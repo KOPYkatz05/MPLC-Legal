@@ -311,3 +311,9 @@
 2026-05-30 23:16:13,535 | INFO | Initialized OneDrive root folders
 2026-05-30 23:16:13,535 | INFO | Initialized OneDrive root folders
 2026-05-30 23:16:13,535 | INFO | Initialized OneDrive root folders
+2026-05-30 23:16:40,289 | INFO | Loaded active missionaries
+2026-05-30 23:16:40,289 | INFO | Opening detail page for missionary: thatonenewguynamed Steve
+2026-05-30 23:16:40,290 | INFO | Loading missionary details for thatonenewguynamed Steve
+2026-05-30 23:16:40,292 | INFO | Loading documents for missionary ID 1
+2026-05-30 23:16:40,294 | INFO | Loaded 1 documents for missionary ID 1
+2026-05-30 23:16:42,837 | INFO | Starting document upload for thatonenewguynamed Steve
