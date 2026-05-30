@@ -1,0 +1,295 @@
+2026-05-28 21:58:08,810 | INFO | Initialized OneDrive root folders
+2026-05-28 21:58:08,810 | INFO | Initialized OneDrive root folders
+2026-05-28 21:58:08,810 | INFO | Initialized MissionariesPage
+2026-05-28 21:58:08,839 | INFO | Loaded active missionaries
+2026-05-28 21:58:08,839 | INFO | Loaded 1 missionaries into table
+2026-05-28 21:58:08,839 | INFO | Initializing MissionaryDetailPage
+2026-05-28 21:58:08,839 | INFO | Initialized OneDrive root folders
+2026-05-28 21:58:08,839 | INFO | Initialized OneDrive root folders
+2026-05-28 21:58:08,839 | INFO | Initialized OneDrive root folders
+2026-05-28 21:58:22,882 | INFO | Loaded active missionaries
+2026-05-28 21:58:22,882 | INFO | Opening detail page for missionary: thatonenewguynamed Steve
+2026-05-28 21:58:22,882 | INFO | Loading missionary details for thatonenewguynamed Steve
+2026-05-28 21:58:28,833 | INFO | Loaded active missionaries
+2026-05-28 21:58:28,834 | INFO | Opening detail page for missionary: thatonenewguynamed Steve
+2026-05-28 21:58:28,834 | INFO | Loading missionary details for thatonenewguynamed Steve
+2026-05-28 21:58:35,099 | INFO | Starting document upload for thatonenewguynamed Steve
+2026-05-28 21:58:43,289 | INFO | Opening workflow status change dialog for workflow ID 1
+2026-05-28 21:58:46,720 | INFO | Updated workflow INTERPOL to IN PROGRESS
+2026-05-28 21:58:46,721 | INFO | Updated current stage for missionary thatonenewguynamed Steve to INTERPOL
+2026-05-28 21:58:46,721 | INFO | Workflow ID 1 updated to status IN PROGRESS
+2026-05-28 21:58:46,732 | INFO | Loading missionary details for thatonenewguynamed Steve
+2026-05-28 22:30:14,339 | INFO | Initialized OneDrive root folders
+2026-05-28 22:30:14,339 | INFO | Initialized OneDrive root folders
+2026-05-28 22:30:14,339 | INFO | Initialized MissionariesPage
+2026-05-28 22:30:14,363 | INFO | Loaded active missionaries
+2026-05-28 22:30:14,370 | INFO | Loaded 1 missionaries into table
+2026-05-28 22:30:14,370 | INFO | Initializing MissionaryDetailPage
+2026-05-28 22:30:14,370 | INFO | Initialized OneDrive root folders
+2026-05-28 22:30:14,370 | INFO | Initialized OneDrive root folders
+2026-05-28 22:30:14,370 | INFO | Initialized OneDrive root folders
+2026-05-28 22:30:18,039 | INFO | Opening Add Missionary dialog
+2026-05-28 22:30:18,039 | INFO | Initialized OneDrive root folders
+2026-05-28 22:30:18,039 | INFO | Initialized OneDrive root folders
+2026-05-28 22:30:18,039 | INFO | Opened Add Missionary dialog
+2026-05-28 22:30:49,246 | INFO | Created missionary root folder: C:\Users\PerúLimaCentralMissi\OneDrive - Church of Jesus Christ (1)\Sec. Visas\1. Visas Lima Central\1 DOCUMENTOS DE LEGALIZACIÓN - IMPORTANTE\ACTIVE\James William VanOrden
+2026-05-28 22:30:49,248 | INFO | Created workflow folder: C:\Users\PerúLimaCentralMissi\OneDrive - Church of Jesus Christ (1)\Sec. Visas\1. Visas Lima Central\1 DOCUMENTOS DE LEGALIZACIÓN - IMPORTANTE\ACTIVE\James William VanOrden\INTERPOL
+2026-05-28 22:30:49,249 | INFO | Created workflow folder: C:\Users\PerúLimaCentralMissi\OneDrive - Church of Jesus Christ (1)\Sec. Visas\1. Visas Lima Central\1 DOCUMENTOS DE LEGALIZACIÓN - IMPORTANTE\ACTIVE\James William VanOrden\CARNET DE EXTRANJERIA
+2026-05-28 22:30:49,253 | INFO | Created workflow folder: C:\Users\PerúLimaCentralMissi\OneDrive - Church of Jesus Christ (1)\Sec. Visas\1. Visas Lima Central\1 DOCUMENTOS DE LEGALIZACIÓN - IMPORTANTE\ACTIVE\James William VanOrden\PRORROGA
+2026-05-28 22:30:49,253 | INFO | Created workflow folder: C:\Users\PerúLimaCentralMissi\OneDrive - Church of Jesus Christ (1)\Sec. Visas\1. Visas Lima Central\1 DOCUMENTOS DE LEGALIZACIÓN - IMPORTANTE\ACTIVE\James William VanOrden\CANCELACION
+2026-05-28 22:30:49,289 | INFO | Initialized workflows for missionary ID 2
+2026-05-28 22:30:49,289 | INFO | Created missionary: James William VanOrden
+2026-05-28 22:30:49,289 | INFO | Successfully created missionary from dialog: James William VanOrden
+2026-05-28 22:30:49,289 | INFO | Missionary created successfully from dialog
+2026-05-28 22:30:49,303 | INFO | Loaded active missionaries
+2026-05-28 22:30:49,303 | INFO | Loaded 2 missionaries into table
+2026-05-28 22:30:50,513 | INFO | Loaded active missionaries
+2026-05-28 22:30:50,513 | INFO | Opening detail page for missionary: James William VanOrden
+2026-05-28 22:30:50,518 | INFO | Loading missionary details for James William VanOrden
+2026-05-28 22:30:52,292 | INFO | Opening workflow status change dialog for workflow ID 6
+2026-05-28 22:30:59,922 | INFO | Updated workflow CARNET DE EXTRANJERIA to COMPLETED
+2026-05-28 22:30:59,930 | INFO | Updated current stage for missionary James William VanOrden to CARNET DE EXTRANJERIA
+2026-05-28 22:30:59,938 | INFO | Workflow ID 6 updated to status COMPLETED
+2026-05-28 22:30:59,944 | INFO | Loading missionary details for James William VanOrden
+2026-05-28 22:31:01,280 | INFO | Opening workflow status change dialog for workflow ID 8
+2026-05-28 22:31:07,899 | INFO | Updated workflow CANCELACION to COMPLETED
+2026-05-28 22:31:07,911 | INFO | Updated current stage for missionary James William VanOrden to CANCELACION
+2026-05-28 22:31:07,917 | INFO | Archived folder James William VanOrden
+2026-05-28 22:31:07,933 | INFO | Archived missionary James William VanOrden
+2026-05-28 22:31:07,936 | INFO | Workflow ID 8 updated to status COMPLETED
+2026-05-28 22:31:07,936 | INFO | Loading missionary details for James William VanOrden
+2026-05-28 22:31:26,777 | INFO | Initialized OneDrive root folders
+2026-05-28 22:31:26,777 | INFO | Initialized OneDrive root folders
+2026-05-28 22:31:26,777 | INFO | Initialized MissionariesPage
+2026-05-28 22:31:26,820 | INFO | Loaded active missionaries
+2026-05-28 22:31:26,820 | INFO | Loaded 1 missionaries into table
+2026-05-28 22:31:26,820 | INFO | Initializing MissionaryDetailPage
+2026-05-28 22:31:26,820 | INFO | Initialized OneDrive root folders
+2026-05-28 22:31:26,820 | INFO | Initialized OneDrive root folders
+2026-05-28 22:31:26,820 | INFO | Initialized OneDrive root folders
+2026-05-28 22:31:31,375 | INFO | Loaded active missionaries
+2026-05-28 22:31:31,377 | INFO | Opening detail page for missionary: thatonenewguynamed Steve
+2026-05-28 22:31:31,377 | INFO | Loading missionary details for thatonenewguynamed Steve
+2026-05-28 22:31:34,503 | INFO | Opening Add Missionary dialog
+2026-05-28 22:31:34,503 | INFO | Initialized OneDrive root folders
+2026-05-28 22:31:34,503 | INFO | Initialized OneDrive root folders
+2026-05-28 22:31:34,503 | INFO | Opened Add Missionary dialog
+2026-05-28 22:31:49,680 | INFO | Created missionary root folder: C:\Users\PerúLimaCentralMissi\OneDrive - Church of Jesus Christ (1)\Sec. Visas\1. Visas Lima Central\1 DOCUMENTOS DE LEGALIZACIÓN - IMPORTANTE\ACTIVE\James William VanOrden
+2026-05-28 22:31:49,680 | INFO | Created workflow folder: C:\Users\PerúLimaCentralMissi\OneDrive - Church of Jesus Christ (1)\Sec. Visas\1. Visas Lima Central\1 DOCUMENTOS DE LEGALIZACIÓN - IMPORTANTE\ACTIVE\James William VanOrden\INTERPOL
+2026-05-28 22:31:49,680 | INFO | Created workflow folder: C:\Users\PerúLimaCentralMissi\OneDrive - Church of Jesus Christ (1)\Sec. Visas\1. Visas Lima Central\1 DOCUMENTOS DE LEGALIZACIÓN - IMPORTANTE\ACTIVE\James William VanOrden\CARNET DE EXTRANJERIA
+2026-05-28 22:31:49,696 | INFO | Created workflow folder: C:\Users\PerúLimaCentralMissi\OneDrive - Church of Jesus Christ (1)\Sec. Visas\1. Visas Lima Central\1 DOCUMENTOS DE LEGALIZACIÓN - IMPORTANTE\ACTIVE\James William VanOrden\PRORROGA
+2026-05-28 22:31:49,707 | INFO | Created workflow folder: C:\Users\PerúLimaCentralMissi\OneDrive - Church of Jesus Christ (1)\Sec. Visas\1. Visas Lima Central\1 DOCUMENTOS DE LEGALIZACIÓN - IMPORTANTE\ACTIVE\James William VanOrden\CANCELACION
+2026-05-28 22:31:49,736 | INFO | Initialized workflows for missionary ID 3
+2026-05-28 22:31:49,736 | INFO | Created missionary: James William VanOrden
+2026-05-28 22:31:49,736 | INFO | Successfully created missionary from dialog: James William VanOrden
+2026-05-28 22:31:49,741 | INFO | Missionary created successfully from dialog
+2026-05-28 22:31:49,744 | INFO | Loaded active missionaries
+2026-05-28 22:31:49,754 | INFO | Loaded 2 missionaries into table
+2026-05-28 22:31:51,040 | INFO | Loaded active missionaries
+2026-05-28 22:31:51,043 | INFO | Opening detail page for missionary: James William VanOrden
+2026-05-28 22:31:51,043 | INFO | Loading missionary details for James William VanOrden
+2026-05-28 22:31:53,637 | INFO | Opening workflow status change dialog for workflow ID 9
+2026-05-28 22:31:57,316 | INFO | Opening workflow status change dialog for workflow ID 10
+2026-05-28 22:32:00,370 | INFO | Updated workflow CARNET DE EXTRANJERIA to COMPLETED
+2026-05-28 22:32:00,391 | INFO | Updated current stage for missionary James William VanOrden to CARNET DE EXTRANJERIA
+2026-05-28 22:32:00,394 | INFO | Workflow ID 10 updated to status COMPLETED
+2026-05-28 22:32:00,396 | INFO | Loading missionary details for James William VanOrden
+2026-05-28 22:32:17,077 | INFO | Initialized OneDrive root folders
+2026-05-28 22:32:17,077 | INFO | Initialized OneDrive root folders
+2026-05-28 22:32:17,077 | INFO | Initialized MissionariesPage
+2026-05-28 22:32:17,117 | INFO | Loaded active missionaries
+2026-05-28 22:32:17,118 | INFO | Loaded 2 missionaries into table
+2026-05-28 22:32:17,119 | INFO | Initializing MissionaryDetailPage
+2026-05-28 22:32:17,119 | INFO | Initialized OneDrive root folders
+2026-05-28 22:32:17,120 | INFO | Initialized OneDrive root folders
+2026-05-28 22:32:17,121 | INFO | Initialized OneDrive root folders
+2026-05-28 22:32:20,716 | INFO | Loaded active missionaries
+2026-05-28 22:32:20,716 | INFO | Opening detail page for missionary: James William VanOrden
+2026-05-28 22:32:20,716 | INFO | Loading missionary details for James William VanOrden
+2026-05-28 22:50:23,536 | INFO | Initialized OneDrive root folders
+2026-05-28 22:50:23,536 | INFO | Initialized OneDrive root folders
+2026-05-28 22:50:23,536 | INFO | Initialized MissionariesPage
+2026-05-28 22:50:23,577 | INFO | Loaded active missionaries
+2026-05-28 22:50:23,589 | INFO | Loaded 2 missionaries into table
+2026-05-28 22:50:23,589 | INFO | Initializing MissionaryDetailPage
+2026-05-28 22:50:23,589 | INFO | Initialized OneDrive root folders
+2026-05-28 22:50:23,589 | INFO | Initialized OneDrive root folders
+2026-05-28 22:50:23,589 | INFO | Initialized OneDrive root folders
+2026-05-28 22:50:26,976 | INFO | Loaded active missionaries
+2026-05-28 22:50:26,976 | INFO | Opening detail page for missionary: James William VanOrden
+2026-05-28 22:50:26,976 | INFO | Loading missionary details for James William VanOrden
+2026-05-28 22:50:26,992 | INFO | Loading documents for missionary ID 3
+2026-05-28 22:50:27,010 | INFO | Loaded 0 documents for missionary ID 3
+2026-05-29 13:58:46,734 | INFO | Processing upload: YOUR PDF PATH HERE
+2026-05-29 13:58:46,734 | WARNING | Unsupported file type: 
+2026-05-29 14:03:01,893 | INFO | Processing upload: C:\Users\PerúLimaCentralMissi\Downloads\testingfile.pdf
+2026-05-29 14:03:02,351 | INFO | Saved processed page: test_output\page_1.png
+2026-05-29 14:03:02,833 | INFO | Saved processed page: test_output\page_2.png
+2026-05-29 15:04:26,266 | INFO | Processing upload: C:\Users\PerúLimaCentralMissi\Downloads\testingfile.pdf
+2026-05-29 15:04:26,853 | INFO | OCR cleaned image: test_output\page_1.png
+2026-05-29 15:04:26,855 | INFO | Saved processed page: test_output\page_1.png
+2026-05-29 15:04:27,393 | INFO | OCR cleaned image: test_output\page_2.png
+2026-05-29 15:04:27,393 | INFO | Saved processed page: test_output\page_2.png
+2026-05-29 15:11:00,538 | INFO | Processing upload: C:\Users\PerúLimaCentralMissi\Downloads\testingfile.pdf
+2026-05-29 15:11:01,223 | INFO | OCR cleaned image: test_output\page_1.png
+2026-05-29 15:11:01,223 | INFO | Detected deskew angle: 0.0
+2026-05-29 15:11:01,239 | INFO | Saved processed page: test_output\page_1.png
+2026-05-29 15:11:01,907 | INFO | OCR cleaned image: test_output\page_2.png
+2026-05-29 15:11:01,907 | INFO | Detected deskew angle: 0.0
+2026-05-29 15:11:01,914 | INFO | Saved processed page: test_output\page_2.png
+2026-05-29 15:15:19,413 | INFO | Processing upload: C:\Users\PerúLimaCentralMissi\Downloads\testingfile.pdf
+2026-05-29 15:15:20,959 | INFO | Calculated rotation angle: -0.9891637667613639
+2026-05-29 15:15:21,020 | INFO | OCR cleaned image: test_output\page_1.png
+2026-05-29 15:15:21,021 | INFO | Detected deskew angle: -0.9891637667613639
+2026-05-29 15:15:21,026 | INFO | Saved processed page: test_output\page_1.png
+2026-05-29 15:15:22,476 | INFO | Calculated rotation angle: 1.0169780307191734
+2026-05-29 15:15:22,523 | INFO | OCR cleaned image: test_output\page_2.png
+2026-05-29 15:15:22,523 | INFO | Detected deskew angle: 1.0169780307191734
+2026-05-29 15:15:22,541 | INFO | Saved processed page: test_output\page_2.png
+2026-05-29 15:16:11,662 | INFO | Processing upload: C:\Users\PerúLimaCentralMissi\Downloads\testingfile.pdf
+2026-05-29 15:16:13,193 | INFO | Calculated rotation angle: -0.9891637667613639
+2026-05-29 15:16:13,264 | INFO | OCR cleaned image: test_output\page_1.png
+2026-05-29 15:16:13,265 | INFO | Detected deskew angle: -0.9891637667613639
+2026-05-29 15:16:13,271 | INFO | Saved processed page: test_output\page_1.png
+2026-05-29 15:16:14,680 | INFO | Calculated rotation angle: 1.0169780307191734
+2026-05-29 15:16:14,740 | INFO | OCR cleaned image: test_output\page_2.png
+2026-05-29 15:16:14,741 | INFO | Detected deskew angle: 1.0169780307191734
+2026-05-29 15:16:14,747 | INFO | Saved processed page: test_output\page_2.png
+2026-05-29 15:27:49,094 | INFO | Processing upload: C:\Users\PerúLimaCentralMissi\Downloads\testingfile.pdf
+2026-05-29 15:27:50,597 | INFO | Calculated rotation angle: 8.506273404622014
+2026-05-29 15:27:50,661 | INFO | OCR cleaned image: test_output\page_1.png
+2026-05-29 15:27:50,661 | INFO | Detected deskew angle: 8.506273404622014
+2026-05-29 15:27:50,667 | INFO | Saved processed page: test_output\page_1.png
+2026-05-29 15:33:47,005 | INFO | Processing upload: C:\Users\PerúLimaCentralMissi\Downloads\testingfile.pdf
+2026-05-29 15:33:47,566 | INFO | Calculated rotation angle: -0.0
+2026-05-29 15:33:47,632 | INFO | OCR cleaned image: test_output\page_1.png
+2026-05-29 15:33:47,633 | INFO | Detected deskew angle: -0.0
+2026-05-29 15:33:47,646 | INFO | Saved processed page: test_output\page_1.png
+2026-05-29 15:40:43,299 | INFO | Processing upload: C:\Users\PerúLimaCentralMissi\Downloads\testingfile.pdf
+2026-05-29 15:40:43,736 | INFO | Largest contour area: 6218.0
+2026-05-29 15:40:43,736 | WARNING | Detected contour too small
+2026-05-29 15:40:43,885 | INFO | Calculated rotation angle: -0.0
+2026-05-29 15:40:43,954 | INFO | OCR cleaned image: test_output\page_1.png
+2026-05-29 15:40:43,954 | INFO | Final deskew angle: -0.0
+2026-05-29 15:40:43,958 | INFO | Saved processed page: test_output\page_1.png
+2026-05-29 15:43:03,198 | INFO | Processing upload: C:\Users\PerúLimaCentralMissi\Downloads\testingfile.pdf
+2026-05-29 15:43:03,676 | INFO | Largest contour area: 20690.5
+2026-05-29 15:43:03,676 | INFO | Document region detected and cropped
+2026-05-29 15:43:03,809 | INFO | Calculated rotation angle: -0.0
+2026-05-29 15:43:03,868 | INFO | OCR cleaned image: test_output\page_1.png
+2026-05-29 15:43:03,868 | INFO | Final deskew angle: -0.0
+2026-05-29 15:43:03,872 | INFO | Saved processed page: test_output\page_1.png
+2026-05-29 15:43:29,261 | INFO | Processing upload: C:\Users\PerúLimaCentralMissi\Downloads\testingfile.pdf
+2026-05-29 15:43:29,743 | INFO | Largest contour area: 20690.5
+2026-05-29 15:43:29,743 | INFO | Document region detected and cropped
+2026-05-29 15:43:29,876 | INFO | Calculated rotation angle: -0.0
+2026-05-29 15:43:29,931 | INFO | OCR cleaned image: test_output\page_1.png
+2026-05-29 15:43:29,932 | INFO | Final deskew angle: -0.0
+2026-05-29 15:43:29,936 | INFO | Saved processed page: test_output\page_1.png
+2026-05-29 15:44:36,901 | INFO | Processing upload: C:\Users\PerúLimaCentralMissi\Downloads\testingfile.pdf
+2026-05-29 15:44:37,467 | INFO | Largest contour area: 21162.5
+2026-05-29 15:44:37,467 | INFO | Document region detected and cropped
+2026-05-29 15:44:37,486 | INFO | Calculated rotation angle: -0.0
+2026-05-29 15:44:37,492 | INFO | OCR cleaned image: test_output\page_1.png
+2026-05-29 15:44:37,492 | INFO | Final deskew angle: -0.0
+2026-05-29 15:44:37,493 | INFO | Saved processed page: test_output\page_1.png
+2026-05-29 15:44:38,034 | INFO | Largest contour area: 104763.5
+2026-05-29 15:44:38,034 | INFO | Document region detected and cropped
+2026-05-29 15:44:38,050 | INFO | Calculated rotation angle: -1.30963134765625
+2026-05-29 15:44:38,061 | INFO | OCR cleaned image: test_output\page_2.png
+2026-05-29 15:44:38,061 | INFO | Final deskew angle: -1.30963134765625
+2026-05-29 15:44:38,061 | INFO | Saved processed page: test_output\page_2.png
+2026-05-29 17:33:33,440 | INFO | Initializing PaddleOCR
+2026-05-29 17:33:57,856 | INFO | HTTP Request: GET https://huggingface.co/api/models/PaddlePaddle/PP-LCNet_x1_0_doc_ori/revision/main "HTTP/1.1 200 OK"
+2026-05-29 17:33:58,005 | INFO | HTTP Request: HEAD https://huggingface.co/PaddlePaddle/PP-LCNet_x1_0_doc_ori/resolve/d3b95a6dff5fe8a94f2748e12b61cb26818a0df8/README.md "HTTP/1.1 307 Temporary Redirect"
+2026-05-29 17:33:58,005 | INFO | HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/PaddlePaddle/PP-LCNet_x1_0_doc_ori/d3b95a6dff5fe8a94f2748e12b61cb26818a0df8/README.md "HTTP/1.1 200 OK"
+2026-05-29 17:33:58,025 | INFO | HTTP Request: GET https://huggingface.co/api/resolve-cache/models/PaddlePaddle/PP-LCNet_x1_0_doc_ori/d3b95a6dff5fe8a94f2748e12b61cb26818a0df8/README.md "HTTP/1.1 200 OK"
+2026-05-29 17:33:58,076 | INFO | HTTP Request: HEAD https://huggingface.co/PaddlePaddle/PP-LCNet_x1_0_doc_ori/resolve/d3b95a6dff5fe8a94f2748e12b61cb26818a0df8/.gitattributes "HTTP/1.1 307 Temporary Redirect"
+2026-05-29 17:33:58,078 | INFO | HTTP Request: HEAD https://huggingface.co/PaddlePaddle/PP-LCNet_x1_0_doc_ori/resolve/d3b95a6dff5fe8a94f2748e12b61cb26818a0df8/inference.yml "HTTP/1.1 307 Temporary Redirect"
+2026-05-29 17:33:58,087 | INFO | HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/PaddlePaddle/PP-LCNet_x1_0_doc_ori/d3b95a6dff5fe8a94f2748e12b61cb26818a0df8/.gitattributes "HTTP/1.1 200 OK"
+2026-05-29 17:33:58,091 | INFO | HTTP Request: HEAD https://huggingface.co/PaddlePaddle/PP-LCNet_x1_0_doc_ori/resolve/d3b95a6dff5fe8a94f2748e12b61cb26818a0df8/config.json "HTTP/1.1 307 Temporary Redirect"
+2026-05-29 17:33:58,091 | INFO | HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/PaddlePaddle/PP-LCNet_x1_0_doc_ori/d3b95a6dff5fe8a94f2748e12b61cb26818a0df8/inference.yml "HTTP/1.1 200 OK"
+2026-05-29 17:33:58,101 | INFO | HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/PaddlePaddle/PP-LCNet_x1_0_doc_ori/d3b95a6dff5fe8a94f2748e12b61cb26818a0df8/config.json "HTTP/1.1 200 OK"
+2026-05-29 17:33:58,102 | INFO | HTTP Request: GET https://huggingface.co/api/resolve-cache/models/PaddlePaddle/PP-LCNet_x1_0_doc_ori/d3b95a6dff5fe8a94f2748e12b61cb26818a0df8/.gitattributes "HTTP/1.1 200 OK"
+2026-05-29 17:33:58,114 | INFO | HTTP Request: GET https://huggingface.co/api/resolve-cache/models/PaddlePaddle/PP-LCNet_x1_0_doc_ori/d3b95a6dff5fe8a94f2748e12b61cb26818a0df8/inference.yml "HTTP/1.1 200 OK"
+2026-05-29 17:33:58,119 | INFO | HTTP Request: GET https://huggingface.co/api/resolve-cache/models/PaddlePaddle/PP-LCNet_x1_0_doc_ori/d3b95a6dff5fe8a94f2748e12b61cb26818a0df8/config.json "HTTP/1.1 200 OK"
+2026-05-29 17:33:58,123 | INFO | HTTP Request: HEAD https://huggingface.co/PaddlePaddle/PP-LCNet_x1_0_doc_ori/resolve/d3b95a6dff5fe8a94f2748e12b61cb26818a0df8/inference.json "HTTP/1.1 307 Temporary Redirect"
+2026-05-29 17:33:58,131 | INFO | HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/PaddlePaddle/PP-LCNet_x1_0_doc_ori/d3b95a6dff5fe8a94f2748e12b61cb26818a0df8/inference.json "HTTP/1.1 200 OK"
+2026-05-29 17:33:58,142 | INFO | HTTP Request: HEAD https://huggingface.co/PaddlePaddle/PP-LCNet_x1_0_doc_ori/resolve/d3b95a6dff5fe8a94f2748e12b61cb26818a0df8/inference.pdiparams "HTTP/1.1 302 Found"
+2026-05-29 17:33:58,142 | INFO | HTTP Request: GET https://huggingface.co/api/resolve-cache/models/PaddlePaddle/PP-LCNet_x1_0_doc_ori/d3b95a6dff5fe8a94f2748e12b61cb26818a0df8/inference.json "HTTP/1.1 200 OK"
+2026-05-29 17:33:59,521 | INFO | HTTP Request: GET https://huggingface.co/api/models/PaddlePaddle/PP-LCNet_x1_0_doc_ori/xet-read-token/d3b95a6dff5fe8a94f2748e12b61cb26818a0df8 "HTTP/1.1 200 OK"
+2026-05-29 18:29:32,795 | INFO | Initializing PaddleOCR
+2026-05-29 19:01:37,247 | INFO | Initializing PaddleOCR
+2026-05-29 19:01:47,323 | INFO | HTTP Request: GET https://huggingface.co/api/models/PaddlePaddle/PP-LCNet_x1_0_doc_ori/revision/main "HTTP/1.1 200 OK"
+2026-05-29 19:01:47,548 | INFO | HTTP Request: HEAD https://huggingface.co/PaddlePaddle/PP-LCNet_x1_0_doc_ori/resolve/d3b95a6dff5fe8a94f2748e12b61cb26818a0df8/inference.json "HTTP/1.1 307 Temporary Redirect"
+2026-05-29 19:01:47,613 | INFO | HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/PaddlePaddle/PP-LCNet_x1_0_doc_ori/d3b95a6dff5fe8a94f2748e12b61cb26818a0df8/inference.json "HTTP/1.1 200 OK"
+2026-05-29 19:01:47,649 | INFO | HTTP Request: HEAD https://huggingface.co/PaddlePaddle/PP-LCNet_x1_0_doc_ori/resolve/d3b95a6dff5fe8a94f2748e12b61cb26818a0df8/inference.yml "HTTP/1.1 307 Temporary Redirect"
+2026-05-29 19:01:47,652 | INFO | HTTP Request: GET https://huggingface.co/api/resolve-cache/models/PaddlePaddle/PP-LCNet_x1_0_doc_ori/d3b95a6dff5fe8a94f2748e12b61cb26818a0df8/inference.json "HTTP/1.1 200 OK"
+2026-05-29 19:01:47,686 | INFO | HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/PaddlePaddle/PP-LCNet_x1_0_doc_ori/d3b95a6dff5fe8a94f2748e12b61cb26818a0df8/inference.yml "HTTP/1.1 200 OK"
+2026-05-29 19:01:47,743 | INFO | HTTP Request: HEAD https://huggingface.co/PaddlePaddle/PP-LCNet_x1_0_doc_ori/resolve/d3b95a6dff5fe8a94f2748e12b61cb26818a0df8/inference.pdiparams "HTTP/1.1 302 Found"
+2026-05-29 19:01:47,793 | INFO | HTTP Request: GET https://huggingface.co/api/resolve-cache/models/PaddlePaddle/PP-LCNet_x1_0_doc_ori/d3b95a6dff5fe8a94f2748e12b61cb26818a0df8/inference.yml "HTTP/1.1 200 OK"
+2026-05-29 19:01:47,793 | INFO | HTTP Request: HEAD https://huggingface.co/PaddlePaddle/PP-LCNet_x1_0_doc_ori/resolve/d3b95a6dff5fe8a94f2748e12b61cb26818a0df8/config.json "HTTP/1.1 307 Temporary Redirect"
+2026-05-29 19:01:47,793 | INFO | HTTP Request: HEAD https://huggingface.co/PaddlePaddle/PP-LCNet_x1_0_doc_ori/resolve/d3b95a6dff5fe8a94f2748e12b61cb26818a0df8/.gitattributes "HTTP/1.1 307 Temporary Redirect"
+2026-05-29 19:01:47,863 | INFO | HTTP Request: HEAD https://huggingface.co/PaddlePaddle/PP-LCNet_x1_0_doc_ori/resolve/d3b95a6dff5fe8a94f2748e12b61cb26818a0df8/README.md "HTTP/1.1 307 Temporary Redirect"
+2026-05-29 19:01:47,872 | INFO | HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/PaddlePaddle/PP-LCNet_x1_0_doc_ori/d3b95a6dff5fe8a94f2748e12b61cb26818a0df8/config.json "HTTP/1.1 200 OK"
+2026-05-29 19:01:47,872 | INFO | HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/PaddlePaddle/PP-LCNet_x1_0_doc_ori/d3b95a6dff5fe8a94f2748e12b61cb26818a0df8/.gitattributes "HTTP/1.1 200 OK"
+2026-05-29 19:01:47,937 | INFO | HTTP Request: GET https://huggingface.co/api/resolve-cache/models/PaddlePaddle/PP-LCNet_x1_0_doc_ori/d3b95a6dff5fe8a94f2748e12b61cb26818a0df8/config.json "HTTP/1.1 200 OK"
+2026-05-29 19:01:47,937 | INFO | HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/PaddlePaddle/PP-LCNet_x1_0_doc_ori/d3b95a6dff5fe8a94f2748e12b61cb26818a0df8/README.md "HTTP/1.1 200 OK"
+2026-05-29 19:01:47,937 | INFO | HTTP Request: GET https://huggingface.co/api/resolve-cache/models/PaddlePaddle/PP-LCNet_x1_0_doc_ori/d3b95a6dff5fe8a94f2748e12b61cb26818a0df8/.gitattributes "HTTP/1.1 200 OK"
+2026-05-29 19:01:47,978 | INFO | HTTP Request: GET https://huggingface.co/api/models/PaddlePaddle/PP-LCNet_x1_0_doc_ori/xet-read-token/d3b95a6dff5fe8a94f2748e12b61cb26818a0df8 "HTTP/1.1 200 OK"
+2026-05-29 19:01:48,031 | INFO | HTTP Request: GET https://huggingface.co/api/resolve-cache/models/PaddlePaddle/PP-LCNet_x1_0_doc_ori/d3b95a6dff5fe8a94f2748e12b61cb26818a0df8/README.md "HTTP/1.1 200 OK"
+2026-05-29 19:33:32,153 | INFO | Processing upload: C:\Users\PerúLimaCentralMissi\Downloads\testingfile.pdf
+2026-05-29 19:33:32,874 | INFO | Largest contour area: 21162.5
+2026-05-29 19:33:32,874 | INFO | Document region detected and cropped
+2026-05-29 19:33:32,874 | INFO | Calculated rotation angle: -90.0
+2026-05-29 19:33:32,896 | INFO | OCR cleaned image: test_output\page_1.png
+2026-05-29 19:33:32,896 | INFO | Final deskew angle: -90.0
+2026-05-29 19:33:32,896 | INFO | Saved processed page: test_output\page_1.png
+2026-05-29 19:33:33,577 | INFO | Largest contour area: 104763.5
+2026-05-29 19:33:33,577 | INFO | Document region detected and cropped
+2026-05-29 19:33:33,577 | INFO | Calculated rotation angle: -1.309631109237671
+2026-05-29 19:33:33,598 | INFO | OCR cleaned image: test_output\page_2.png
+2026-05-29 19:33:33,598 | INFO | Final deskew angle: -1.309631109237671
+2026-05-29 19:33:33,598 | INFO | Saved processed page: test_output\page_2.png
+2026-05-29 19:39:32,946 | INFO | Processing upload: C:\Users\PerúLimaCentralMissi\Downloads\testingfile.pdf
+2026-05-29 19:41:11,366 | INFO | Processing upload: C:\Users\PerúLimaCentralMissi\Downloads\testingfile.pdf
+2026-05-29 19:41:12,057 | INFO | OCR cleaned image: test_output\page_1.png
+2026-05-29 19:41:12,071 | INFO | Saved processed page: test_output\page_1.png
+2026-05-30 11:26:01,036 | INFO | Processing upload: C:\Users\PerúLimaCentralMissi\Downloads\testingfile.pdf
+2026-05-30 11:26:01,720 | INFO | OCR image prepared: test_output\page_1.png
+2026-05-30 11:26:01,725 | INFO | Saved processed page: test_output\page_1.png
+2026-05-30 13:01:38,570 | INFO | Initialized OneDrive root folders
+2026-05-30 13:01:38,570 | INFO | Initialized OneDrive root folders
+2026-05-30 13:01:38,570 | INFO | Initialized MissionariesPage
+2026-05-30 13:01:38,614 | INFO | Loaded active missionaries
+2026-05-30 13:01:38,615 | INFO | Loaded 2 missionaries into table
+2026-05-30 13:01:38,615 | INFO | Initializing MissionaryDetailPage
+2026-05-30 13:01:38,615 | INFO | Initialized OneDrive root folders
+2026-05-30 13:01:38,615 | INFO | Initialized OneDrive root folders
+2026-05-30 13:01:38,615 | INFO | Initialized OneDrive root folders
+2026-05-30 13:01:43,184 | INFO | Loaded active missionaries
+2026-05-30 13:01:43,184 | INFO | Opening detail page for missionary: thatonenewguynamed Steve
+2026-05-30 13:01:43,184 | INFO | Loading missionary details for thatonenewguynamed Steve
+2026-05-30 13:01:43,184 | INFO | Loading documents for missionary ID 1
+2026-05-30 13:01:43,184 | INFO | Loaded 0 documents for missionary ID 1
+2026-05-30 13:01:45,057 | INFO | Starting document upload for thatonenewguynamed Steve
+2026-05-30 13:02:11,795 | INFO | Uploading document PASSPORT.pdf for missionary thatonenewguynamed Steve
+2026-05-30 13:02:11,808 | INFO | Successfully uploaded PASSPORT.pdf for missionary thatonenewguynamed Steve
+2026-05-30 13:02:11,812 | INFO | Uploaded document PASSPORT for missionary thatonenewguynamed Steve
+2026-05-30 13:02:11,812 | INFO | Loading documents for missionary ID 1
+2026-05-30 13:02:11,817 | INFO | Loaded 1 documents for missionary ID 1
+2026-05-30 13:34:59,258 | INFO | Initialized OneDrive root folders
+2026-05-30 13:34:59,258 | INFO | Initialized OneDrive root folders
+2026-05-30 13:34:59,273 | INFO | Initialized MissionariesPage
+2026-05-30 13:34:59,314 | INFO | Loaded active missionaries
+2026-05-30 13:34:59,315 | INFO | Loaded 2 missionaries into table
+2026-05-30 13:34:59,315 | INFO | Initializing MissionaryDetailPage
+2026-05-30 13:34:59,316 | INFO | Initialized OneDrive root folders
+2026-05-30 13:34:59,316 | INFO | Initialized OneDrive root folders
+2026-05-30 13:34:59,317 | INFO | Initialized OneDrive root folders
+2026-05-30 13:35:03,157 | INFO | Loaded active missionaries
+2026-05-30 13:35:03,157 | INFO | Opening detail page for missionary: thatonenewguynamed Steve
+2026-05-30 13:35:03,157 | INFO | Loading missionary details for thatonenewguynamed Steve
+2026-05-30 13:35:03,157 | INFO | Loading documents for missionary ID 1
+2026-05-30 13:35:03,157 | INFO | Loaded 1 documents for missionary ID 1
+2026-05-30 13:35:05,891 | INFO | Starting document upload for thatonenewguynamed Steve

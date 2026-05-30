@@ -1,0 +1,11 @@
+PySide6
+SQLAlchemy
+python-dotenv
+winotify
+
+paddleocr==2.8.1
+paddlepaddle==2.6.2
+
+PyMuPDF
+opencv-python
+numpy
