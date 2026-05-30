@@ -201,19 +201,15 @@ class MissionariesPage(QWidget):
 
         self.table.setObjectName("MissionaryTable")
 
-        self.table.setColumnCount(6)
+        self.table.setColumnCount(5)
 
         self.table.setHorizontalHeaderLabels([
             "ID",
             "Full Name",
-            "Preferred Name",
             "Nationality",
             "Passport Number",
             "Current Stage",
         ])
-
-        # Hide the ID column — used internally only
-        self.table.setColumnHidden(0, True)
 
         # Table behaviour
         self.table.setSelectionBehavior(
@@ -240,6 +236,10 @@ class MissionariesPage(QWidget):
         header_view = self.table.horizontalHeader()
 
         header_view.setSectionResizeMode(
+            0, QHeaderView.ResizeToContents
+        )
+
+        header_view.setSectionResizeMode(
             1, QHeaderView.Stretch
         )
 
@@ -253,10 +253,6 @@ class MissionariesPage(QWidget):
 
         header_view.setSectionResizeMode(
             4, QHeaderView.ResizeToContents
-        )
-
-        header_view.setSectionResizeMode(
-            5, QHeaderView.ResizeToContents
         )
 
         self.table.setRowHeight(0, 44)
@@ -368,21 +364,16 @@ class MissionariesPage(QWidget):
 
             self.table.setItem(
                 row, 2,
-                make_item(m.preferred_name or ""),
-            )
-
-            self.table.setItem(
-                row, 3,
                 make_item(m.nationality or ""),
             )
 
             self.table.setItem(
-                row, 4,
+                row, 3,
                 make_item(m.passport_number or ""),
             )
 
             self.table.setItem(
-                row, 5,
+                row, 4,
                 make_item(m.current_stage or ""),
             )
 
