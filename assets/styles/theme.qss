@@ -1,0 +1,481 @@
+/* ==========================================
+   MISSION LEGAL TRACKER — THEME
+   Clean white / off-white / gray palette
+   ========================================== */
+
+
+/* ==========================================
+   BASE
+   ========================================== */
+
+QMainWindow {
+    background-color: #F4F4F5;
+}
+
+QWidget {
+    font-family: "Segoe UI", Arial, sans-serif;
+    font-size: 13px;
+    color: #18181B;
+    background-color: transparent;
+}
+
+QScrollArea {
+    border: none;
+    background-color: transparent;
+}
+
+QScrollArea > QWidget > QWidget {
+    background-color: transparent;
+}
+
+QScrollBar:vertical {
+    background: transparent;
+    width: 8px;
+    border-radius: 4px;
+}
+
+QScrollBar::handle:vertical {
+    background: #D4D4D8;
+    border-radius: 4px;
+    min-height: 24px;
+}
+
+QScrollBar::handle:vertical:hover {
+    background: #A1A1AA;
+}
+
+QScrollBar::add-line:vertical,
+QScrollBar::sub-line:vertical {
+    height: 0px;
+}
+
+QScrollBar:horizontal {
+    height: 8px;
+    background: transparent;
+}
+
+QScrollBar::handle:horizontal {
+    background: #D4D4D8;
+    border-radius: 4px;
+    min-width: 24px;
+}
+
+
+/* ==========================================
+   SIDEBAR
+   ========================================== */
+
+QListWidget#Sidebar {
+    background-color: #FFFFFF;
+    border: none;
+    border-right: 1px solid #E4E4E7;
+    padding: 10px 0px;
+    outline: 0;
+}
+
+QListWidget#Sidebar::item {
+    height: 38px;
+    padding-left: 18px;
+    border-radius: 6px;
+    margin: 2px 10px;
+    color: #52525B;
+    font-size: 13px;
+}
+
+QListWidget#Sidebar::item:hover {
+    background-color: #F4F4F5;
+    color: #27272A;
+}
+
+QListWidget#Sidebar::item:selected {
+    background-color: #EFF6FF;
+    color: #1D4ED8;
+    font-weight: 600;
+}
+
+
+/* ==========================================
+   PAGE HEADER
+   ========================================== */
+
+QFrame#PageHeader {
+    background-color: #FFFFFF;
+}
+
+QFrame#HeaderDivider {
+    background-color: #E4E4E7;
+}
+
+QLabel#PageTitle {
+    font-size: 20px;
+    font-weight: 700;
+    color: #18181B;
+    background: transparent;
+}
+
+
+/* ==========================================
+   DASHBOARD CONTENT
+   ========================================== */
+
+QWidget#DashboardContent {
+    background-color: #F4F4F5;
+}
+
+QFrame#DashboardScroll {
+    background-color: #F4F4F5;
+}
+
+
+/* ==========================================
+   SECTION HEADER
+   ========================================== */
+
+QLabel#SectionHeader {
+    font-size: 13px;
+    font-weight: 600;
+    color: #71717A;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    background: transparent;
+}
+
+
+/* ==========================================
+   STAT CARD
+   ========================================== */
+
+QFrame#StatCard {
+    background-color: #FFFFFF;
+    border: 1px solid #E4E4E7;
+    border-radius: 10px;
+}
+
+QLabel#StatTitle {
+    font-size: 12px;
+    color: #71717A;
+    font-weight: 500;
+    background: transparent;
+}
+
+
+/* ==========================================
+   LIST CARD
+   ========================================== */
+
+QFrame#ListCard {
+    background-color: #FFFFFF;
+    border: 1px solid #E4E4E7;
+    border-radius: 10px;
+}
+
+
+/* ==========================================
+   COLUMN HEADERS
+   ========================================== */
+
+QFrame#ColumnHeaderRow {
+    background-color: #F9F9FA;
+    border-bottom: 1px solid #E4E4E7;
+    border-top-left-radius: 10px;
+    border-top-right-radius: 10px;
+}
+
+QLabel#ColHeaderLabel {
+    font-size: 11px;
+    font-weight: 600;
+    color: #A1A1AA;
+    letter-spacing: 0.5px;
+    background: transparent;
+}
+
+
+/* ==========================================
+   TABLE ROWS
+   ========================================== */
+
+QFrame#TableRow {
+    background-color: #FFFFFF;
+    border-bottom: 1px solid #F4F4F5;
+}
+
+QFrame#TableRowAlt {
+    background-color: #FAFAFA;
+    border-bottom: 1px solid #F4F4F5;
+}
+
+QLabel#RowText {
+    font-size: 13px;
+    color: #3F3F46;
+    background: transparent;
+}
+
+QLabel#EmptyLabel {
+    font-size: 13px;
+    color: #A1A1AA;
+    padding: 16px 4px;
+    background: transparent;
+}
+
+
+/* ==========================================
+   BUTTONS
+   ========================================== */
+
+QPushButton {
+    background-color: #FFFFFF;
+    color: #3F3F46;
+    border: 1px solid #D4D4D8;
+    border-radius: 6px;
+    padding: 6px 16px;
+    font-size: 13px;
+}
+
+QPushButton:hover {
+    background-color: #F4F4F5;
+    border-color: #A1A1AA;
+}
+
+QPushButton:pressed {
+    background-color: #E4E4E7;
+}
+
+QPushButton#RefreshButton {
+    background-color: #FFFFFF;
+    color: #3B82F6;
+    border: 1px solid #BFDBFE;
+    border-radius: 6px;
+    padding: 6px 16px;
+    font-weight: 500;
+}
+
+QPushButton#RefreshButton:hover {
+    background-color: #EFF6FF;
+}
+
+QPushButton[text="Upload Document"] {
+    background-color: #3B82F6;
+    color: #FFFFFF;
+    border: none;
+    border-radius: 6px;
+    padding: 7px 18px;
+    font-weight: 500;
+}
+
+QPushButton[text="Upload Document"]:hover {
+    background-color: #2563EB;
+}
+
+QPushButton[text="Delete Missionary"] {
+    background-color: #FFFFFF;
+    color: #DC2626;
+    border: 1px solid #FECACA;
+    border-radius: 6px;
+    padding: 6px 16px;
+}
+
+QPushButton[text="Delete Missionary"]:hover {
+    background-color: #FEF2F2;
+}
+
+QPushButton[text="Save"] ,
+QPushButton[text="Save Extracted Data"],
+QPushButton[text="Continue to Document Editor"] {
+    background-color: #3B82F6;
+    color: #FFFFFF;
+    border: none;
+    padding: 7px 18px;
+    font-weight: 500;
+}
+
+QPushButton[text="Save"]:hover,
+QPushButton[text="Save Extracted Data"]:hover,
+QPushButton[text="Continue to Document Editor"]:hover {
+    background-color: #2563EB;
+}
+
+QPushButton[text="Cancel"],
+QPushButton[text="Skip (no OCR data)"] {
+    background-color: #FFFFFF;
+    color: #71717A;
+    border: 1px solid #E4E4E7;
+}
+
+QPushButton[text="Cancel"]:hover,
+QPushButton[text="Skip (no OCR data)"]:hover {
+    background-color: #F4F4F5;
+}
+
+
+/* ==========================================
+   MISSIONARIES LIST PAGE
+   ========================================== */
+
+QListWidget {
+    background-color: #FFFFFF;
+    border: 1px solid #E4E4E7;
+    border-radius: 8px;
+    outline: 0;
+    padding: 2px;
+}
+
+QListWidget::item {
+    height: 36px;
+    padding-left: 12px;
+    border-radius: 4px;
+    color: #3F3F46;
+}
+
+QListWidget::item:hover {
+    background-color: #F4F4F5;
+}
+
+QListWidget::item:selected {
+    background-color: #EFF6FF;
+    color: #1D4ED8;
+}
+
+
+/* ==========================================
+   TABS
+   ========================================== */
+
+QTabWidget::pane {
+    border: 1px solid #E4E4E7;
+    border-radius: 8px;
+    background-color: #FFFFFF;
+    top: -1px;
+}
+
+QTabBar::tab {
+    background-color: transparent;
+    color: #71717A;
+    padding: 8px 20px;
+    font-size: 13px;
+    border: none;
+    border-bottom: 2px solid transparent;
+    margin-right: 4px;
+}
+
+QTabBar::tab:selected {
+    color: #3B82F6;
+    border-bottom: 2px solid #3B82F6;
+    font-weight: 600;
+}
+
+QTabBar::tab:hover:!selected {
+    color: #27272A;
+    background-color: #F4F4F5;
+    border-radius: 6px 6px 0 0;
+}
+
+
+/* ==========================================
+   FORM LABELS
+   ========================================== */
+
+QLabel {
+    background: transparent;
+    color: #3F3F46;
+}
+
+QFormLayout QLabel {
+    color: #71717A;
+    font-size: 12px;
+}
+
+
+/* ==========================================
+   INPUTS
+   ========================================== */
+
+QLineEdit {
+    background-color: #FFFFFF;
+    border: 1px solid #D4D4D8;
+    border-radius: 6px;
+    padding: 6px 10px;
+    color: #18181B;
+    font-size: 13px;
+}
+
+QLineEdit:focus {
+    border-color: #3B82F6;
+    outline: none;
+}
+
+QComboBox {
+    background-color: #FFFFFF;
+    border: 1px solid #D4D4D8;
+    border-radius: 6px;
+    padding: 6px 10px;
+    color: #18181B;
+    font-size: 13px;
+    min-width: 140px;
+}
+
+QComboBox:focus {
+    border-color: #3B82F6;
+}
+
+QComboBox::drop-down {
+    border: none;
+    width: 24px;
+}
+
+QComboBox QAbstractItemView {
+    background-color: #FFFFFF;
+    border: 1px solid #D4D4D8;
+    border-radius: 6px;
+    selection-background-color: #EFF6FF;
+    selection-color: #1D4ED8;
+}
+
+
+/* ==========================================
+   DIALOGS
+   ========================================== */
+
+QDialog {
+    background-color: #FFFFFF;
+}
+
+QDialog QWidget {
+    background-color: transparent;
+}
+
+
+/* ==========================================
+   SLIDERS (Document Editor)
+   ========================================== */
+
+QSlider::groove:horizontal {
+    height: 4px;
+    background: #E4E4E7;
+    border-radius: 2px;
+}
+
+QSlider::handle:horizontal {
+    background: #3B82F6;
+    width: 16px;
+    height: 16px;
+    margin: -6px 0;
+    border-radius: 8px;
+}
+
+QSlider::sub-page:horizontal {
+    background: #BFDBFE;
+    border-radius: 2px;
+}
+
+
+/* ==========================================
+   MESSAGE BOX
+   ========================================== */
+
+QMessageBox {
+    background-color: #FFFFFF;
+}
+
+QMessageBox QPushButton {
+    min-width: 80px;
+}

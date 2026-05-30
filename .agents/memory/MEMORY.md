@@ -1,0 +1,3 @@
+- [App architecture](app-architecture.md) — Windows 11 desktop app (PySide6/Qt + SQLite), exported from Replit to run locally; DISPLAY=:1 needed in Replit VNC workflow
+- [OCR pipeline](ocr-pipeline.md) — Full pipeline: UploadDocumentDialog → DocumentEditorDialog → export image → OCRService → DocumentParser → OCRReviewDialog → save + MissionaryService.update_fields
+- [Theme](theme.md) — Global QSS applied via app.setStyleSheet() in main.py; sidebar needs objectName="Sidebar"; white/off-white/gray palette
