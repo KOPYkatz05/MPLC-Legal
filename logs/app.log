@@ -293,3 +293,12 @@
 2026-05-30 13:35:03,157 | INFO | Loading documents for missionary ID 1
 2026-05-30 13:35:03,157 | INFO | Loaded 1 documents for missionary ID 1
 2026-05-30 13:35:05,891 | INFO | Starting document upload for thatonenewguynamed Steve
+2026-05-30 23:12:15,929 | INFO | Initialized OneDrive root folders
+2026-05-30 23:12:15,929 | INFO | Initialized OneDrive root folders
+2026-05-30 23:12:15,929 | INFO | Initialized MissionariesPage
+2026-05-30 23:12:16,119 | INFO | Loaded active missionaries
+2026-05-30 23:12:16,120 | INFO | Loaded 2 missionaries into table
+2026-05-30 23:12:16,120 | INFO | Initializing MissionaryDetailPage
+2026-05-30 23:12:16,120 | INFO | Initialized OneDrive root folders
+2026-05-30 23:12:16,120 | INFO | Initialized OneDrive root folders
+2026-05-30 23:12:16,120 | INFO | Initialized OneDrive root folders

@@ -1,12 +1,21 @@
 from pathlib import Path
+import os
+import sys
 
 
 MISSIONS_ROOT = Path(
-    r"C:\Users\PerúLimaCentralMissi\OneDrive - Church of Jesus Christ (1)\Sec. Visas\1. Visas Lima Central\1 DOCUMENTOS DE LEGALIZACIÓN - IMPORTANTE"
+    os.environ.get(
+        "MISSIONS_ROOT",
+        str(Path.home() / "mission_data")
+    )
 )
 
 
 if not MISSIONS_ROOT.exists():
-    raise FileNotFoundError(
-        f"Mission root folder not found:\n{MISSIONS_ROOT}"
-    )
+    try:
+        MISSIONS_ROOT.mkdir(parents=True, exist_ok=True)
+    except Exception as e:
+        print(
+            f"Warning: Could not create mission root folder: {MISSIONS_ROOT}\n{e}",
+            file=sys.stderr
+        )
