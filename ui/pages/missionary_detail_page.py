@@ -1,3 +1,9 @@
+import tempfile
+
+from datetime import date
+
+from pathlib import Path
+
 from PySide6.QtWidgets import (
     QWidget,
     QVBoxLayout,
@@ -26,8 +32,32 @@ from services.missionary_service import (
     MissionaryService,
 )
 
+from services.ocr_service import (
+    OCRService,
+)
+
+from services.document_parser import (
+    DocumentParser,
+)
+
+from services.document_image_export_service import (
+    DocumentImageExportService,
+)
+
+from ui.dialogs.upload_document_dialog import (
+    UploadDocumentDialog,
+)
+
+from ui.dialogs.document_editor_dialog import (
+    DocumentEditorDialog,
+)
+
+from ui.dialogs.ocr_review_dialog import (
+    OCRReviewDialog,
+)
+
 from utils.constants import (
-    DOCUMENT_TYPES,
+    DOCUMENTS,
     WORKFLOW_STATUSES,
 )
 
@@ -36,6 +66,20 @@ from utils.logger import logger
 from services.workflow_validator import (
     WorkflowValidator,
 )
+
+
+# ==========================================
+# Fields that require date parsing
+# when writing back to the missionary record
+# ==========================================
+
+DATE_AUTO_UPDATE_FIELDS = {
+    "arrival_date",
+    "carnet_issue_date",
+    "residency_expiration",
+    "prorroga_expiration",
+    "cancelacion_date",
+}
 
 
 class MissionaryDetailPage(QWidget):
@@ -63,6 +107,16 @@ class MissionaryDetailPage(QWidget):
             MissionaryService()
         )
 
+        self.ocr_service = None
+
+        self.document_parser = (
+            DocumentParser()
+        )
+
+        self.image_export_service = (
+            DocumentImageExportService()
+        )
+
         self.setup_ui()
 
         self.workflow_list.itemDoubleClicked.connect(
@@ -72,6 +126,18 @@ class MissionaryDetailPage(QWidget):
         self.workflow_validator = (
             WorkflowValidator()
         )
+
+    def _get_ocr_service(self):
+        if self.ocr_service is None:
+            try:
+                self.ocr_service = OCRService()
+
+            except Exception:
+                logger.exception(
+                    "Failed to initialize OCR service"
+                )
+
+        return self.ocr_service
 
     def setup_ui(self):
         logger.debug(
@@ -197,76 +263,53 @@ class MissionaryDetailPage(QWidget):
             details_layout
         )
 
-        self.nationality_label = QLabel(
-            "-"
-        )
-
-        self.passport_label = QLabel(
-            "-"
-        )
-
-        self.folder_label = QLabel(
-            "-"
-        )
-
-        self.arrival_date_label = QLabel(
-            "-"
-        )
-
-        self.visa_expiration_label = QLabel(
-            "-"
-        )
-
-        self.prorroga_expiration_label = QLabel(
-            "-"
-        )
-
-        self.carnet_issue_date_label = QLabel(
-            "-"
-        )
-
-        self.cancelacion_date_label = QLabel(
-            "-"
-        )
+        self.nationality_label = QLabel("-")
+        self.passport_label = QLabel("-")
+        self.folder_label = QLabel("-")
+        self.arrival_date_label = QLabel("-")
+        self.visa_expiration_label = QLabel("-")
+        self.prorroga_expiration_label = QLabel("-")
+        self.carnet_issue_date_label = QLabel("-")
+        self.cancelacion_date_label = QLabel("-")
 
         details_layout.addRow(
             "Nationality:",
-            self.nationality_label
+            self.nationality_label,
         )
 
         details_layout.addRow(
             "Passport Number:",
-            self.passport_label
+            self.passport_label,
         )
 
         details_layout.addRow(
             "Arrival Date:",
-            self.arrival_date_label
+            self.arrival_date_label,
         )
 
         details_layout.addRow(
             "Visa Expiration:",
-            self.visa_expiration_label
+            self.visa_expiration_label,
         )
 
         details_layout.addRow(
             "Prórroga Expiration:",
-            self.prorroga_expiration_label
+            self.prorroga_expiration_label,
         )
 
         details_layout.addRow(
             "Carnet Issue Date:",
-            self.carnet_issue_date_label
+            self.carnet_issue_date_label,
         )
 
         details_layout.addRow(
             "Cancelación Date:",
-            self.cancelacion_date_label
+            self.cancelacion_date_label,
         )
 
         details_layout.addRow(
             "Folder Path:",
-            self.folder_label
+            self.folder_label,
         )
 
         # ==========================================
@@ -284,6 +327,10 @@ class MissionaryDetailPage(QWidget):
         logger.debug(
             "MissionaryDetailPage UI setup complete"
         )
+
+    # ==========================================
+    # LOAD MISSIONARY
+    # ==========================================
 
     def load_missing_documents(self):
         self.missing_documents_list.clear()
@@ -305,27 +352,17 @@ class MissionaryDetailPage(QWidget):
                 )
             )
 
-            # ==================================
-            # Stage Header
-            # ==================================
-
             self.missing_documents_list.addItem(
                 f"--- "
                 f"{workflow.stage_name} "
                 f"---"
             )
 
-            # ==================================
-            # Missing Docs
-            # ==================================
-
             if missing_documents:
-
                 for document in missing_documents:
                     self.missing_documents_list.addItem(
                         f"Missing: {document}"
                     )
-
             else:
                 self.missing_documents_list.addItem(
                     "All required documents uploaded."
@@ -342,10 +379,6 @@ class MissionaryDetailPage(QWidget):
             f"{missionary.full_name}"
         )
 
-        # ==========================================
-        # Process Overview
-        # ==========================================
-
         self.name_label.setText(
             f"Name: {missionary.full_name}"
         )
@@ -354,10 +387,6 @@ class MissionaryDetailPage(QWidget):
             f"Current Stage: "
             f"{missionary.current_stage or ''}"
         )
-
-        # ==========================================
-        # Details
-        # ==========================================
 
         self.nationality_label.setText(
             missionary.nationality or "-"
@@ -401,10 +430,6 @@ class MissionaryDetailPage(QWidget):
             )
         )
 
-        # ==========================================
-        # Workflows
-        # ==========================================
-
         self.workflow_list.clear()
 
         workflows = (
@@ -414,47 +439,33 @@ class MissionaryDetailPage(QWidget):
             )
         )
 
-        logger.debug(
-            f"Loaded {len(workflows)} workflows "
-            f"for missionary "
-            f"{missionary.full_name}"
-        )
-
         for workflow in workflows:
             item_text = (
                 f"{workflow.stage_name} - "
                 f"{workflow.status}"
             )
 
-            item = QListWidgetItem(
-                item_text
-            )
+            item = QListWidgetItem(item_text)
 
             item.setData(
                 Qt.UserRole,
-                workflow.id
+                workflow.id,
             )
 
-            self.workflow_list.addItem(
-                item
-            )
+            self.workflow_list.addItem(item)
 
         self.load_documents()
         self.load_missing_documents()
+
+    # ==========================================
+    # WORKFLOW STATUS
+    # ==========================================
 
     def change_workflow_status(
         self,
         item
     ):
-        workflow_id = item.data(
-            Qt.UserRole
-        )
-
-        logger.info(
-            f"Opening workflow status change "
-            f"dialog for workflow ID "
-            f"{workflow_id}"
-        )
+        workflow_id = item.data(Qt.UserRole)
 
         selected_status, ok = (
             QInputDialog.getItem(
@@ -468,10 +479,6 @@ class MissionaryDetailPage(QWidget):
         )
 
         if not ok:
-            logger.debug(
-                "Workflow status change cancelled"
-            )
-
             return
 
         self.workflow_service.update_workflow_status(
@@ -479,109 +486,354 @@ class MissionaryDetailPage(QWidget):
             selected_status,
         )
 
-        logger.info(
-            f"Workflow ID {workflow_id} "
-            f"updated to status "
-            f"{selected_status}"
-        )
-
-        if hasattr(
-            self,
-            "current_missionary"
-        ):
+        if hasattr(self, "current_missionary"):
             self.load_missionary(
                 self.current_missionary
             )
 
-    def upload_document(self):
-        if not hasattr(
-            self,
-            "current_missionary"
-        ):
-            logger.warning(
-                "Attempted document upload "
-                "without loaded missionary"
-            )
+    # ==========================================
+    # UPLOAD DOCUMENT — full OCR pipeline
+    # ==========================================
 
+    def upload_document(self):
+        if not hasattr(self, "current_missionary"):
             return
 
-        logger.info(
-            f"Starting document upload for "
-            f"{self.current_missionary.full_name}"
-        )
+        missionary = self.current_missionary
+
+        # ------------------------------------------
+        # Step 1: Select file
+        # ------------------------------------------
 
         file_path, _ = QFileDialog.getOpenFileName(
             self,
             "Select Document",
+            "",
+            "Documents (*.pdf *.png *.jpg *.jpeg *.bmp *.tiff *.tif)",
         )
 
         if not file_path:
-            logger.debug(
-                "Document upload cancelled "
-                "during file selection"
-            )
-
             return
 
-        document_type, ok = (
-            QInputDialog.getItem(
+        # ------------------------------------------
+        # Step 2: Choose document type + stage
+        # ------------------------------------------
+
+        upload_dialog = UploadDocumentDialog(self)
+
+        if upload_dialog.exec() != UploadDocumentDialog.Accepted:
+            return
+
+        document_type = upload_dialog.get_document_type()
+        workflow_stage = upload_dialog.get_workflow_stage()
+
+        # ------------------------------------------
+        # Step 3: Document editor (crop / rotate)
+        # ------------------------------------------
+
+        editor = DocumentEditorDialog(
+            file_path,
+            parent=self,
+        )
+
+        if editor.exec() != DocumentEditorDialog.Accepted:
+            return
+
+        export_settings = editor.get_export_settings()
+
+        # ------------------------------------------
+        # Step 4: Export the processed image for OCR
+        # ------------------------------------------
+
+        ocr_image_path = self._export_for_ocr(
+            file_path,
+            export_settings,
+        )
+
+        # ------------------------------------------
+        # Step 5 & 6: Run OCR + parse
+        # ------------------------------------------
+
+        ocr_fields = (
+            DOCUMENTS
+            .get(document_type, {})
+            .get("ocr_fields", [])
+        )
+
+        parsed_data = {}
+
+        if ocr_fields and ocr_image_path:
+            parsed_data = self._run_ocr(
+                ocr_image_path,
+                document_type,
+            )
+
+        # ------------------------------------------
+        # Step 7: Review dialog (if fields extracted)
+        # ------------------------------------------
+
+        confirmed_data = {}
+
+        if ocr_fields:
+            review_dialog = OCRReviewDialog(
+                ocr_fields=ocr_fields,
+                parsed_data=parsed_data,
+                parent=self,
+            )
+
+            if review_dialog.exec() == OCRReviewDialog.Accepted:
+                confirmed_data = review_dialog.get_data()
+
+        # ------------------------------------------
+        # Step 8: Save document to DB + filesystem
+        # ------------------------------------------
+
+        try:
+            self.document_service.upload_document(
+                missionary=missionary,
+                source_file=file_path,
+                document_type=document_type,
+                workflow_stage=workflow_stage,
+            )
+
+            logger.info(
+                f"Saved document {document_type} "
+                f"for {missionary.full_name}"
+            )
+
+        except Exception:
+            logger.exception(
+                "Failed to save document"
+            )
+
+            QMessageBox.critical(
                 self,
-                "Document Type",
-                "Select document type:",
-                DOCUMENT_TYPES,
-                0,
-                False,
-            )
-        )
-
-        if not ok:
-            logger.debug(
-                "Document upload cancelled "
-                "during document type selection"
+                "Upload Failed",
+                "The document could not be saved. "
+                "Check the logs for details.",
             )
 
             return
 
-        workflow_stage, ok = (
-            QInputDialog.getItem(
-                self,
-                "Workflow Stage",
-                "Select workflow stage:",
-                [
-                    "INTERPOL",
-                    "CARNET DE EXTRANJERIA",
-                    "PRORROGA",
-                    "CANCELACION",
-                ],
-                0,
-                False,
-            )
-        )
+        # ------------------------------------------
+        # Step 9: Apply auto_updates to missionary
+        # ------------------------------------------
 
-        if not ok:
-            logger.debug(
-                "Document upload cancelled "
-                "during workflow stage selection"
+        if confirmed_data:
+            auto_update_fields = (
+                DOCUMENTS
+                .get(document_type, {})
+                .get("auto_updates", [])
             )
 
-            return
+            self._apply_auto_updates(
+                missionary.id,
+                confirmed_data,
+                auto_update_fields,
+            )
 
-        self.document_service.upload_document(
-            missionary=self.current_missionary,
-            source_file=file_path,
-            document_type=document_type,
-            workflow_stage=workflow_stage,
+        # ------------------------------------------
+        # Step 10: Refresh UI
+        # ------------------------------------------
+
+        # Reload missionary to pick up any updated fields
+        from database.db import SessionLocal
+        from database.models.missionary import Missionary as MissionaryModel
+
+        session = SessionLocal()
+
+        try:
+            refreshed = (
+                session.query(MissionaryModel)
+                .filter_by(id=missionary.id)
+                .first()
+            )
+
+            if refreshed:
+                self.load_missionary(refreshed)
+
+        finally:
+            session.close()
+
+    # ==========================================
+    # OCR HELPERS
+    # ==========================================
+
+    def _export_for_ocr(
+        self,
+        file_path,
+        export_settings,
+    ):
+        file_path = Path(file_path)
+
+        suffix = file_path.suffix.lower()
+
+        tmp = tempfile.NamedTemporaryFile(
+            suffix=".png",
+            delete=False,
         )
 
-        logger.info(
-            f"Uploaded document "
-            f"{document_type} "
-            f"for missionary "
-            f"{self.current_missionary.full_name}"
+        tmp_path = Path(tmp.name)
+
+        tmp.close()
+
+        try:
+            if suffix == ".pdf":
+                self.image_export_service.export_pdf_page(
+                    pdf_path=file_path,
+                    page_index=export_settings.get("page", 0),
+                    rotation_angle=export_settings.get("rotation", 0),
+                    crop_rect=export_settings.get("crop_rect"),
+                    output_path=str(tmp_path),
+                )
+
+            else:
+                from PIL import Image
+
+                img = Image.open(str(file_path))
+
+                rotation = export_settings.get("rotation", 0)
+
+                if rotation:
+                    img = img.rotate(
+                        -rotation,
+                        expand=True,
+                    )
+
+                crop_rect = export_settings.get("crop_rect")
+
+                if crop_rect:
+                    img = img.crop((
+                        int(crop_rect.left()),
+                        int(crop_rect.top()),
+                        int(crop_rect.right()),
+                        int(crop_rect.bottom()),
+                    ))
+
+                img.save(str(tmp_path))
+
+            return tmp_path
+
+        except Exception:
+            logger.exception(
+                "Failed to export document image for OCR"
+            )
+
+            return None
+
+    def _run_ocr(
+        self,
+        image_path,
+        document_type,
+    ):
+        try:
+            ocr = self._get_ocr_service()
+
+            if ocr is None:
+                logger.warning(
+                    "OCR service unavailable, skipping"
+                )
+
+                return {}
+
+            raw_text = ocr.extract_text(
+                str(image_path)
+            )
+
+            parsed = self.document_parser.parse(
+                raw_text,
+                document_type,
+            )
+
+            logger.info(
+                f"OCR parsed fields: "
+                f"{list(parsed.keys())}"
+            )
+
+            return parsed
+
+        except Exception:
+            logger.exception(
+                f"OCR failed for {document_type}"
+            )
+
+            return {}
+
+    def _apply_auto_updates(
+        self,
+        missionary_id,
+        confirmed_data,
+        auto_update_fields,
+    ):
+        updates = {}
+
+        for field in auto_update_fields:
+            value_str = confirmed_data.get(field, "")
+
+            if not value_str:
+                continue
+
+            if field in DATE_AUTO_UPDATE_FIELDS:
+                parsed_date = self._parse_date(
+                    value_str
+                )
+
+                if parsed_date:
+                    updates[field] = parsed_date
+
+            else:
+                updates[field] = value_str
+
+        if updates:
+            try:
+                self.missionary_service.update_fields(
+                    missionary_id,
+                    updates,
+                )
+
+                logger.info(
+                    f"Auto-updated missionary fields: "
+                    f"{list(updates.keys())}"
+                )
+
+            except Exception:
+                logger.exception(
+                    "Failed to apply auto-updates "
+                    "to missionary"
+                )
+
+    def _parse_date(self, value_str):
+        if not value_str:
+            return None
+
+        formats = [
+            "%Y-%m-%d",
+            "%d/%m/%Y",
+            "%m/%d/%Y",
+            "%d-%m-%Y",
+        ]
+
+        from datetime import datetime
+
+        for fmt in formats:
+            try:
+                return datetime.strptime(
+                    value_str.strip(),
+                    fmt,
+                ).date()
+
+            except ValueError:
+                continue
+
+        logger.warning(
+            f"Could not parse date string: '{value_str}'"
         )
 
-        self.load_documents()
-        self.load_missing_documents()
+        return None
+
+    # ==========================================
+    # DOCUMENTS LIST
+    # ==========================================
 
     def load_documents(self):
         self.documents_list.clear()
@@ -593,34 +845,28 @@ class MissionaryDetailPage(QWidget):
             )
         )
 
-        logger.debug(
-            f"Loaded {len(documents)} documents "
-            f"for missionary "
-            f"{self.current_missionary.full_name}"
-        )
-
         for document in documents:
-            self.documents_list.addItem(
-                f"{document.document_type} - "
-                f"{document.file_name}"
+            doc_config = DOCUMENTS.get(
+                document.document_type,
+                {},
             )
+
+            label = doc_config.get(
+                "label",
+                document.document_type,
+            )
+
+            self.documents_list.addItem(
+                f"{label} — {document.file_name}"
+            )
+
+    # ==========================================
+    # DELETE MISSIONARY
+    # ==========================================
 
     def delete_missionary(self):
-        if not hasattr(
-            self,
-            "current_missionary"
-        ):
-            logger.warning(
-                "Attempted missionary delete "
-                "without loaded missionary"
-            )
-
+        if not hasattr(self, "current_missionary"):
             return
-
-        logger.warning(
-            f"Delete requested for missionary "
-            f"{self.current_missionary.full_name}"
-        )
 
         response = QMessageBox.question(
             self,
@@ -635,20 +881,10 @@ class MissionaryDetailPage(QWidget):
         )
 
         if response != QMessageBox.Yes:
-            logger.info(
-                f"Delete cancelled for missionary "
-                f"{self.current_missionary.full_name}"
-            )
-
             return
 
         self.missionary_service.delete_missionary(
             self.current_missionary.id
-        )
-
-        logger.info(
-            f"Missionary moved to trash: "
-            f"{self.current_missionary.full_name}"
         )
 
         missionaries_page = (
@@ -657,17 +893,14 @@ class MissionaryDetailPage(QWidget):
 
         missionaries_page.load_data()
 
-        self.main_window.stack.setCurrentIndex(
-            1
-        )
+        self.main_window.stack.setCurrentIndex(1)
 
-    def format_date(
-        self,
-        date_value
-    ):
+    # ==========================================
+    # HELPERS
+    # ==========================================
+
+    def format_date(self, date_value):
         if not date_value:
             return "-"
 
-        return date_value.strftime(
-            "%B %d, %Y"
-        )
+        return date_value.strftime("%B %d, %Y")

@@ -126,6 +126,63 @@ class MissionaryService:
         finally:
             session.close()
 
+    def update_fields(
+        self,
+        missionary_id,
+        field_updates,
+    ):
+        session = SessionLocal()
+
+        try:
+            missionary = (
+                session.query(Missionary)
+                .filter_by(id=missionary_id)
+                .first()
+            )
+
+            if not missionary:
+                logger.warning(
+                    f"Missionary ID "
+                    f"{missionary_id} "
+                    f"not found for field update"
+                )
+
+                return
+
+            for field, value in field_updates.items():
+                if (
+                    hasattr(missionary, field)
+                    and value is not None
+                    and value != ""
+                ):
+                    setattr(missionary, field, value)
+
+                    logger.info(
+                        f"Updated {field} = {value} "
+                        f"for {missionary.full_name}"
+                    )
+
+            session.commit()
+
+            logger.info(
+                f"Saved field updates for "
+                f"{missionary.full_name}: "
+                f"{list(field_updates.keys())}"
+            )
+
+        except Exception:
+            session.rollback()
+
+            logger.exception(
+                f"Failed to update fields for "
+                f"missionary ID {missionary_id}"
+            )
+
+            raise
+
+        finally:
+            session.close()
+
     def delete_missionary(
         self,
         missionary_id
