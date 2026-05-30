@@ -12,11 +12,23 @@ QMainWindow {
     background-color: #F4F4F5;
 }
 
+/* Root containers get explicit backgrounds */
+QMainWindow > QWidget,
+QStackedWidget,
+QStackedWidget > QWidget {
+    background-color: #F4F4F5;
+}
+
 QWidget {
     font-family: "Segoe UI", Arial, sans-serif;
     font-size: 13px;
     color: #18181B;
-    background-color: transparent;
+}
+
+QWidget#MissionariesPage,
+QWidget#DashboardContent,
+QWidget#CentralWidget {
+    background-color: #F4F4F5;
 }
 
 QScrollArea {
@@ -32,6 +44,7 @@ QScrollBar:vertical {
     background: transparent;
     width: 8px;
     border-radius: 4px;
+    margin: 0px;
 }
 
 QScrollBar::handle:vertical {
@@ -45,19 +58,29 @@ QScrollBar::handle:vertical:hover {
 }
 
 QScrollBar::add-line:vertical,
-QScrollBar::sub-line:vertical {
+QScrollBar::sub-line:vertical,
+QScrollBar::add-page:vertical,
+QScrollBar::sub-page:vertical {
     height: 0px;
+    background: none;
 }
 
 QScrollBar:horizontal {
     height: 8px;
     background: transparent;
+    margin: 0px;
 }
 
 QScrollBar::handle:horizontal {
     background: #D4D4D8;
     border-radius: 4px;
     min-width: 24px;
+}
+
+QScrollBar::add-line:horizontal,
+QScrollBar::sub-line:horizontal {
+    width: 0px;
+    background: none;
 }
 
 
@@ -100,10 +123,12 @@ QListWidget#Sidebar::item:selected {
 
 QFrame#PageHeader {
     background-color: #FFFFFF;
+    border-bottom: none;
 }
 
 QFrame#HeaderDivider {
     background-color: #E4E4E7;
+    border: none;
 }
 
 QLabel#PageTitle {
@@ -115,14 +140,116 @@ QLabel#PageTitle {
 
 
 /* ==========================================
+   FILTER BAR
+   ========================================== */
+
+QFrame#FilterBar {
+    background-color: #FAFAFA;
+}
+
+QLineEdit#SearchInput {
+    background-color: #FFFFFF;
+    border: 1px solid #D4D4D8;
+    border-radius: 6px;
+    padding: 0px 12px;
+    font-size: 13px;
+    color: #18181B;
+}
+
+QLineEdit#SearchInput:focus {
+    border-color: #3B82F6;
+}
+
+QComboBox#FilterCombo {
+    background-color: #FFFFFF;
+    border: 1px solid #D4D4D8;
+    border-radius: 6px;
+    padding: 0px 10px;
+    font-size: 13px;
+    color: #3F3F46;
+    min-width: 180px;
+}
+
+QComboBox#FilterCombo:focus {
+    border-color: #3B82F6;
+}
+
+QComboBox#FilterCombo::drop-down {
+    border: none;
+    width: 24px;
+}
+
+QComboBox#FilterCombo QAbstractItemView {
+    background-color: #FFFFFF;
+    border: 1px solid #D4D4D8;
+    border-radius: 4px;
+    selection-background-color: #EFF6FF;
+    selection-color: #1D4ED8;
+    outline: 0;
+}
+
+QLabel#ResultLabel {
+    color: #A1A1AA;
+    font-size: 12px;
+    background: transparent;
+}
+
+
+/* ==========================================
+   MISSIONARIES TABLE
+   ========================================== */
+
+QTableWidget#MissionaryTable {
+    background-color: #FFFFFF;
+    alternate-background-color: #F9F9FA;
+    border: none;
+    border-top: 1px solid #E4E4E7;
+    gridline-color: transparent;
+    selection-background-color: #EFF6FF;
+    selection-color: #1D4ED8;
+    font-size: 13px;
+    color: #3F3F46;
+    outline: 0;
+}
+
+QTableWidget#MissionaryTable::item {
+    padding: 0px 12px;
+    border-bottom: 1px solid #F4F4F5;
+}
+
+QTableWidget#MissionaryTable::item:selected {
+    background-color: #EFF6FF;
+    color: #1D4ED8;
+}
+
+QHeaderView {
+    background-color: #FAFAFA;
+    border: none;
+}
+
+QHeaderView::section {
+    background-color: #FAFAFA;
+    color: #A1A1AA;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    padding: 0px 12px;
+    border: none;
+    border-bottom: 1px solid #E4E4E7;
+    height: 36px;
+}
+
+QHeaderView::section:hover {
+    background-color: #F4F4F5;
+    color: #71717A;
+}
+
+
+/* ==========================================
    DASHBOARD CONTENT
    ========================================== */
 
 QWidget#DashboardContent {
-    background-color: #F4F4F5;
-}
-
-QFrame#DashboardScroll {
     background-color: #F4F4F5;
 }
 
@@ -132,10 +259,9 @@ QFrame#DashboardScroll {
    ========================================== */
 
 QLabel#SectionHeader {
-    font-size: 13px;
+    font-size: 11px;
     font-weight: 600;
-    color: #71717A;
-    text-transform: uppercase;
+    color: #A1A1AA;
     letter-spacing: 1px;
     background: transparent;
 }
@@ -154,7 +280,7 @@ QFrame#StatCard {
 QLabel#StatTitle {
     font-size: 12px;
     color: #71717A;
-    font-weight: 500;
+    font-weight: 400;
     background: transparent;
 }
 
@@ -175,7 +301,7 @@ QFrame#ListCard {
    ========================================== */
 
 QFrame#ColumnHeaderRow {
-    background-color: #F9F9FA;
+    background-color: #FAFAFA;
     border-bottom: 1px solid #E4E4E7;
     border-top-left-radius: 10px;
     border-top-right-radius: 10px;
@@ -240,6 +366,27 @@ QPushButton:pressed {
     background-color: #E4E4E7;
 }
 
+QPushButton#PrimaryButton,
+QPushButton[text="+ Add Missionary"],
+QPushButton[text="Upload Document"],
+QPushButton[text="Save"],
+QPushButton[text="Save Extracted Data"],
+QPushButton[text="Continue to Document Editor"] {
+    background-color: #3B82F6;
+    color: #FFFFFF;
+    border: none;
+    font-weight: 500;
+}
+
+QPushButton#PrimaryButton:hover,
+QPushButton[text="+ Add Missionary"]:hover,
+QPushButton[text="Upload Document"]:hover,
+QPushButton[text="Save"]:hover,
+QPushButton[text="Save Extracted Data"]:hover,
+QPushButton[text="Continue to Document Editor"]:hover {
+    background-color: #2563EB;
+}
+
 QPushButton#RefreshButton {
     background-color: #FFFFFF;
     color: #3B82F6;
@@ -253,45 +400,14 @@ QPushButton#RefreshButton:hover {
     background-color: #EFF6FF;
 }
 
-QPushButton[text="Upload Document"] {
-    background-color: #3B82F6;
-    color: #FFFFFF;
-    border: none;
-    border-radius: 6px;
-    padding: 7px 18px;
-    font-weight: 500;
-}
-
-QPushButton[text="Upload Document"]:hover {
-    background-color: #2563EB;
-}
-
 QPushButton[text="Delete Missionary"] {
     background-color: #FFFFFF;
     color: #DC2626;
     border: 1px solid #FECACA;
-    border-radius: 6px;
-    padding: 6px 16px;
 }
 
 QPushButton[text="Delete Missionary"]:hover {
     background-color: #FEF2F2;
-}
-
-QPushButton[text="Save"] ,
-QPushButton[text="Save Extracted Data"],
-QPushButton[text="Continue to Document Editor"] {
-    background-color: #3B82F6;
-    color: #FFFFFF;
-    border: none;
-    padding: 7px 18px;
-    font-weight: 500;
-}
-
-QPushButton[text="Save"]:hover,
-QPushButton[text="Save Extracted Data"]:hover,
-QPushButton[text="Continue to Document Editor"]:hover {
-    background-color: #2563EB;
 }
 
 QPushButton[text="Cancel"],
@@ -308,7 +424,7 @@ QPushButton[text="Skip (no OCR data)"]:hover {
 
 
 /* ==========================================
-   MISSIONARIES LIST PAGE
+   WORKFLOW / DOCUMENT LISTS
    ========================================== */
 
 QListWidget {
@@ -320,10 +436,11 @@ QListWidget {
 }
 
 QListWidget::item {
-    height: 36px;
-    padding-left: 12px;
+    height: 34px;
+    padding-left: 10px;
     border-radius: 4px;
     color: #3F3F46;
+    border-bottom: 1px solid #F4F4F5;
 }
 
 QListWidget::item:hover {
@@ -345,6 +462,14 @@ QTabWidget::pane {
     border-radius: 8px;
     background-color: #FFFFFF;
     top: -1px;
+}
+
+QTabWidget > QWidget {
+    background-color: #FFFFFF;
+}
+
+QTabBar {
+    background: transparent;
 }
 
 QTabBar::tab {
@@ -371,7 +496,7 @@ QTabBar::tab:hover:!selected {
 
 
 /* ==========================================
-   FORM LABELS
+   FORM LABELS & LAYOUT
    ========================================== */
 
 QLabel {
@@ -400,7 +525,6 @@ QLineEdit {
 
 QLineEdit:focus {
     border-color: #3B82F6;
-    outline: none;
 }
 
 QComboBox {
@@ -428,6 +552,7 @@ QComboBox QAbstractItemView {
     border-radius: 6px;
     selection-background-color: #EFF6FF;
     selection-color: #1D4ED8;
+    outline: 0;
 }
 
 
@@ -441,6 +566,10 @@ QDialog {
 
 QDialog QWidget {
     background-color: transparent;
+}
+
+QDialog QLabel {
+    background: transparent;
 }
 
 
@@ -474,6 +603,11 @@ QSlider::sub-page:horizontal {
 
 QMessageBox {
     background-color: #FFFFFF;
+}
+
+QMessageBox QLabel {
+    background: transparent;
+    color: #18181B;
 }
 
 QMessageBox QPushButton {
