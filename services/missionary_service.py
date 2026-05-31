@@ -260,6 +260,10 @@ class MissionaryService:
 
             missionary.status = "TRASH"
 
+            from datetime import datetime
+
+            missionary.deleted_at = datetime.now()
+
             session.commit()
 
             logger.info(
@@ -273,6 +277,179 @@ class MissionaryService:
             logger.exception(
                 f"Failed to delete missionary "
                 f"ID {missionary_id}"
+            )
+
+            raise
+
+        finally:
+            session.close()
+
+    def get_trashed(self):
+        session = SessionLocal()
+
+        try:
+            return (
+                session.query(Missionary)
+                .filter_by(status="TRASH")
+                .order_by(Missionary.deleted_at.desc())
+                .all()
+            )
+
+        except Exception:
+            logger.exception(
+                "Failed to load trashed missionaries"
+            )
+
+            return []
+
+        finally:
+            session.close()
+
+    def restore_missionary(self, missionary_id):
+        session = SessionLocal()
+
+        try:
+            missionary = (
+                session.query(Missionary)
+                .filter_by(id=missionary_id)
+                .first()
+            )
+
+            if not missionary:
+                return
+
+            missionary.status = "ACTIVE"
+
+            missionary.deleted_at = None
+
+            # Move folder back
+            if missionary.folder_path:
+                current_folder = Path(
+                    missionary.folder_path
+                )
+
+                active_root = (
+                    current_folder.parent.parent
+                    / "Missionaries"
+                )
+
+                active_root.mkdir(exist_ok=True)
+
+                dest = (
+                    active_root
+                    / current_folder.name
+                )
+
+                counter = 1
+
+                while dest.exists():
+                    dest = (
+                        active_root
+                        / f"{current_folder.name}_{counter}"
+                    )
+
+                    counter += 1
+
+                if current_folder.exists():
+                    shutil.move(
+                        str(current_folder),
+                        str(dest),
+                    )
+
+                    missionary.folder_path = str(dest)
+
+            session.commit()
+
+            logger.info(
+                f"Restored missionary: "
+                f"{missionary.full_name}"
+            )
+
+        except Exception:
+            session.rollback()
+
+            logger.exception(
+                "Failed to restore missionary"
+            )
+
+            raise
+
+        finally:
+            session.close()
+
+    def hard_delete(self, missionary_id):
+        session = SessionLocal()
+
+        try:
+            missionary = (
+                session.query(Missionary)
+                .filter_by(id=missionary_id)
+                .first()
+            )
+
+            if not missionary:
+                return
+
+            # Delete folder
+            if missionary.folder_path:
+                folder = Path(
+                    missionary.folder_path
+                )
+
+                if folder.exists():
+                    shutil.rmtree(folder)
+
+            # Delete related records
+            from database.models.document import (
+                Document,
+            )
+
+            from database.models.workflow import (
+                WorkflowStage,
+            )
+
+            from database.models.stage_history import (
+                StageHistory,
+            )
+
+            (
+                session.query(Document)
+                .filter_by(
+                    missionary_id=missionary_id
+                )
+                .delete()
+            )
+
+            (
+                session.query(WorkflowStage)
+                .filter_by(
+                    missionary_id=missionary_id
+                )
+                .delete()
+            )
+
+            (
+                session.query(StageHistory)
+                .filter_by(
+                    missionary_id=missionary_id
+                )
+                .delete()
+            )
+
+            session.delete(missionary)
+
+            session.commit()
+
+            logger.info(
+                f"Permanently deleted missionary "
+                f"ID {missionary_id}"
+            )
+
+        except Exception:
+            session.rollback()
+
+            logger.exception(
+                "Failed to permanently delete"
             )
 
             raise

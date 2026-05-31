@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
     QAbstractItemView,
     QFileDialog,
     QMessageBox,
+    QDialog,
 )
 
 from PySide6.QtCore import Qt
@@ -68,6 +69,10 @@ class MissionariesPage(QWidget):
         )
 
         self.stage_filter.currentIndexChanged.connect(
+            self._apply_filters
+        )
+
+        self.nationality_filter.currentIndexChanged.connect(
             self._apply_filters
         )
 
@@ -175,7 +180,7 @@ class MissionariesPage(QWidget):
 
         self.search_input.setFixedHeight(34)
 
-        self.search_input.setMaximumWidth(320)
+        self.search_input.setMaximumWidth(280)
 
         self.stage_filter = QComboBox()
 
@@ -190,6 +195,34 @@ class MissionariesPage(QWidget):
         for stage in WORKFLOW_STAGES:
             self.stage_filter.addItem(stage, stage)
 
+        self.nationality_filter = QComboBox()
+
+        self.nationality_filter.setObjectName(
+            "FilterCombo"
+        )
+
+        self.nationality_filter.setFixedHeight(34)
+
+        self.nationality_filter.setMaximumWidth(180)
+
+        self.nationality_filter.addItem(
+            "All Nationalities", None
+        )
+
+        self.batch_button = QPushButton(
+            "Batch Actions"
+        )
+
+        self.batch_button.setFixedHeight(34)
+
+        self.batch_button.setObjectName(
+            "RefreshButton"
+        )
+
+        self.batch_button.clicked.connect(
+            self._batch_actions
+        )
+
         self.result_label = QLabel("")
 
         self.result_label.setObjectName(
@@ -200,7 +233,13 @@ class MissionariesPage(QWidget):
 
         filter_layout.addWidget(self.stage_filter)
 
+        filter_layout.addWidget(
+            self.nationality_filter
+        )
+
         filter_layout.addStretch()
+
+        filter_layout.addWidget(self.batch_button)
 
         filter_layout.addWidget(self.result_label)
 
@@ -239,7 +278,7 @@ class MissionariesPage(QWidget):
         )
 
         self.table.setSelectionMode(
-            QAbstractItemView.SingleSelection
+            QAbstractItemView.MultiSelection
         )
 
         self.table.setEditTriggers(
@@ -292,6 +331,24 @@ class MissionariesPage(QWidget):
                 .get_all_missionaries()
             )
 
+            # Update nationality filter dropdown
+            existing = [
+                self.nationality_filter.itemText(i)
+                for i in range(
+                    self.nationality_filter.count()
+                )
+            ]
+
+            for m in self._all_missionaries:
+                nat = (m.nationality or "").strip()
+
+                if nat and nat not in existing:
+                    self.nationality_filter.addItem(
+                        nat, nat
+                    )
+
+                    existing.append(nat)
+
             self._apply_filters()
 
             logger.info(
@@ -314,6 +371,10 @@ class MissionariesPage(QWidget):
             self.stage_filter.currentData()
         )
 
+        selected_nationality = (
+            self.nationality_filter.currentData()
+        )
+
         filtered = []
 
         for m in self._all_missionaries:
@@ -332,6 +393,13 @@ class MissionariesPage(QWidget):
             if (
                 selected_stage
                 and m.current_stage != selected_stage
+            ):
+                continue
+
+            if (
+                selected_nationality
+                and (m.nationality or "")
+                != selected_nationality
             ):
                 continue
 
@@ -463,6 +531,10 @@ class MissionariesPage(QWidget):
             )
 
     def open_missionary_detail(self, row, column):
+        # Only open detail if single row selected
+        if len(self.table.selectedItems()) > 5:
+            return
+
         try:
             id_item = self.table.item(row, 0)
 
@@ -504,3 +576,60 @@ class MissionariesPage(QWidget):
             logger.exception(
                 "Failed to open missionary detail page"
             )
+
+    def _batch_actions(self):
+        selected_rows = set()
+
+        for item in self.table.selectedItems():
+            selected_rows.add(item.row())
+
+        if not selected_rows:
+            QMessageBox.information(
+                self,
+                "No Selection",
+                "Select at least one missionary "
+                "from the table.",
+            )
+
+            return
+
+        ids = []
+
+        for row in selected_rows:
+            id_item = self.table.item(row, 0)
+
+            if id_item:
+                ids.append(int(id_item.text()))
+
+        # Show simple menu
+        from PySide6.QtWidgets import QMenu
+
+        menu = QMenu(self)
+
+        advance_action = menu.addAction(
+            "Advance Stage"
+        )
+
+        action = menu.exec(
+            self.batch_button.mapToGlobal(
+                self.batch_button.rect().bottomLeft()
+            )
+        )
+
+        if action == advance_action:
+            from ui.dialogs.batch_stage_advance_dialog import (
+                BatchStageAdvanceDialog,
+            )
+
+            dialog = BatchStageAdvanceDialog(
+                ids, parent=self
+            )
+
+            if dialog.exec() == QDialog.Accepted:
+                self.load_data()
+
+                # Also refresh dashboard
+                if hasattr(
+                    self.main_window, "dashboard_page"
+                ):
+                    self.main_window.dashboard_page.load_data()

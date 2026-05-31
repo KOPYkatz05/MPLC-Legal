@@ -13,6 +13,7 @@ class AlertService:
         ("visa_expiration", "Visa"),
         ("residency_expiration", "Residency (Carnet)"),
         ("prorroga_expiration", "Prórroga"),
+        ("passport_expiration", "Passport"),
     ]
 
     def get_expiring_soon(

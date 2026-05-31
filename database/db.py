@@ -22,6 +22,7 @@ def init_db():
     from database.models.missionary import Missionary
     from database.models.workflow import WorkflowStage
     from database.models.document import Document
+    from database.models.stage_history import StageHistory
 
     Base.metadata.create_all(bind=engine)
 
@@ -31,6 +32,8 @@ def init_db():
 def _run_migrations():
     migrations = [
         "ALTER TABLE documents ADD COLUMN notes TEXT",
+        "ALTER TABLE missionaries ADD COLUMN deleted_at DATETIME",
+        "ALTER TABLE missionaries ADD COLUMN passport_expiration DATE",
     ]
 
     with engine.connect() as conn:

@@ -111,26 +111,28 @@ class DashboardService:
                     set(),
                 )
 
+                # Only check CURRENT stage
+                stage = missionary.current_stage
+
+                required = WORKFLOW_REQUIREMENTS.get(
+                    stage,
+                    [],
+                )
+
                 missionary_missing = []
 
-                for stage in WORKFLOW_STAGES:
-                    required = WORKFLOW_REQUIREMENTS.get(
-                        stage,
-                        [],
-                    )
+                for doc_type in required:
+                    if doc_type not in uploaded:
+                        label = (
+                            DOCUMENTS
+                            .get(doc_type, {})
+                            .get("label", doc_type)
+                        )
 
-                    for doc_type in required:
-                        if doc_type not in uploaded:
-                            label = (
-                                DOCUMENTS
-                                .get(doc_type, {})
-                                .get("label", doc_type)
-                            )
-
-                            missionary_missing.append({
-                                "stage": stage,
-                                "label": label,
-                            })
+                        missionary_missing.append({
+                            "stage": stage,
+                            "label": label,
+                        })
 
                 if missionary_missing:
                     missing_docs.append({

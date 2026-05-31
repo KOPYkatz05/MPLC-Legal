@@ -24,3 +24,9 @@ description: Major features built into the app and where they live
 - **Missing Documents list only shows current stage** — stage-advance logic was incorrectly showing all 4 stages' missing docs at once. Now it only shows the stage the missionary is currently in (e.g., INTERPOL docs only, not PRORROGA/CANCELACION docs).
 - `ThumbnailService.get_pixmap(file_path)` returns `QPixmap | None`; used in `load_documents()`
 - `_document_data` list on `MissionaryDetailPage` caches doc dicts (id, label, file_path, notes) to avoid detached SQLAlchemy objects in context menus
+- **StageHistory** model tracks every stage transition with `from_stage`, `to_stage`, and `created_at`. Shown on Timeline tab.
+- **Missionary model** has `deleted_at` for soft delete, `passport_expiration` for alert tracking.
+- **Sidebar pages** (by stack index): 0=Dashboard, 1=Missionaries, 2=Detail (not in sidebar), 3=Appointments, 4=Reports, 5=Trash.
+- **DocumentViewerDialog** uses `fitz` (PyMuPDF) for PDF rendering and `QPixmap` for images; zoom in/out with buttons or +/- keys.
+- **Multi-selection table** on Missionaries page allows Batch Actions (Advance Stage via `BatchStageAdvanceDialog`).
+- **Nationality filter** dropdown auto-populates from loaded missionaries.

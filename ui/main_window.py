@@ -16,6 +16,12 @@ from ui.pages.missionary_detail_page import (
     MissionaryDetailPage,
 )
 
+from ui.pages.calendar_page import CalendarPage
+
+from ui.pages.reports_page import ReportsPage
+
+from ui.pages.trash_page import TrashPage
+
 from utils.logger import logger
 
 
@@ -67,6 +73,12 @@ class MainWindow(QMainWindow):
 
         self.sidebar.addItem("  Missionaries")
 
+        self.sidebar.addItem("  Appointments")
+
+        self.sidebar.addItem("  Reports")
+
+        self.sidebar.addItem("  Trash")
+
         # ==========================================
         # Pages
         # ==========================================
@@ -83,11 +95,23 @@ class MainWindow(QMainWindow):
             self
         )
 
+        self.calendar_page = CalendarPage(self)
+
+        self.reports_page = ReportsPage(self)
+
+        self.trash_page = TrashPage(self)
+
         self.stack.addWidget(self.dashboard_page)
 
         self.stack.addWidget(self.missionaries_page)
 
         self.stack.addWidget(self.detail_page)
+
+        self.stack.addWidget(self.calendar_page)
+
+        self.stack.addWidget(self.reports_page)
+
+        self.stack.addWidget(self.trash_page)
 
         # ==========================================
         # Navigation
@@ -117,6 +141,18 @@ class MainWindow(QMainWindow):
         # Refresh dashboard on navigation
         if index == 0:
             self.dashboard_page.load_data()
+
+        # Refresh calendar on navigation
+        if index == 3:
+            self.calendar_page.load_data()
+
+        # Refresh reports on navigation
+        if index == 4:
+            self.reports_page.load_data()
+
+        # Refresh trash on navigation
+        if index == 5:
+            self.trash_page.load_data()
 
     def _show_startup_alerts(self):
         try:

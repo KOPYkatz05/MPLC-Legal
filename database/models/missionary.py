@@ -88,6 +88,10 @@ class Missionary(Base):
         Date
     )
 
+    passport_expiration = Column(
+        Date
+    )
+
     # ======================================
     # File System
     # ======================================
@@ -99,6 +103,10 @@ class Missionary(Base):
     # ======================================
     # Audit
     # ======================================
+
+    deleted_at = Column(
+        DateTime(timezone=True),
+    )
 
     created_at = Column(
         DateTime(timezone=True),

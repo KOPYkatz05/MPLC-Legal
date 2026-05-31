@@ -26,6 +26,10 @@ from database.models.document import (
     Document,
 )
 
+from database.models.stage_history import (
+    StageHistory,
+)
+
 
 def load_stylesheet(app):
     theme_path = (

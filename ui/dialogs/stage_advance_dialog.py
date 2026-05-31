@@ -20,6 +20,8 @@ from database.models.workflow import WorkflowStage
 
 from database.models.missionary import Missionary
 
+from database.models.stage_history import StageHistory
+
 from utils.constants import (
     WORKFLOW_STAGES,
     WORKFLOW_REQUIREMENTS,
@@ -496,8 +498,25 @@ class StageAdvanceDialog(QDialog):
                 if next_wf:
                     next_wf.status = "IN PROGRESS"
 
+                # Record history
+                history = StageHistory(
+                    missionary_id=missionary.id,
+                    from_stage=self.current_stage,
+                    to_stage=self.next_stage,
+                )
+
+                session.add(history)
+
             else:
                 missionary.status = "ARCHIVED"
+
+                history = StageHistory(
+                    missionary_id=missionary.id,
+                    from_stage=self.current_stage,
+                    to_stage="ARCHIVED",
+                )
+
+                session.add(history)
 
             session.commit()
 

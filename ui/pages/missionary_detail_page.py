@@ -344,6 +344,8 @@ class MissionaryDetailPage(QWidget):
 
         self._build_notes_tab()
 
+        self._build_timeline_tab()
+
         # Connections
         self.workflow_list.itemDoubleClicked.connect(
             self.change_workflow_status
@@ -452,6 +454,10 @@ class MissionaryDetailPage(QWidget):
 
         self.documents_list.customContextMenuRequested.connect(
             self._show_doc_context_menu
+        )
+
+        self.documents_list.itemDoubleClicked.connect(
+            self._open_document_viewer
         )
 
         content_layout.addWidget(
@@ -806,6 +812,8 @@ class MissionaryDetailPage(QWidget):
         self.load_documents()
 
         self.load_missing_documents()
+
+        self._load_timeline()
 
         self._update_advance_banner()
 
@@ -1331,17 +1339,22 @@ class MissionaryDetailPage(QWidget):
 
         menu = QMenu(self)
 
+        view_action = menu.addAction("View Document")
+
         notes_action = menu.addAction(
             "View / Edit Notes"
         )
 
-        open_action = menu.addAction("Open File")
+        open_action = menu.addAction("Open Externally")
 
         action = menu.exec(
             self.documents_list.mapToGlobal(pos)
         )
 
-        if action == notes_action:
+        if action == view_action:
+            self._open_document_viewer(doc_id)
+
+        elif action == notes_action:
             self._open_document_notes(doc_id)
 
         elif action == open_action:
@@ -1397,6 +1410,41 @@ class MissionaryDetailPage(QWidget):
 
         except Exception:
             logger.exception("Failed to open file")
+
+    def _open_document_viewer(self, doc_id):
+        doc = self._find_doc_data(doc_id)
+
+        if not doc:
+            return
+
+        try:
+            file_path = doc.get("file_path")
+
+            if not file_path or not Path(
+                file_path
+            ).exists():
+                QMessageBox.warning(
+                    self,
+                    "File Not Found",
+                    "Cannot open document file.",
+                )
+
+                return
+
+            from ui.dialogs.document_viewer_dialog import (
+                DocumentViewerDialog,
+            )
+
+            dialog = DocumentViewerDialog(
+                file_path, parent=self
+            )
+
+            dialog.exec()
+
+        except Exception:
+            logger.exception(
+                "Document viewer failed"
+            )
 
     # ==========================================
     # MISSING DOCUMENTS
@@ -1489,6 +1537,123 @@ class MissionaryDetailPage(QWidget):
 
             self.missing_documents_list.addItem(
                 item
+            )
+
+    # ==========================================
+    # TIMELINE
+    # ==========================================
+
+    def _build_timeline_tab(self):
+        timeline_tab = QWidget()
+
+        self.tabs.addTab(timeline_tab, "Timeline")
+
+        timeline_layout = QVBoxLayout()
+
+        timeline_layout.setContentsMargins(
+            32, 24, 32, 24
+        )
+
+        timeline_layout.setSpacing(12)
+
+        timeline_tab.setLayout(timeline_layout)
+
+        timeline_tab.setStyleSheet(
+            "background-color: #F4F4F5;"
+        )
+
+        self.timeline_list = QListWidget()
+
+        self.timeline_list.setStyleSheet(
+            "QListWidget {"
+            "background-color: transparent;"
+            "border: none;"
+            "}"
+            "QListWidget::item {"
+            "background-color: #FFFFFF;"
+            "border: 1px solid #E4E4E7;"
+            "border-radius: 8px;"
+            "padding: 8px;"
+            "margin-bottom: 6px;"
+            "}"
+        )
+
+        timeline_layout.addWidget(
+            self.timeline_list
+        )
+
+    def _load_timeline(self):
+        self.timeline_list.clear()
+
+        if not hasattr(self, "current_missionary"):
+            return
+
+        try:
+            from database.db import SessionLocal
+
+            from database.models.stage_history import (
+                StageHistory,
+            )
+
+            session = SessionLocal()
+
+            try:
+                history = (
+                    session.query(StageHistory)
+                    .filter_by(
+                        missionary_id=self.current_missionary.id
+                    )
+                    .order_by(
+                        StageHistory.created_at.desc()
+                    )
+                    .all()
+                )
+
+                if not history:
+                    empty = QListWidgetItem(
+                        "No stage transitions recorded."
+                    )
+
+                    empty.setForeground(
+                        QColor("#A1A1AA")
+                    )
+
+                    self.timeline_list.addItem(empty)
+
+                    return
+
+                for h in history:
+                    date_str = (
+                        h.created_at.strftime(
+                            "%b %d, %Y %H:%M"
+                        )
+                        if h.created_at
+                        else ""
+                    )
+
+                    from_str = (
+                        h.from_stage or "Started"
+                    )
+
+                    text = (
+                        f"{date_str}\n"
+                        f"{from_str} \u2192 {h.to_stage}"
+                    )
+
+                    item = QListWidgetItem(text)
+
+                    item.setForeground(
+                        QColor("#18181B")
+                    )
+
+                    self.timeline_list.addItem(item)
+
+            finally:
+                session.close()
+
+        except Exception:
+            logger.exception(
+                "Failed to load timeline"
             )
 
     # ==========================================
