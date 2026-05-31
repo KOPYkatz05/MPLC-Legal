@@ -528,3 +528,16 @@ FROM documents]
 2026-05-31 01:50:55,236 | INFO | Initialized OneDrive root folders
 2026-05-31 01:50:55,282 | INFO | Dashboard data loaded
 2026-05-31 01:50:55,324 | INFO | Dashboard data loaded
+2026-05-31 01:53:42,910 | INFO | Dashboard data loaded
+2026-05-31 01:53:42,911 | INFO | Initialized OneDrive root folders
+2026-05-31 01:53:42,911 | INFO | Initialized OneDrive root folders
+2026-05-31 01:53:42,911 | INFO | Initialized MissionariesPage
+2026-05-31 01:53:42,935 | INFO | Loaded active missionaries
+2026-05-31 01:53:42,935 | INFO | Loaded 3 missionaries into table
+2026-05-31 01:53:42,936 | INFO | Initializing MissionaryDetailPage
+2026-05-31 01:53:42,936 | INFO | Initialized OneDrive root folders
+2026-05-31 01:53:42,936 | INFO | Initialized OneDrive root folders
+2026-05-31 01:53:42,936 | INFO | Initialized OneDrive root folders
+2026-05-31 01:53:42,981 | INFO | Dashboard data loaded
+2026-05-31 01:53:43,022 | INFO | Dashboard data loaded
+2026-05-31 01:53:43,849 | INFO | Showing 3 expiration alert(s)
