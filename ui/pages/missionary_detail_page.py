@@ -1405,60 +1405,40 @@ class MissionaryDetailPage(QWidget):
     def load_missing_documents(self):
         self.missing_documents_list.clear()
 
-        workflows = self.workflow_service.get_workflows(
-            self.current_missionary.id
-        )
+        if not hasattr(self, "current_missionary"):
+            return
 
-        any_missing = False
+        stage = self.current_missionary.current_stage
 
-        for wf in workflows:
-            missing = (
-                self.workflow_validator
-                .get_missing_documents(
-                    self.current_missionary.id,
-                    wf.stage_name,
-                )
+        if not stage:
+            no_stage = QListWidgetItem(
+                "No current stage assigned."
             )
 
-            if not missing:
-                continue
-
-            any_missing = True
-
-            stage_item = QListWidgetItem(
-                f"— {wf.stage_name} —"
-            )
-
-            stage_item.setForeground(
+            no_stage.setForeground(
                 QColor("#A1A1AA")
             )
 
-            stage_item.setFlags(
-                stage_item.flags()
+            no_stage.setFlags(
+                no_stage.flags()
                 & ~Qt.ItemIsSelectable
             )
 
             self.missing_documents_list.addItem(
-                stage_item
+                no_stage
             )
 
-            for doc_key in missing:
-                label = (
-                    DOCUMENTS.get(doc_key, {})
-                    .get("label", doc_key)
-                )
+            return
 
-                item = QListWidgetItem(
-                    f"  ✗  {label}"
-                )
+        missing = (
+            self.workflow_validator
+            .get_missing_documents(
+                self.current_missionary.id,
+                stage,
+            )
+        )
 
-                item.setForeground(QColor("#DC2626"))
-
-                self.missing_documents_list.addItem(
-                    item
-                )
-
-        if not any_missing:
+        if not missing:
             all_good = QListWidgetItem(
                 "✓  All required documents uploaded."
             )
@@ -1474,6 +1454,41 @@ class MissionaryDetailPage(QWidget):
 
             self.missing_documents_list.addItem(
                 all_good
+            )
+
+            return
+
+        stage_item = QListWidgetItem(
+            f"— {stage} —"
+        )
+
+        stage_item.setForeground(
+            QColor("#A1A1AA")
+        )
+
+        stage_item.setFlags(
+            stage_item.flags()
+            & ~Qt.ItemIsSelectable
+        )
+
+        self.missing_documents_list.addItem(
+            stage_item
+        )
+
+        for doc_key in missing:
+            label = (
+                DOCUMENTS.get(doc_key, {})
+                .get("label", doc_key)
+            )
+
+            item = QListWidgetItem(
+                f"  ✗  {label}"
+            )
+
+            item.setForeground(QColor("#DC2626"))
+
+            self.missing_documents_list.addItem(
+                item
             )
 
     # ==========================================

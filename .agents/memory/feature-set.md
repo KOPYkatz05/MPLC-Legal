@@ -21,5 +21,6 @@ description: Major features built into the app and where they live
 - `AlertService.get_all_alerts(within_days=30)` returns overdue + expiring-soon combined
 - `StageAdvanceDialog` queries DB directly and commits changes on accept
 - `BatchUploadDialog` copies files to missionary folder without OCR; uses try/except per file
+- **Missing Documents list only shows current stage** — stage-advance logic was incorrectly showing all 4 stages' missing docs at once. Now it only shows the stage the missionary is currently in (e.g., INTERPOL docs only, not PRORROGA/CANCELACION docs).
 - `ThumbnailService.get_pixmap(file_path)` returns `QPixmap | None`; used in `load_documents()`
 - `_document_data` list on `MissionaryDetailPage` caches doc dicts (id, label, file_path, notes) to avoid detached SQLAlchemy objects in context menus
