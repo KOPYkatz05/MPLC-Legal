@@ -570,3 +570,16 @@ FROM documents]
 2026-05-31 01:57:52,311 | INFO | Dashboard data loaded
 2026-05-31 01:57:52,353 | INFO | Dashboard data loaded
 2026-05-31 01:57:53,097 | INFO | Showing 3 expiration alert(s)
+2026-05-31 01:58:56,756 | INFO | Dashboard data loaded
+2026-05-31 01:58:58,970 | INFO | Loaded active missionaries
+2026-05-31 01:58:58,971 | INFO | Loaded 3 missionaries into table
+2026-05-31 01:59:00,165 | INFO | Opening detail page for missionary: thatonenewguynamed Steve
+2026-05-31 01:59:00,165 | INFO | Loading missionary details for thatonenewguynamed Steve
+2026-05-31 01:59:00,170 | INFO | Loading documents for missionary ID 1
+2026-05-31 01:59:00,171 | INFO | Loaded 1 documents for missionary ID 1
+2026-05-31 01:59:08,456 | INFO | Dashboard data loaded
+2026-05-31 01:59:08,466 | INFO | Dashboard data loaded
+2026-05-31 02:00:04,770 | INFO | Loaded active missionaries
+2026-05-31 02:00:04,771 | INFO | Loaded 3 missionaries into table
+2026-05-31 02:00:54,428 | INFO | Dashboard data loaded
+2026-05-31 02:00:54,441 | INFO | Dashboard data loaded
