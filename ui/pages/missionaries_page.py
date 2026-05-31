@@ -11,6 +11,8 @@ from PySide6.QtWidgets import (
     QFrame,
     QHeaderView,
     QAbstractItemView,
+    QFileDialog,
+    QMessageBox,
 )
 
 from PySide6.QtCore import Qt
@@ -18,6 +20,8 @@ from PySide6.QtCore import Qt
 from services.missionary_service import (
     MissionaryService,
 )
+
+from services.export_service import ExportService
 
 from ui.dialogs.add_missionary_dialog import (
     AddMissionaryDialog,
@@ -42,6 +46,8 @@ class MissionariesPage(QWidget):
         self.missionary_service = (
             MissionaryService()
         )
+
+        self.export_service = ExportService()
 
         self._all_missionaries = []
 
@@ -106,9 +112,25 @@ class MissionariesPage(QWidget):
 
         self.add_button.setFixedHeight(34)
 
+        self.export_button = QPushButton(
+            "Export to Excel"
+        )
+
+        self.export_button.setFixedHeight(34)
+
+        self.export_button.setObjectName(
+            "RefreshButton"
+        )
+
+        self.export_button.clicked.connect(
+            self._export_excel
+        )
+
         header_layout.addWidget(title)
 
         header_layout.addStretch()
+
+        header_layout.addWidget(self.export_button)
 
         header_layout.addWidget(self.add_button)
 
@@ -397,6 +419,47 @@ class MissionariesPage(QWidget):
         except Exception:
             logger.exception(
                 "Failed to open AddMissionaryDialog"
+            )
+
+    def _export_excel(self):
+        if not self._all_missionaries:
+            QMessageBox.information(
+                self,
+                "No Data",
+                "No missionaries to export.",
+            )
+            return
+
+        file_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Export Missionaries to Excel",
+            "missionaries_export.xlsx",
+            "Excel Files (*.xlsx)",
+        )
+
+        if not file_path:
+            return
+
+        ok = self.export_service.export_missionaries_to_excel(
+            self._all_missionaries,
+            file_path,
+        )
+
+        if ok:
+            QMessageBox.information(
+                self,
+                "Export Complete",
+                f"Exported "
+                f"{len(self._all_missionaries)} "
+                f"missionaries to:\n{file_path}",
+            )
+
+        else:
+            QMessageBox.critical(
+                self,
+                "Export Failed",
+                "Failed to export. "
+                "Check logs for details.",
             )
 
     def open_missionary_detail(self, row, column):

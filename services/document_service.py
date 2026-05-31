@@ -31,31 +31,26 @@ class DocumentService:
         session = SessionLocal()
 
         try:
-            source_path = Path(
-                source_file
-            )
+            source_path = Path(source_file)
 
             destination_folder = (
                 Path(missionary.folder_path)
-                / workflow_stage
+                / (workflow_stage or "GENERAL")
             )
 
             destination_folder.mkdir(
-                exist_ok=True
+                parents=True,
+                exist_ok=True,
             )
 
-            file_extension = (
-                source_path.suffix
-            )
+            file_extension = source_path.suffix
 
             new_file_name = (
-                f"{document_type}"
-                f"{file_extension}"
+                f"{document_type}{file_extension}"
             )
 
             destination_path = (
-                destination_folder
-                / new_file_name
+                destination_folder / new_file_name
             )
 
             logger.info(
@@ -89,10 +84,6 @@ class DocumentService:
                 f"{missionary.full_name}"
             )
 
-            # =====================================
-            # Run workflow validation
-            # =====================================
-
             self.workflow_validator.validate_workflows(
                 missionary.id
             )
@@ -111,10 +102,7 @@ class DocumentService:
         finally:
             session.close()
 
-    def get_documents(
-        self,
-        missionary_id
-    ):
+    def get_documents(self, missionary_id):
         session = SessionLocal()
 
         try:
@@ -147,6 +135,141 @@ class DocumentService:
             )
 
             return []
+
+        finally:
+            session.close()
+
+    def document_type_exists(
+        self,
+        missionary_id,
+        document_type,
+    ):
+        session = SessionLocal()
+
+        try:
+            existing = (
+                session.query(Document)
+                .filter_by(
+                    missionary_id=missionary_id,
+                    document_type=document_type,
+                )
+                .first()
+            )
+
+            return existing is not None
+
+        except Exception:
+            logger.exception(
+                "Failed to check document type"
+            )
+
+            return False
+
+        finally:
+            session.close()
+
+    def delete_document_by_type(
+        self,
+        missionary_id,
+        document_type,
+    ):
+        session = SessionLocal()
+
+        try:
+            existing = (
+                session.query(Document)
+                .filter_by(
+                    missionary_id=missionary_id,
+                    document_type=document_type,
+                )
+                .first()
+            )
+
+            if not existing:
+                return
+
+            try:
+                old_path = Path(existing.file_path)
+
+                if old_path.exists():
+                    old_path.unlink()
+
+            except Exception:
+                logger.warning(
+                    f"Could not delete old file: "
+                    f"{existing.file_path}"
+                )
+
+            session.delete(existing)
+
+            session.commit()
+
+            logger.info(
+                f"Deleted document {document_type} "
+                f"for missionary {missionary_id}"
+            )
+
+        except Exception:
+            session.rollback()
+
+            logger.exception(
+                "Failed to delete document by type"
+            )
+
+        finally:
+            session.close()
+
+    def update_document_notes(
+        self,
+        document_id,
+        notes,
+    ):
+        session = SessionLocal()
+
+        try:
+            doc = (
+                session.query(Document)
+                .filter_by(id=document_id)
+                .first()
+            )
+
+            if not doc:
+                return
+
+            doc.notes = notes
+
+            session.commit()
+
+            logger.info(
+                f"Updated notes for document "
+                f"{document_id}"
+            )
+
+        except Exception:
+            session.rollback()
+
+            logger.exception(
+                "Failed to update document notes"
+            )
+
+        finally:
+            session.close()
+
+    def get_document_by_id(
+        self,
+        document_id,
+    ):
+        session = SessionLocal()
+
+        try:
+            return (
+                session.query(Document)
+                .filter_by(id=document_id)
+                .first()
+            )
+
+        except Exception:
+            return None
 
         finally:
             session.close()

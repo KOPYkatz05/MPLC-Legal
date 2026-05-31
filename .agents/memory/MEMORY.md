@@ -1,3 +1,5 @@
-- [App architecture](app-architecture.md) — Windows 11 desktop app (PySide6/Qt + SQLite), exported from Replit to run locally; DISPLAY=:1 needed in Replit VNC workflow
+- [App architecture](app-architecture.md) — Windows 11 desktop app (PySide6/Qt + SQLite), exported from Replit to run locally; DISPLAY=:0 is the correct VNC display in Replit (not :1 — check with `ls /tmp/.X*`)
 - [OCR pipeline](ocr-pipeline.md) — Full pipeline: UploadDocumentDialog → DocumentEditorDialog → export image → OCRService → DocumentParser → OCRReviewDialog → save + MissionaryService.update_fields
 - [Theme](theme.md) — Global QSS applied via app.setStyleSheet() in main.py; sidebar needs objectName="Sidebar"; white/off-white/gray palette
+- [DB migrations](db-migrations.md) — SQLite migrations via _run_migrations() in db.py use try/except ALTER TABLE; run python -c "..." to apply manually for existing DBs if needed
+- [Feature set](feature-set.md) — 8 major features added: batch upload, expiration alerts, stage wizard, Excel export, notes, thumbnails, auto-advance banner, duplicate detection
