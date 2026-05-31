@@ -366,3 +366,36 @@
 2026-05-30 23:44:12,337 | INFO | Initialized OneDrive root folders
 2026-05-30 23:44:12,337 | INFO | Initialized OneDrive root folders
 2026-05-30 23:44:12,376 | INFO | Dashboard data loaded
+2026-05-30 23:45:01,174 | INFO | Initialized OneDrive root folders
+2026-05-30 23:45:01,175 | INFO | Initialized OneDrive root folders
+2026-05-30 23:45:01,175 | INFO | Opened Add Missionary dialog
+2026-05-30 23:46:03,082 | INFO | Created missionary root folder: /home/runner/mission_data/ACTIVE/James William VanOrden
+2026-05-30 23:46:03,082 | INFO | Created system folder: /home/runner/mission_data/ACTIVE/James William VanOrden/RAW_SCANS
+2026-05-30 23:46:03,082 | INFO | Created system folder: /home/runner/mission_data/ACTIVE/James William VanOrden/OCR_PROCESSED
+2026-05-30 23:46:03,082 | INFO | Created workflow folder: /home/runner/mission_data/ACTIVE/James William VanOrden/INTERPOL
+2026-05-30 23:46:03,083 | INFO | Created workflow folder: /home/runner/mission_data/ACTIVE/James William VanOrden/CARNET DE EXTRANJERIA
+2026-05-30 23:46:03,083 | INFO | Created workflow folder: /home/runner/mission_data/ACTIVE/James William VanOrden/PRORROGA
+2026-05-30 23:46:03,083 | INFO | Created workflow folder: /home/runner/mission_data/ACTIVE/James William VanOrden/CANCELACION
+2026-05-30 23:46:03,124 | INFO | Initialized workflows for missionary ID 4
+2026-05-30 23:46:03,124 | INFO | Created missionary: James William VanOrden
+2026-05-30 23:46:03,125 | INFO | Successfully created missionary from dialog: James William VanOrden
+2026-05-30 23:46:03,126 | INFO | Missionary created successfully
+2026-05-30 23:46:03,127 | INFO | Loaded active missionaries
+2026-05-30 23:46:03,128 | INFO | Loaded 3 missionaries into table
+2026-05-30 23:46:05,450 | INFO | Opening detail page for missionary: James William VanOrden
+2026-05-30 23:46:05,450 | INFO | Loading missionary details for James William VanOrden
+2026-05-30 23:46:05,453 | INFO | Loading documents for missionary ID 4
+2026-05-30 23:46:05,454 | INFO | Loaded 0 documents for missionary ID 4
+2026-05-30 23:47:32,208 | INFO | Dashboard data loaded
+2026-05-30 23:55:23,731 | INFO | Dashboard data loaded
+2026-05-30 23:55:25,836 | INFO | Dashboard data loaded
+2026-05-30 23:55:28,405 | INFO | Initialized OneDrive root folders
+2026-05-30 23:55:28,405 | INFO | Initialized OneDrive root folders
+2026-05-30 23:55:28,405 | INFO | Opened Add Missionary dialog
+2026-05-30 23:55:32,990 | INFO | Initialized OneDrive root folders
+2026-05-30 23:55:32,991 | INFO | Initialized OneDrive root folders
+2026-05-30 23:55:32,991 | INFO | Opened Add Missionary dialog
+2026-05-30 23:55:38,460 | INFO | Opening detail page for missionary: James William VanOrden
+2026-05-30 23:55:38,460 | INFO | Loading missionary details for James William VanOrden
+2026-05-30 23:55:38,461 | INFO | Loading documents for missionary ID 4
+2026-05-30 23:55:38,462 | INFO | Loaded 0 documents for missionary ID 4
