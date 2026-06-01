@@ -599,3 +599,30 @@ FROM documents]
 2026-05-31 02:08:27,087 | INFO | Dashboard data loaded
 2026-05-31 02:08:27,132 | INFO | Dashboard data loaded
 2026-05-31 02:08:27,877 | INFO | Showing 3 expiration alert(s)
+2026-05-31 02:09:45,611 | INFO | Loaded active missionaries
+2026-05-31 02:09:45,613 | INFO | Loaded 3 missionaries into table
+2026-05-31 02:09:48,565 | INFO | Dashboard data loaded
+2026-05-31 02:09:48,577 | INFO | Dashboard data loaded
+2026-05-31 02:09:52,263 | INFO | Loaded active missionaries
+2026-05-31 02:09:52,265 | INFO | Loaded 3 missionaries into table
+2026-05-31 02:09:57,096 | INFO | Loaded active missionaries
+2026-05-31 02:09:57,098 | INFO | Loaded 3 missionaries into table
+2026-05-31 02:09:59,110 | INFO | Initialized OneDrive root folders
+2026-05-31 02:09:59,111 | INFO | Initialized OneDrive root folders
+2026-05-31 02:09:59,111 | INFO | Opened Add Missionary dialog
+2026-06-01 20:03:14,412 | INFO | Dashboard data loaded
+2026-06-01 20:03:14,413 | INFO | Initialized OneDrive root folders
+2026-06-01 20:03:14,413 | INFO | Initialized OneDrive root folders
+2026-06-01 20:03:14,413 | INFO | Initialized MissionariesPage
+2026-06-01 20:03:14,735 | INFO | Loaded active missionaries
+2026-06-01 20:03:14,736 | INFO | Loaded 3 missionaries into table
+2026-06-01 20:03:14,736 | INFO | Initializing MissionaryDetailPage
+2026-06-01 20:03:14,736 | INFO | Initialized OneDrive root folders
+2026-06-01 20:03:14,736 | INFO | Initialized OneDrive root folders
+2026-06-01 20:03:14,736 | INFO | Initialized OneDrive root folders
+2026-06-01 20:03:14,768 | INFO | Initialized OneDrive root folders
+2026-06-01 20:03:14,769 | INFO | Initialized OneDrive root folders
+2026-06-01 20:03:14,773 | INFO | Loaded 0 trashed missionaries
+2026-06-01 20:03:14,803 | INFO | Dashboard data loaded
+2026-06-01 20:03:14,841 | INFO | Dashboard data loaded
+2026-06-01 20:03:15,668 | INFO | Showing 3 expiration alert(s)

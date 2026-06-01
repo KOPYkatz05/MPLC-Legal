@@ -1,5 +1,7 @@
 {pkgs}: {
   deps = [
+    pkgs.xorg.xauth
+    pkgs.xorg.xorgserver
     pkgs.xcb-util-cursor
     pkgs.xorg.xcbutilrenderutil
     pkgs.xorg.xcbutilkeysyms

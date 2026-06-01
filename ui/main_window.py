@@ -131,27 +131,38 @@ class MainWindow(QMainWindow):
 
         layout.addWidget(self.stack, stretch=1)
 
-    def _on_nav_changed(self, index):
-        self.stack.setCurrentIndex(index)
+    # Sidebar index → stack index mapping.
+    # Stack order: 0=Dashboard, 1=Missionaries,
+    # 2=Detail (no sidebar entry), 3=Calendar,
+    # 4=Reports, 5=Trash
+    _SIDEBAR_TO_STACK = {
+        0: 0,  # Dashboard
+        1: 1,  # Missionaries
+        2: 3,  # Appointments / Calendar
+        3: 4,  # Reports
+        4: 5,  # Trash
+    }
 
-        # Refresh missionaries list on navigation
-        if index == 1:
-            self.missionaries_page.load_data()
+    def _on_nav_changed(self, sidebar_index):
+        stack_index = self._SIDEBAR_TO_STACK.get(
+            sidebar_index, 0
+        )
+        self.stack.setCurrentIndex(stack_index)
 
-        # Refresh dashboard on navigation
-        if index == 0:
+        # Refresh page data on navigation
+        if stack_index == 0:
             self.dashboard_page.load_data()
 
-        # Refresh calendar on navigation
-        if index == 3:
+        elif stack_index == 1:
+            self.missionaries_page.load_data()
+
+        elif stack_index == 3:
             self.calendar_page.load_data()
 
-        # Refresh reports on navigation
-        if index == 4:
+        elif stack_index == 4:
             self.reports_page.load_data()
 
-        # Refresh trash on navigation
-        if index == 5:
+        elif stack_index == 5:
             self.trash_page.load_data()
 
     def _show_startup_alerts(self):
