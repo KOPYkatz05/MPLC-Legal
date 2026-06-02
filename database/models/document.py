@@ -74,6 +74,16 @@ class Document(Base):
         nullable=True,
     )
 
+    ocr_raw_data = Column(
+        String,
+        nullable=True,
+    )
+
+    ocr_confirmed_data = Column(
+        String,
+        nullable=True,
+    )
+
     # ======================================
     # Audit Tracking
     # ======================================

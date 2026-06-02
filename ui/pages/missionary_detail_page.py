@@ -1,4 +1,4 @@
-import tempfile
+import json
 
 from datetime import date
 
@@ -22,64 +22,55 @@ from PySide6.QtWidgets import (
     QTextEdit,
     QMenu,
     QSizePolicy,
+    QDateEdit,
 )
 
-from PySide6.QtCore import Qt, QSize
+from PySide6.QtCore import Qt, QSize, QDate
 
 from PySide6.QtGui import QIcon, QColor
 
 from services.workflow_service import WorkflowService
-
 from services.document_service import DocumentService
-
 from services.missionary_service import MissionaryService
-
-from services.ocr_service import OCRService
-
-from services.document_parser import DocumentParser
-
 from services.document_image_export_service import (
     DocumentImageExportService,
 )
-
 from services.thumbnail_service import ThumbnailService
-
-from ui.dialogs.upload_document_dialog import (
-    UploadDocumentDialog,
+from services.upload_pipeline import (
+    prepare_ocr_ingestion,
+    finalize_ocr_ingestion,
+    get_missing_for_missionary,
 )
-
-from ui.dialogs.document_editor_dialog import (
-    DocumentEditorDialog,
-)
-
+from ui.dialogs.upload_document_dialog import UploadDocumentDialog
+from ui.dialogs.document_editor_dialog import DocumentEditorDialog
 from ui.dialogs.ocr_review_dialog import OCRReviewDialog
-
-from ui.dialogs.stage_advance_dialog import (
-    StageAdvanceDialog,
-)
-
-from ui.dialogs.batch_upload_dialog import (
-    BatchUploadDialog,
-)
-
+from ui.dialogs.upload_summary_dialog import UploadSummaryDialog
+from ui.dialogs.ocr_data_view_dialog import OcrDataViewDialog
+from ui.dialogs.stage_advance_dialog import StageAdvanceDialog
+from ui.dialogs.batch_upload_dialog import BatchUploadDialog
 from utils.constants import (
     DOCUMENTS,
     WORKFLOW_STATUSES,
     WORKFLOW_STAGES,
 )
-
+from utils.i18n import tr, field_label
 from utils.logger import logger
-
 from services.workflow_validator import WorkflowValidator
 
+DATE_PLACEHOLDER = QDate(1900, 1, 1)
 
-DATE_AUTO_UPDATE_FIELDS = {
+EDITABLE_DATE_FIELDS = [
     "arrival_date",
-    "carnet_issue_date",
+    "visa_expiration",
+    "passport_expiration",
     "residency_expiration",
     "prorroga_expiration",
+    "carnet_issue_date",
     "cancelacion_date",
-}
+    "interpol_appointment_date",
+    "biometric_appointment_date",
+    "pickup_appointment_date",
+]
 
 
 class MissionaryDetailPage(QWidget):
@@ -102,27 +93,14 @@ class MissionaryDetailPage(QWidget):
 
         self.thumb_service = ThumbnailService()
 
-        self.ocr_service = None
-
-        self.document_parser = DocumentParser()
-
-        self.image_export_service = (
-            DocumentImageExportService()
-        )
+        self.image_export_service = DocumentImageExportService()
 
         self._document_data = []
+        self._date_edits = {}
+        self._date_source_labels = {}
+        self._date_empty_on_load = set()
 
         self.setup_ui()
-
-    def _get_ocr_service(self):
-        if self.ocr_service is None:
-            try:
-                self.ocr_service = OCRService()
-            except Exception:
-                logger.exception(
-                    "Failed to initialize OCR service"
-                )
-        return self.ocr_service
 
     # ==========================================
     # UI SETUP
@@ -409,6 +387,7 @@ class MissionaryDetailPage(QWidget):
         )
 
         self.batch_upload_btn.setFixedHeight(30)
+        self.batch_upload_btn.setMinimumWidth(132)
 
         self.batch_upload_btn.clicked.connect(
             self._batch_upload
@@ -423,18 +402,21 @@ class MissionaryDetailPage(QWidget):
         )
 
         self.upload_button.setFixedHeight(30)
+        self.upload_button.setMinimumWidth(150)
 
         self.upload_button.clicked.connect(
             self.upload_document
         )
 
+        button_row = QHBoxLayout()
+        button_row.setContentsMargins(0, 0, 0, 0)
+        button_row.setSpacing(8)
+        button_row.addWidget(self.upload_button)
+        button_row.addWidget(self.batch_upload_btn)
+
         docs_hdr_row.addWidget(docs_label)
-
+        docs_hdr_row.addLayout(button_row)
         docs_hdr_row.addStretch()
-
-        docs_hdr_row.addWidget(self.batch_upload_btn)
-
-        docs_hdr_row.addWidget(self.upload_button)
 
         content_layout.addLayout(docs_hdr_row)
 
@@ -562,62 +544,59 @@ class MissionaryDetailPage(QWidget):
 
         self.nationality_label = make_field()
         self.passport_label = make_field()
-        self.arrival_date_label = make_field()
-        self.visa_expiration_label = make_field()
-        self.residency_exp_label = make_field()
-        self.prorroga_expiration_label = make_field()
-        self.carnet_issue_date_label = make_field()
-        self.cancelacion_date_label = make_field()
         self.folder_label = make_field()
-
         self.folder_label.setWordWrap(True)
 
         form.addRow(
             row_label("Nationality:"),
             self.nationality_label,
         )
-
         form.addRow(
             row_label("Passport Number:"),
             self.passport_label,
         )
 
-        form.addRow(
-            row_label("Arrival Date:"),
-            self.arrival_date_label,
-        )
+        for field_key in EDITABLE_DATE_FIELDS:
+            date_edit = QDateEdit()
+            date_edit.setCalendarPopup(True)
+            date_edit.setDate(DATE_PLACEHOLDER)
+            self._date_edits[field_key] = date_edit
 
-        form.addRow(
-            row_label("Visa Expiration:"),
-            self.visa_expiration_label,
-        )
+            source_lbl = QLabel("")
+            source_lbl.setStyleSheet(
+                "color: #A1A1AA; font-size: 11px; background: transparent;"
+            )
+            self._date_source_labels[field_key] = source_lbl
 
-        form.addRow(
-            row_label("Residency Expiration:"),
-            self.residency_exp_label,
-        )
+            field_widget = QWidget()
+            fw_layout = QVBoxLayout()
+            fw_layout.setContentsMargins(0, 0, 0, 0)
+            fw_layout.setSpacing(2)
+            field_widget.setLayout(fw_layout)
+            fw_layout.addWidget(date_edit)
+            fw_layout.addWidget(source_lbl)
 
-        form.addRow(
-            row_label("Prórroga Expiration:"),
-            self.prorroga_expiration_label,
-        )
-
-        form.addRow(
-            row_label("Carnet Issue Date:"),
-            self.carnet_issue_date_label,
-        )
-
-        form.addRow(
-            row_label("Cancelación Date:"),
-            self.cancelacion_date_label,
-        )
+            form.addRow(
+                row_label(f"{field_label(field_key)}:"),
+                field_widget,
+            )
 
         form.addRow(
             row_label("Folder Path:"),
             self.folder_label,
         )
 
+        self.save_dates_btn = QPushButton(tr("save_dates"))
+        self.save_dates_btn.setObjectName("PrimaryButton")
+        self.save_dates_btn.setFixedHeight(34)
+        self.save_dates_btn.setFixedWidth(160)
+        self.save_dates_btn.clicked.connect(self._save_dates)
+
+        btn_row = QHBoxLayout()
+        btn_row.addStretch()
+        btn_row.addWidget(self.save_dates_btn)
         details_layout.addWidget(card)
+        details_layout.addLayout(btn_row)
 
         details_layout.addStretch()
 
@@ -729,43 +708,18 @@ class MissionaryDetailPage(QWidget):
             missionary.passport_number or "-"
         )
 
-        self.arrival_date_label.setText(
-            self.format_date(missionary.arrival_date)
-        )
-
-        self.visa_expiration_label.setText(
-            self.format_date(
-                missionary.visa_expiration
-            )
-        )
-
-        self.residency_exp_label.setText(
-            self.format_date(
-                getattr(
-                    missionary,
-                    "residency_expiration",
-                    None,
+        self._date_empty_on_load = set()
+        for field_key, date_edit in self._date_edits.items():
+            value = getattr(missionary, field_key, None)
+            if value:
+                date_edit.setDate(
+                    QDate(value.year, value.month, value.day)
                 )
-            )
-        )
+            else:
+                date_edit.setDate(DATE_PLACEHOLDER)
+                self._date_empty_on_load.add(field_key)
 
-        self.prorroga_expiration_label.setText(
-            self.format_date(
-                missionary.prorroga_expiration
-            )
-        )
-
-        self.carnet_issue_date_label.setText(
-            self.format_date(
-                missionary.carnet_issue_date
-            )
-        )
-
-        self.cancelacion_date_label.setText(
-            self.format_date(
-                missionary.cancelacion_date
-            )
-        )
+        self._update_field_sources(missionary)
 
         self.folder_label.setText(
             missionary.folder_path or "-"
@@ -995,85 +949,79 @@ class MissionaryDetailPage(QWidget):
 
         export_settings = editor.get_export_settings()
 
-        # Step 5: Export the processed image for OCR
-        ocr_image_path = self._export_for_ocr(
-            file_path, export_settings
+        ocr_fields = DOCUMENTS.get(document_type, {}).get(
+            "ocr_fields", []
         )
 
-        # Step 6 & 7: Run OCR + parse
-        ocr_fields = (
-            DOCUMENTS.get(document_type, {})
-            .get("ocr_fields", [])
+        pipeline_result = prepare_ocr_ingestion(
+            source_file=file_path,
+            document_type=document_type,
+            export_settings=export_settings,
+            parent=self,
+            ocr_fields=ocr_fields,
+            image_export_service=self.image_export_service,
         )
 
-        parsed_data = {}
-
-        if ocr_fields and ocr_image_path:
-            parsed_data = self._run_ocr(
-                ocr_image_path, document_type
-            )
-
-        # Step 8: Review dialog
         confirmed_data = {}
-
         if ocr_fields:
             review_dialog = OCRReviewDialog(
                 ocr_fields=ocr_fields,
-                parsed_data=parsed_data,
+                parsed_data=pipeline_result.parsed_data,
                 parent=self,
+                ocr_status=pipeline_result.ocr_status,
+                image_path=pipeline_result.ocr_image_path,
             )
+            if review_dialog.exec() == OCRReviewDialog.Accepted:
+                confirmed_data = review_dialog.get_data()
 
-            if (
-                review_dialog.exec()
-                == OCRReviewDialog.Accepted
-            ):
-                confirmed_data = (
-                    review_dialog.get_data()
-                )
-
-        # Step 9: Save document to DB + filesystem
         try:
-            self.document_service.upload_document(
+            save_result = finalize_ocr_ingestion(
                 missionary=missionary,
                 source_file=file_path,
                 document_type=document_type,
                 workflow_stage=workflow_stage,
+                pipeline_result=pipeline_result,
+                confirmed_data=confirmed_data,
+                document_service=self.document_service,
             )
-
-            logger.info(
-                f"Saved document {document_type} "
-                f"for {missionary.full_name}"
-            )
-
         except Exception:
-            logger.exception(
-                "Failed to save document"
-            )
-
+            logger.exception("Failed to save document")
             QMessageBox.critical(
                 self,
                 "Upload Failed",
                 "The document could not be saved. "
                 "Check the logs for details.",
             )
-
             return
 
-        # Step 10: Apply auto_updates to missionary
-        if confirmed_data:
-            auto_update_fields = (
-                DOCUMENTS.get(document_type, {})
-                .get("auto_updates", [])
-            )
-
-            self._apply_auto_updates(
-                missionary.id,
-                confirmed_data,
-                auto_update_fields,
-            )
-
-        # Step 11: Refresh UI
         self._reload_missionary()
+
+        if ocr_fields and hasattr(self, "current_missionary"):
+            missing_keys = get_missing_for_missionary(
+                self.current_missionary.id,
+                self.current_missionary.current_stage,
+            )
+            missing_labels = [
+                DOCUMENTS.get(k, {}).get("label", k)
+                for k in missing_keys
+            ]
+            has_appt = any(
+                f in save_result.updated_fields
+                for f in (
+                    "interpol_appointment_date",
+                    "biometric_appointment_date",
+                    "pickup_appointment_date",
+                )
+            )
+            summary = UploadSummaryDialog(
+                save_result.updated_fields,
+                missing_labels,
+                parent=self,
+                has_appointment_update=has_appt,
+            )
+            summary.exec()
+            if summary.wants_calendar() and self.main_window:
+                self.main_window.go_to_calendar()
 
     # ==========================================
     # BATCH UPLOAD
@@ -1091,172 +1039,66 @@ class MissionaryDetailPage(QWidget):
 
         self._reload_missionary()
 
-    # ==========================================
-    # OCR HELPERS
-    # ==========================================
+    def _update_field_sources(self, missionary):
+        sources = {}
+        if missionary.field_sources:
+            try:
+                sources = json.loads(missionary.field_sources)
+            except (json.JSONDecodeError, TypeError):
+                sources = {}
 
-    def _export_for_ocr(
-        self, file_path, export_settings
-    ):
-        file_path = Path(file_path)
-
-        suffix = file_path.suffix.lower()
-
-        tmp = tempfile.NamedTemporaryFile(
-            suffix=".png", delete=False
-        )
-
-        tmp_path = Path(tmp.name)
-
-        tmp.close()
-
-        try:
-            if suffix == ".pdf":
-                self.image_export_service.export_pdf_page(
-                    pdf_path=file_path,
-                    page_index=export_settings.get(
-                        "page", 0
-                    ),
-                    rotation_angle=export_settings.get(
-                        "rotation", 0
-                    ),
-                    crop_rect=export_settings.get(
-                        "crop_rect"
-                    ),
-                    output_path=str(tmp_path),
+        for field_key, source_lbl in self._date_source_labels.items():
+            info = sources.get(field_key)
+            if info and info.get("label"):
+                source_lbl.setText(
+                    tr("field_from_source", label=info["label"])
                 )
-
             else:
-                from PIL import Image
+                source_lbl.setText("")
 
-                img = Image.open(str(file_path))
+    def _save_dates(self):
+        if not hasattr(self, "current_missionary"):
+            return
 
-                rotation = export_settings.get(
-                    "rotation", 0
-                )
-
-                if rotation:
-                    img = img.rotate(
-                        -rotation, expand=True
-                    )
-
-                crop_rect = export_settings.get(
-                    "crop_rect"
-                )
-
-                if crop_rect:
-                    img = img.crop((
-                        int(crop_rect.left()),
-                        int(crop_rect.top()),
-                        int(crop_rect.right()),
-                        int(crop_rect.bottom()),
-                    ))
-
-                img.save(str(tmp_path))
-
-            return tmp_path
-
-        except Exception:
-            logger.exception(
-                "Failed to export document image "
-                "for OCR"
-            )
-
-            return None
-
-    def _run_ocr(self, image_path, document_type):
-        try:
-            ocr = self._get_ocr_service()
-
-            if ocr is None:
-                return {}
-
-            raw_text = ocr.extract_text(
-                str(image_path)
-            )
-
-            parsed = self.document_parser.parse(
-                raw_text, document_type
-            )
-
-            logger.info(
-                f"OCR parsed fields: "
-                f"{list(parsed.keys())}"
-            )
-
-            return parsed
-
-        except Exception:
-            logger.exception(
-                f"OCR failed for {document_type}"
-            )
-
-            return {}
-
-    def _apply_auto_updates(
-        self,
-        missionary_id,
-        confirmed_data,
-        auto_update_fields,
-    ):
         updates = {}
-
-        for field in auto_update_fields:
-            value_str = confirmed_data.get(field, "")
-
-            if not value_str:
+        for field_key, date_edit in self._date_edits.items():
+            qd = date_edit.date()
+            if (
+                field_key in self._date_empty_on_load
+                and qd == DATE_PLACEHOLDER
+            ):
                 continue
-
-            if field in DATE_AUTO_UPDATE_FIELDS:
-                parsed_date = self._parse_date(
-                    value_str
-                )
-
-                if parsed_date:
-                    updates[field] = parsed_date
-
-            else:
-                updates[field] = value_str
-
-        if updates:
-            try:
-                self.missionary_service.update_fields(
-                    missionary_id, updates
-                )
-
-                logger.info(
-                    f"Auto-updated missionary fields: "
-                    f"{list(updates.keys())}"
-                )
-
-            except Exception:
-                logger.exception(
-                    "Failed to apply auto-updates"
-                )
-
-    def _parse_date(self, value_str):
-        if not value_str:
-            return None
-
-        from datetime import datetime
-
-        formats = [
-            "%Y-%m-%d",
-            "%d/%m/%Y",
-            "%m/%d/%Y",
-            "%d-%m-%Y",
-        ]
-
-        for fmt in formats:
-            try:
-                return datetime.strptime(
-                    value_str.strip(), fmt
-                ).date()
-
-            except ValueError:
+            if qd == DATE_PLACEHOLDER:
                 continue
+            updates[field_key] = date(
+                qd.year(), qd.month(), qd.day()
+            )
 
-        return None
+        if not updates:
+            return
+
+        try:
+            self.missionary_service.update_fields(
+                self.current_missionary.id,
+                updates,
+            )
+            QMessageBox.information(
+                self,
+                tr("save_dates"),
+                tr("dates_saved"),
+            )
+            self._reload_missionary()
+        except Exception:
+            logger.exception("Failed to save dates")
+            QMessageBox.critical(
+                self,
+                tr("save_dates"),
+                tr("dates_save_failed"),
+            )
+
+    def retranslate_ui(self):
+        if hasattr(self, "save_dates_btn"):
+            self.save_dates_btn.setText(tr("save_dates"))
 
     # ==========================================
     # DOCUMENTS LIST WITH THUMBNAILS
@@ -1324,6 +1166,8 @@ class MissionaryDetailPage(QWidget):
                 "file_path": doc.file_path,
                 "file_name": doc.file_name,
                 "notes": doc.notes or "",
+                "ocr_raw_data": doc.ocr_raw_data,
+                "ocr_confirmed_data": doc.ocr_confirmed_data,
             })
 
     def _show_doc_context_menu(self, pos):
@@ -1345,6 +1189,10 @@ class MissionaryDetailPage(QWidget):
             "View / Edit Notes"
         )
 
+        ocr_action = menu.addAction(
+            tr("view_extracted_data")
+        )
+
         open_action = menu.addAction("Open Externally")
 
         action = menu.exec(
@@ -1356,6 +1204,9 @@ class MissionaryDetailPage(QWidget):
 
         elif action == notes_action:
             self._open_document_notes(doc_id)
+
+        elif action == ocr_action:
+            self._open_ocr_data(doc_id)
 
         elif action == open_action:
             self._open_document_file(doc_id)
@@ -1369,6 +1220,17 @@ class MissionaryDetailPage(QWidget):
             ),
             None,
         )
+
+    def _open_ocr_data(self, doc_id):
+        doc = self._find_doc_data(doc_id)
+        if not doc:
+            return
+        dialog = OcrDataViewDialog(
+            doc.get("ocr_raw_data"),
+            doc.get("ocr_confirmed_data"),
+            parent=self,
+        )
+        dialog.exec()
 
     def _open_document_notes(self, doc_id):
         doc = self._find_doc_data(doc_id)
@@ -1708,7 +1570,7 @@ class MissionaryDetailPage(QWidget):
             "Are you sure you want to delete "
             "this missionary?\n\n"
             "The missionary will be moved to "
-            "the TRASH PILE.",
+            "TRASH.",
             QMessageBox.Yes | QMessageBox.No,
         )
 

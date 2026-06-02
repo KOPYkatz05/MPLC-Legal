@@ -31,6 +31,7 @@ from utils.constants import (
 )
 
 from utils.logger import logger
+from services.onedrive_service import OneDriveService
 
 
 class BatchStageAdvanceDialog(QDialog):
@@ -373,8 +374,19 @@ class BatchStageAdvanceDialog(QDialog):
         session = SessionLocal()
 
         try:
+            onedrive_service = OneDriveService()
+
             for status in self.stage_statuses:
-                m = status["missionary"]
+                stored_missionary = status["missionary"]
+
+                m = (
+                    session.query(Missionary)
+                    .filter_by(id=stored_missionary.id)
+                    .first()
+                )
+
+                if not m:
+                    continue
 
                 stage = status["stage"]
 
@@ -417,6 +429,14 @@ class BatchStageAdvanceDialog(QDialog):
 
                 else:
                     m.status = "ARCHIVED"
+                    if m.folder_path:
+                        new_folder = (
+                            onedrive_service
+                            .archive_missionary_folder(
+                                m.folder_path
+                            )
+                        )
+                        m.folder_path = str(new_folder)
 
                 logger.info(
                     f"Batch advanced {m.full_name} "

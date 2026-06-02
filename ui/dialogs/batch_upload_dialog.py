@@ -1,5 +1,3 @@
-import shutil
-
 from pathlib import Path
 
 from PySide6.QtWidgets import (
@@ -16,17 +14,23 @@ from PySide6.QtWidgets import (
     QHeaderView,
     QAbstractItemView,
     QProgressBar,
+    QCheckBox,
+    QProgressDialog,
+    QApplication,
 )
 
-from PySide6.QtCore import Qt, QThread, Signal
-
-from database.db import SessionLocal
-
-from database.models.document import Document
+from PySide6.QtCore import Qt
 
 from utils.constants import DOCUMENTS
-
+from utils.i18n import tr
 from utils.logger import logger
+
+from services.document_service import DocumentService
+from services.upload_pipeline import (
+    prepare_ocr_ingestion,
+    finalize_ocr_ingestion,
+)
+from ui.dialogs.ocr_review_dialog import OCRReviewDialog
 
 
 # Column indices in the table
@@ -42,6 +46,7 @@ class BatchUploadDialog(QDialog):
         super().__init__(parent)
 
         self.missionary = missionary
+        self.document_service = DocumentService()
 
         self.setWindowTitle("Batch Upload Documents")
 
@@ -114,11 +119,17 @@ class BatchUploadDialog(QDialog):
         # Instruction label
         # ==========================================
 
+        self.ocr_checkbox = QCheckBox(
+            tr("batch_run_ocr")
+        )
+        self.ocr_checkbox.setStyleSheet(
+            "padding: 8px 24px; background-color: #F4F4F5;"
+        )
+        layout.addWidget(self.ocr_checkbox)
+
         info = QLabel(
             "  Select files, assign document types, "
-            "then click Upload All. "
-            "Files are uploaded without cropping or "
-            "OCR review for speed."
+            "then click Upload All."
         )
 
         info.setStyleSheet(
@@ -457,52 +468,86 @@ class BatchUploadDialog(QDialog):
 
     def _upload_all(self):
         self.upload_btn.setEnabled(False)
+        run_ocr = self.ocr_checkbox.isChecked()
 
         total = self.table.rowCount()
-
         self.progress_bar.setVisible(True)
-
         self.progress_bar.setMaximum(total)
-
         self.progress_bar.setValue(0)
 
         uploaded = 0
-
         failed = 0
 
         for row in range(total):
             data = self._get_row_data(row)
-
             if not data:
                 continue
 
             try:
-                self._save_document(
-                    data["file_path"],
-                    data["type_key"],
-                    data["stage"],
+                status_text = tr("batch_uploaded")
+                type_key = data["type_key"]
+                ocr_fields = DOCUMENTS.get(type_key, {}).get(
+                    "ocr_fields", []
                 )
+                confirmed_data = {}
+                pipeline = None
 
-                self._set_status(
-                    row, "✓ Uploaded", "#059669"
-                )
+                if run_ocr and ocr_fields:
+                    pipeline = prepare_ocr_ingestion(
+                        source_file=data["file_path"],
+                        document_type=type_key,
+                        export_settings={
+                            "pages": "all",
+                            "rotation": 0,
+                            "crop_rect": None,
+                        },
+                        parent=self,
+                        ocr_fields=ocr_fields,
+                    )
+                    review = OCRReviewDialog(
+                        ocr_fields=ocr_fields,
+                        parsed_data=pipeline.parsed_data,
+                        parent=self,
+                        ocr_status=pipeline.ocr_status,
+                        image_path=pipeline.ocr_image_path,
+                    )
+                    if review.exec() == OCRReviewDialog.Accepted:
+                        confirmed_data = review.get_data()
+                    else:
+                        confirmed_data = {}
 
+                    finalize_ocr_ingestion(
+                        missionary=self.missionary,
+                        source_file=data["file_path"],
+                        document_type=type_key,
+                        workflow_stage=data["stage"],
+                        pipeline_result=pipeline,
+                        confirmed_data=confirmed_data,
+                    )
+                    status_text = tr("batch_uploaded_ocr")
+                else:
+                    self._save_document(
+                        data["file_path"],
+                        type_key,
+                        data["stage"],
+                    )
+                    if run_ocr and not ocr_fields:
+                        status_text = tr("batch_ocr_skipped")
+
+                self._set_status(row, f"✓ {status_text}", "#059669")
                 uploaded += 1
 
             except Exception as e:
-                logger.exception(
-                    f"Batch upload failed row {row}"
-                )
-
+                logger.exception(f"Batch upload failed row {row}")
                 self._set_status(
                     row,
                     f"✗ Failed: {str(e)[:40]}",
                     "#DC2626",
                 )
-
                 failed += 1
 
             self.progress_bar.setValue(row + 1)
+            QApplication.processEvents()
 
         self.status_label.setText(
             f"Done: {uploaded} uploaded"
@@ -529,71 +574,19 @@ class BatchUploadDialog(QDialog):
         document_type,
         workflow_stage,
     ):
-        source_path = Path(source_file)
-
-        if not source_path.exists():
+        if not Path(source_file).exists():
             raise FileNotFoundError(
                 f"File not found: {source_file}"
             )
 
-        missionary = self.missionary
-
-        folder = Path(missionary.folder_path)
-
-        dest_folder = folder / (
-            workflow_stage or "GENERAL"
+        doc = self.document_service.upload_document(
+            missionary=self.missionary,
+            source_file=source_file,
+            document_type=document_type,
+            workflow_stage=workflow_stage,
         )
 
-        dest_folder.mkdir(
-            parents=True, exist_ok=True
+        logger.info(
+            f"Batch uploaded {doc.file_name} "
+            f"for {self.missionary.full_name}"
         )
-
-        ext = source_path.suffix
-
-        new_name = f"{document_type}{ext}"
-
-        dest_path = dest_folder / new_name
-
-        counter = 1
-
-        while dest_path.exists():
-            new_name = (
-                f"{document_type}_{counter}{ext}"
-            )
-
-            dest_path = dest_folder / new_name
-
-            counter += 1
-
-        shutil.copy2(
-            str(source_path),
-            str(dest_path),
-        )
-
-        session = SessionLocal()
-
-        try:
-            doc = Document(
-                missionary_id=missionary.id,
-                document_type=document_type,
-                workflow_stage=workflow_stage,
-                file_name=new_name,
-                file_path=str(dest_path),
-            )
-
-            session.add(doc)
-
-            session.commit()
-
-            logger.info(
-                f"Batch uploaded {new_name} "
-                f"for {missionary.full_name}"
-            )
-
-        except Exception:
-            session.rollback()
-
-            raise
-
-        finally:
-            session.close()

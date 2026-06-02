@@ -3,7 +3,6 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QLabel,
     QLineEdit,
-    QPushButton,
     QMessageBox,
     QDateEdit,
 )
@@ -13,6 +12,7 @@ from PySide6.QtCore import QDate
 from services.missionary_service import (
     MissionaryService,
 )
+from ui.foundation import DialogFooter, create_button
 
 from utils.logger import logger
 
@@ -158,17 +158,22 @@ class AddMissionaryDialog(QDialog):
         # Save Button
         # ======================================
 
-        self.save_button = QPushButton(
-            "Save Missionary"
+        footer = DialogFooter()
+
+        self.save_button = create_button(
+            "Save Missionary",
+            "primary",
         )
 
         self.save_button.clicked.connect(
             self.save_missionary
         )
 
-        layout.addWidget(
+        footer.add_action(
             self.save_button
         )
+
+        layout.addWidget(footer)
 
     def save_missionary(self):
         try:

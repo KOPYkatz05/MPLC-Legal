@@ -1,14 +1,8 @@
 from PySide6.QtWidgets import (
     QWidget,
     QVBoxLayout,
-    QHBoxLayout,
-    QPushButton,
-    QTableWidget,
-    QTableWidgetItem,
-    QLineEdit,
-    QComboBox,
     QLabel,
-    QFrame,
+    QTableWidgetItem,
     QHeaderView,
     QAbstractItemView,
     QFileDialog,
@@ -23,6 +17,16 @@ from services.missionary_service import (
 )
 
 from services.export_service import ExportService
+from ui.foundation import (
+    FilterBar,
+    PageHeader,
+    configure_data_table,
+    create_button,
+    create_combo_box,
+    create_line_edit,
+    create_table,
+    divider,
+)
 
 from ui.dialogs.add_missionary_dialog import (
     AddMissionaryDialog,
@@ -87,121 +91,50 @@ class MissionariesPage(QWidget):
 
         self.setLayout(outer)
 
-        # ==========================================
-        # Page header
-        # ==========================================
-
-        header = QFrame()
-
-        header.setObjectName("PageHeader")
-
-        header_layout = QHBoxLayout()
-
-        header_layout.setContentsMargins(
-            32, 20, 32, 20
+        self.add_button = create_button(
+            "+ Add Missionary",
+            "primary",
         )
 
-        header.setLayout(header_layout)
-
-        title = QLabel("Missionaries")
-
-        title.setObjectName("PageTitle")
-
-        self.add_button = QPushButton(
-            "+ Add Missionary"
-        )
-
-        self.add_button.setObjectName(
-            "PrimaryButton"
-        )
-
-        self.add_button.setFixedHeight(34)
-
-        self.export_button = QPushButton(
-            "Export to Excel"
-        )
-
-        self.export_button.setFixedHeight(34)
-
-        self.export_button.setObjectName(
-            "RefreshButton"
+        self.export_button = create_button(
+            "Export to Excel",
+            "secondary",
         )
 
         self.export_button.clicked.connect(
             self._export_excel
         )
 
-        header_layout.addWidget(title)
-
-        header_layout.addStretch()
-
-        header_layout.addWidget(self.export_button)
-
-        header_layout.addWidget(self.add_button)
+        header = PageHeader(
+            "Missionaries",
+            "Track legal workflow status and documents.",
+            [self.export_button, self.add_button],
+        )
 
         outer.addWidget(header)
 
-        # Divider
-        divider = QFrame()
-
-        divider.setObjectName("HeaderDivider")
-
-        divider.setFixedHeight(1)
-
-        outer.addWidget(divider)
+        outer.addWidget(divider())
 
         # ==========================================
         # Search + filter bar
         # ==========================================
 
-        filter_bar = QFrame()
+        filter_bar = FilterBar()
 
-        filter_bar.setObjectName("FilterBar")
-
-        filter_layout = QHBoxLayout()
-
-        filter_layout.setContentsMargins(
-            32, 14, 32, 14
-        )
-
-        filter_layout.setSpacing(12)
-
-        filter_bar.setLayout(filter_layout)
-
-        self.search_input = QLineEdit()
-
-        self.search_input.setPlaceholderText(
+        self.search_input = create_line_edit(
             "Search by name..."
         )
 
-        self.search_input.setObjectName(
-            "SearchInput"
-        )
-
-        self.search_input.setFixedHeight(34)
-
         self.search_input.setMaximumWidth(280)
 
-        self.stage_filter = QComboBox()
-
-        self.stage_filter.setObjectName(
-            "FilterCombo"
-        )
-
-        self.stage_filter.setFixedHeight(34)
+        self.stage_filter = create_combo_box()
 
         self.stage_filter.addItem("All Stages", None)
 
         for stage in WORKFLOW_STAGES:
             self.stage_filter.addItem(stage, stage)
 
-        self.nationality_filter = QComboBox()
-
-        self.nationality_filter.setObjectName(
-            "FilterCombo"
-        )
-
-        self.nationality_filter.setFixedHeight(34)
+        self.nationality_filter = create_combo_box()
 
         self.nationality_filter.setMaximumWidth(180)
 
@@ -209,14 +142,9 @@ class MissionariesPage(QWidget):
             "All Nationalities", None
         )
 
-        self.batch_button = QPushButton(
-            "Batch Actions"
-        )
-
-        self.batch_button.setFixedHeight(34)
-
-        self.batch_button.setObjectName(
-            "RefreshButton"
+        self.batch_button = create_button(
+            "Batch Actions",
+            "secondary",
         )
 
         self.batch_button.clicked.connect(
@@ -229,38 +157,24 @@ class MissionariesPage(QWidget):
             "ResultLabel"
         )
 
-        filter_layout.addWidget(self.search_input)
-
-        filter_layout.addWidget(self.stage_filter)
-
-        filter_layout.addWidget(
+        filter_bar.add_filter(self.search_input)
+        filter_bar.add_filter(self.stage_filter)
+        filter_bar.add_filter(
             self.nationality_filter
         )
-
-        filter_layout.addStretch()
-
-        filter_layout.addWidget(self.batch_button)
-
-        filter_layout.addWidget(self.result_label)
+        filter_bar.add_spacer()
+        filter_bar.add_filter(self.batch_button)
+        filter_bar.add_filter(self.result_label)
 
         outer.addWidget(filter_bar)
 
-        # Filter bar bottom divider
-        filter_divider = QFrame()
-
-        filter_divider.setObjectName("HeaderDivider")
-
-        filter_divider.setFixedHeight(1)
-
-        outer.addWidget(filter_divider)
+        outer.addWidget(divider())
 
         # ==========================================
         # Table
         # ==========================================
 
-        self.table = QTableWidget()
-
-        self.table.setObjectName("MissionaryTable")
+        self.table = create_table()
 
         self.table.setColumnCount(5)
 
@@ -272,51 +186,18 @@ class MissionariesPage(QWidget):
             "Current Stage",
         ])
 
-        # Table behaviour
-        self.table.setSelectionBehavior(
-            QAbstractItemView.SelectRows
+        configure_data_table(
+            self.table,
+            {
+                0: QHeaderView.ResizeToContents,
+                1: QHeaderView.Stretch,
+                2: QHeaderView.ResizeToContents,
+                3: QHeaderView.ResizeToContents,
+                4: QHeaderView.ResizeToContents,
+            },
+            selection_mode=QAbstractItemView.MultiSelection,
+            sorting=True,
         )
-
-        self.table.setSelectionMode(
-            QAbstractItemView.MultiSelection
-        )
-
-        self.table.setEditTriggers(
-            QAbstractItemView.NoEditTriggers
-        )
-
-        self.table.setAlternatingRowColors(True)
-
-        self.table.verticalHeader().setVisible(False)
-
-        self.table.setShowGrid(False)
-
-        self.table.setSortingEnabled(True)
-
-        # Column widths
-        header_view = self.table.horizontalHeader()
-
-        header_view.setSectionResizeMode(
-            0, QHeaderView.ResizeToContents
-        )
-
-        header_view.setSectionResizeMode(
-            1, QHeaderView.Stretch
-        )
-
-        header_view.setSectionResizeMode(
-            2, QHeaderView.ResizeToContents
-        )
-
-        header_view.setSectionResizeMode(
-            3, QHeaderView.ResizeToContents
-        )
-
-        header_view.setSectionResizeMode(
-            4, QHeaderView.ResizeToContents
-        )
-
-        self.table.setRowHeight(0, 44)
 
         outer.addWidget(self.table, stretch=1)
 

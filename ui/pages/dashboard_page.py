@@ -6,13 +6,19 @@ from PySide6.QtWidgets import (
     QPushButton,
     QFrame,
     QScrollArea,
-    QSizePolicy,
 )
 
 from PySide6.QtCore import Qt
 
 from services.dashboard_service import (
     DashboardService,
+)
+from ui.foundation import (
+    PageHeader,
+    SectionTitle as SectionHeader,
+    StatCard,
+    create_button,
+    divider,
 )
 
 from utils.constants import WORKFLOW_STAGES
@@ -37,86 +43,6 @@ STAGE_LABELS = {
     "PRORROGA": "Prórroga",
     "CANCELACION": "Cancelación",
 }
-
-
-# ==========================================
-# STAT CARD
-# ==========================================
-
-class StatCard(QFrame):
-    def __init__(
-        self,
-        count,
-        title,
-        color="#3B82F6",
-        parent=None,
-    ):
-        super().__init__(parent)
-
-        self.setObjectName("StatCard")
-
-        self.setSizePolicy(
-            QSizePolicy.Expanding,
-            QSizePolicy.Fixed,
-        )
-
-        self.setMinimumHeight(110)
-
-        layout = QVBoxLayout()
-
-        layout.setContentsMargins(20, 16, 20, 16)
-
-        layout.setSpacing(2)
-
-        self.setLayout(layout)
-
-        count_label = QLabel(str(count))
-
-        count_label.setObjectName("StatCount")
-
-        count_label.setStyleSheet(
-            f"color: {color}; "
-            f"font-size: 38px; "
-            f"font-weight: 700; "
-            f"background: transparent;"
-        )
-
-        title_label = QLabel(title)
-
-        title_label.setObjectName("StatTitle")
-
-        title_label.setWordWrap(True)
-
-        layout.addWidget(count_label)
-
-        layout.addWidget(title_label)
-
-        layout.addStretch()
-
-
-# ==========================================
-# SECTION HEADER
-# ==========================================
-
-class SectionHeader(QWidget):
-    def __init__(self, text, parent=None):
-        super().__init__(parent)
-
-        layout = QHBoxLayout()
-
-        layout.setContentsMargins(0, 8, 0, 4)
-
-        layout.setSpacing(0)
-
-        self.setLayout(layout)
-
-        label = QLabel(text)
-
-        label.setObjectName("SectionHeader")
-
-        layout.addWidget(label)
-
-        layout.addStretch()
 
 
 # ==========================================

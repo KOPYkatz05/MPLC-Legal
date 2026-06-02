@@ -1,3 +1,9 @@
+import os
+import stat
+import shutil
+
+from pathlib import Path
+
 from database.db import SessionLocal
 
 from database.models.missionary import (
@@ -15,10 +21,6 @@ from services.onedrive_service import (
 from services.workflow_service import (
     WorkflowService,
 )
-
-import shutil
-
-from pathlib import Path
 
 from utils.logger import logger
 
@@ -210,49 +212,22 @@ class MissionaryService:
             # ======================================
 
             if missionary.folder_path:
-                current_folder = Path(
-                    missionary.folder_path
-                )
-
-                trash_root = (
-                    current_folder.parent.parent
-                    / "TRASH PILE"
-                )
-
-                trash_root.mkdir(
-                    exist_ok=True
-                )
-
                 destination_folder = (
-                    trash_root
-                    / current_folder.name
+                    self.onedrive_service
+                    .trash_missionary_folder(
+                        missionary.folder_path
+                    )
                 )
 
-                counter = 1
+                missionary.folder_path = str(
+                    destination_folder
+                )
 
-                while destination_folder.exists():
-                    destination_folder = (
-                        trash_root
-                        / f"{current_folder.name}_{counter}"
-                    )
-
-                    counter += 1
-
-                if current_folder.exists():
-                    shutil.move(
-                        str(current_folder),
-                        str(destination_folder),
-                    )
-
-                    missionary.folder_path = str(
-                        destination_folder
-                    )
-
-                    logger.info(
-                        f"Moved missionary folder "
-                        f"to trash: "
-                        f"{destination_folder}"
-                    )
+                logger.info(
+                    f"Moved missionary folder "
+                    f"to trash: "
+                    f"{destination_folder}"
+                )
 
             # ======================================
             # Soft Delete
@@ -324,39 +299,14 @@ class MissionaryService:
 
             # Move folder back
             if missionary.folder_path:
-                current_folder = Path(
-                    missionary.folder_path
-                )
-
-                active_root = (
-                    current_folder.parent.parent
-                    / "Missionaries"
-                )
-
-                active_root.mkdir(exist_ok=True)
-
                 dest = (
-                    active_root
-                    / current_folder.name
+                    self.onedrive_service
+                    .restore_missionary_folder(
+                        missionary.folder_path
+                    )
                 )
 
-                counter = 1
-
-                while dest.exists():
-                    dest = (
-                        active_root
-                        / f"{current_folder.name}_{counter}"
-                    )
-
-                    counter += 1
-
-                if current_folder.exists():
-                    shutil.move(
-                        str(current_folder),
-                        str(dest),
-                    )
-
-                    missionary.folder_path = str(dest)
+                missionary.folder_path = str(dest)
 
             session.commit()
 
@@ -397,7 +347,16 @@ class MissionaryService:
                 )
 
                 if folder.exists():
-                    shutil.rmtree(folder)
+                    folder_deleted = (
+                        self._safe_delete_folder(folder)
+                    )
+
+                    if not folder_deleted:
+                        logger.warning(
+                            f"Could not fully remove folder "
+                            f"for missionary ID {missionary_id}: "
+                            f"{folder}"
+                        )
 
             # Delete related records
             from database.models.document import (
@@ -456,3 +415,46 @@ class MissionaryService:
 
         finally:
             session.close()
+
+    def _make_writable(self, path):
+        try:
+            os.chmod(path, stat.S_IWRITE)
+        except Exception:
+            logger.debug(
+                f"Could not update permissions for {path}"
+            )
+
+    def _safe_delete_folder(self, folder):
+        # OneDrive and Windows can leave read-only files or directories
+        # behind long enough for a plain rmtree() to fail. We first clear
+        # writable flags recursively, then retry permission errors.
+        try:
+            for child in folder.rglob("*"):
+                self._make_writable(child)
+
+            self._make_writable(folder)
+
+            def onerror(func, path, exc_info):
+                exc = exc_info[1]
+
+                if isinstance(exc, PermissionError):
+                    self._make_writable(path)
+
+                    try:
+                        func(path)
+                        return
+                    except Exception:
+                        pass
+
+                raise exc
+
+            shutil.rmtree(folder, onerror=onerror)
+
+            return not folder.exists()
+
+        except Exception:
+            logger.exception(
+                f"Failed to remove folder: {folder}"
+            )
+
+            return False

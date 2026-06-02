@@ -686,3 +686,769 @@ FROM documents]
 2026-06-01 15:40:28,298 | INFO | Loaded active missionaries
 2026-06-01 15:40:28,300 | INFO | Loaded 3 missionaries into table
 2026-06-01 15:40:53,504 | INFO | Loaded 0 trashed missionaries
+2026-06-01 15:44:28,687 | INFO | Loaded 0 trashed missionaries
+2026-06-01 15:44:33,845 | INFO | Loaded active missionaries
+2026-06-01 15:44:33,850 | INFO | Loaded 3 missionaries into table
+2026-06-01 15:44:35,030 | INFO | Loaded active missionaries
+2026-06-01 15:44:35,033 | INFO | Loaded 3 missionaries into table
+2026-06-01 15:45:10,302 | INFO | Opening detail page for missionary: James William VanOrden
+2026-06-01 15:45:10,304 | INFO | Loading missionary details for James William VanOrden
+2026-06-01 15:45:10,307 | INFO | Loading documents for missionary ID 4
+2026-06-01 15:45:10,309 | INFO | Loaded 0 documents for missionary ID 4
+2026-06-01 15:45:12,983 | ERROR | Failed to delete missionary ID 4
+Traceback (most recent call last):
+  File "C:\Local Apps\Mission-Legal-App(V2)\services\missionary_service.py", line 222, in delete_missionary
+    trash_root.mkdir(
+  File "C:\Users\PerúLimaCentralMissi\AppData\Local\Programs\Python\Python312\Lib\pathlib.py", line 1311, in mkdir
+    os.mkdir(self, mode)
+FileNotFoundError: [WinError 3] The system cannot find the path specified: '\\home\\runner\\mission_data\\TRASH PILE'
+2026-06-01 15:45:15,612 | INFO | Dashboard data loaded
+2026-06-01 15:45:15,629 | INFO | Dashboard data loaded
+2026-06-01 15:45:15,951 | INFO | Loaded active missionaries
+2026-06-01 15:45:15,953 | INFO | Loaded 3 missionaries into table
+2026-06-01 15:45:17,017 | INFO | Opening detail page for missionary: James William VanOrden
+2026-06-01 15:45:17,018 | INFO | Loading missionary details for James William VanOrden
+2026-06-01 15:45:17,021 | INFO | Loading documents for missionary ID 3
+2026-06-01 15:45:17,022 | INFO | Loaded 0 documents for missionary ID 3
+2026-06-01 15:45:19,209 | INFO | Moved missionary folder to trash: C:\Users\PerúLimaCentralMissi\OneDrive - Church of Jesus Christ (1)\Sec. Visas\1. Visas Lima Central\1 DOCUMENTOS DE LEGALIZACIÓN - IMPORTANTE\TRASH PILE\James William VanOrden
+2026-06-01 15:45:19,222 | INFO | Soft deleted missionary: James William VanOrden
+2026-06-01 15:45:19,223 | INFO | Loaded active missionaries
+2026-06-01 15:45:19,226 | INFO | Loaded 2 missionaries into table
+2026-06-01 15:45:20,502 | INFO | Opening detail page for missionary: James William VanOrden
+2026-06-01 15:45:20,502 | INFO | Loading missionary details for James William VanOrden
+2026-06-01 15:45:20,511 | INFO | Loading documents for missionary ID 4
+2026-06-01 15:45:20,513 | INFO | Loaded 0 documents for missionary ID 4
+2026-06-01 15:45:22,478 | ERROR | Failed to delete missionary ID 4
+Traceback (most recent call last):
+  File "C:\Local Apps\Mission-Legal-App(V2)\services\missionary_service.py", line 222, in delete_missionary
+    trash_root.mkdir(
+  File "C:\Users\PerúLimaCentralMissi\AppData\Local\Programs\Python\Python312\Lib\pathlib.py", line 1311, in mkdir
+    os.mkdir(self, mode)
+FileNotFoundError: [WinError 3] The system cannot find the path specified: '\\home\\runner\\mission_data\\TRASH PILE'
+2026-06-01 15:45:25,110 | INFO | Loaded active missionaries
+2026-06-01 15:45:25,114 | INFO | Loaded 2 missionaries into table
+2026-06-01 15:45:25,910 | INFO | Opening detail page for missionary: thatonenewguynamed Steve
+2026-06-01 15:45:25,916 | INFO | Loading missionary details for thatonenewguynamed Steve
+2026-06-01 15:45:25,919 | INFO | Loading documents for missionary ID 1
+2026-06-01 15:45:25,922 | INFO | Loaded 1 documents for missionary ID 1
+2026-06-01 15:45:27,799 | INFO | Moved missionary folder to trash: C:\Users\PerúLimaCentralMissi\OneDrive - Church of Jesus Christ (1)\Sec. Visas\1. Visas Lima Central\1 DOCUMENTOS DE LEGALIZACIÓN - IMPORTANTE\TRASH PILE\thatonenewguynamed Steve
+2026-06-01 15:45:27,808 | INFO | Soft deleted missionary: thatonenewguynamed Steve
+2026-06-01 15:45:27,809 | INFO | Loaded active missionaries
+2026-06-01 15:45:27,809 | INFO | Loaded 1 missionaries into table
+2026-06-01 15:45:28,849 | INFO | Opening detail page for missionary: James William VanOrden
+2026-06-01 15:45:28,852 | INFO | Loading missionary details for James William VanOrden
+2026-06-01 15:45:28,856 | INFO | Loading documents for missionary ID 4
+2026-06-01 15:45:28,857 | INFO | Loaded 0 documents for missionary ID 4
+2026-06-01 15:45:31,714 | ERROR | Failed to delete missionary ID 4
+Traceback (most recent call last):
+  File "C:\Local Apps\Mission-Legal-App(V2)\services\missionary_service.py", line 222, in delete_missionary
+    trash_root.mkdir(
+  File "C:\Users\PerúLimaCentralMissi\AppData\Local\Programs\Python\Python312\Lib\pathlib.py", line 1311, in mkdir
+    os.mkdir(self, mode)
+FileNotFoundError: [WinError 3] The system cannot find the path specified: '\\home\\runner\\mission_data\\TRASH PILE'
+2026-06-01 15:45:34,110 | ERROR | Failed to delete missionary ID 4
+Traceback (most recent call last):
+  File "C:\Local Apps\Mission-Legal-App(V2)\services\missionary_service.py", line 222, in delete_missionary
+    trash_root.mkdir(
+  File "C:\Users\PerúLimaCentralMissi\AppData\Local\Programs\Python\Python312\Lib\pathlib.py", line 1311, in mkdir
+    os.mkdir(self, mode)
+FileNotFoundError: [WinError 3] The system cannot find the path specified: '\\home\\runner\\mission_data\\TRASH PILE'
+2026-06-01 16:37:20,048 | INFO | Dashboard data loaded
+2026-06-01 16:37:20,048 | INFO | Initialized OneDrive root folders
+2026-06-01 16:37:20,052 | INFO | Initialized OneDrive root folders
+2026-06-01 16:37:20,052 | INFO | Initialized MissionariesPage
+2026-06-01 16:37:20,872 | INFO | Loaded active missionaries
+2026-06-01 16:37:20,872 | INFO | Loaded 1 missionaries into table
+2026-06-01 16:37:20,872 | INFO | Initializing MissionaryDetailPage
+2026-06-01 16:37:20,876 | INFO | Initialized OneDrive root folders
+2026-06-01 16:37:20,876 | INFO | Initialized OneDrive root folders
+2026-06-01 16:37:20,878 | INFO | Initialized OneDrive root folders
+2026-06-01 16:37:20,924 | INFO | Initialized OneDrive root folders
+2026-06-01 16:37:20,924 | INFO | Initialized OneDrive root folders
+2026-06-01 16:37:20,936 | INFO | Loaded 2 trashed missionaries
+2026-06-01 16:37:20,973 | INFO | Dashboard data loaded
+2026-06-01 16:37:21,124 | INFO | Dashboard data loaded
+2026-06-01 16:37:21,822 | INFO | Showing 1 expiration alert(s)
+2026-06-01 16:37:41,022 | INFO | Loaded active missionaries
+2026-06-01 16:37:41,022 | INFO | Loaded 1 missionaries into table
+2026-06-01 16:37:43,186 | INFO | Initialized OneDrive root folders
+2026-06-01 16:37:43,195 | INFO | Initialized OneDrive root folders
+2026-06-01 16:37:43,195 | INFO | Opened Add Missionary dialog
+2026-06-01 16:37:47,052 | INFO | Opening detail page for missionary: James William VanOrden
+2026-06-01 16:37:47,057 | INFO | Loading missionary details for James William VanOrden
+2026-06-01 16:37:47,062 | INFO | Loading documents for missionary ID 4
+2026-06-01 16:37:47,064 | INFO | Loaded 0 documents for missionary ID 4
+2026-06-01 16:38:28,072 | INFO | Batch uploaded PASSPORT.pdf for James William VanOrden
+2026-06-01 16:38:31,065 | INFO | Loading missionary details for James William VanOrden
+2026-06-01 16:38:31,065 | INFO | Loading documents for missionary ID 4
+2026-06-01 16:38:31,074 | INFO | Loaded 1 documents for missionary ID 4
+2026-06-01 16:39:10,100 | INFO | Advanced James William VanOrden from INTERPOL to CARNET DE EXTRANJERIA
+2026-06-01 16:39:10,107 | INFO | Loading missionary details for James William VanOrden
+2026-06-01 16:39:10,114 | INFO | Loading documents for missionary ID 4
+2026-06-01 16:39:10,114 | INFO | Loaded 1 documents for missionary ID 4
+2026-06-01 16:39:10,145 | INFO | Loaded active missionaries
+2026-06-01 16:39:10,145 | INFO | Loaded 1 missionaries into table
+2026-06-01 16:39:38,942 | INFO | Loaded active missionaries
+2026-06-01 16:39:38,943 | INFO | Loaded 1 missionaries into table
+2026-06-01 16:39:41,592 | INFO | Opening detail page for missionary: James William VanOrden
+2026-06-01 16:39:41,594 | INFO | Loading missionary details for James William VanOrden
+2026-06-01 16:39:41,597 | INFO | Loading documents for missionary ID 4
+2026-06-01 16:39:41,599 | INFO | Loaded 1 documents for missionary ID 4
+2026-06-01 16:40:25,846 | INFO | Loaded 2 trashed missionaries
+2026-06-01 16:40:42,104 | INFO | Loaded active missionaries
+2026-06-01 16:40:42,109 | INFO | Loaded 1 missionaries into table
+2026-06-01 21:25:13,194 | INFO | Dashboard data loaded
+2026-06-01 21:25:13,194 | INFO | Initialized OneDrive root folders
+2026-06-01 21:25:13,194 | INFO | Initialized OneDrive root folders
+2026-06-01 21:25:13,194 | INFO | Initialized MissionariesPage
+2026-06-01 21:25:13,578 | INFO | Loaded active missionaries
+2026-06-01 21:25:13,578 | INFO | Loaded 1 missionaries into table
+2026-06-01 21:25:13,578 | INFO | Initializing MissionaryDetailPage
+2026-06-01 21:25:13,578 | INFO | Initialized OneDrive root folders
+2026-06-01 21:25:13,578 | INFO | Initialized OneDrive root folders
+2026-06-01 21:25:13,578 | INFO | Initialized OneDrive root folders
+2026-06-01 21:25:13,640 | INFO | Initialized OneDrive root folders
+2026-06-01 21:25:13,641 | INFO | Initialized OneDrive root folders
+2026-06-01 21:25:13,644 | INFO | Loaded 2 trashed missionaries
+2026-06-01 21:25:13,694 | INFO | Dashboard data loaded
+2026-06-01 21:25:13,839 | INFO | Dashboard data loaded
+2026-06-01 21:25:14,545 | INFO | Showing 1 expiration alert(s)
+2026-06-01 21:25:18,636 | INFO | Loaded active missionaries
+2026-06-01 21:25:18,640 | INFO | Loaded 1 missionaries into table
+2026-06-01 21:25:23,293 | INFO | Opening detail page for missionary: James William VanOrden
+2026-06-01 21:25:23,293 | INFO | Loading missionary details for James William VanOrden
+2026-06-01 21:25:23,300 | INFO | Loading documents for missionary ID 4
+2026-06-01 21:25:23,303 | INFO | Loaded 1 documents for missionary ID 4
+2026-06-01 21:25:45,653 | INFO | Loaded active missionaries
+2026-06-01 21:25:45,666 | INFO | Loaded 1 missionaries into table
+2026-06-01 21:25:48,470 | INFO | Initialized OneDrive root folders
+2026-06-01 21:25:48,470 | INFO | Initialized OneDrive root folders
+2026-06-01 21:25:48,470 | INFO | Opened Add Missionary dialog
+2026-06-01 21:27:03,422 | INFO | Created missionary root folder: C:\Users\PerúLimaCentralMissi\mission_data\ACTIVE\James William VanOrden
+2026-06-01 21:27:03,422 | INFO | Created system folder: C:\Users\PerúLimaCentralMissi\mission_data\ACTIVE\James William VanOrden\RAW_SCANS
+2026-06-01 21:27:03,438 | INFO | Created system folder: C:\Users\PerúLimaCentralMissi\mission_data\ACTIVE\James William VanOrden\OCR_PROCESSED
+2026-06-01 21:27:03,438 | INFO | Created workflow folder: C:\Users\PerúLimaCentralMissi\mission_data\ACTIVE\James William VanOrden\INTERPOL
+2026-06-01 21:27:03,440 | INFO | Created workflow folder: C:\Users\PerúLimaCentralMissi\mission_data\ACTIVE\James William VanOrden\CARNET DE EXTRANJERIA
+2026-06-01 21:27:03,440 | INFO | Created workflow folder: C:\Users\PerúLimaCentralMissi\mission_data\ACTIVE\James William VanOrden\PRORROGA
+2026-06-01 21:27:03,440 | INFO | Created workflow folder: C:\Users\PerúLimaCentralMissi\mission_data\ACTIVE\James William VanOrden\CANCELACION
+2026-06-01 21:27:03,454 | INFO | Initialized workflows for missionary ID 5
+2026-06-01 21:27:03,454 | INFO | Created missionary: James William VanOrden
+2026-06-01 21:27:03,454 | INFO | Successfully created missionary from dialog: James William VanOrden
+2026-06-01 21:27:03,460 | INFO | Missionary created successfully
+2026-06-01 21:27:03,460 | INFO | Loaded active missionaries
+2026-06-01 21:27:03,460 | INFO | Loaded 2 missionaries into table
+2026-06-01 21:27:06,255 | INFO | Opening detail page for missionary: James William VanOrden
+2026-06-01 21:27:06,255 | INFO | Loading missionary details for James William VanOrden
+2026-06-01 21:27:06,255 | INFO | Loading documents for missionary ID 5
+2026-06-01 21:27:06,255 | INFO | Loaded 0 documents for missionary ID 5
+2026-06-01 21:27:22,543 | INFO | Loaded 2 trashed missionaries
+2026-06-01 21:27:28,922 | INFO | Loaded active missionaries
+2026-06-01 21:27:28,922 | INFO | Loaded 2 missionaries into table
+2026-06-01 21:27:30,343 | INFO | Dashboard data loaded
+2026-06-01 21:27:30,343 | INFO | Dashboard data loaded
+2026-06-01 21:27:43,172 | INFO | Loaded 2 trashed missionaries
+2026-06-01 21:27:46,996 | INFO | Loaded active missionaries
+2026-06-01 21:27:46,996 | INFO | Loaded 2 missionaries into table
+2026-06-01 21:27:48,731 | INFO | Opening detail page for missionary: James William VanOrden
+2026-06-01 21:27:48,731 | INFO | Loading missionary details for James William VanOrden
+2026-06-01 21:27:48,731 | INFO | Loading documents for missionary ID 5
+2026-06-01 21:27:48,731 | INFO | Loaded 0 documents for missionary ID 5
+2026-06-01 21:28:13,617 | INFO | Initializing PaddleOCR
+2026-06-01 21:28:18,638 | ERROR | Failed to initialize PaddleOCR
+Traceback (most recent call last):
+  File "C:\Local Apps\Mission-Legal-App(V2)\services\ocr_service.py", line 9, in __init__
+    from paddleocr import PaddleOCR
+  File "C:\Users\PerúLimaCentralMissi\AppData\Local\Programs\Python\Python312\Lib\site-packages\paddleocr\__init__.py", line 14, in <module>
+    from .paddleocr import *
+  File "C:\Users\PerúLimaCentralMissi\AppData\Local\Programs\Python\Python312\Lib\site-packages\paddleocr\paddleocr.py", line 21, in <module>
+    import paddle
+  File "C:\Users\PerúLimaCentralMissi\AppData\Local\Programs\Python\Python312\Lib\site-packages\paddle\__init__.py", line 28, in <module>
+    from .base import core  # noqa: F401
+    ^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\PerúLimaCentralMissi\AppData\Local\Programs\Python\Python312\Lib\site-packages\paddle\base\__init__.py", line 77, in <module>
+    from . import dataset
+  File "C:\Users\PerúLimaCentralMissi\AppData\Local\Programs\Python\Python312\Lib\site-packages\paddle\base\dataset.py", line 20, in <module>
+    from ..utils import deprecated
+  File "C:\Users\PerúLimaCentralMissi\AppData\Local\Programs\Python\Python312\Lib\site-packages\paddle\utils\__init__.py", line 16, in <module>
+    from . import (  # noqa: F401
+  File "C:\Users\PerúLimaCentralMissi\AppData\Local\Programs\Python\Python312\Lib\site-packages\paddle\utils\cpp_extension\__init__.py", line 15, in <module>
+    from .cpp_extension import (
+  File "C:\Users\PerúLimaCentralMissi\AppData\Local\Programs\Python\Python312\Lib\site-packages\paddle\utils\cpp_extension\cpp_extension.py", line 21, in <module>
+    import setuptools
+ModuleNotFoundError: No module named 'setuptools'
+2026-06-01 21:28:18,656 | ERROR | Failed to initialize OCR service
+Traceback (most recent call last):
+  File "C:\Local Apps\Mission-Legal-App(V2)\services\upload_pipeline.py", line 58, in get_ocr_service
+    _ocr_service = OCRService()
+                   ^^^^^^^^^^^^
+  File "C:\Local Apps\Mission-Legal-App(V2)\services\ocr_service.py", line 9, in __init__
+    from paddleocr import PaddleOCR
+  File "C:\Users\PerúLimaCentralMissi\AppData\Local\Programs\Python\Python312\Lib\site-packages\paddleocr\__init__.py", line 14, in <module>
+    from .paddleocr import *
+  File "C:\Users\PerúLimaCentralMissi\AppData\Local\Programs\Python\Python312\Lib\site-packages\paddleocr\paddleocr.py", line 21, in <module>
+    import paddle
+  File "C:\Users\PerúLimaCentralMissi\AppData\Local\Programs\Python\Python312\Lib\site-packages\paddle\__init__.py", line 28, in <module>
+    from .base import core  # noqa: F401
+    ^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\PerúLimaCentralMissi\AppData\Local\Programs\Python\Python312\Lib\site-packages\paddle\base\__init__.py", line 77, in <module>
+    from . import dataset
+  File "C:\Users\PerúLimaCentralMissi\AppData\Local\Programs\Python\Python312\Lib\site-packages\paddle\base\dataset.py", line 20, in <module>
+    from ..utils import deprecated
+  File "C:\Users\PerúLimaCentralMissi\AppData\Local\Programs\Python\Python312\Lib\site-packages\paddle\utils\__init__.py", line 16, in <module>
+    from . import (  # noqa: F401
+  File "C:\Users\PerúLimaCentralMissi\AppData\Local\Programs\Python\Python312\Lib\site-packages\paddle\utils\cpp_extension\__init__.py", line 15, in <module>
+    from .cpp_extension import (
+  File "C:\Users\PerúLimaCentralMissi\AppData\Local\Programs\Python\Python312\Lib\site-packages\paddle\utils\cpp_extension\cpp_extension.py", line 21, in <module>
+    import setuptools
+ModuleNotFoundError: No module named 'setuptools'
+2026-06-01 21:29:35,455 | INFO | Uploading document PASSPORT.pdf for missionary James William VanOrden
+2026-06-01 21:29:35,468 | INFO | Successfully uploaded PASSPORT.pdf for missionary James William VanOrden
+2026-06-01 21:29:35,479 | INFO | Auto-updated missionary 5: ['passport_number', 'nationality', 'passport_expiration']
+2026-06-01 21:29:58,453 | INFO | Uploading document TAM.pdf for missionary James William VanOrden
+2026-06-01 21:29:58,471 | INFO | Successfully uploaded TAM.pdf for missionary James William VanOrden
+2026-06-01 21:29:58,489 | INFO | Auto-updated missionary 5: ['arrival_date', 'visa_expiration']
+2026-06-01 21:30:02,279 | INFO | Loading missionary details for James William VanOrden
+2026-06-01 21:30:02,279 | INFO | Loading documents for missionary ID 5
+2026-06-01 21:30:02,279 | INFO | Loaded 2 documents for missionary ID 5
+2026-06-01 21:42:12,324 | INFO | Dashboard data loaded
+2026-06-01 21:42:12,325 | INFO | Initialized OneDrive root folders
+2026-06-01 21:42:12,326 | INFO | Initialized OneDrive root folders
+2026-06-01 21:42:12,327 | INFO | Initialized MissionariesPage
+2026-06-01 21:42:12,649 | INFO | Loaded active missionaries
+2026-06-01 21:42:12,649 | INFO | Loaded 2 missionaries into table
+2026-06-01 21:42:12,649 | INFO | Initializing MissionaryDetailPage
+2026-06-01 21:42:12,653 | INFO | Initialized OneDrive root folders
+2026-06-01 21:42:12,653 | INFO | Initialized OneDrive root folders
+2026-06-01 21:42:12,655 | INFO | Initialized OneDrive root folders
+2026-06-01 21:42:12,711 | INFO | Initialized OneDrive root folders
+2026-06-01 21:42:12,712 | INFO | Initialized OneDrive root folders
+2026-06-01 21:42:12,718 | INFO | Loaded 2 trashed missionaries
+2026-06-01 21:42:12,756 | INFO | Dashboard data loaded
+2026-06-01 21:42:12,886 | INFO | Dashboard data loaded
+2026-06-01 21:42:13,599 | INFO | Showing 2 expiration alert(s)
+2026-06-01 21:42:18,861 | INFO | Loaded active missionaries
+2026-06-01 21:42:18,861 | INFO | Loaded 2 missionaries into table
+2026-06-01 21:42:21,078 | INFO | Initialized OneDrive root folders
+2026-06-01 21:42:21,078 | INFO | Initialized OneDrive root folders
+2026-06-01 21:42:21,078 | INFO | Opened Add Missionary dialog
+2026-06-01 21:42:23,624 | INFO | Opening detail page for missionary: James William VanOrden
+2026-06-01 21:42:23,624 | INFO | Loading missionary details for James William VanOrden
+2026-06-01 21:42:23,624 | INFO | Loading documents for missionary ID 5
+2026-06-01 21:42:23,624 | INFO | Loaded 2 documents for missionary ID 5
+2026-06-01 21:42:34,908 | ERROR | Document viewer failed
+Traceback (most recent call last):
+  File "C:\Local Apps\Mission-Legal-App(V2)\ui\pages\missionary_detail_page.py", line 1311, in _open_document_viewer
+    dialog = DocumentViewerDialog(
+             ^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Local Apps\Mission-Legal-App(V2)\ui\dialogs\document_viewer_dialog.py", line 43, in __init__
+    self.setup_ui()
+  File "C:\Local Apps\Mission-Legal-App(V2)\ui\dialogs\document_viewer_dialog.py", line 145, in setup_ui
+    | Qt.SmoothPixmapTransform
+      ^^^^^^^^^^^^^^^^^^^^^^^^
+AttributeError: type object 'PySide6.QtCore.Qt' has no attribute 'SmoothPixmapTransform'
+2026-06-01 21:42:38,093 | ERROR | Document viewer failed
+Traceback (most recent call last):
+  File "C:\Local Apps\Mission-Legal-App(V2)\ui\pages\missionary_detail_page.py", line 1311, in _open_document_viewer
+    dialog = DocumentViewerDialog(
+             ^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Local Apps\Mission-Legal-App(V2)\ui\dialogs\document_viewer_dialog.py", line 43, in __init__
+    self.setup_ui()
+  File "C:\Local Apps\Mission-Legal-App(V2)\ui\dialogs\document_viewer_dialog.py", line 145, in setup_ui
+    | Qt.SmoothPixmapTransform
+      ^^^^^^^^^^^^^^^^^^^^^^^^
+AttributeError: type object 'PySide6.QtCore.Qt' has no attribute 'SmoothPixmapTransform'
+2026-06-02 12:58:18,463 | INFO | Parsing OCR text for document type: CONSTANCIA_DE_CITA_INTERPOL
+2026-06-02 12:58:18,463 | INFO | Parsing OCR text for document type: PASSPORT
+2026-06-02 12:58:18,463 | INFO | Passport parse result: ['passport_number', 'nationality', 'full_name', 'date_of_birth', 'passport_expiration']
+2026-06-02 12:58:18,463 | INFO | Parsing OCR text for document type: TAM
+2026-06-02 12:58:18,463 | INFO | OCR status=success fields=['arrival_date', 'visa_expiration']
+2026-06-02 12:58:18,463 | INFO | Parsing OCR text for document type: TAM
+2026-06-02 12:59:56,644 | INFO | Parsing OCR text for document type: CONSTANCIA_DE_CITA_INTERPOL
+2026-06-02 12:59:56,644 | INFO | Parsing OCR text for document type: PASSPORT
+2026-06-02 12:59:56,644 | INFO | Passport parse result: ['passport_number', 'nationality', 'full_name', 'date_of_birth', 'passport_expiration']
+2026-06-02 12:59:56,644 | INFO | Parsing OCR text for document type: TAM
+2026-06-02 12:59:56,644 | INFO | OCR status=success fields=['arrival_date', 'visa_expiration']
+2026-06-02 12:59:56,644 | INFO | Parsing OCR text for document type: TAM
+2026-06-02 13:04:23,762 | INFO | Dashboard data loaded
+2026-06-02 13:04:23,764 | INFO | Initialized OneDrive root folders
+2026-06-02 13:04:23,765 | INFO | Initialized OneDrive root folders
+2026-06-02 13:04:23,765 | INFO | Initialized MissionariesPage
+2026-06-02 13:04:24,119 | INFO | Loaded active missionaries
+2026-06-02 13:04:24,119 | INFO | Loaded 2 missionaries into table
+2026-06-02 13:04:24,119 | INFO | Initializing MissionaryDetailPage
+2026-06-02 13:04:24,119 | INFO | Initialized OneDrive root folders
+2026-06-02 13:04:24,119 | INFO | Initialized OneDrive root folders
+2026-06-02 13:04:24,119 | INFO | Initialized OneDrive root folders
+2026-06-02 13:04:24,178 | INFO | Initialized OneDrive root folders
+2026-06-02 13:04:24,179 | INFO | Initialized OneDrive root folders
+2026-06-02 13:04:24,184 | INFO | Loaded 2 trashed missionaries
+2026-06-02 13:04:24,232 | INFO | Dashboard data loaded
+2026-06-02 13:04:24,373 | INFO | Dashboard data loaded
+2026-06-02 13:04:25,075 | INFO | Showing 2 expiration alert(s)
+2026-06-02 13:04:28,839 | INFO | Loaded active missionaries
+2026-06-02 13:04:28,850 | INFO | Loaded 2 missionaries into table
+2026-06-02 13:04:30,762 | INFO | Initialized OneDrive root folders
+2026-06-02 13:04:30,766 | INFO | Initialized OneDrive root folders
+2026-06-02 13:04:30,766 | INFO | Opened Add Missionary dialog
+2026-06-02 13:05:04,961 | INFO | Created missionary root folder: C:\Users\PerúLimaCentralMissi\mission_data\ACTIVE\James William VanOrden
+2026-06-02 13:05:04,961 | INFO | Created system folder: C:\Users\PerúLimaCentralMissi\mission_data\ACTIVE\James William VanOrden\RAW_SCANS
+2026-06-02 13:05:04,974 | INFO | Created system folder: C:\Users\PerúLimaCentralMissi\mission_data\ACTIVE\James William VanOrden\OCR_PROCESSED
+2026-06-02 13:05:04,974 | INFO | Created workflow folder: C:\Users\PerúLimaCentralMissi\mission_data\ACTIVE\James William VanOrden\INTERPOL
+2026-06-02 13:05:04,974 | INFO | Created workflow folder: C:\Users\PerúLimaCentralMissi\mission_data\ACTIVE\James William VanOrden\CARNET DE EXTRANJERIA
+2026-06-02 13:05:04,974 | INFO | Created workflow folder: C:\Users\PerúLimaCentralMissi\mission_data\ACTIVE\James William VanOrden\PRORROGA
+2026-06-02 13:05:04,974 | INFO | Created workflow folder: C:\Users\PerúLimaCentralMissi\mission_data\ACTIVE\James William VanOrden\CANCELACION
+2026-06-02 13:05:04,976 | INFO | Initialized workflows for missionary ID 6
+2026-06-02 13:05:04,976 | INFO | Created missionary: James William VanOrden
+2026-06-02 13:05:04,976 | INFO | Successfully created missionary from dialog: James William VanOrden
+2026-06-02 13:05:04,995 | INFO | Missionary created successfully
+2026-06-02 13:05:04,995 | INFO | Loaded active missionaries
+2026-06-02 13:05:04,995 | INFO | Loaded 3 missionaries into table
+2026-06-02 13:05:09,034 | INFO | Opening detail page for missionary: James William VanOrden
+2026-06-02 13:05:09,034 | INFO | Loading missionary details for James William VanOrden
+2026-06-02 13:05:09,034 | INFO | Loading documents for missionary ID 5
+2026-06-02 13:05:09,034 | INFO | Loaded 2 documents for missionary ID 5
+2026-06-02 13:05:11,817 | INFO | Loaded active missionaries
+2026-06-02 13:05:11,817 | INFO | Loaded 3 missionaries into table
+2026-06-02 13:05:14,907 | INFO | Opening detail page for missionary: James William VanOrden
+2026-06-02 13:05:14,907 | INFO | Loading missionary details for James William VanOrden
+2026-06-02 13:05:14,909 | INFO | Loading documents for missionary ID 6
+2026-06-02 13:05:14,909 | INFO | Loaded 0 documents for missionary ID 6
+2026-06-02 13:10:28,381 | INFO | Loaded active missionaries
+2026-06-02 13:10:28,397 | INFO | Loaded 3 missionaries into table
+2026-06-02 13:10:41,728 | INFO | Opening detail page for missionary: James William VanOrden
+2026-06-02 13:10:41,728 | INFO | Loading missionary details for James William VanOrden
+2026-06-02 13:10:41,731 | INFO | Loading documents for missionary ID 5
+2026-06-02 13:10:41,731 | INFO | Loaded 2 documents for missionary ID 5
+2026-06-02 13:10:58,492 | INFO | OCR image prepared: C:\Users\PERLIM~1\AppData\Local\Temp\tmp6s0lw1nc.png
+2026-06-02 13:10:59,868 | INFO | OCR image prepared: C:\Users\PERLIM~1\AppData\Local\Temp\tmpq2b76xau.png
+2026-06-02 13:10:59,888 | INFO | Initializing PaddleOCR
+2026-06-02 13:11:03,476 | ERROR | Failed to initialize PaddleOCR
+Traceback (most recent call last):
+  File "C:\Local Apps\Mission-Legal-App(V2)\services\ocr_service.py", line 9, in __init__
+    from paddleocr import PaddleOCR
+  File "C:\Local Apps\Mission-Legal-App(V2)\venv\Lib\site-packages\paddleocr\__init__.py", line 14, in <module>
+    from .paddleocr import *
+  File "C:\Local Apps\Mission-Legal-App(V2)\venv\Lib\site-packages\paddleocr\paddleocr.py", line 21, in <module>
+    import paddle
+  File "C:\Local Apps\Mission-Legal-App(V2)\venv\Lib\site-packages\paddle\__init__.py", line 28, in <module>
+    from .base import core  # noqa: F401
+    ^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Local Apps\Mission-Legal-App(V2)\venv\Lib\site-packages\paddle\base\__init__.py", line 77, in <module>
+    from . import dataset
+  File "C:\Local Apps\Mission-Legal-App(V2)\venv\Lib\site-packages\paddle\base\dataset.py", line 20, in <module>
+    from ..utils import deprecated
+  File "C:\Local Apps\Mission-Legal-App(V2)\venv\Lib\site-packages\paddle\utils\__init__.py", line 16, in <module>
+    from . import (  # noqa: F401
+  File "C:\Local Apps\Mission-Legal-App(V2)\venv\Lib\site-packages\paddle\utils\cpp_extension\__init__.py", line 15, in <module>
+    from .cpp_extension import (
+  File "C:\Local Apps\Mission-Legal-App(V2)\venv\Lib\site-packages\paddle\utils\cpp_extension\cpp_extension.py", line 21, in <module>
+    import setuptools
+ModuleNotFoundError: No module named 'setuptools'
+2026-06-02 13:11:03,476 | ERROR | Failed to initialize OCR service
+Traceback (most recent call last):
+  File "C:\Local Apps\Mission-Legal-App(V2)\services\upload_pipeline.py", line 85, in get_ocr_service
+    _ocr_service = OCRService()
+                   ^^^^^^^^^^^^
+  File "C:\Local Apps\Mission-Legal-App(V2)\services\ocr_service.py", line 9, in __init__
+    from paddleocr import PaddleOCR
+  File "C:\Local Apps\Mission-Legal-App(V2)\venv\Lib\site-packages\paddleocr\__init__.py", line 14, in <module>
+    from .paddleocr import *
+  File "C:\Local Apps\Mission-Legal-App(V2)\venv\Lib\site-packages\paddleocr\paddleocr.py", line 21, in <module>
+    import paddle
+  File "C:\Local Apps\Mission-Legal-App(V2)\venv\Lib\site-packages\paddle\__init__.py", line 28, in <module>
+    from .base import core  # noqa: F401
+    ^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Local Apps\Mission-Legal-App(V2)\venv\Lib\site-packages\paddle\base\__init__.py", line 77, in <module>
+    from . import dataset
+  File "C:\Local Apps\Mission-Legal-App(V2)\venv\Lib\site-packages\paddle\base\dataset.py", line 20, in <module>
+    from ..utils import deprecated
+  File "C:\Local Apps\Mission-Legal-App(V2)\venv\Lib\site-packages\paddle\utils\__init__.py", line 16, in <module>
+    from . import (  # noqa: F401
+  File "C:\Local Apps\Mission-Legal-App(V2)\venv\Lib\site-packages\paddle\utils\cpp_extension\__init__.py", line 15, in <module>
+    from .cpp_extension import (
+  File "C:\Local Apps\Mission-Legal-App(V2)\venv\Lib\site-packages\paddle\utils\cpp_extension\cpp_extension.py", line 21, in <module>
+    import setuptools
+ModuleNotFoundError: No module named 'setuptools'
+2026-06-02 13:11:08,332 | INFO | Uploading document PASSPORT_1.pdf for missionary James William VanOrden
+2026-06-02 13:11:08,346 | INFO | Successfully uploaded PASSPORT_1.pdf for missionary James William VanOrden
+2026-06-02 13:11:09,342 | INFO | Loading missionary details for James William VanOrden
+2026-06-02 13:11:09,342 | INFO | Loading documents for missionary ID 5
+2026-06-02 13:11:09,342 | INFO | Loaded 3 documents for missionary ID 5
+2026-06-02 13:11:15,369 | ERROR | Document viewer failed
+Traceback (most recent call last):
+  File "C:\Local Apps\Mission-Legal-App(V2)\ui\pages\missionary_detail_page.py", line 1296, in _open_document_viewer
+    dialog = DocumentViewerDialog(
+             ^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Local Apps\Mission-Legal-App(V2)\ui\dialogs\document_viewer_dialog.py", line 43, in __init__
+    self.setup_ui()
+  File "C:\Local Apps\Mission-Legal-App(V2)\ui\dialogs\document_viewer_dialog.py", line 145, in setup_ui
+    | Qt.SmoothPixmapTransform
+      ^^^^^^^^^^^^^^^^^^^^^^^^
+AttributeError: type object 'PySide6.QtCore.Qt' has no attribute 'SmoothPixmapTransform'
+2026-06-02 13:11:23,119 | ERROR | Failed to open file
+Traceback (most recent call last):
+  File "C:\Local Apps\Mission-Legal-App(V2)\ui\pages\missionary_detail_page.py", line 1265, in _open_document_file
+    subprocess.Popen(
+  File "C:\Users\PerúLimaCentralMissi\AppData\Local\Programs\Python\Python312\Lib\subprocess.py", line 1026, in __init__
+    self._execute_child(args, executable, preexec_fn, close_fds,
+  File "C:\Users\PerúLimaCentralMissi\AppData\Local\Programs\Python\Python312\Lib\subprocess.py", line 1538, in _execute_child
+    hp, ht, pid, tid = _winapi.CreateProcess(executable, args,
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+FileNotFoundError: [WinError 2] The system cannot find the file specified
+2026-06-02 13:14:32,452 | INFO | Dashboard data loaded
+2026-06-02 13:14:32,452 | INFO | Initialized OneDrive root folders
+2026-06-02 13:14:32,452 | INFO | Initialized OneDrive root folders
+2026-06-02 13:14:32,452 | INFO | Initialized MissionariesPage
+2026-06-02 13:14:32,683 | INFO | Loaded active missionaries
+2026-06-02 13:14:32,683 | INFO | Loaded 3 missionaries into table
+2026-06-02 13:14:32,683 | INFO | Initializing MissionaryDetailPage
+2026-06-02 13:14:32,683 | INFO | Initialized OneDrive root folders
+2026-06-02 13:14:32,683 | INFO | Initialized OneDrive root folders
+2026-06-02 13:14:32,683 | INFO | Initialized OneDrive root folders
+2026-06-02 13:14:32,733 | INFO | Initialized OneDrive root folders
+2026-06-02 13:14:32,733 | INFO | Initialized OneDrive root folders
+2026-06-02 13:14:32,733 | INFO | Loaded 2 trashed missionaries
+2026-06-02 13:14:32,779 | INFO | Dashboard data loaded
+2026-06-02 13:14:32,898 | INFO | Dashboard data loaded
+2026-06-02 13:14:33,633 | INFO | Showing 3 expiration alert(s)
+2026-06-02 13:14:37,286 | INFO | Loaded active missionaries
+2026-06-02 13:14:37,302 | INFO | Loaded 3 missionaries into table
+2026-06-02 13:14:39,158 | INFO | Opening detail page for missionary: James William VanOrden
+2026-06-02 13:14:39,158 | INFO | Loading missionary details for James William VanOrden
+2026-06-02 13:14:39,160 | INFO | Loading documents for missionary ID 5
+2026-06-02 13:14:39,160 | INFO | Loaded 3 documents for missionary ID 5
+2026-06-02 13:14:46,891 | INFO | Moved missionary folder to trash: C:\Users\PerúLimaCentralMissi\mission_data\TRASH PILE\James William VanOrden
+2026-06-02 13:14:46,895 | INFO | Soft deleted missionary: James William VanOrden
+2026-06-02 13:14:46,895 | INFO | Loaded active missionaries
+2026-06-02 13:14:46,902 | INFO | Loaded 2 missionaries into table
+2026-06-02 13:14:49,124 | INFO | Opening detail page for missionary: James William VanOrden
+2026-06-02 13:14:49,124 | INFO | Loading missionary details for James William VanOrden
+2026-06-02 13:14:49,124 | INFO | Loading documents for missionary ID 6
+2026-06-02 13:14:49,140 | INFO | Loaded 0 documents for missionary ID 6
+2026-06-02 13:17:53,282 | INFO | Dashboard data loaded
+2026-06-02 13:17:53,282 | INFO | Initialized OneDrive root folders
+2026-06-02 13:17:53,282 | INFO | Initialized OneDrive root folders
+2026-06-02 13:17:53,282 | INFO | Initialized MissionariesPage
+2026-06-02 13:17:53,644 | INFO | Loaded active missionaries
+2026-06-02 13:17:53,648 | INFO | Loaded 2 missionaries into table
+2026-06-02 13:17:53,649 | INFO | Initializing MissionaryDetailPage
+2026-06-02 13:17:53,649 | INFO | Initialized OneDrive root folders
+2026-06-02 13:17:53,650 | INFO | Initialized OneDrive root folders
+2026-06-02 13:17:53,651 | INFO | Initialized OneDrive root folders
+2026-06-02 13:17:53,701 | INFO | Initialized OneDrive root folders
+2026-06-02 13:17:53,701 | INFO | Initialized OneDrive root folders
+2026-06-02 13:17:53,716 | INFO | Loaded 3 trashed missionaries
+2026-06-02 13:17:53,751 | INFO | Dashboard data loaded
+2026-06-02 13:17:53,896 | INFO | Dashboard data loaded
+2026-06-02 13:17:54,598 | INFO | Showing 2 expiration alert(s)
+2026-06-02 13:17:57,713 | INFO | Loaded active missionaries
+2026-06-02 13:17:57,713 | INFO | Loaded 2 missionaries into table
+2026-06-02 13:17:58,915 | INFO | Opening detail page for missionary: James William VanOrden
+2026-06-02 13:17:58,915 | INFO | Loading missionary details for James William VanOrden
+2026-06-02 13:17:58,915 | INFO | Loading documents for missionary ID 6
+2026-06-02 13:17:58,915 | INFO | Loaded 0 documents for missionary ID 6
+2026-06-02 14:43:40,742 | INFO | Dashboard data loaded
+2026-06-02 14:43:40,742 | INFO | Initialized OneDrive root folders
+2026-06-02 14:43:40,742 | INFO | Initialized OneDrive root folders
+2026-06-02 14:43:40,742 | INFO | Initialized MissionariesPage
+2026-06-02 14:43:40,742 | INFO | Loaded active missionaries
+2026-06-02 14:43:40,742 | INFO | Loaded 2 missionaries into table
+2026-06-02 14:43:40,742 | INFO | Initializing MissionaryDetailPage
+2026-06-02 14:43:40,742 | INFO | Initialized OneDrive root folders
+2026-06-02 14:43:40,742 | INFO | Initialized OneDrive root folders
+2026-06-02 14:43:40,742 | INFO | Initialized OneDrive root folders
+2026-06-02 14:43:40,775 | INFO | Initialized OneDrive root folders
+2026-06-02 14:43:40,775 | INFO | Initialized OneDrive root folders
+2026-06-02 14:43:40,775 | INFO | Loaded 3 trashed missionaries
+2026-06-02 14:43:40,775 | INFO | Dashboard data loaded
+2026-06-02 14:43:40,792 | INFO | Dashboard data loaded
+2026-06-02 14:43:40,793 | INFO | Loaded active missionaries
+2026-06-02 14:43:40,793 | INFO | Loaded 2 missionaries into table
+2026-06-02 14:43:40,793 | INFO | Loaded 3 trashed missionaries
+2026-06-02 14:45:23,978 | INFO | Dashboard data loaded
+2026-06-02 14:45:23,978 | INFO | Initialized OneDrive root folders
+2026-06-02 14:45:23,978 | INFO | Initialized OneDrive root folders
+2026-06-02 14:45:23,978 | INFO | Initialized MissionariesPage
+2026-06-02 14:45:24,099 | INFO | Loaded active missionaries
+2026-06-02 14:45:24,099 | INFO | Loaded 2 missionaries into table
+2026-06-02 14:45:24,099 | INFO | Initializing MissionaryDetailPage
+2026-06-02 14:45:24,099 | INFO | Initialized OneDrive root folders
+2026-06-02 14:45:24,099 | INFO | Initialized OneDrive root folders
+2026-06-02 14:45:24,108 | INFO | Initialized OneDrive root folders
+2026-06-02 14:45:24,139 | INFO | Initialized OneDrive root folders
+2026-06-02 14:45:24,139 | INFO | Initialized OneDrive root folders
+2026-06-02 14:45:24,160 | INFO | Loaded 3 trashed missionaries
+2026-06-02 14:45:24,163 | INFO | Dashboard data loaded
+2026-06-02 14:45:24,175 | INFO | Dashboard data loaded
+2026-06-02 14:45:24,179 | INFO | Loaded active missionaries
+2026-06-02 14:45:24,179 | INFO | Loaded 2 missionaries into table
+2026-06-02 14:45:24,196 | INFO | Loaded 3 trashed missionaries
+2026-06-02 14:46:19,494 | INFO | Dashboard data loaded
+2026-06-02 14:46:19,494 | INFO | Initialized OneDrive root folders
+2026-06-02 14:46:19,494 | INFO | Initialized OneDrive root folders
+2026-06-02 14:46:19,494 | INFO | Initialized MissionariesPage
+2026-06-02 14:46:19,561 | INFO | Loaded active missionaries
+2026-06-02 14:46:19,575 | INFO | Loaded 2 missionaries into table
+2026-06-02 14:46:19,575 | INFO | Initializing MissionaryDetailPage
+2026-06-02 14:46:19,575 | INFO | Initialized OneDrive root folders
+2026-06-02 14:46:19,576 | INFO | Initialized OneDrive root folders
+2026-06-02 14:46:19,576 | INFO | Initialized OneDrive root folders
+2026-06-02 14:46:19,594 | INFO | Initialized OneDrive root folders
+2026-06-02 14:46:19,594 | INFO | Initialized OneDrive root folders
+2026-06-02 14:46:19,611 | INFO | Loaded 3 trashed missionaries
+2026-06-02 14:46:19,624 | INFO | Dashboard data loaded
+2026-06-02 14:47:32,884 | INFO | Dashboard data loaded
+2026-06-02 14:47:32,884 | INFO | Initialized OneDrive root folders
+2026-06-02 14:47:32,884 | INFO | Initialized OneDrive root folders
+2026-06-02 14:47:32,884 | INFO | Initialized MissionariesPage
+2026-06-02 14:47:33,696 | INFO | Loaded active missionaries
+2026-06-02 14:47:33,696 | INFO | Loaded 2 missionaries into table
+2026-06-02 14:47:33,696 | INFO | Initializing MissionaryDetailPage
+2026-06-02 14:47:33,696 | INFO | Initialized OneDrive root folders
+2026-06-02 14:47:33,696 | INFO | Initialized OneDrive root folders
+2026-06-02 14:47:33,696 | INFO | Initialized OneDrive root folders
+2026-06-02 14:47:33,828 | INFO | Initialized OneDrive root folders
+2026-06-02 14:47:33,829 | INFO | Initialized OneDrive root folders
+2026-06-02 14:47:33,903 | INFO | Loaded 3 trashed missionaries
+2026-06-02 14:47:34,019 | INFO | Dashboard data loaded
+2026-06-02 14:47:34,052 | INFO | Dashboard data loaded
+2026-06-02 14:47:34,821 | INFO | Showing 2 expiration alert(s)
+2026-06-02 14:47:37,990 | INFO | Loaded active missionaries
+2026-06-02 14:47:37,990 | INFO | Loaded 2 missionaries into table
+2026-06-02 14:47:48,347 | INFO | Dashboard data loaded
+2026-06-02 14:47:48,354 | INFO | Dashboard data loaded
+2026-06-02 14:47:59,141 | INFO | Loaded 3 trashed missionaries
+2026-06-02 14:48:05,569 | INFO | Dashboard data loaded
+2026-06-02 14:48:05,573 | INFO | Dashboard data loaded
+2026-06-02 14:48:15,697 | INFO | Loaded 3 trashed missionaries
+2026-06-02 14:48:19,270 | INFO | Loaded 3 trashed missionaries
+2026-06-02 14:48:28,944 | INFO | Permanently deleted missionary ID 5
+2026-06-02 14:48:28,960 | INFO | Loaded 2 trashed missionaries
+2026-06-02 14:48:35,085 | ERROR | Failed to permanently delete
+Traceback (most recent call last):
+  File "C:\Local Apps\Mission-Legal-App(V2)\services\missionary_service.py", line 400, in hard_delete
+    shutil.rmtree(folder)
+  File "C:\Users\PerúLimaCentralMissi\AppData\Local\Programs\Python\Python312\Lib\shutil.py", line 781, in rmtree
+    return _rmtree_unsafe(path, onexc)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\PerúLimaCentralMissi\AppData\Local\Programs\Python\Python312\Lib\shutil.py", line 629, in _rmtree_unsafe
+    onexc(os.rmdir, fullname, err)
+  File "C:\Users\PerúLimaCentralMissi\AppData\Local\Programs\Python\Python312\Lib\shutil.py", line 627, in _rmtree_unsafe
+    os.rmdir(fullname)
+PermissionError: [WinError 5] Access is denied: 'C:\\Users\\PerúLimaCentralMissi\\OneDrive - Church of Jesus Christ (1)\\Sec. Visas\\1. Visas Lima Central\\1 DOCUMENTOS DE LEGALIZACIÓN - IMPORTANTE\\TRASH PILE\\thatonenewguynamed Steve\\CANCELACION'
+2026-06-02 14:48:35,085 | ERROR | Hard delete failed
+Traceback (most recent call last):
+  File "C:\Local Apps\Mission-Legal-App(V2)\ui\pages\trash_page.py", line 246, in _hard_delete_missionary
+    self.missionary_service.hard_delete(
+  File "C:\Local Apps\Mission-Legal-App(V2)\services\missionary_service.py", line 400, in hard_delete
+    shutil.rmtree(folder)
+  File "C:\Users\PerúLimaCentralMissi\AppData\Local\Programs\Python\Python312\Lib\shutil.py", line 781, in rmtree
+    return _rmtree_unsafe(path, onexc)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\PerúLimaCentralMissi\AppData\Local\Programs\Python\Python312\Lib\shutil.py", line 629, in _rmtree_unsafe
+    onexc(os.rmdir, fullname, err)
+  File "C:\Users\PerúLimaCentralMissi\AppData\Local\Programs\Python\Python312\Lib\shutil.py", line 627, in _rmtree_unsafe
+    os.rmdir(fullname)
+PermissionError: [WinError 5] Access is denied: 'C:\\Users\\PerúLimaCentralMissi\\OneDrive - Church of Jesus Christ (1)\\Sec. Visas\\1. Visas Lima Central\\1 DOCUMENTOS DE LEGALIZACIÓN - IMPORTANTE\\TRASH PILE\\thatonenewguynamed Steve\\CANCELACION'
+2026-06-02 14:48:38,404 | ERROR | Failed to permanently delete
+Traceback (most recent call last):
+  File "C:\Local Apps\Mission-Legal-App(V2)\services\missionary_service.py", line 400, in hard_delete
+    shutil.rmtree(folder)
+  File "C:\Users\PerúLimaCentralMissi\AppData\Local\Programs\Python\Python312\Lib\shutil.py", line 781, in rmtree
+    return _rmtree_unsafe(path, onexc)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\PerúLimaCentralMissi\AppData\Local\Programs\Python\Python312\Lib\shutil.py", line 629, in _rmtree_unsafe
+    onexc(os.rmdir, fullname, err)
+  File "C:\Users\PerúLimaCentralMissi\AppData\Local\Programs\Python\Python312\Lib\shutil.py", line 627, in _rmtree_unsafe
+    os.rmdir(fullname)
+PermissionError: [WinError 5] Access is denied: 'C:\\Users\\PerúLimaCentralMissi\\OneDrive - Church of Jesus Christ (1)\\Sec. Visas\\1. Visas Lima Central\\1 DOCUMENTOS DE LEGALIZACIÓN - IMPORTANTE\\TRASH PILE\\James William VanOrden\\CANCELACION'
+2026-06-02 14:48:38,404 | ERROR | Hard delete failed
+Traceback (most recent call last):
+  File "C:\Local Apps\Mission-Legal-App(V2)\ui\pages\trash_page.py", line 246, in _hard_delete_missionary
+    self.missionary_service.hard_delete(
+  File "C:\Local Apps\Mission-Legal-App(V2)\services\missionary_service.py", line 400, in hard_delete
+    shutil.rmtree(folder)
+  File "C:\Users\PerúLimaCentralMissi\AppData\Local\Programs\Python\Python312\Lib\shutil.py", line 781, in rmtree
+    return _rmtree_unsafe(path, onexc)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\PerúLimaCentralMissi\AppData\Local\Programs\Python\Python312\Lib\shutil.py", line 629, in _rmtree_unsafe
+    onexc(os.rmdir, fullname, err)
+  File "C:\Users\PerúLimaCentralMissi\AppData\Local\Programs\Python\Python312\Lib\shutil.py", line 627, in _rmtree_unsafe
+    os.rmdir(fullname)
+PermissionError: [WinError 5] Access is denied: 'C:\\Users\\PerúLimaCentralMissi\\OneDrive - Church of Jesus Christ (1)\\Sec. Visas\\1. Visas Lima Central\\1 DOCUMENTOS DE LEGALIZACIÓN - IMPORTANTE\\TRASH PILE\\James William VanOrden\\CANCELACION'
+2026-06-02 14:48:41,669 | INFO | Loaded active missionaries
+2026-06-02 14:48:41,671 | INFO | Loaded 2 missionaries into table
+2026-06-02 14:49:17,783 | INFO | Dashboard data loaded
+2026-06-02 14:49:17,803 | INFO | Dashboard data loaded
+2026-06-02 14:49:21,709 | INFO | Loaded active missionaries
+2026-06-02 14:49:21,714 | INFO | Loaded 2 missionaries into table
+2026-06-02 15:18:36,960 | INFO | Dashboard data loaded
+2026-06-02 15:18:36,960 | INFO | Initialized OneDrive root folders
+2026-06-02 15:18:36,960 | INFO | Initialized OneDrive root folders
+2026-06-02 15:18:36,960 | INFO | Initialized MissionariesPage
+2026-06-02 15:18:38,247 | INFO | Loaded active missionaries
+2026-06-02 15:18:38,259 | INFO | Loaded 2 missionaries into table
+2026-06-02 15:18:38,265 | INFO | Initializing MissionaryDetailPage
+2026-06-02 15:18:38,274 | INFO | Initialized OneDrive root folders
+2026-06-02 15:18:38,290 | INFO | Initialized OneDrive root folders
+2026-06-02 15:18:38,297 | INFO | Initialized OneDrive root folders
+2026-06-02 15:18:38,490 | INFO | Initialized OneDrive root folders
+2026-06-02 15:18:38,500 | INFO | Initialized OneDrive root folders
+2026-06-02 15:18:38,599 | INFO | Loaded 2 trashed missionaries
+2026-06-02 15:18:38,776 | INFO | Dashboard data loaded
+2026-06-02 15:18:38,821 | INFO | Dashboard data loaded
+2026-06-02 15:18:39,589 | INFO | Showing 2 expiration alert(s)
+2026-06-02 15:18:46,646 | INFO | Loaded active missionaries
+2026-06-02 15:18:46,648 | INFO | Loaded 2 missionaries into table
+2026-06-02 15:18:56,716 | INFO | Loaded 2 trashed missionaries
+2026-06-02 15:19:00,380 | INFO | Loaded 2 trashed missionaries
+2026-06-02 15:19:03,020 | INFO | Loaded active missionaries
+2026-06-02 15:19:03,020 | INFO | Loaded 2 missionaries into table
+2026-06-02 15:19:04,129 | INFO | Dashboard data loaded
+2026-06-02 15:19:04,133 | INFO | Dashboard data loaded
+2026-06-02 15:25:14,389 | INFO | Loaded active missionaries
+2026-06-02 15:25:14,389 | INFO | Loaded 2 missionaries into table
+2026-06-02 15:25:21,261 | INFO | Opening detail page for missionary: James William VanOrden
+2026-06-02 15:25:21,261 | INFO | Loading missionary details for James William VanOrden
+2026-06-02 15:25:21,268 | INFO | Loading documents for missionary ID 4
+2026-06-02 15:25:21,268 | INFO | Loaded 1 documents for missionary ID 4
+2026-06-02 15:25:23,483 | INFO | Moved folder to trash: C:\Users\PerúLimaCentralMissi\OneDrive - Church of Jesus Christ (1)\Sec. Visas\1. Visas Lima Central\1 DOCUMENTOS DE LEGALIZACIÓN - IMPORTANTE\TRASH\James William VanOrden
+2026-06-02 15:25:23,483 | INFO | Moved missionary folder to trash: C:\Users\PerúLimaCentralMissi\OneDrive - Church of Jesus Christ (1)\Sec. Visas\1. Visas Lima Central\1 DOCUMENTOS DE LEGALIZACIÓN - IMPORTANTE\TRASH\James William VanOrden
+2026-06-02 15:25:23,514 | INFO | Soft deleted missionary: James William VanOrden
+2026-06-02 15:25:23,514 | INFO | Loaded active missionaries
+2026-06-02 15:25:23,515 | INFO | Loaded 1 missionaries into table
+2026-06-02 15:25:24,947 | INFO | Opening detail page for missionary: James William VanOrden
+2026-06-02 15:25:24,947 | INFO | Loading missionary details for James William VanOrden
+2026-06-02 15:25:24,947 | INFO | Loading documents for missionary ID 6
+2026-06-02 15:25:24,947 | INFO | Loaded 0 documents for missionary ID 6
+2026-06-02 15:25:26,794 | INFO | Moved folder to trash: C:\Users\PerúLimaCentralMissi\OneDrive - Church of Jesus Christ (1)\Sec. Visas\1. Visas Lima Central\1 DOCUMENTOS DE LEGALIZACIÓN - IMPORTANTE\TRASH\James William VanOrden_1
+2026-06-02 15:25:26,794 | INFO | Moved missionary folder to trash: C:\Users\PerúLimaCentralMissi\OneDrive - Church of Jesus Christ (1)\Sec. Visas\1. Visas Lima Central\1 DOCUMENTOS DE LEGALIZACIÓN - IMPORTANTE\TRASH\James William VanOrden_1
+2026-06-02 15:25:26,802 | INFO | Soft deleted missionary: James William VanOrden
+2026-06-02 15:25:26,804 | INFO | Loaded active missionaries
+2026-06-02 15:25:26,807 | INFO | Loaded 0 missionaries into table
+2026-06-02 15:25:28,413 | INFO | Loaded 4 trashed missionaries
+2026-06-02 15:25:30,687 | INFO | Permanently deleted missionary ID 6
+2026-06-02 15:25:30,709 | INFO | Loaded 3 trashed missionaries
+2026-06-02 15:25:33,010 | INFO | Permanently deleted missionary ID 4
+2026-06-02 15:25:33,020 | INFO | Loaded 2 trashed missionaries
+2026-06-02 15:25:35,175 | ERROR | Failed to permanently delete
+Traceback (most recent call last):
+  File "C:\Local Apps\Mission-Legal-App(V2)\services\missionary_service.py", line 348, in hard_delete
+    shutil.rmtree(folder)
+  File "C:\Users\PerúLimaCentralMissi\AppData\Local\Programs\Python\Python312\Lib\shutil.py", line 781, in rmtree
+    return _rmtree_unsafe(path, onexc)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\PerúLimaCentralMissi\AppData\Local\Programs\Python\Python312\Lib\shutil.py", line 629, in _rmtree_unsafe
+    onexc(os.rmdir, fullname, err)
+  File "C:\Users\PerúLimaCentralMissi\AppData\Local\Programs\Python\Python312\Lib\shutil.py", line 627, in _rmtree_unsafe
+    os.rmdir(fullname)
+PermissionError: [WinError 5] Access is denied: 'C:\\Users\\PerúLimaCentralMissi\\OneDrive - Church of Jesus Christ (1)\\Sec. Visas\\1. Visas Lima Central\\1 DOCUMENTOS DE LEGALIZACIÓN - IMPORTANTE\\TRASH PILE\\thatonenewguynamed Steve\\CANCELACION'
+2026-06-02 15:25:35,175 | ERROR | Hard delete failed
+Traceback (most recent call last):
+  File "C:\Local Apps\Mission-Legal-App(V2)\ui\pages\trash_page.py", line 246, in _hard_delete_missionary
+    self.missionary_service.hard_delete(
+  File "C:\Local Apps\Mission-Legal-App(V2)\services\missionary_service.py", line 348, in hard_delete
+    shutil.rmtree(folder)
+  File "C:\Users\PerúLimaCentralMissi\AppData\Local\Programs\Python\Python312\Lib\shutil.py", line 781, in rmtree
+    return _rmtree_unsafe(path, onexc)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\PerúLimaCentralMissi\AppData\Local\Programs\Python\Python312\Lib\shutil.py", line 629, in _rmtree_unsafe
+    onexc(os.rmdir, fullname, err)
+  File "C:\Users\PerúLimaCentralMissi\AppData\Local\Programs\Python\Python312\Lib\shutil.py", line 627, in _rmtree_unsafe
+    os.rmdir(fullname)
+PermissionError: [WinError 5] Access is denied: 'C:\\Users\\PerúLimaCentralMissi\\OneDrive - Church of Jesus Christ (1)\\Sec. Visas\\1. Visas Lima Central\\1 DOCUMENTOS DE LEGALIZACIÓN - IMPORTANTE\\TRASH PILE\\thatonenewguynamed Steve\\CANCELACION'
+2026-06-02 15:25:37,574 | INFO | Restored folder: C:\Users\PerúLimaCentralMissi\OneDrive - Church of Jesus Christ (1)\Sec. Visas\1. Visas Lima Central\1 DOCUMENTOS DE LEGALIZACIÓN - IMPORTANTE\ACTIVE\thatonenewguynamed Steve
+2026-06-02 15:25:37,586 | INFO | Restored missionary: thatonenewguynamed Steve
+2026-06-02 15:25:37,590 | INFO | Loaded 1 trashed missionaries
+2026-06-02 15:25:37,590 | INFO | Loaded active missionaries
+2026-06-02 15:25:37,595 | INFO | Loaded 1 missionaries into table
+2026-06-02 15:25:39,403 | INFO | Restored folder: C:\Users\PerúLimaCentralMissi\OneDrive - Church of Jesus Christ (1)\Sec. Visas\1. Visas Lima Central\1 DOCUMENTOS DE LEGALIZACIÓN - IMPORTANTE\ACTIVE\James William VanOrden
+2026-06-02 15:25:39,407 | INFO | Restored missionary: James William VanOrden
+2026-06-02 15:25:39,407 | INFO | Loaded 0 trashed missionaries
+2026-06-02 15:25:39,415 | INFO | Loaded active missionaries
+2026-06-02 15:25:39,415 | INFO | Loaded 2 missionaries into table
+2026-06-02 15:25:41,870 | INFO | Loaded active missionaries
+2026-06-02 15:25:41,870 | INFO | Loaded 2 missionaries into table
+2026-06-02 15:25:44,079 | INFO | Opening detail page for missionary: thatonenewguynamed Steve
+2026-06-02 15:25:44,079 | INFO | Loading missionary details for thatonenewguynamed Steve
+2026-06-02 15:25:44,079 | INFO | Loading documents for missionary ID 1
+2026-06-02 15:25:44,079 | INFO | Loaded 1 documents for missionary ID 1
+2026-06-02 15:25:46,101 | INFO | Moved folder to trash: C:\Users\PerúLimaCentralMissi\OneDrive - Church of Jesus Christ (1)\Sec. Visas\1. Visas Lima Central\1 DOCUMENTOS DE LEGALIZACIÓN - IMPORTANTE\TRASH\thatonenewguynamed Steve
+2026-06-02 15:25:46,109 | INFO | Moved missionary folder to trash: C:\Users\PerúLimaCentralMissi\OneDrive - Church of Jesus Christ (1)\Sec. Visas\1. Visas Lima Central\1 DOCUMENTOS DE LEGALIZACIÓN - IMPORTANTE\TRASH\thatonenewguynamed Steve
+2026-06-02 15:25:46,109 | INFO | Soft deleted missionary: thatonenewguynamed Steve
+2026-06-02 15:25:46,109 | INFO | Loaded active missionaries
+2026-06-02 15:25:46,117 | INFO | Loaded 1 missionaries into table
+2026-06-02 15:25:47,166 | INFO | Opening detail page for missionary: James William VanOrden
+2026-06-02 15:25:47,166 | INFO | Loading missionary details for James William VanOrden
+2026-06-02 15:25:47,166 | INFO | Loading documents for missionary ID 3
+2026-06-02 15:25:47,166 | INFO | Loaded 0 documents for missionary ID 3
+2026-06-02 15:25:49,009 | INFO | Moved folder to trash: C:\Users\PerúLimaCentralMissi\OneDrive - Church of Jesus Christ (1)\Sec. Visas\1. Visas Lima Central\1 DOCUMENTOS DE LEGALIZACIÓN - IMPORTANTE\TRASH\James William VanOrden
+2026-06-02 15:25:49,009 | INFO | Moved missionary folder to trash: C:\Users\PerúLimaCentralMissi\OneDrive - Church of Jesus Christ (1)\Sec. Visas\1. Visas Lima Central\1 DOCUMENTOS DE LEGALIZACIÓN - IMPORTANTE\TRASH\James William VanOrden
+2026-06-02 15:25:49,019 | INFO | Soft deleted missionary: James William VanOrden
+2026-06-02 15:25:49,019 | INFO | Loaded active missionaries
+2026-06-02 15:25:49,024 | INFO | Loaded 0 missionaries into table
+2026-06-02 15:25:50,683 | INFO | Loaded 2 trashed missionaries
+2026-06-02 15:25:52,606 | ERROR | Failed to permanently delete
+Traceback (most recent call last):
+  File "C:\Local Apps\Mission-Legal-App(V2)\services\missionary_service.py", line 348, in hard_delete
+    shutil.rmtree(folder)
+  File "C:\Users\PerúLimaCentralMissi\AppData\Local\Programs\Python\Python312\Lib\shutil.py", line 781, in rmtree
+    return _rmtree_unsafe(path, onexc)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\PerúLimaCentralMissi\AppData\Local\Programs\Python\Python312\Lib\shutil.py", line 629, in _rmtree_unsafe
+    onexc(os.rmdir, fullname, err)
+  File "C:\Users\PerúLimaCentralMissi\AppData\Local\Programs\Python\Python312\Lib\shutil.py", line 627, in _rmtree_unsafe
+    os.rmdir(fullname)
+PermissionError: [WinError 5] Access is denied: 'C:\\Users\\PerúLimaCentralMissi\\OneDrive - Church of Jesus Christ (1)\\Sec. Visas\\1. Visas Lima Central\\1 DOCUMENTOS DE LEGALIZACIÓN - IMPORTANTE\\TRASH\\James William VanOrden\\CANCELACION'
+2026-06-02 15:25:52,606 | ERROR | Hard delete failed
+Traceback (most recent call last):
+  File "C:\Local Apps\Mission-Legal-App(V2)\ui\pages\trash_page.py", line 246, in _hard_delete_missionary
+    self.missionary_service.hard_delete(
+  File "C:\Local Apps\Mission-Legal-App(V2)\services\missionary_service.py", line 348, in hard_delete
+    shutil.rmtree(folder)
+  File "C:\Users\PerúLimaCentralMissi\AppData\Local\Programs\Python\Python312\Lib\shutil.py", line 781, in rmtree
+    return _rmtree_unsafe(path, onexc)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\PerúLimaCentralMissi\AppData\Local\Programs\Python\Python312\Lib\shutil.py", line 629, in _rmtree_unsafe
+    onexc(os.rmdir, fullname, err)
+  File "C:\Users\PerúLimaCentralMissi\AppData\Local\Programs\Python\Python312\Lib\shutil.py", line 627, in _rmtree_unsafe
+    os.rmdir(fullname)
+PermissionError: [WinError 5] Access is denied: 'C:\\Users\\PerúLimaCentralMissi\\OneDrive - Church of Jesus Christ (1)\\Sec. Visas\\1. Visas Lima Central\\1 DOCUMENTOS DE LEGALIZACIÓN - IMPORTANTE\\TRASH\\James William VanOrden\\CANCELACION'
+2026-06-02 15:34:37,481 | WARNING | Skipped locked or inaccessible __pycache__: C:\Local Apps\Mission-Legal-App(V2)\_tmp_pycache_cleanup_test\pkg\__pycache__
+2026-06-02 15:35:09,693 | WARNING | Skipped locked or inaccessible __pycache__: C:\Local Apps\Mission-Legal-App(V2)\_tmp_pycache_cleanup_test_2\pkg\__pycache__
+2026-06-02 15:36:56,272 | INFO | [dry-run] Would remove C:\Local Apps\Mission-Legal-App(V2)\__pycache__
+2026-06-02 15:36:56,272 | INFO | [dry-run] Would remove C:\Local Apps\Mission-Legal-App(V2)\_tmp_pycache_cleanup_test\pkg\__pycache__
+2026-06-02 15:36:56,272 | INFO | [dry-run] Would remove C:\Local Apps\Mission-Legal-App(V2)\_tmp_pycache_cleanup_test_2\pkg\__pycache__
+2026-06-02 15:36:56,272 | INFO | [dry-run] Would remove C:\Local Apps\Mission-Legal-App(V2)\database\__pycache__
+2026-06-02 15:36:56,272 | INFO | [dry-run] Would remove C:\Local Apps\Mission-Legal-App(V2)\database\models\__pycache__
+2026-06-02 15:36:56,272 | INFO | [dry-run] Would remove C:\Local Apps\Mission-Legal-App(V2)\services\__pycache__
+2026-06-02 15:36:56,272 | INFO | [dry-run] Would remove C:\Local Apps\Mission-Legal-App(V2)\ui\__pycache__
+2026-06-02 15:36:56,272 | INFO | [dry-run] Would remove C:\Local Apps\Mission-Legal-App(V2)\ui\dialogs\__pycache__
+2026-06-02 15:36:56,272 | INFO | [dry-run] Would remove C:\Local Apps\Mission-Legal-App(V2)\ui\foundation\__pycache__
+2026-06-02 15:36:56,272 | INFO | [dry-run] Would remove C:\Local Apps\Mission-Legal-App(V2)\ui\pages\__pycache__
+2026-06-02 15:36:56,272 | INFO | [dry-run] Would remove C:\Local Apps\Mission-Legal-App(V2)\ui\widgets\__pycache__
+2026-06-02 15:36:56,272 | INFO | [dry-run] Would remove C:\Local Apps\Mission-Legal-App(V2)\utils\__pycache__
+2026-06-02 15:37:35,967 | INFO | [dry-run] Would remove C:\Local Apps\Mission-Legal-App(V2)\__pycache__
+2026-06-02 15:37:35,967 | INFO | [dry-run] Would remove C:\Local Apps\Mission-Legal-App(V2)\_tmp_pycache_cleanup_test\pkg\__pycache__
+2026-06-02 15:37:35,967 | INFO | [dry-run] Would remove C:\Local Apps\Mission-Legal-App(V2)\_tmp_pycache_cleanup_test_2\pkg\__pycache__
+2026-06-02 15:37:35,967 | INFO | [dry-run] Would remove C:\Local Apps\Mission-Legal-App(V2)\database\__pycache__
+2026-06-02 15:37:35,967 | INFO | [dry-run] Would remove C:\Local Apps\Mission-Legal-App(V2)\database\models\__pycache__
+2026-06-02 15:37:35,967 | INFO | [dry-run] Would remove C:\Local Apps\Mission-Legal-App(V2)\services\__pycache__
+2026-06-02 15:37:35,967 | INFO | [dry-run] Would remove C:\Local Apps\Mission-Legal-App(V2)\ui\__pycache__
+2026-06-02 15:37:35,967 | INFO | [dry-run] Would remove C:\Local Apps\Mission-Legal-App(V2)\ui\dialogs\__pycache__
+2026-06-02 15:37:35,967 | INFO | [dry-run] Would remove C:\Local Apps\Mission-Legal-App(V2)\ui\foundation\__pycache__
+2026-06-02 15:37:35,967 | INFO | [dry-run] Would remove C:\Local Apps\Mission-Legal-App(V2)\ui\pages\__pycache__
+2026-06-02 15:37:35,967 | INFO | [dry-run] Would remove C:\Local Apps\Mission-Legal-App(V2)\ui\widgets\__pycache__
+2026-06-02 15:37:35,967 | INFO | [dry-run] Would remove C:\Local Apps\Mission-Legal-App(V2)\utils\__pycache__
+2026-06-02 15:37:36,725 | INFO | Removed stale __pycache__: C:\Local Apps\Mission-Legal-App(V2)\__pycache__
+2026-06-02 15:37:36,725 | INFO | Removed stale __pycache__: C:\Local Apps\Mission-Legal-App(V2)\_tmp_pycache_cleanup_test\pkg\__pycache__
+2026-06-02 15:37:36,725 | INFO | Removed stale __pycache__: C:\Local Apps\Mission-Legal-App(V2)\_tmp_pycache_cleanup_test_2\pkg\__pycache__
+2026-06-02 15:37:36,725 | INFO | Removed stale __pycache__: C:\Local Apps\Mission-Legal-App(V2)\database\__pycache__
+2026-06-02 15:37:36,741 | INFO | Removed stale __pycache__: C:\Local Apps\Mission-Legal-App(V2)\database\models\__pycache__
+2026-06-02 15:37:36,741 | INFO | Removed stale __pycache__: C:\Local Apps\Mission-Legal-App(V2)\services\__pycache__
+2026-06-02 15:37:36,759 | INFO | Removed stale __pycache__: C:\Local Apps\Mission-Legal-App(V2)\ui\__pycache__
+2026-06-02 15:37:36,769 | INFO | Removed stale __pycache__: C:\Local Apps\Mission-Legal-App(V2)\ui\dialogs\__pycache__
+2026-06-02 15:37:36,778 | INFO | Removed stale __pycache__: C:\Local Apps\Mission-Legal-App(V2)\ui\foundation\__pycache__
+2026-06-02 15:37:36,778 | INFO | Removed stale __pycache__: C:\Local Apps\Mission-Legal-App(V2)\ui\pages\__pycache__
+2026-06-02 15:37:36,793 | INFO | Removed stale __pycache__: C:\Local Apps\Mission-Legal-App(V2)\ui\widgets\__pycache__
+2026-06-02 15:37:36,793 | INFO | Removed stale __pycache__: C:\Local Apps\Mission-Legal-App(V2)\utils\__pycache__

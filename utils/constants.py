@@ -77,6 +77,7 @@ DOCUMENTS = {
         "auto_updates": [
             "passport_number",
             "nationality",
+            "passport_expiration",
         ],
     },
 
@@ -86,9 +87,11 @@ DOCUMENTS = {
         "required": True,
         "ocr_fields": [
             "arrival_date",
+            "visa_expiration",
         ],
         "auto_updates": [
             "arrival_date",
+            "visa_expiration",
         ],
     },
 
@@ -111,7 +114,9 @@ DOCUMENTS = {
         "ocr_fields": [
             "interpol_appointment_date",
         ],
-        "auto_updates": [],
+        "auto_updates": [
+            "interpol_appointment_date",
+        ],
     },
 
     "FICHA_DE_CANJE_INTERNACIONAL": {
@@ -141,7 +146,9 @@ DOCUMENTS = {
         "ocr_fields": [
             "biometric_appointment_date",
         ],
-        "auto_updates": [],
+        "auto_updates": [
+            "biometric_appointment_date",
+        ],
     },
 
     "CONSTANCIA_DE_TRAMITE_CARNE_DE_EXTRANJERIA": {
@@ -162,7 +169,9 @@ DOCUMENTS = {
         "ocr_fields": [
             "pickup_appointment_date",
         ],
-        "auto_updates": [],
+        "auto_updates": [
+            "pickup_appointment_date",
+        ],
     },
 
     "CARNE_DE_EXTRANJERIA": {
@@ -312,4 +321,20 @@ OCR_FIELDS = [
     "residency_expiration",
     "prorroga_expiration",
     "cancelacion_date",
+    "visa_expiration",
+]
+
+
+# Date fields that OCR / manual save can update on Missionary
+MISSIONARY_DATE_FIELDS = [
+    "arrival_date",
+    "visa_expiration",
+    "passport_expiration",
+    "residency_expiration",
+    "prorroga_expiration",
+    "carnet_issue_date",
+    "cancelacion_date",
+    "interpol_appointment_date",
+    "biometric_appointment_date",
+    "pickup_appointment_date",
 ]

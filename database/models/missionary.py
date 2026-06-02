@@ -92,6 +92,22 @@ class Missionary(Base):
         Date
     )
 
+    interpol_appointment_date = Column(
+        Date
+    )
+
+    biometric_appointment_date = Column(
+        Date
+    )
+
+    pickup_appointment_date = Column(
+        Date
+    )
+
+    field_sources = Column(
+        String
+    )
+
     # ======================================
     # File System
     # ======================================

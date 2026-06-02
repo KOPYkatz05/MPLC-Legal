@@ -2,11 +2,7 @@ from PySide6.QtWidgets import (
     QWidget,
     QVBoxLayout,
     QHBoxLayout,
-    QPushButton,
-    QTableWidget,
     QTableWidgetItem,
-    QLabel,
-    QFrame,
     QHeaderView,
     QAbstractItemView,
     QMessageBox,
@@ -15,6 +11,13 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt
 
 from services.missionary_service import MissionaryService
+from ui.foundation import (
+    PageHeader,
+    configure_data_table,
+    create_button,
+    create_table,
+    divider,
+)
 
 from utils.logger import logger
 
@@ -42,39 +45,17 @@ class TrashPage(QWidget):
 
         self.setLayout(outer)
 
-        # Header
-        header = QFrame()
-
-        header.setObjectName("PageHeader")
-
-        header_layout = QHBoxLayout()
-
-        header_layout.setContentsMargins(32, 20, 32, 20)
-
-        header.setLayout(header_layout)
-
-        title = QLabel("Trash / Archive")
-
-        title.setObjectName("PageTitle")
-
-        header_layout.addWidget(title)
-
-        header_layout.addStretch()
+        header = PageHeader(
+            "Trash / Archive",
+            "Restore archived records or remove them permanently.",
+        )
 
         outer.addWidget(header)
 
-        divider = QFrame()
-
-        divider.setObjectName("HeaderDivider")
-
-        divider.setFixedHeight(1)
-
-        outer.addWidget(divider)
+        outer.addWidget(divider())
 
         # Table
-        self.table = QTableWidget()
-
-        self.table.setObjectName("MissionaryTable")
+        self.table = create_table()
 
         self.table.setColumnCount(6)
 
@@ -89,51 +70,19 @@ class TrashPage(QWidget):
             ]
         )
 
-        self.table.setSelectionBehavior(
-            QAbstractItemView.SelectRows
+        configure_data_table(
+            self.table,
+            {
+                0: QHeaderView.ResizeToContents,
+                1: QHeaderView.Stretch,
+                2: QHeaderView.ResizeToContents,
+                3: QHeaderView.ResizeToContents,
+                4: QHeaderView.ResizeToContents,
+                5: QHeaderView.ResizeToContents,
+            },
+            selection_mode=QAbstractItemView.SingleSelection,
+            sorting=False,
         )
-
-        self.table.setSelectionMode(
-            QAbstractItemView.SingleSelection
-        )
-
-        self.table.setEditTriggers(
-            QAbstractItemView.NoEditTriggers
-        )
-
-        self.table.setAlternatingRowColors(True)
-
-        self.table.verticalHeader().setVisible(False)
-
-        self.table.setShowGrid(False)
-
-        header_view = self.table.horizontalHeader()
-
-        header_view.setSectionResizeMode(
-            0, QHeaderView.ResizeToContents
-        )
-
-        header_view.setSectionResizeMode(
-            1, QHeaderView.Stretch
-        )
-
-        header_view.setSectionResizeMode(
-            2, QHeaderView.ResizeToContents
-        )
-
-        header_view.setSectionResizeMode(
-            3, QHeaderView.ResizeToContents
-        )
-
-        header_view.setSectionResizeMode(
-            4, QHeaderView.ResizeToContents
-        )
-
-        header_view.setSectionResizeMode(
-            5, QHeaderView.ResizeToContents
-        )
-
-        self.table.setRowHeight(0, 44)
 
         outer.addWidget(self.table, stretch=1)
 
@@ -218,45 +167,22 @@ class TrashPage(QWidget):
 
             actions_layout.setSpacing(8)
 
-            restore_btn = QPushButton("Restore")
-
-            restore_btn.setFixedHeight(28)
-
-            restore_btn.setStyleSheet(
-                "QPushButton {"
-                "background-color: #059669;"
-                "color: white;"
-                "border: none;"
-                "border-radius: 4px;"
-                "padding: 2px 10px;"
-                "font-size: 11px;"
-                "}"
-                "QPushButton:hover {"
-                "background-color: #047857;"
-                "}"
+            restore_btn = create_button(
+                "Restore",
+                "success",
+                fixed_height=28,
             )
+
 
             restore_btn.clicked.connect(
                 lambda _=None, mid=m.id:
                 self._restore_missionary(mid)
             )
 
-            delete_btn = QPushButton("Delete Permanently")
-
-            delete_btn.setFixedHeight(28)
-
-            delete_btn.setStyleSheet(
-                "QPushButton {"
-                "background-color: #DC2626;"
-                "color: white;"
-                "border: none;"
-                "border-radius: 4px;"
-                "padding: 2px 10px;"
-                "font-size: 11px;"
-                "}"
-                "QPushButton:hover {"
-                "background-color: #B91C1C;"
-                "}"
+            delete_btn = create_button(
+                "Delete Permanently",
+                "danger",
+                fixed_height=28,
             )
 
             delete_btn.clicked.connect(

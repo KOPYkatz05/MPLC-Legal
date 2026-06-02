@@ -1,24 +1,30 @@
 from pathlib import Path
 
+from utils.i18n import tr
 from utils.logger import logger
 
 
 class ExportService:
 
-    HEADERS = [
-        "ID",
-        "Full Name",
-        "Nationality",
-        "Passport Number",
-        "Current Stage",
-        "Arrival Date",
-        "Visa Expiration",
-        "Residency Expiration",
-        "Prórroga Expiration",
-        "Carnet Issue Date",
-        "Cancelación Date",
-        "Notes",
-    ]
+    def _headers(self):
+        return [
+            "ID",
+            "Full Name",
+            "Nationality",
+            "Passport Number",
+            "Current Stage",
+            "Arrival Date",
+            "Visa Expiration",
+            tr("export_passport_exp"),
+            "Residency Expiration",
+            "Prórroga Expiration",
+            "Carnet Issue Date",
+            "Cancelación Date",
+            tr("export_interpol_appt"),
+            tr("export_biometric_appt"),
+            tr("export_pickup_appt"),
+            "Notes",
+        ]
 
     def export_missionaries_to_excel(
         self,
@@ -35,13 +41,11 @@ class ExportService:
                 Side,
             )
 
+            headers = self._headers()
+
             wb = openpyxl.Workbook()
             ws = wb.active
             ws.title = "Missionaries"
-
-            # ==========================================
-            # Header row
-            # ==========================================
 
             header_fill = PatternFill(
                 start_color="1D4ED8",
@@ -62,31 +66,17 @@ class ExportService:
                 ),
             )
 
-            for col, header in enumerate(
-                self.HEADERS, 1
-            ):
-                cell = ws.cell(
-                    row=1,
-                    column=col,
-                    value=header,
-                )
-
+            for col, header in enumerate(headers, 1):
+                cell = ws.cell(row=1, column=col, value=header)
                 cell.font = header_font
-
                 cell.fill = header_fill
-
                 cell.border = header_border
-
                 cell.alignment = Alignment(
                     horizontal="center",
                     vertical="center",
                 )
 
             ws.row_dimensions[1].height = 30
-
-            # ==========================================
-            # Data rows
-            # ==========================================
 
             alt_fill = PatternFill(
                 start_color="EFF6FF",
@@ -108,65 +98,36 @@ class ExportService:
                     m.current_stage or "",
                     fmt_date(m.arrival_date),
                     fmt_date(m.visa_expiration),
-                    fmt_date(
-                        m.residency_expiration
-                    ),
-                    fmt_date(
-                        m.prorroga_expiration
-                    ),
+                    fmt_date(m.passport_expiration),
+                    fmt_date(m.residency_expiration),
+                    fmt_date(m.prorroga_expiration),
                     fmt_date(m.carnet_issue_date),
                     fmt_date(m.cancelacion_date),
+                    fmt_date(m.interpol_appointment_date),
+                    fmt_date(m.biometric_appointment_date),
+                    fmt_date(m.pickup_appointment_date),
                     m.notes or "",
                 ]
 
-                for col, val in enumerate(
-                    values, 1
-                ):
-                    cell = ws.cell(
-                        row=i,
-                        column=col,
-                        value=val,
-                    )
-
-                    cell.alignment = Alignment(
-                        vertical="center",
-                    )
-
+                for col, val in enumerate(values, 1):
+                    cell = ws.cell(row=i, column=col, value=val)
+                    cell.alignment = Alignment(vertical="center")
                     if i % 2 == 0:
                         cell.fill = alt_fill
 
                 ws.row_dimensions[i].height = 22
 
-            # ==========================================
-            # Column widths
-            # ==========================================
-
             col_widths = [
-                6,
-                30,
-                16,
-                18,
-                22,
-                14,
-                16,
-                20,
-                20,
-                16,
-                16,
-                40,
+                6, 30, 16, 18, 22, 14, 16, 16, 20, 20,
+                16, 16, 16, 16, 16, 40,
             ]
 
-            for col, width in enumerate(
-                col_widths, 1
-            ):
+            for col, width in enumerate(col_widths, 1):
                 ws.column_dimensions[
-                    ws.cell(row=1, column=col)
-                    .column_letter
+                    ws.cell(row=1, column=col).column_letter
                 ].width = width
 
-            # Freeze top row
             ws.freeze_panes = "A2"
-
             wb.save(output_path)
 
             logger.info(
@@ -178,8 +139,7 @@ class ExportService:
 
         except Exception:
             logger.exception(
-                "Failed to export missionaries "
-                "to Excel"
+                "Failed to export missionaries to Excel"
             )
 
             return False

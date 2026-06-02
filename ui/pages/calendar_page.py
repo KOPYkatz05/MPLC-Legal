@@ -18,6 +18,7 @@ from PySide6.QtGui import QColor
 from database.db import SessionLocal
 
 from database.models.missionary import Missionary
+from ui.foundation import PageHeader, divider
 
 from utils.logger import logger
 
@@ -51,42 +52,21 @@ class CalendarPage(QWidget):
 
         self.setLayout(outer)
 
-        # Header
-        header = QFrame()
-
-        header.setObjectName("PageHeader")
-
-        header_layout = QHBoxLayout()
-
-        header_layout.setContentsMargins(32, 20, 32, 20)
-
-        header.setLayout(header_layout)
-
-        title = QLabel("Appointments Calendar")
-
-        title.setObjectName("PageTitle")
-
-        header_layout.addWidget(title)
-
-        header_layout.addStretch()
-
         self._count_label = QLabel("")
 
         self._count_label.setStyleSheet(
             "font-size: 13px; color: #71717A;"
         )
 
-        header_layout.addWidget(self._count_label)
+        header = PageHeader(
+            "Appointments Calendar",
+            "Upcoming Interpol, biometric, and pickup appointments.",
+            [self._count_label],
+        )
 
         outer.addWidget(header)
 
-        divider = QFrame()
-
-        divider.setObjectName("HeaderDivider")
-
-        divider.setFixedHeight(1)
-
-        outer.addWidget(divider)
+        outer.addWidget(divider())
 
         # Scroll area for appointments
         scroll = QScrollArea()

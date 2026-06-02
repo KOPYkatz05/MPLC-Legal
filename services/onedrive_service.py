@@ -1,6 +1,12 @@
 from pathlib import Path
 
-from config import MISSIONS_ROOT
+from config import (
+    ACTIVE_FOLDER_NAME,
+    ARCHIVE_FOLDER_NAME,
+    TRASH_FOLDER_NAME,
+    ensure_storage_root,
+    get_storage_root,
+)
 
 from utils.constants import (
     WORKFLOW_STAGES,
@@ -13,33 +19,10 @@ import shutil
 from datetime import datetime
 
 
-ACTIVE_ROOT = (
-    MISSIONS_ROOT / "ACTIVE"
-)
-
-ARCHIVE_ROOT = (
-    MISSIONS_ROOT / "ARCHIVED"
-)
-
-TRASH_ROOT = (
-    MISSIONS_ROOT / "TRASH PILE"
-)
-
-
 class OneDriveService:
     def __init__(self):
         try:
-            ACTIVE_ROOT.mkdir(
-                exist_ok=True
-            )
-
-            ARCHIVE_ROOT.mkdir(
-                exist_ok=True
-            )
-
-            TRASH_ROOT.mkdir(
-                exist_ok=True
-            )
+            ensure_storage_root(self.root)
 
             logger.info(
                 "Initialized OneDrive "
@@ -54,13 +37,29 @@ class OneDriveService:
 
             raise
 
+    @property
+    def root(self):
+        return get_storage_root()
+
+    @property
+    def active_root(self):
+        return self.root / ACTIVE_FOLDER_NAME
+
+    @property
+    def archive_root(self):
+        return self.root / ARCHIVE_FOLDER_NAME
+
+    @property
+    def trash_root(self):
+        return self.root / TRASH_FOLDER_NAME
+
     def create_missionary_folders(
         self,
         missionary_name,
     ):
         try:
             missionary_folder = (
-                ACTIVE_ROOT
+                self.active_root
                 / missionary_name
             )
 
@@ -145,7 +144,7 @@ class OneDriveService:
             )
 
             archive_folder = (
-                ARCHIVE_ROOT
+                self.archive_root
                 / archive_year
             )
 
@@ -159,14 +158,24 @@ class OneDriveService:
                 / current_folder.name
             )
 
-            shutil.move(
-                str(current_folder),
-                str(destination_folder)
-            )
+            counter = 1
+
+            while destination_folder.exists():
+                destination_folder = (
+                    archive_folder
+                    / f"{current_folder.name}_{counter}"
+                )
+                counter += 1
+
+            if current_folder.exists():
+                shutil.move(
+                    str(current_folder),
+                    str(destination_folder)
+                )
 
             logger.info(
                 f"Archived folder "
-                f"{current_folder.name}"
+                f"{destination_folder}"
             )
 
             return destination_folder
@@ -175,6 +184,104 @@ class OneDriveService:
             logger.exception(
                 f"Failed to archive "
                 f"folder: "
+                f"{current_folder_path}"
+            )
+
+            raise
+
+    def trash_missionary_folder(
+        self,
+        current_folder_path,
+    ):
+        try:
+            current_folder = Path(
+                current_folder_path
+            )
+
+            self.trash_root.mkdir(
+                parents=True,
+                exist_ok=True,
+            )
+
+            destination_folder = (
+                self.trash_root
+                / current_folder.name
+            )
+
+            counter = 1
+
+            while destination_folder.exists():
+                destination_folder = (
+                    self.trash_root
+                    / f"{current_folder.name}_{counter}"
+                )
+                counter += 1
+
+            if current_folder.exists():
+                shutil.move(
+                    str(current_folder),
+                    str(destination_folder),
+                )
+
+            logger.info(
+                f"Moved folder to trash: "
+                f"{destination_folder}"
+            )
+
+            return destination_folder
+
+        except Exception:
+            logger.exception(
+                f"Failed to trash folder: "
+                f"{current_folder_path}"
+            )
+
+            raise
+
+    def restore_missionary_folder(
+        self,
+        current_folder_path,
+    ):
+        try:
+            current_folder = Path(
+                current_folder_path
+            )
+
+            self.active_root.mkdir(
+                parents=True,
+                exist_ok=True,
+            )
+
+            destination_folder = (
+                self.active_root
+                / current_folder.name
+            )
+
+            counter = 1
+
+            while destination_folder.exists():
+                destination_folder = (
+                    self.active_root
+                    / f"{current_folder.name}_{counter}"
+                )
+                counter += 1
+
+            if current_folder.exists():
+                shutil.move(
+                    str(current_folder),
+                    str(destination_folder),
+                )
+
+            logger.info(
+                f"Restored folder: "
+                f"{destination_folder}"
+            )
+
+            return destination_folder
+
+        except Exception:
+            logger.exception(
+                f"Failed to restore folder: "
                 f"{current_folder_path}"
             )
 

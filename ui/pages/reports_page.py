@@ -7,7 +7,6 @@ from PySide6.QtWidgets import (
     QLabel,
     QFrame,
     QScrollArea,
-    QSizePolicy,
 )
 
 from PySide6.QtCore import Qt
@@ -19,74 +18,11 @@ from database.models.missionary import Missionary
 from database.models.document import Document
 
 from database.models.stage_history import StageHistory
+from ui.foundation import PageHeader, StatCard, divider
 
 from utils.constants import WORKFLOW_STAGES
 
 from utils.logger import logger
-
-
-class StatCard(QFrame):
-    def __init__(
-        self,
-        count,
-        title,
-        subtitle="",
-        color="#3B82F6",
-        parent=None,
-    ):
-        super().__init__(parent)
-
-        self.setStyleSheet(
-            "background-color: #FFFFFF;"
-            "border: 1px solid #E4E4E7;"
-            "border-radius: 10px;"
-        )
-
-        self.setSizePolicy(
-            QSizePolicy.Expanding,
-            QSizePolicy.Fixed,
-        )
-
-        self.setMinimumHeight(110)
-
-        layout = QVBoxLayout()
-
-        layout.setContentsMargins(20, 16, 20, 16)
-
-        layout.setSpacing(2)
-
-        self.setLayout(layout)
-
-        count_label = QLabel(str(count))
-
-        count_label.setStyleSheet(
-            f"color: {color};"
-            "font-size: 38px;"
-            "font-weight: 700;"
-        )
-
-        title_label = QLabel(title)
-
-        title_label.setStyleSheet(
-            "font-size: 13px;"
-            "font-weight: 600;"
-            "color: #18181B;"
-        )
-
-        layout.addWidget(count_label)
-
-        layout.addWidget(title_label)
-
-        if subtitle:
-            sub_label = QLabel(subtitle)
-
-            sub_label.setStyleSheet(
-                "font-size: 11px; color: #71717A;"
-            )
-
-            layout.addWidget(sub_label)
-
-        layout.addStretch()
 
 
 class ReportsPage(QWidget):
@@ -110,34 +46,14 @@ class ReportsPage(QWidget):
 
         self.setLayout(outer)
 
-        # Header
-        header = QFrame()
-
-        header.setObjectName("PageHeader")
-
-        header_layout = QHBoxLayout()
-
-        header_layout.setContentsMargins(32, 20, 32, 20)
-
-        header.setLayout(header_layout)
-
-        title = QLabel("Reports & Statistics")
-
-        title.setObjectName("PageTitle")
-
-        header_layout.addWidget(title)
-
-        header_layout.addStretch()
+        header = PageHeader(
+            "Reports & Statistics",
+            "Operational metrics for workflow health.",
+        )
 
         outer.addWidget(header)
 
-        divider = QFrame()
-
-        divider.setObjectName("HeaderDivider")
-
-        divider.setFixedHeight(1)
-
-        outer.addWidget(divider)
+        outer.addWidget(divider())
 
         # Scroll area
         scroll = QScrollArea()

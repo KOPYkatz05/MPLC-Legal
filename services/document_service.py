@@ -1,3 +1,4 @@
+import json
 import shutil
 
 from pathlib import Path
@@ -27,6 +28,8 @@ class DocumentService:
         source_file,
         document_type,
         workflow_stage,
+        ocr_raw_data=None,
+        ocr_confirmed_data=None,
     ):
         session = SessionLocal()
 
@@ -53,6 +56,17 @@ class DocumentService:
                 destination_folder / new_file_name
             )
 
+            counter = 1
+            while destination_path.exists():
+                new_file_name = (
+                    f"{document_type}_{counter}"
+                    f"{file_extension}"
+                )
+                destination_path = (
+                    destination_folder / new_file_name
+                )
+                counter += 1
+
             logger.info(
                 f"Uploading document "
                 f"{new_file_name} "
@@ -65,17 +79,30 @@ class DocumentService:
                 destination_path,
             )
 
+            raw_json = None
+            confirmed_json = None
+            if ocr_raw_data is not None:
+                raw_json = json.dumps(ocr_raw_data, default=str)
+            if ocr_confirmed_data is not None:
+                confirmed_json = json.dumps(
+                    ocr_confirmed_data, default=str
+                )
+
             document = Document(
                 missionary_id=missionary.id,
                 document_type=document_type,
                 workflow_stage=workflow_stage,
                 file_name=new_file_name,
                 file_path=str(destination_path),
+                ocr_raw_data=raw_json,
+                ocr_confirmed_data=confirmed_json,
             )
 
             session.add(document)
 
             session.commit()
+
+            session.refresh(document)
 
             logger.info(
                 f"Successfully uploaded "
@@ -87,6 +114,8 @@ class DocumentService:
             self.workflow_validator.validate_workflows(
                 missionary.id
             )
+
+            return document
 
         except Exception:
             session.rollback()

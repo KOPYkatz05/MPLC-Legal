@@ -29,6 +29,7 @@ from utils.constants import (
 )
 
 from utils.logger import logger
+from services.onedrive_service import OneDriveService
 
 
 class StageAdvanceDialog(QDialog):
@@ -509,6 +510,14 @@ class StageAdvanceDialog(QDialog):
 
             else:
                 missionary.status = "ARCHIVED"
+                if missionary.folder_path:
+                    new_folder = (
+                        OneDriveService()
+                        .archive_missionary_folder(
+                            missionary.folder_path
+                        )
+                    )
+                    missionary.folder_path = str(new_folder)
 
                 history = StageHistory(
                     missionary_id=missionary.id,

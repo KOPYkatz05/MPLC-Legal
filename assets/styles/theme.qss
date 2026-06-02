@@ -26,6 +26,11 @@ QWidget {
 }
 
 QWidget#MissionariesPage,
+QWidget#CalendarPage,
+QWidget#ReportsPage,
+QWidget#SettingsPage,
+QWidget#TrashPage,
+QWidget#MissionaryDetailPage,
 QWidget#DashboardContent,
 QWidget#CentralWidget {
     background-color: #F4F4F5;
@@ -88,6 +93,51 @@ QScrollBar::sub-line:horizontal {
    SIDEBAR
    ========================================== */
 
+QFrame#FluentSidebar {
+    background-color: #FFFFFF;
+    border: none;
+    border-right: 1px solid #E4E4E7;
+}
+
+QLabel#SidebarBrand {
+    color: #18181B;
+    font-size: 15px;
+    font-weight: 700;
+    padding: 0px 8px 18px 8px;
+    background: transparent;
+}
+
+QLabel#SidebarGroupLabel {
+    color: #A1A1AA;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.8px;
+    padding: 14px 8px 4px 8px;
+    background: transparent;
+}
+
+QPushButton#SidebarNavButton {
+    background-color: transparent;
+    color: #52525B;
+    border: none;
+    border-radius: 6px;
+    padding: 0px 12px;
+    text-align: left;
+    font-size: 13px;
+    font-weight: 500;
+}
+
+QPushButton#SidebarNavButton:hover {
+    background-color: #F4F4F5;
+    color: #27272A;
+}
+
+QPushButton#SidebarNavButton:checked {
+    background-color: #EFF6FF;
+    color: #1D4ED8;
+    font-weight: 700;
+}
+
 QListWidget#Sidebar {
     background-color: #FFFFFF;
     border: none;
@@ -135,6 +185,12 @@ QLabel#PageTitle {
     font-size: 20px;
     font-weight: 700;
     color: #18181B;
+    background: transparent;
+}
+
+QLabel#PageSubtitle {
+    font-size: 12px;
+    color: #71717A;
     background: transparent;
 }
 
@@ -274,13 +330,25 @@ QLabel#SectionHeader {
 QFrame#StatCard {
     background-color: #FFFFFF;
     border: 1px solid #E4E4E7;
-    border-radius: 10px;
+    border-radius: 8px;
+}
+
+QLabel#StatCount {
+    font-size: 36px;
+    font-weight: 700;
+    background: transparent;
 }
 
 QLabel#StatTitle {
     font-size: 12px;
     color: #71717A;
     font-weight: 400;
+    background: transparent;
+}
+
+QLabel#StatSubtitle {
+    font-size: 11px;
+    color: #71717A;
     background: transparent;
 }
 
@@ -292,7 +360,7 @@ QLabel#StatTitle {
 QFrame#ListCard {
     background-color: #FFFFFF;
     border: 1px solid #E4E4E7;
-    border-radius: 10px;
+    border-radius: 8px;
 }
 
 
@@ -372,7 +440,7 @@ QPushButton[text="Upload Document"],
 QPushButton[text="Save"],
 QPushButton[text="Save Extracted Data"],
 QPushButton[text="Continue to Document Editor"] {
-    background-color: #3B82F6;
+    background-color: #2563EB;
     color: #FFFFFF;
     border: none;
     font-weight: 500;
@@ -384,30 +452,61 @@ QPushButton[text="Upload Document"]:hover,
 QPushButton[text="Save"]:hover,
 QPushButton[text="Save Extracted Data"]:hover,
 QPushButton[text="Continue to Document Editor"]:hover {
-    background-color: #2563EB;
+    background-color: #1D4ED8;
 }
 
+QPushButton#SecondaryButton,
 QPushButton#RefreshButton {
     background-color: #FFFFFF;
-    color: #3B82F6;
+    color: #2563EB;
     border: 1px solid #BFDBFE;
     border-radius: 6px;
     padding: 6px 16px;
     font-weight: 500;
 }
 
+QPushButton#SecondaryButton:hover,
 QPushButton#RefreshButton:hover {
     background-color: #EFF6FF;
 }
 
+QPushButton#SubtleButton {
+    background-color: transparent;
+    color: #52525B;
+    border: 1px solid transparent;
+}
+
+QPushButton#SubtleButton:hover {
+    background-color: #F4F4F5;
+    border-color: #E4E4E7;
+}
+
+QPushButton#SuccessButton {
+    background-color: #059669;
+    color: #FFFFFF;
+    border: none;
+    font-weight: 600;
+}
+
+QPushButton#SuccessButton:hover {
+    background-color: #047857;
+}
+
+QPushButton#DangerButton,
 QPushButton[text="Delete Missionary"] {
     background-color: #FFFFFF;
     color: #DC2626;
     border: 1px solid #FECACA;
 }
 
+QPushButton#DangerButton:hover,
 QPushButton[text="Delete Missionary"]:hover {
     background-color: #FEF2F2;
+}
+
+QFrame#DialogFooter {
+    background-color: #FFFFFF;
+    border-top: 1px solid #E4E4E7;
 }
 
 QPushButton[text="Cancel"],
