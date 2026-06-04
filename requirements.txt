@@ -2,6 +2,7 @@ PySide6
 PySide6-Fluent-Widgets
 SQLAlchemy
 python-dotenv
+setuptools
 
 paddleocr==2.8.1
 paddlepaddle==2.6.2

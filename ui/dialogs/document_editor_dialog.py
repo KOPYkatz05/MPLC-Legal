@@ -17,17 +17,15 @@ from PySide6.QtWidgets import (
     QDialog,
     QVBoxLayout,
     QHBoxLayout,
-    QPushButton,
-    QListWidget,
     QListWidgetItem,
     QGraphicsScene,
     QGraphicsPixmapItem,
-    QSlider,
 )
 
 from ui.widgets.crop_graphics_view import (
     CropGraphicsView,
 )
+from ui.foundation import create_button, create_list_widget, create_slider
 
 
 class DocumentEditorDialog(QDialog):
@@ -87,7 +85,7 @@ class DocumentEditorDialog(QDialog):
         # PDF Page List
         # =====================================
 
-        self.page_list = QListWidget()
+        self.page_list = create_list_widget()
 
         self.page_list.setFixedWidth(
             180
@@ -120,7 +118,7 @@ class DocumentEditorDialog(QDialog):
         # Rotation Slider
         # =====================================
 
-        self.rotation_slider = QSlider(
+        self.rotation_slider = create_slider(
             Qt.Horizontal
         )
 
@@ -143,13 +141,9 @@ class DocumentEditorDialog(QDialog):
 
         button_layout = QHBoxLayout()
 
-        self.cancel_button = QPushButton(
-            "Cancel"
-        )
+        self.cancel_button = create_button("Cancel", "secondary")
 
-        self.confirm_button = QPushButton(
-            "Confirm"
-        )
+        self.confirm_button = create_button("Confirm", "primary")
 
         button_layout.addStretch()
 

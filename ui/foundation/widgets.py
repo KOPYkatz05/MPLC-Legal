@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 
 from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QColor, QPalette
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QButtonGroup,
@@ -17,6 +18,7 @@ from PySide6.QtWidgets import (
 )
 
 from ui.foundation.fluent import create_button
+from ui.foundation.fluent import CardWidget, SimpleCardWidget
 
 
 @dataclass(frozen=True)
@@ -34,7 +36,7 @@ def divider(object_name="HeaderDivider"):
     return line
 
 
-class PageHeader(QFrame):
+class PageHeader(SimpleCardWidget):
     def __init__(self, title, subtitle="", actions=None, parent=None):
         super().__init__(parent)
         self.setObjectName("PageHeader")
@@ -74,7 +76,7 @@ class PageHeader(QFrame):
         self.subtitle_label.setVisible(bool(subtitle))
 
 
-class FilterBar(QFrame):
+class FilterBar(SimpleCardWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName("FilterBar")
@@ -103,7 +105,7 @@ class SectionTitle(QWidget):
         layout.addStretch()
 
 
-class StatCard(QFrame):
+class StatCard(SimpleCardWidget):
     def __init__(
         self,
         value,
@@ -127,7 +129,9 @@ class StatCard(QFrame):
 
         value_label = QLabel(str(value))
         value_label.setObjectName("StatCount")
-        value_label.setStyleSheet(f"color: {accent};")
+        palette = value_label.palette()
+        palette.setColor(QPalette.WindowText, QColor(accent))
+        value_label.setPalette(palette)
 
         title_label = QLabel(title)
         title_label.setObjectName("StatTitle")
@@ -144,7 +148,7 @@ class StatCard(QFrame):
         layout.addStretch()
 
 
-class DialogFooter(QFrame):
+class DialogFooter(SimpleCardWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName("DialogFooter")

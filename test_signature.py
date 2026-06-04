@@ -1,4 +1,11 @@
-from paddleocr import PaddleOCR
 import inspect
 
-print(inspect.signature(PaddleOCR))
+
+def main():
+    from paddleocr import PaddleOCR
+
+    print(inspect.signature(PaddleOCR))
+
+
+if __name__ == "__main__":
+    main()

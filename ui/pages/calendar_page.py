@@ -5,20 +5,17 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QHBoxLayout,
     QLabel,
-    QFrame,
-    QScrollArea,
-    QPushButton,
     QSizePolicy,
 )
 
 from PySide6.QtCore import Qt
 
-from PySide6.QtGui import QColor
+from PySide6.QtGui import QColor, QFont, QPalette
 
 from database.db import SessionLocal
 
 from database.models.missionary import Missionary
-from ui.foundation import PageHeader, divider
+from ui.foundation import PageHeader, create_button, create_card, create_scroll_area, divider
 
 from utils.logger import logger
 
@@ -54,9 +51,7 @@ class CalendarPage(QWidget):
 
         self._count_label = QLabel("")
 
-        self._count_label.setStyleSheet(
-            "font-size: 13px; color: #71717A;"
-        )
+        self._count_label.setObjectName("MutedText")
 
         header = PageHeader(
             "Appointments Calendar",
@@ -69,13 +64,9 @@ class CalendarPage(QWidget):
         outer.addWidget(divider())
 
         # Scroll area for appointments
-        scroll = QScrollArea()
+        scroll = create_scroll_area()
 
-        scroll.setWidgetResizable(True)
-
-        scroll.setStyleSheet(
-            "background-color: #F4F4F5;"
-        )
+        scroll.setObjectName("PageSurface")
 
         content = QWidget()
 
@@ -187,13 +178,7 @@ class CalendarPage(QWidget):
             )
 
     def _make_day_card(self, d, appts, today):
-        card = QFrame()
-
-        card.setStyleSheet(
-            "background-color: #FFFFFF;"
-            "border: 1px solid #E4E4E7;"
-            "border-radius: 10px;"
-        )
+        card = create_card()
 
         card_layout = QVBoxLayout()
 
@@ -221,10 +206,7 @@ class CalendarPage(QWidget):
             f"{date_str}  {days_text}"
         )
 
-        date_label.setStyleSheet(
-            "font-size: 14px; font-weight: 700;"
-            "color: #18181B;"
-        )
+        date_label.setObjectName("PanelTitle")
 
         card_layout.addWidget(date_label)
 
@@ -235,25 +217,29 @@ class CalendarPage(QWidget):
             row.setSpacing(12)
 
             # Color dot
-            dot = QLabel("")
-
-            dot.setFixedSize(10, 10)
-
-            dot.setStyleSheet(
-                f"background-color: {appt['color']};"
-                "border-radius: 5px;"
+            dot = QLabel("●")
+            dot.setFixedWidth(12)
+            dot_palette = dot.palette()
+            dot_palette.setColor(
+                QPalette.WindowText,
+                QColor(appt["color"]),
             )
+            dot.setPalette(dot_palette)
 
             row.addWidget(dot)
 
             # Type label
             type_label = QLabel(appt["type"])
-
-            type_label.setStyleSheet(
-                f"color: {appt['color']};"
-                "font-size: 12px;"
-                "font-weight: 600;"
+            type_font = QFont(type_label.font())
+            type_font.setPointSize(12)
+            type_font.setWeight(QFont.DemiBold)
+            type_label.setFont(type_font)
+            type_palette = type_label.palette()
+            type_palette.setColor(
+                QPalette.WindowText,
+                QColor(appt["color"]),
             )
+            type_label.setPalette(type_palette)
 
             type_label.setFixedWidth(80)
 
@@ -264,32 +250,14 @@ class CalendarPage(QWidget):
                 appt["missionary"].full_name
             )
 
-            name_label.setStyleSheet(
-                "font-size: 13px; color: #18181B;"
-            )
+            name_label.setObjectName("BodyText")
 
             row.addWidget(name_label)
 
             row.addStretch()
 
             # View button
-            view_btn = QPushButton("View")
-
-            view_btn.setFixedHeight(24)
-
-            view_btn.setStyleSheet(
-                "QPushButton {"
-                "background-color: #F4F4F5;"
-                "color: #18181B;"
-                "border: 1px solid #E4E4E7;"
-                "border-radius: 4px;"
-                "padding: 2px 10px;"
-                "font-size: 11px;"
-                "}"
-                "QPushButton:hover {"
-                "background-color: #E4E4E7;"
-                "}"
-            )
+            view_btn = create_button("View", "subtle", fixed_height=24)
 
             mid = appt["missionary"].id
 

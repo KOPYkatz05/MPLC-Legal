@@ -5,22 +5,25 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QHBoxLayout,
     QFormLayout,
-    QLineEdit,
-    QPushButton,
     QLabel,
-    QDateEdit,
-    QScrollArea,
     QWidget,
     QFrame,
 )
 from PySide6.QtCore import Qt, QDate
 from PySide6.QtGui import QPixmap
 
+from ui.foundation import (
+    create_button,
+    create_date_edit,
+    create_line_edit,
+    create_scroll_area,
+)
 from utils.constants import MISSIONARY_DATE_FIELDS
 from utils.i18n import tr, field_label
 
 
 EMPTY_DATE = QDate(1900, 1, 1)
+DATE_EDIT_MAX_WIDTH = 180
 
 
 class OCRReviewDialog(QDialog):
@@ -53,20 +56,10 @@ class OCRReviewDialog(QDialog):
 
         status_key = f"ocr_status_{self.ocr_status}"
         status_text = tr(status_key)
-        colors = {
-            "success": "#059669",
-            "partial": "#D97706",
-            "failed": "#DC2626",
-            "skipped": "#71717A",
-        }
-        color = colors.get(self.ocr_status, "#71717A")
-
         banner = QLabel(status_text)
         banner.setWordWrap(True)
-        banner.setStyleSheet(
-            f"background-color: #F4F4F5; color: {color}; "
-            f"padding: 10px; border-radius: 6px; font-weight: 600;"
-        )
+        banner.setObjectName("OcrStatusBanner")
+        banner.setProperty("status", self.ocr_status)
         root.addWidget(banner)
 
         info = QLabel(tr("ocr_review_instructions"))
@@ -91,7 +84,7 @@ class OCRReviewDialog(QDialog):
                 img_label = QLabel()
                 img_label.setPixmap(scaled)
                 img_label.setAlignment(Qt.AlignCenter)
-                scroll = QScrollArea()
+                scroll = create_scroll_area()
                 scroll.setWidget(img_label)
                 scroll.setWidgetResizable(True)
                 preview_layout.addWidget(scroll)
@@ -111,10 +104,10 @@ class OCRReviewDialog(QDialog):
             raw_value = self.parsed_data.get(field, "")
 
             if field in MISSIONARY_DATE_FIELDS or field == "date_of_birth":
-                date_edit = QDateEdit()
-                date_edit.setCalendarPopup(True)
+                date_edit = create_date_edit()
                 date_edit.setMinimumDate(EMPTY_DATE)
                 date_edit.setSpecialValueText("--")
+                date_edit.setMaximumWidth(DATE_EDIT_MAX_WIDTH)
                 parsed = self._to_date(raw_value)
                 if parsed:
                     date_edit.setDate(
@@ -132,20 +125,20 @@ class OCRReviewDialog(QDialog):
             else:
                 if raw_value and not isinstance(raw_value, str):
                     raw_value = str(raw_value)
-                edit = QLineEdit(raw_value or "")
+                edit = create_line_edit()
+                edit.setText(raw_value or "")
                 self.field_edits[field] = edit
                 form.addRow(f"{label}:", edit)
 
-        scroll_form = QScrollArea()
+        scroll_form = create_scroll_area()
         scroll_form.setWidget(form_widget)
-        scroll_form.setWidgetResizable(True)
         body.addWidget(scroll_form, stretch=1)
 
         root.addLayout(body)
 
         button_layout = QHBoxLayout()
-        self.skip_btn = QPushButton(tr("ocr_skip"))
-        self.save_btn = QPushButton(tr("ocr_save"))
+        self.skip_btn = create_button(tr("ocr_skip"), "secondary")
+        self.save_btn = create_button(tr("ocr_save"), "primary")
         self.save_btn.setDefault(True)
         button_layout.addStretch()
         button_layout.addWidget(self.skip_btn)

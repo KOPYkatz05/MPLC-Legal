@@ -1,4 +1,7 @@
+import os
 import json
+import subprocess
+import sys
 
 from datetime import date
 
@@ -9,20 +12,12 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QHBoxLayout,
     QLabel,
-    QListWidget,
     QListWidgetItem,
     QInputDialog,
-    QPushButton,
     QFileDialog,
-    QMessageBox,
-    QTabWidget,
     QFormLayout,
     QFrame,
-    QScrollArea,
-    QTextEdit,
-    QMenu,
     QSizePolicy,
-    QDateEdit,
 )
 
 from PySide6.QtCore import Qt, QSize, QDate
@@ -36,18 +31,20 @@ from services.document_image_export_service import (
     DocumentImageExportService,
 )
 from services.thumbnail_service import ThumbnailService
-from services.upload_pipeline import (
-    prepare_ocr_ingestion,
-    finalize_ocr_ingestion,
-    get_missing_for_missionary,
-)
-from ui.dialogs.upload_document_dialog import UploadDocumentDialog
-from ui.dialogs.document_editor_dialog import DocumentEditorDialog
-from ui.dialogs.ocr_review_dialog import OCRReviewDialog
-from ui.dialogs.upload_summary_dialog import UploadSummaryDialog
 from ui.dialogs.ocr_data_view_dialog import OcrDataViewDialog
 from ui.dialogs.stage_advance_dialog import StageAdvanceDialog
-from ui.dialogs.batch_upload_dialog import BatchUploadDialog
+from ui.dialogs.upload_session_dialog import UploadSessionDialog
+from ui.foundation import (
+    create_button,
+    create_card,
+    create_date_edit,
+    create_list_widget,
+    create_menu,
+    create_scroll_area,
+    create_tab_widget,
+    create_text_edit,
+    show_message,
+)
 from utils.constants import (
     DOCUMENTS,
     WORKFLOW_STATUSES,
@@ -58,6 +55,7 @@ from utils.logger import logger
 from services.workflow_validator import WorkflowValidator
 
 DATE_PLACEHOLDER = QDate(1900, 1, 1)
+DATE_EDIT_MAX_WIDTH = 180
 
 EDITABLE_DATE_FIELDS = [
     "arrival_date",
@@ -71,6 +69,20 @@ EDITABLE_DATE_FIELDS = [
     "biometric_appointment_date",
     "pickup_appointment_date",
 ]
+
+
+def open_document_with_default_app(file_path):
+    file_path = str(file_path)
+
+    if sys.platform.startswith("win"):
+        os.startfile(file_path)
+        return
+
+    if sys.platform == "darwin":
+        subprocess.Popen(["open", file_path])
+        return
+
+    subprocess.Popen(["xdg-open", file_path])
 
 
 class MissionaryDetailPage(QWidget):
@@ -146,17 +158,6 @@ class MissionaryDetailPage(QWidget):
 
         self.stage_badge.setObjectName("StageBadge")
 
-        self.stage_badge.setStyleSheet(
-            "background-color: #EFF6FF; "
-            "color: #1D4ED8; "
-            "font-size: 11px; "
-            "font-weight: 600; "
-            "padding: 2px 10px; "
-            "border-radius: 10px; "
-            "border: 1px solid #BFDBFE; "
-            "background: transparent;"
-        )
-
         name_stage.addWidget(self.name_label)
 
         name_stage.addWidget(
@@ -168,40 +169,23 @@ class MissionaryDetailPage(QWidget):
 
         header_layout.addStretch()
 
-        self.advance_button = QPushButton(
-            "→ Advance Stage"
+        self.advance_button = create_button(
+            "→ Advance Stage",
+            "success",
         )
 
         self.advance_button.setObjectName(
             "AdvanceButton"
         )
 
-        self.advance_button.setFixedHeight(34)
-
-        self.advance_button.setStyleSheet(
-            "QPushButton#AdvanceButton {"
-            "background-color: #059669; "
-            "color: white; "
-            "border: none; "
-            "border-radius: 6px; "
-            "padding: 0px 16px; "
-            "font-weight: 500; "
-            "font-size: 13px;"
-            "}"
-            "QPushButton#AdvanceButton:hover {"
-            "background-color: #047857;"
-            "}"
-        )
-
         self.advance_button.clicked.connect(
             self._advance_stage
         )
 
-        self.delete_button = QPushButton(
-            "Delete Missionary"
+        self.delete_button = create_button(
+            "Delete Missionary",
+            "danger",
         )
-
-        self.delete_button.setFixedHeight(34)
 
         self.delete_button.clicked.connect(
             self.delete_missionary
@@ -229,14 +213,7 @@ class MissionaryDetailPage(QWidget):
         self.advance_banner = QFrame()
 
         self.advance_banner.setObjectName(
-            "AdvanceBanner"
-        )
-
-        self.advance_banner.setStyleSheet(
-            "QFrame#AdvanceBanner {"
-            "background-color: #DCFCE7; "
-            "border-bottom: 1px solid #86EFAC;"
-            "}"
+            "SuccessBanner"
         )
 
         self.advance_banner.setVisible(False)
@@ -255,41 +232,19 @@ class MissionaryDetailPage(QWidget):
 
         banner_icon = QLabel("✓")
 
-        banner_icon.setStyleSheet(
-            "color: #059669; "
-            "font-size: 16px; "
-            "font-weight: 700; "
-            "background: transparent;"
-        )
+        banner_icon.setObjectName("SuccessIcon")
 
         self.banner_text = QLabel(
             "All required documents uploaded — "
             "ready to advance to the next stage."
         )
 
-        self.banner_text.setStyleSheet(
-            "color: #166534; "
-            "font-size: 13px; "
-            "background: transparent;"
-        )
+        self.banner_text.setObjectName("SuccessBannerText")
 
-        banner_now_btn = QPushButton(
-            "Advance Now"
-        )
-
-        banner_now_btn.setStyleSheet(
-            "QPushButton {"
-            "background-color: #059669; "
-            "color: white; "
-            "border: none; "
-            "border-radius: 6px; "
-            "padding: 4px 14px; "
-            "font-size: 12px; "
-            "font-weight: 500;"
-            "}"
-            "QPushButton:hover {"
-            "background-color: #047857;"
-            "}"
+        banner_now_btn = create_button(
+            "Advance Now",
+            "success",
+            fixed_height=30,
         )
 
         banner_now_btn.clicked.connect(
@@ -310,7 +265,7 @@ class MissionaryDetailPage(QWidget):
         # Tabs
         # ==========================================
 
-        self.tabs = QTabWidget()
+        self.tabs = create_tab_widget()
 
         main_layout.addWidget(
             self.tabs, stretch=1
@@ -340,17 +295,11 @@ class MissionaryDetailPage(QWidget):
 
         overview_tab.setLayout(tab_layout)
 
-        scroll = QScrollArea()
-
-        scroll.setWidgetResizable(True)
-
-        scroll.setFrameShape(QFrame.NoFrame)
+        scroll = create_scroll_area()
 
         content = QWidget()
 
-        content.setStyleSheet(
-            "background-color: #F4F4F5;"
-        )
+        content.setObjectName("PageSurface")
 
         content_layout = QVBoxLayout()
 
@@ -369,7 +318,7 @@ class MissionaryDetailPage(QWidget):
 
         content_layout.addWidget(wf_section_hdr)
 
-        self.workflow_list = QListWidget()
+        self.workflow_list = create_list_widget()
 
         self.workflow_list.setMaximumHeight(160)
 
@@ -382,26 +331,22 @@ class MissionaryDetailPage(QWidget):
 
         docs_label.setObjectName("SectionHeader")
 
-        self.batch_upload_btn = QPushButton(
-            "⬆  Batch Upload"
+        self.batch_upload_btn = create_button(
+            "⬆  Batch Upload",
+            "secondary",
+            fixed_height=30,
         )
-
-        self.batch_upload_btn.setFixedHeight(30)
         self.batch_upload_btn.setMinimumWidth(132)
 
         self.batch_upload_btn.clicked.connect(
             self._batch_upload
         )
 
-        self.upload_button = QPushButton(
-            "Upload Document"
+        self.upload_button = create_button(
+            "Upload Document",
+            "primary",
+            fixed_height=30,
         )
-
-        self.upload_button.setObjectName(
-            "PrimaryButton"
-        )
-
-        self.upload_button.setFixedHeight(30)
         self.upload_button.setMinimumWidth(150)
 
         self.upload_button.clicked.connect(
@@ -420,7 +365,7 @@ class MissionaryDetailPage(QWidget):
 
         content_layout.addLayout(docs_hdr_row)
 
-        self.documents_list = QListWidget()
+        self.documents_list = create_list_widget()
 
         self.documents_list.setIconSize(
             QSize(60, 75)
@@ -453,7 +398,7 @@ class MissionaryDetailPage(QWidget):
 
         content_layout.addWidget(missing_label)
 
-        self.missing_documents_list = QListWidget()
+        self.missing_documents_list = create_list_widget()
 
         self.missing_documents_list.setMaximumHeight(
             160
@@ -480,17 +425,11 @@ class MissionaryDetailPage(QWidget):
 
         details_outer.setLayout(outer_layout)
 
-        scroll = QScrollArea()
-
-        scroll.setWidgetResizable(True)
-
-        scroll.setFrameShape(QFrame.NoFrame)
+        scroll = create_scroll_area()
 
         details_content = QWidget()
 
-        details_content.setStyleSheet(
-            "background-color: #F4F4F5;"
-        )
+        details_content.setObjectName("PageSurface")
 
         details_layout = QVBoxLayout()
 
@@ -502,17 +441,7 @@ class MissionaryDetailPage(QWidget):
 
         details_content.setLayout(details_layout)
 
-        card = QFrame()
-
-        card.setObjectName("StatCard")
-
-        card.setStyleSheet(
-            "QFrame#StatCard {"
-            "background-color: white; "
-            "border: 1px solid #E4E4E7; "
-            "border-radius: 10px;"
-            "}"
-        )
+        card = create_card()
 
         form = QFormLayout()
 
@@ -526,20 +455,12 @@ class MissionaryDetailPage(QWidget):
 
         def make_field():
             lbl = QLabel("-")
-            lbl.setStyleSheet(
-                "color: #18181B; "
-                "font-size: 13px; "
-                "background: transparent;"
-            )
+            lbl.setObjectName("BodyText")
             return lbl
 
         def row_label(text):
             lbl = QLabel(text)
-            lbl.setStyleSheet(
-                "color: #71717A; "
-                "font-size: 12px; "
-                "background: transparent;"
-            )
+            lbl.setObjectName("MutedText")
             return lbl
 
         self.nationality_label = make_field()
@@ -557,15 +478,13 @@ class MissionaryDetailPage(QWidget):
         )
 
         for field_key in EDITABLE_DATE_FIELDS:
-            date_edit = QDateEdit()
-            date_edit.setCalendarPopup(True)
+            date_edit = create_date_edit()
             date_edit.setDate(DATE_PLACEHOLDER)
+            date_edit.setMaximumWidth(DATE_EDIT_MAX_WIDTH)
             self._date_edits[field_key] = date_edit
 
             source_lbl = QLabel("")
-            source_lbl.setStyleSheet(
-                "color: #A1A1AA; font-size: 11px; background: transparent;"
-            )
+            source_lbl.setObjectName("MiniMutedText")
             self._date_source_labels[field_key] = source_lbl
 
             field_widget = QWidget()
@@ -586,9 +505,7 @@ class MissionaryDetailPage(QWidget):
             self.folder_label,
         )
 
-        self.save_dates_btn = QPushButton(tr("save_dates"))
-        self.save_dates_btn.setObjectName("PrimaryButton")
-        self.save_dates_btn.setFixedHeight(34)
+        self.save_dates_btn = create_button(tr("save_dates"), "primary")
         self.save_dates_btn.setFixedWidth(160)
         self.save_dates_btn.clicked.connect(self._save_dates)
 
@@ -619,9 +536,7 @@ class MissionaryDetailPage(QWidget):
 
         notes_tab.setLayout(notes_layout)
 
-        notes_tab.setStyleSheet(
-            "background-color: #F4F4F5;"
-        )
+        notes_tab.setObjectName("PageSurface")
 
         hint = QLabel(
             "Use this space to record status "
@@ -629,45 +544,25 @@ class MissionaryDetailPage(QWidget):
             "about this missionary's legal process."
         )
 
-        hint.setStyleSheet(
-            "color: #71717A; "
-            "font-size: 12px; "
-            "background: transparent;"
-        )
+        hint.setObjectName("MutedText")
 
         hint.setWordWrap(True)
 
         notes_layout.addWidget(hint)
 
-        self.notes_text = QTextEdit()
+        self.notes_text = create_text_edit()
 
         self.notes_text.setPlaceholderText(
             "Enter notes here..."
         )
 
-        self.notes_text.setStyleSheet(
-            "QTextEdit {"
-            "background-color: white; "
-            "border: 1px solid #D4D4D8; "
-            "border-radius: 8px; "
-            "padding: 12px; "
-            "font-size: 13px; "
-            "color: #18181B;"
-            "}"
-            "QTextEdit:focus {"
-            "border-color: #3B82F6;"
-            "}"
-        )
+        self.notes_text.setObjectName("NotesEditor")
 
         notes_layout.addWidget(
             self.notes_text, stretch=1
         )
 
-        save_notes_btn = QPushButton("Save Notes")
-
-        save_notes_btn.setObjectName("PrimaryButton")
-
-        save_notes_btn.setFixedHeight(34)
+        save_notes_btn = create_button("Save Notes", "primary")
 
         save_notes_btn.setFixedWidth(140)
 
@@ -885,143 +780,16 @@ class MissionaryDetailPage(QWidget):
         if not hasattr(self, "current_missionary"):
             return
 
-        missionary = self.current_missionary
-
-        # Step 1: Select file
-        file_path, _ = QFileDialog.getOpenFileName(
-            self,
-            "Select Document",
-            "",
-            "Documents ("
-            "*.pdf *.png *.jpg *.jpeg "
-            "*.bmp *.tiff *.tif"
-            ")",
-        )
-
-        if not file_path:
-            return
-
-        # Step 2: Choose document type + stage
-        upload_dialog = UploadDocumentDialog(self)
-
-        if (
-            upload_dialog.exec()
-            != UploadDocumentDialog.Accepted
-        ):
-            return
-
-        document_type = upload_dialog.get_document_type()
-
-        workflow_stage = upload_dialog.get_workflow_stage()
-
-        # Step 3: Duplicate detection
-        if self.document_service.document_type_exists(
-            missionary.id, document_type
-        ):
-            doc_label = (
-                DOCUMENTS.get(document_type, {})
-                .get("label", document_type)
-            )
-
-            response = QMessageBox.question(
-                self,
-                "Document Already Exists",
-                f"A '{doc_label}' has already been "
-                f"uploaded for this missionary.\n\n"
-                f"Replace it with the new file?",
-                QMessageBox.Yes | QMessageBox.No,
-            )
-
-            if response == QMessageBox.No:
-                return
-
-            self.document_service.delete_document_by_type(
-                missionary.id, document_type
-            )
-
-        # Step 4: Document editor (crop / rotate)
-        editor = DocumentEditorDialog(
-            file_path, parent=self
-        )
-
-        if editor.exec() != DocumentEditorDialog.Accepted:
-            return
-
-        export_settings = editor.get_export_settings()
-
-        ocr_fields = DOCUMENTS.get(document_type, {}).get(
-            "ocr_fields", []
-        )
-
-        pipeline_result = prepare_ocr_ingestion(
-            source_file=file_path,
-            document_type=document_type,
-            export_settings=export_settings,
+        dialog = UploadSessionDialog(
+            self.current_missionary,
             parent=self,
-            ocr_fields=ocr_fields,
-            image_export_service=self.image_export_service,
         )
+        dialog.exec()
 
-        confirmed_data = {}
-        if ocr_fields:
-            review_dialog = OCRReviewDialog(
-                ocr_fields=ocr_fields,
-                parsed_data=pipeline_result.parsed_data,
-                parent=self,
-                ocr_status=pipeline_result.ocr_status,
-                image_path=pipeline_result.ocr_image_path,
-            )
-            if review_dialog.exec() == OCRReviewDialog.Accepted:
-                confirmed_data = review_dialog.get_data()
+        if dialog.saved_any():
+            self._reload_missionary()
 
-        try:
-            save_result = finalize_ocr_ingestion(
-                missionary=missionary,
-                source_file=file_path,
-                document_type=document_type,
-                workflow_stage=workflow_stage,
-                pipeline_result=pipeline_result,
-                confirmed_data=confirmed_data,
-                document_service=self.document_service,
-            )
-        except Exception:
-            logger.exception("Failed to save document")
-            QMessageBox.critical(
-                self,
-                "Upload Failed",
-                "The document could not be saved. "
-                "Check the logs for details.",
-            )
-            return
-
-        self._reload_missionary()
-
-        if ocr_fields and hasattr(self, "current_missionary"):
-            missing_keys = get_missing_for_missionary(
-                self.current_missionary.id,
-                self.current_missionary.current_stage,
-            )
-            missing_labels = [
-                DOCUMENTS.get(k, {}).get("label", k)
-                for k in missing_keys
-            ]
-            has_appt = any(
-                f in save_result.updated_fields
-                for f in (
-                    "interpol_appointment_date",
-                    "biometric_appointment_date",
-                    "pickup_appointment_date",
-                )
-            )
-            summary = UploadSummaryDialog(
-                save_result.updated_fields,
-                missing_labels,
-                parent=self,
-                has_appointment_update=has_appt,
-            )
-            summary.exec()
-            if summary.wants_calendar() and self.main_window:
-                self.main_window.go_to_calendar()
+        return
 
     # ==========================================
     # BATCH UPLOAD
@@ -1031,13 +799,27 @@ class MissionaryDetailPage(QWidget):
         if not hasattr(self, "current_missionary"):
             return
 
-        dialog = BatchUploadDialog(
-            self.current_missionary, parent=self
+        files, _ = QFileDialog.getOpenFileNames(
+            self,
+            "Select Documents",
+            "",
+            "Documents ("
+            "*.pdf *.png *.jpg *.jpeg "
+            "*.bmp *.tiff *.tif"
+            ")",
         )
 
+        dialog = UploadSessionDialog(
+            self.current_missionary,
+            initial_files=files,
+            parent=self,
+        )
         dialog.exec()
 
-        self._reload_missionary()
+        if dialog.saved_any():
+            self._reload_missionary()
+
+        return
 
     def _update_field_sources(self, missionary):
         sources = {}
@@ -1082,7 +864,7 @@ class MissionaryDetailPage(QWidget):
                 self.current_missionary.id,
                 updates,
             )
-            QMessageBox.information(
+            show_message(
                 self,
                 tr("save_dates"),
                 tr("dates_saved"),
@@ -1090,10 +872,11 @@ class MissionaryDetailPage(QWidget):
             self._reload_missionary()
         except Exception:
             logger.exception("Failed to save dates")
-            QMessageBox.critical(
+            show_message(
                 self,
                 tr("save_dates"),
                 tr("dates_save_failed"),
+                kind="critical",
             )
 
     def retranslate_ui(self):
@@ -1181,7 +964,7 @@ class MissionaryDetailPage(QWidget):
         if doc_id is None:
             return
 
-        menu = QMenu(self)
+        menu = create_menu("", self)
 
         view_action = menu.addAction("View Document")
 
@@ -1191,6 +974,10 @@ class MissionaryDetailPage(QWidget):
 
         ocr_action = menu.addAction(
             tr("view_extracted_data")
+        )
+
+        delete_action = menu.addAction(
+            tr("delete_document")
         )
 
         open_action = menu.addAction("Open Externally")
@@ -1207,6 +994,9 @@ class MissionaryDetailPage(QWidget):
 
         elif action == ocr_action:
             self._open_ocr_data(doc_id)
+
+        elif action == delete_action:
+            self._delete_document(doc_id)
 
         elif action == open_action:
             self._open_document_file(doc_id)
@@ -1253,22 +1043,19 @@ class MissionaryDetailPage(QWidget):
             return
 
         try:
-            import subprocess
-
             file_path = doc["file_path"]
 
             if not Path(file_path).exists():
-                QMessageBox.warning(
+                show_message(
                     self,
                     "File Not Found",
                     f"Cannot open file:\n{file_path}",
+                    kind="warning",
                 )
 
                 return
 
-            subprocess.Popen(
-                ["xdg-open", file_path]
-            )
+            open_document_with_default_app(file_path)
 
         except Exception:
             logger.exception("Failed to open file")
@@ -1285,10 +1072,11 @@ class MissionaryDetailPage(QWidget):
             if not file_path or not Path(
                 file_path
             ).exists():
-                QMessageBox.warning(
+                show_message(
                     self,
                     "File Not Found",
                     "Cannot open document file.",
+                    kind="warning",
                 )
 
                 return
@@ -1306,6 +1094,48 @@ class MissionaryDetailPage(QWidget):
         except Exception:
             logger.exception(
                 "Document viewer failed"
+            )
+
+    def _delete_document(self, doc_id):
+        doc = self._find_doc_data(doc_id)
+
+        if not doc:
+            return
+
+        response = show_message(
+            self,
+            tr("delete_document_title"),
+            tr("delete_document_confirm"),
+            kind="question",
+            buttons="yes_no",
+        )
+
+        if response not in {1, 16384}:
+            return
+
+        try:
+            deleted = self.document_service.delete_document_by_id(
+                doc_id
+            )
+
+            if not deleted:
+                show_message(
+                    self,
+                    tr("delete_document_title"),
+                    tr("delete_document_failed"),
+                    kind="warning",
+                )
+                return
+
+            self._reload_missionary()
+
+        except Exception:
+            logger.exception("Failed to delete document")
+            show_message(
+                self,
+                tr("delete_document_title"),
+                tr("delete_document_failed"),
+                kind="critical",
             )
 
     # ==========================================
@@ -1420,25 +1250,11 @@ class MissionaryDetailPage(QWidget):
 
         timeline_tab.setLayout(timeline_layout)
 
-        timeline_tab.setStyleSheet(
-            "background-color: #F4F4F5;"
-        )
+        timeline_tab.setObjectName("PageSurface")
 
-        self.timeline_list = QListWidget()
+        self.timeline_list = create_list_widget()
 
-        self.timeline_list.setStyleSheet(
-            "QListWidget {"
-            "background-color: transparent;"
-            "border: none;"
-            "}"
-            "QListWidget::item {"
-            "background-color: #FFFFFF;"
-            "border: 1px solid #E4E4E7;"
-            "border-radius: 8px;"
-            "padding: 8px;"
-            "margin-bottom: 6px;"
-            "}"
-        )
+        self.timeline_list.setObjectName("TimelineList")
 
         timeline_layout.addWidget(
             self.timeline_list
@@ -1539,7 +1355,7 @@ class MissionaryDetailPage(QWidget):
                 f"{self.current_missionary.full_name}"
             )
 
-            QMessageBox.information(
+            show_message(
                 self,
                 "Saved",
                 "Notes saved successfully.",
@@ -1550,10 +1366,11 @@ class MissionaryDetailPage(QWidget):
                 "Failed to save notes"
             )
 
-            QMessageBox.critical(
+            show_message(
                 self,
                 "Error",
                 "Failed to save notes.",
+                kind="critical",
             )
 
     # ==========================================
@@ -1564,17 +1381,18 @@ class MissionaryDetailPage(QWidget):
         if not hasattr(self, "current_missionary"):
             return
 
-        response = QMessageBox.question(
+        response = show_message(
             self,
             "Confirm Delete",
             "Are you sure you want to delete "
             "this missionary?\n\n"
             "The missionary will be moved to "
             "TRASH.",
-            QMessageBox.Yes | QMessageBox.No,
+            kind="question",
+            buttons="yes_no",
         )
 
-        if response != QMessageBox.Yes:
+        if response not in {1, 16384}:
             return
 
         self.missionary_service.delete_missionary(
@@ -1658,14 +1476,11 @@ class QDialog_Notes(QDialog):
             f"File: {doc_data['file_name']}"
         )
 
-        file_label.setStyleSheet(
-            "color: #71717A; "
-            "font-size: 12px;"
-        )
+        file_label.setObjectName("MutedText")
 
         layout.addWidget(file_label)
 
-        self.text_edit = QTextEdit()
+        self.text_edit = create_text_edit()
 
         self.text_edit.setPlainText(
             doc_data.get("notes", "")
@@ -1675,29 +1490,17 @@ class QDialog_Notes(QDialog):
             "Enter notes for this document..."
         )
 
-        self.text_edit.setStyleSheet(
-            "QTextEdit {"
-            "background-color: white; "
-            "border: 1px solid #D4D4D8; "
-            "border-radius: 6px; "
-            "padding: 8px; "
-            "font-size: 13px;"
-            "}"
-        )
+        self.text_edit.setObjectName("DocumentNotesEditor")
 
         layout.addWidget(self.text_edit, stretch=1)
 
         btn_row = QHBoxLayout()
 
-        cancel_btn = QPushButton("Cancel")
+        cancel_btn = create_button("Cancel", "secondary")
 
         cancel_btn.clicked.connect(self.reject)
 
-        save_btn = QPushButton("Save Notes")
-
-        save_btn.setObjectName("PrimaryButton")
-
-        save_btn.setFixedHeight(34)
+        save_btn = create_button("Save Notes", "primary")
 
         save_btn.clicked.connect(self._save)
 

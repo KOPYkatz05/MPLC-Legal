@@ -5,7 +5,6 @@ from PySide6.QtWidgets import (
     QTableWidgetItem,
     QHeaderView,
     QAbstractItemView,
-    QMessageBox,
 )
 
 from PySide6.QtCore import Qt
@@ -17,6 +16,7 @@ from ui.foundation import (
     create_button,
     create_table,
     divider,
+    show_message,
 )
 
 from utils.logger import logger
@@ -214,7 +214,7 @@ class TrashPage(QWidget):
             if hasattr(self.main_window, "missionaries_page"):
                 self.main_window.missionaries_page.load_data()
 
-            QMessageBox.information(
+            show_message(
                 self,
                 "Restored",
                 "Missionary restored successfully.",
@@ -223,23 +223,25 @@ class TrashPage(QWidget):
         except Exception:
             logger.exception("Restore failed")
 
-            QMessageBox.critical(
+            show_message(
                 self,
                 "Error",
                 "Failed to restore missionary.",
+                kind="critical",
             )
 
     def _hard_delete_missionary(self, missionary_id):
-        response = QMessageBox.question(
+        response = show_message(
             self,
             "Confirm Permanent Delete",
             "Are you sure you want to permanently "
             "delete this missionary?\n\n"
             "This action cannot be undone.",
-            QMessageBox.Yes | QMessageBox.No,
+            kind="question",
+            buttons="yes_no",
         )
 
-        if response != QMessageBox.Yes:
+        if response not in {1, 16384}:
             return
 
         try:
@@ -249,7 +251,7 @@ class TrashPage(QWidget):
 
             self.load_data()
 
-            QMessageBox.information(
+            show_message(
                 self,
                 "Deleted",
                 "Missionary permanently deleted.",
@@ -258,8 +260,9 @@ class TrashPage(QWidget):
         except Exception:
             logger.exception("Hard delete failed")
 
-            QMessageBox.critical(
+            show_message(
                 self,
                 "Error",
                 "Failed to delete missionary.",
+                kind="critical",
             )

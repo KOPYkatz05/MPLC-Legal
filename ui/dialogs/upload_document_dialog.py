@@ -2,12 +2,11 @@ from PySide6.QtWidgets import (
     QDialog,
     QVBoxLayout,
     QFormLayout,
-    QComboBox,
-    QPushButton,
     QHBoxLayout,
     QLabel,
 )
 
+from ui.foundation import create_button, create_combo_box
 from utils.constants import (
     DOCUMENTS,
     WORKFLOW_STAGES,
@@ -28,6 +27,8 @@ class UploadDocumentDialog(QDialog):
         self.setModal(True)
 
         self.resize(460, 180)
+
+        self._label_to_key = {}
 
         self.setup_ui()
 
@@ -51,9 +52,10 @@ class UploadDocumentDialog(QDialog):
         # Document Type
         # ==========================================
 
-        self.type_combo = QComboBox()
+        self.type_combo = create_combo_box()
 
         for key, config in DOCUMENTS.items():
+            self._label_to_key[config["label"]] = key
             self.type_combo.addItem(
                 config["label"],
                 key,
@@ -68,7 +70,7 @@ class UploadDocumentDialog(QDialog):
         # Workflow Stage
         # ==========================================
 
-        self.stage_combo = QComboBox()
+        self.stage_combo = create_combo_box()
 
         for stage in WORKFLOW_STAGES:
             self.stage_combo.addItem(
@@ -89,12 +91,11 @@ class UploadDocumentDialog(QDialog):
 
         buttons = QHBoxLayout()
 
-        self.cancel_btn = QPushButton(
-            "Cancel"
-        )
+        self.cancel_btn = create_button("Cancel", "secondary")
 
-        self.ok_btn = QPushButton(
-            "Continue to Document Editor"
+        self.ok_btn = create_button(
+            "Continue to Document Editor",
+            "primary",
         )
 
         self.ok_btn.setDefault(True)
@@ -126,7 +127,7 @@ class UploadDocumentDialog(QDialog):
         self._auto_fill_stage()
 
     def _auto_fill_stage(self):
-        doc_key = self.type_combo.currentData()
+        doc_key = self.get_document_type()
 
         if not doc_key:
             return
@@ -143,7 +144,12 @@ class UploadDocumentDialog(QDialog):
             self.stage_combo.setCurrentIndex(0)
 
     def get_document_type(self):
-        return self.type_combo.currentData()
+        current_data = self.type_combo.currentData()
+        if current_data in DOCUMENTS:
+            return current_data
+
+        current_text = self.type_combo.currentText()
+        return self._label_to_key.get(current_text)
 
     def get_workflow_stage(self):
         return self.stage_combo.currentData()

@@ -114,11 +114,14 @@ def export_pages_for_ocr(
     image_export_service=None,
 ):
     file_path = Path(file_path)
-    export_settings = export_settings or {
-        "page": 0,
-        "rotation": 0,
-        "crop_rect": None,
-    }
+    export_settings = _normalize_ocr_export_settings(
+        file_path,
+        export_settings or {
+            "page": 0,
+            "rotation": 0,
+            "crop_rect": None,
+        },
+    )
     if image_export_service is None:
         image_export_service = DocumentImageExportService()
 
@@ -165,6 +168,19 @@ def export_pages_for_ocr(
     except Exception:
         logger.exception("Failed to export document image for OCR")
         return []
+
+
+def _normalize_ocr_export_settings(file_path, export_settings):
+    settings = dict(export_settings or {
+        "page": 0,
+        "rotation": 0,
+        "crop_rect": None,
+    })
+
+    if Path(file_path).suffix.lower() == ".pdf" and "pages" not in settings:
+        settings["pages"] = "all"
+
+    return settings
 
 
 def _temporary_png_path():
@@ -248,6 +264,9 @@ def run_ocr_on_images(
     ocr = get_ocr_service(parent)
     if ocr is None:
         result.ocr_status = "failed"
+        result.errors.append(
+            "OCR service unavailable. Check OCR dependencies."
+        )
         return result
 
     try:
@@ -318,11 +337,14 @@ def prepare_ocr_ingestion(
     ocr_fields=None,
     image_export_service=None,
 ):
-    export_settings = export_settings or {
-        "page": 0,
-        "rotation": 0,
-        "crop_rect": None,
-    }
+    export_settings = _normalize_ocr_export_settings(
+        source_file,
+        export_settings or {
+            "page": 0,
+            "rotation": 0,
+            "crop_rect": None,
+        },
+    )
     ocr_fields = ocr_fields or DOCUMENTS.get(
         document_type, {}
     ).get("ocr_fields", [])

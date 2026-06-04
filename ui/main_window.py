@@ -1,27 +1,62 @@
-from PySide6.QtWidgets import (
-    QMainWindow,
-)
-
 from PySide6.QtCore import QTimer
+from PySide6.QtWidgets import QMainWindow
 
-from ui.foundation import AppShell
+from services.settings_service import SettingsService
+from ui.foundation import AppShell, FLUENT_AVAILABLE, fluent_icon
+from ui.pages.calendar_page import CalendarPage
 from ui.pages.dashboard_page import DashboardPage
 from ui.pages.missionaries_page import MissionariesPage
 from ui.pages.missionary_detail_page import MissionaryDetailPage
-from ui.pages.calendar_page import CalendarPage
 from ui.pages.reports_page import ReportsPage
-from ui.pages.trash_page import TrashPage
 from ui.pages.settings_page import SettingsPage
-from services.settings_service import SettingsService
+from ui.pages.trash_page import TrashPage
 from utils.i18n import tr
 from utils.logger import logger
 
+try:
+    from qfluentwidgets import FluentWindow, NavigationItemPosition
+except Exception:
+    FluentWindow = QMainWindow
+    NavigationItemPosition = None
 
-class MainWindow(QMainWindow):
+
+class _SidebarCompat:
+    def __init__(self, window):
+        self.window = window
+        self._index_to_key = {
+            0: "dashboard",
+            1: "missionaries",
+            3: "appointments",
+            4: "reports",
+            5: "trash",
+            6: "settings",
+        }
+
+    def setCurrentRow(self, row):
+        key = self._index_to_key.get(row)
+        if key:
+            self.window.set_current_key(key)
+
+
+class _FluentShellCompat:
+    def __init__(self, window):
+        self.window = window
+        self.stack = window.stack
+
+    def set_current_key(self, key):
+        self.window.set_current_key(key)
+
+    def set_nav_title(self, key, title):
+        self.window.set_nav_title(key, title)
+
+
+class MainWindow(FluentWindow if FLUENT_AVAILABLE else QMainWindow):
     def __init__(self):
         super().__init__()
 
         self.settings_service = SettingsService()
+        self._nav_widgets = {}
+        self._nav_titles = {}
 
         self.setWindowTitle(tr("app_title"))
         self.resize(1400, 900)
@@ -35,10 +70,6 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(800, self._show_startup_alerts)
 
     def setup_ui(self):
-        self.shell = AppShell(tr("app_title"), self)
-        self.setCentralWidget(self.shell)
-        self.stack = self.shell.stack
-
         self.dashboard_page = DashboardPage(self)
         self.missionaries_page = MissionariesPage(self)
         self.detail_page = MissionaryDetailPage(self)
@@ -46,14 +77,6 @@ class MainWindow(QMainWindow):
         self.reports_page = ReportsPage(self)
         self.trash_page = TrashPage(self)
         self.settings_page = SettingsPage(self)
-
-        self.stack.addWidget(self.dashboard_page)
-        self.stack.addWidget(self.missionaries_page)
-        self.stack.addWidget(self.detail_page)
-        self.stack.addWidget(self.calendar_page)
-        self.stack.addWidget(self.reports_page)
-        self.stack.addWidget(self.trash_page)
-        self.stack.addWidget(self.settings_page)
 
         self._nav_keys = {
             "dashboard": "sidebar_dashboard",
@@ -64,27 +87,102 @@ class MainWindow(QMainWindow):
             "settings": "sidebar_settings",
         }
 
-        self.shell.add_nav_item(
-            "dashboard", tr("sidebar_dashboard"), 0, "Work"
+        if FLUENT_AVAILABLE and hasattr(self, "addSubInterface"):
+            self._setup_fluent_shell()
+            self.shell = _FluentShellCompat(self)
+        else:
+            self._setup_fallback_shell()
+
+        self.sidebar = _SidebarCompat(self)
+        self.set_current_key("dashboard")
+
+    def _setup_fluent_shell(self):
+        pages = [
+            (self.dashboard_page, "dashboard", "HOME", 0),
+            (self.missionaries_page, "missionaries", "PEOPLE", 1),
+        ]
+
+        for widget, key, icon_name, _stack_index in pages:
+            self._add_fluent_nav_page(widget, key, icon_name)
+
+        self.detail_page.setObjectName("MissionaryDetailPage")
+        self.stackedWidget.addWidget(self.detail_page)
+
+        for widget, key, icon_name, _stack_index in [
+            (self.calendar_page, "appointments", "CALENDAR", 3),
+            (self.reports_page, "reports", "DOCUMENT", 4),
+            (self.trash_page, "trash", "DELETE", 5),
+            (self.settings_page, "settings", "SETTING", 6),
+        ]:
+            self._add_fluent_nav_page(widget, key, icon_name)
+
+        self.stack = self.stackedWidget
+        self.navigationInterface.setExpandWidth(238)
+
+    def _add_fluent_nav_page(self, widget, key, icon_name):
+        widget.setObjectName(widget.objectName() or key)
+        title = tr(self._nav_keys[key])
+        icon = fluent_icon(icon_name)
+        item = self.addSubInterface(
+            widget,
+            icon,
+            title,
+            position=NavigationItemPosition.TOP,
         )
-        self.shell.add_nav_item(
-            "missionaries", tr("sidebar_missionaries"), 1, "Work"
-        )
-        self.shell.add_nav_item(
-            "appointments", tr("sidebar_appointments"), 3, "Work"
-        )
-        self.shell.add_nav_item(
-            "reports", tr("sidebar_reports"), 4, "Insights"
-        )
-        self.shell.add_nav_item(
-            "trash", tr("sidebar_trash"), 5, "System"
-        )
-        self.shell.add_nav_item(
-            "settings", tr("sidebar_settings"), 6, "System"
-        )
+        self._nav_widgets[key] = widget
+        self._nav_titles[key] = item
+
+    def _setup_fallback_shell(self):
+        self.shell = AppShell(tr("app_title"), self)
+        self.setCentralWidget(self.shell)
+        self.stack = self.shell.stack
+
+        for widget in [
+            self.dashboard_page,
+            self.missionaries_page,
+            self.detail_page,
+            self.calendar_page,
+            self.reports_page,
+            self.trash_page,
+            self.settings_page,
+        ]:
+            self.stack.addWidget(widget)
+
+        for key, index, group in [
+            ("dashboard", 0, "Work"),
+            ("missionaries", 1, "Work"),
+            ("appointments", 3, "Work"),
+            ("reports", 4, "Insights"),
+            ("trash", 5, "System"),
+            ("settings", 6, "System"),
+        ]:
+            self.shell.add_nav_item(key, tr(self._nav_keys[key]), index, group)
 
         self.shell.navigation_changed.connect(self._on_nav_changed)
-        self.shell.set_current_key("dashboard")
+
+    def set_current_key(self, key):
+        if not (FLUENT_AVAILABLE and hasattr(self, "switchTo")):
+            self.shell.set_current_key(key)
+            return
+
+        widget = self._nav_widgets.get(key)
+        if widget is None:
+            return
+        self.switchTo(widget)
+        self.navigationInterface.setCurrentItem(widget.objectName())
+        self._on_nav_changed(key, self.stack.indexOf(widget))
+
+    def set_nav_title(self, key, title):
+        if not (FLUENT_AVAILABLE and hasattr(self, "navigationInterface")):
+            self.shell.set_nav_title(key, title)
+            return
+
+        widget = self._nav_widgets.get(key)
+        if widget is None:
+            return
+        nav_widget = self.navigationInterface.widget(widget.objectName())
+        if nav_widget and hasattr(nav_widget, "setText"):
+            nav_widget.setText(title)
 
     def _on_nav_changed(self, nav_key, stack_index):
         _ = nav_key
@@ -103,14 +201,14 @@ class MainWindow(QMainWindow):
     def retranslate_ui(self):
         self.setWindowTitle(tr("app_title"))
         for nav_key, translation_key in self._nav_keys.items():
-            self.shell.set_nav_title(nav_key, tr(translation_key))
+            self.set_nav_title(nav_key, tr(translation_key))
         if hasattr(self.settings_page, "retranslate_ui"):
             self.settings_page.retranslate_ui()
         if hasattr(self.detail_page, "retranslate_ui"):
             self.detail_page.retranslate_ui()
 
     def go_to_calendar(self):
-        self.shell.set_current_key("appointments")
+        self.set_current_key("appointments")
 
     def _show_startup_alerts(self):
         try:

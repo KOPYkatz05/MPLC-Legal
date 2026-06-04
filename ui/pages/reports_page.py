@@ -6,10 +6,10 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QFrame,
-    QScrollArea,
 )
 
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QColor, QFont, QPalette
 
 from database.db import SessionLocal
 
@@ -18,7 +18,7 @@ from database.models.missionary import Missionary
 from database.models.document import Document
 
 from database.models.stage_history import StageHistory
-from ui.foundation import PageHeader, StatCard, divider
+from ui.foundation import PageHeader, StatCard, create_card, create_scroll_area, divider
 
 from utils.constants import WORKFLOW_STAGES
 
@@ -56,13 +56,9 @@ class ReportsPage(QWidget):
         outer.addWidget(divider())
 
         # Scroll area
-        scroll = QScrollArea()
+        scroll = create_scroll_area()
 
-        scroll.setWidgetResizable(True)
-
-        scroll.setStyleSheet(
-            "background-color: #F4F4F5;"
-        )
+        scroll.setObjectName("PageSurface")
 
         content = QWidget()
 
@@ -271,13 +267,7 @@ class ReportsPage(QWidget):
                             "_", " "
                         ).title()
 
-                        row_widget = QFrame()
-
-                        row_widget.setStyleSheet(
-                            "background-color: #FFFFFF;"
-                            "border: 1px solid #E4E4E7;"
-                            "border-radius: 6px;"
-                        )
+                        row_widget = create_card()
 
                         row_layout = QHBoxLayout()
 
@@ -289,17 +279,11 @@ class ReportsPage(QWidget):
 
                         name_lbl = QLabel(e["name"])
 
-                        name_lbl.setStyleSheet(
-                            "font-size: 13px;"
-                            "font-weight: 600;"
-                        )
+                        name_lbl.setObjectName("StrongText")
 
                         type_lbl = QLabel(label)
 
-                        type_lbl.setStyleSheet(
-                            "font-size: 12px;"
-                            "color: #71717A;"
-                        )
+                        type_lbl.setObjectName("MutedText")
 
                         days_text = (
                             "TODAY"
@@ -315,16 +299,20 @@ class ReportsPage(QWidget):
                         )
 
                         days_lbl = QLabel(days_text)
-
-                        days_lbl.setStyleSheet(
-                            (
-                                "color: #DC2626;"
+                        days_font = QFont(days_lbl.font())
+                        days_font.setPointSize(12)
+                        days_font.setWeight(QFont.DemiBold)
+                        days_lbl.setFont(days_font)
+                        days_palette = days_lbl.palette()
+                        days_palette.setColor(
+                            QPalette.WindowText,
+                            QColor(
+                                "#DC2626"
                                 if e["days"] <= 0
-                                else "color: #D97706;"
-                            )
-                            + "font-size: 12px;"
-                            "font-weight: 600;"
+                                else "#D97706"
+                            ),
                         )
+                        days_lbl.setPalette(days_palette)
 
                         row_layout.addWidget(name_lbl)
 
@@ -351,12 +339,7 @@ class ReportsPage(QWidget):
     def _add_section_header(self, text):
         label = QLabel(text)
 
-        label.setStyleSheet(
-            "font-size: 16px;"
-            "font-weight: 700;"
-            "color: #18181B;"
-            "padding-top: 8px;"
-        )
+        label.setObjectName("ReportSectionTitle")
 
         self.content_layout.insertWidget(
             self.content_layout.count() - 1,

@@ -41,6 +41,13 @@ TRANSLATIONS = {
         "upload_summary_calendar": "View in Appointments calendar?",
         "field_from_source": "From: {label}",
         "view_extracted_data": "View Extracted Data",
+        "delete_document": "Delete Document",
+        "delete_document_title": "Delete Document",
+        "delete_document_confirm": (
+            "Delete this uploaded document?\n\n"
+            "This will permanently remove the file and its record."
+        ),
+        "delete_document_failed": "Failed to delete the document.",
         "extracted_data_title": "Extracted Data",
         "extracted_data_none": "No OCR data stored for this document.",
         "batch_run_ocr": "Run OCR for supported document types",
@@ -107,6 +114,13 @@ TRANSLATIONS = {
         "upload_summary_calendar": "¿Ver en el calendario de citas?",
         "field_from_source": "De: {label}",
         "view_extracted_data": "Ver datos extraídos",
+        "delete_document": "Eliminar documento",
+        "delete_document_title": "Eliminar documento",
+        "delete_document_confirm": (
+            "¿Eliminar este documento cargado?\n\n"
+            "Esto eliminará permanentemente el archivo y su registro."
+        ),
+        "delete_document_failed": "No se pudo eliminar el documento.",
         "extracted_data_title": "Datos extraídos",
         "extracted_data_none": "No hay datos OCR guardados para este documento.",
         "batch_run_ocr": "Ejecutar OCR en tipos de documento compatibles",

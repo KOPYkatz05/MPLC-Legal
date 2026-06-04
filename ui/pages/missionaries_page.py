@@ -6,7 +6,6 @@ from PySide6.QtWidgets import (
     QHeaderView,
     QAbstractItemView,
     QFileDialog,
-    QMessageBox,
     QDialog,
 )
 
@@ -24,8 +23,10 @@ from ui.foundation import (
     create_button,
     create_combo_box,
     create_line_edit,
+    create_menu,
     create_table,
     divider,
+    show_message,
 )
 
 from ui.dialogs.add_missionary_dialog import (
@@ -356,7 +357,9 @@ class MissionariesPage(QWidget):
 
     def open_add_dialog(self):
         try:
-            dialog = AddMissionaryDialog(self)
+            dialog = AddMissionaryDialog(
+                self.main_window
+            )
 
             if dialog.exec():
                 logger.info(
@@ -372,7 +375,7 @@ class MissionariesPage(QWidget):
 
     def _export_excel(self):
         if not self._all_missionaries:
-            QMessageBox.information(
+            show_message(
                 self,
                 "No Data",
                 "No missionaries to export.",
@@ -395,7 +398,7 @@ class MissionariesPage(QWidget):
         )
 
         if ok:
-            QMessageBox.information(
+            show_message(
                 self,
                 "Export Complete",
                 f"Exported "
@@ -404,11 +407,12 @@ class MissionariesPage(QWidget):
             )
 
         else:
-            QMessageBox.critical(
+            show_message(
                 self,
                 "Export Failed",
                 "Failed to export. "
                 "Check logs for details.",
+                kind="critical",
             )
 
     def open_missionary_detail(self, row, column):
@@ -465,7 +469,7 @@ class MissionariesPage(QWidget):
             selected_rows.add(item.row())
 
         if not selected_rows:
-            QMessageBox.information(
+            show_message(
                 self,
                 "No Selection",
                 "Select at least one missionary "
@@ -483,9 +487,7 @@ class MissionariesPage(QWidget):
                 ids.append(int(id_item.text()))
 
         # Show simple menu
-        from PySide6.QtWidgets import QMenu
-
-        menu = QMenu(self)
+        menu = create_menu("", self)
 
         advance_action = menu.addAction(
             "Advance Stage"

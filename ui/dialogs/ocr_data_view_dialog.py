@@ -3,11 +3,10 @@ import json
 from PySide6.QtWidgets import (
     QDialog,
     QVBoxLayout,
-    QTextEdit,
-    QPushButton,
     QLabel,
 )
 
+from ui.foundation import create_button, create_text_edit
 from utils.i18n import tr
 
 
@@ -30,7 +29,8 @@ class OcrDataViewDialog(QDialog):
         else:
             if ocr_raw_data:
                 layout.addWidget(QLabel("Raw (OCR parsed):"))
-                raw_edit = QTextEdit()
+                raw_edit = create_text_edit()
+                raw_edit.setObjectName("NotesEditor")
                 raw_edit.setReadOnly(True)
                 raw_edit.setPlainText(
                     self._format_json(ocr_raw_data)
@@ -39,14 +39,15 @@ class OcrDataViewDialog(QDialog):
 
             if ocr_confirmed_data:
                 layout.addWidget(QLabel("Confirmed (saved):"))
-                conf_edit = QTextEdit()
+                conf_edit = create_text_edit()
+                conf_edit.setObjectName("NotesEditor")
                 conf_edit.setReadOnly(True)
                 conf_edit.setPlainText(
                     self._format_json(ocr_confirmed_data)
                 )
                 layout.addWidget(conf_edit)
 
-        close_btn = QPushButton("OK")
+        close_btn = create_button("OK", "primary")
         close_btn.clicked.connect(self.accept)
         layout.addWidget(close_btn)
 

@@ -3,12 +3,11 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QHBoxLayout,
     QLabel,
-    QPushButton,
     QFrame,
-    QScrollArea,
 )
 
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QColor, QFont, QPalette
 
 from services.dashboard_service import (
     DashboardService,
@@ -18,8 +17,10 @@ from ui.foundation import (
     SectionTitle as SectionHeader,
     StatCard,
     create_button,
+    create_scroll_area,
     divider,
 )
+from ui.foundation.fluent import SimpleCardWidget
 
 from utils.constants import WORKFLOW_STAGES
 
@@ -108,15 +109,15 @@ class TableRow(QFrame):
 
         lbl.setWordWrap(word_wrap)
 
-        style = "background: transparent;"
-
         if bold:
-            style += " font-weight: 600;"
+            font = QFont(lbl.font())
+            font.setWeight(QFont.DemiBold)
+            lbl.setFont(font)
 
         if color:
-            style += f" color: {color};"
-
-        lbl.setStyleSheet(style)
+            palette = lbl.palette()
+            palette.setColor(QPalette.WindowText, QColor(color))
+            lbl.setPalette(palette)
 
         self.layout_.addWidget(lbl, stretch=stretch)
 
@@ -125,7 +126,7 @@ class TableRow(QFrame):
 # LIST CARD (container for table rows)
 # ==========================================
 
-class ListCard(QFrame):
+class ListCard(SimpleCardWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
 
@@ -189,11 +190,12 @@ class DashboardPage(QWidget):
 
         title.setObjectName("PageTitle")
 
-        self.refresh_btn = QPushButton("↻   Refresh")
+        self.refresh_btn = create_button(
+            "↻   Refresh",
+            "secondary",
+        )
 
         self.refresh_btn.setObjectName("RefreshButton")
-
-        self.refresh_btn.setFixedHeight(34)
 
         self.refresh_btn.clicked.connect(
             self.load_data
@@ -223,17 +225,13 @@ class DashboardPage(QWidget):
         # Scrollable content area
         # ======================================
 
-        scroll = QScrollArea()
-
-        scroll.setWidgetResizable(True)
+        scroll = create_scroll_area()
 
         scroll.setObjectName("DashboardScroll")
 
         scroll.setHorizontalScrollBarPolicy(
             Qt.ScrollBarAlwaysOff
         )
-
-        scroll.setFrameShape(QFrame.NoFrame)
 
         self.content_widget = QWidget()
 

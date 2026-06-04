@@ -3,16 +3,16 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QHBoxLayout,
     QLabel,
-    QLineEdit,
     QFileDialog,
-    QMessageBox,
 )
 
 from ui.foundation import (
     PageHeader,
     create_button,
     create_combo_box,
+    create_line_edit,
     divider,
+    show_message,
 )
 from services.settings_service import SettingsService
 from utils.i18n import tr
@@ -53,7 +53,7 @@ class SettingsPage(QWidget):
 
         self.hint_label = QLabel(tr("settings_language_hint"))
         self.hint_label.setWordWrap(True)
-        self.hint_label.setStyleSheet("color: #71717A;")
+        self.hint_label.setObjectName("MutedText")
         content.addWidget(self.hint_label)
 
         self.lang_combo = create_combo_box()
@@ -72,13 +72,16 @@ class SettingsPage(QWidget):
 
         self.storage_hint_label = QLabel(tr("settings_storage_root_hint"))
         self.storage_hint_label.setWordWrap(True)
-        self.storage_hint_label.setStyleSheet("color: #71717A;")
+        self.storage_hint_label.setObjectName("MutedText")
         content.addWidget(self.storage_hint_label)
 
         storage_row = QHBoxLayout()
         storage_row.setSpacing(8)
 
-        self.storage_input = QLineEdit()
+        self.storage_input = create_line_edit(
+            tr("settings_storage_root"),
+            "SettingsStorageInput",
+        )
         self.storage_input.setText(
             self.settings_service.get_storage_root()
         )
@@ -108,7 +111,7 @@ class SettingsPage(QWidget):
         )
         if self.main_window:
             self.main_window.retranslate_ui()
-        QMessageBox.information(
+        show_message(
             self,
             tr("settings_title"),
             tr("settings_saved"),

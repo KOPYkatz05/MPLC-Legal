@@ -3,12 +3,8 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QHBoxLayout,
     QLabel,
-    QPushButton,
     QFrame,
-    QScrollArea,
     QWidget,
-    QMessageBox,
-    QTableWidget,
     QTableWidgetItem,
     QHeaderView,
     QAbstractItemView,
@@ -16,6 +12,7 @@ from PySide6.QtWidgets import (
 
 from PySide6.QtCore import Qt
 
+from ui.foundation import create_button, create_table, show_message
 from database.db import SessionLocal
 
 from database.models.missionary import Missionary
@@ -165,18 +162,14 @@ class BatchStageAdvanceDialog(QDialog):
 
         divider.setFixedHeight(1)
 
-        divider.setStyleSheet(
-            "background-color: #E4E4E7;"
-        )
+        divider.setObjectName("HeaderDivider")
 
         layout.addWidget(divider)
 
         # Body
         body = QWidget()
 
-        body.setStyleSheet(
-            "background-color: #F4F4F5;"
-        )
+        body.setObjectName("DialogBody")
 
         body_layout = QVBoxLayout()
 
@@ -194,14 +187,13 @@ class BatchStageAdvanceDialog(QDialog):
             f"missionary(s) to the next stage."
         )
 
-        summary.setStyleSheet(
-            "font-size: 13px; color: #18181B;"
-        )
+        summary.setObjectName("BodyText")
 
         body_layout.addWidget(summary)
 
         # Table
-        table = QTableWidget()
+        table = create_table()
+        table.setObjectName("MissionaryTable")
 
         table.setColumnCount(5)
 
@@ -318,7 +310,7 @@ class BatchStageAdvanceDialog(QDialog):
 
         footer.setLayout(footer_layout)
 
-        cancel_btn = QPushButton("Cancel")
+        cancel_btn = create_button("Cancel", "secondary")
 
         cancel_btn.clicked.connect(self.reject)
 
@@ -339,11 +331,7 @@ class BatchStageAdvanceDialog(QDialog):
         else:
             label = "Advance All"
 
-        advance_btn = QPushButton(label)
-
-        advance_btn.setObjectName("PrimaryButton")
-
-        advance_btn.setFixedHeight(34)
+        advance_btn = create_button(label, "primary")
 
         advance_btn.clicked.connect(
             self._do_batch_advance
@@ -360,15 +348,16 @@ class BatchStageAdvanceDialog(QDialog):
         )
 
         if any_missing:
-            confirm = QMessageBox.question(
+            confirm = show_message(
                 self,
                 "Confirm",
                 "Some missionaries have missing "
                 "documents. Advance anyway?",
-                QMessageBox.Yes | QMessageBox.No,
+                kind="question",
+                buttons="yes_no",
             )
 
-            if confirm != QMessageBox.Yes:
+            if confirm not in {1, 16384}:
                 return
 
         session = SessionLocal()
@@ -454,10 +443,11 @@ class BatchStageAdvanceDialog(QDialog):
                 "Batch advance failed"
             )
 
-            QMessageBox.critical(
+            show_message(
                 self,
                 "Error",
                 "Failed to advance stages.",
+                kind="critical",
             )
 
         finally:

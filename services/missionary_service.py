@@ -64,11 +64,11 @@ class MissionaryService:
     def create_missionary(
         self,
         full_name,
-        preferred_name,
-        nationality,
-        passport_number,
-        arrival_date,
-        visa_expiration,
+        preferred_name=None,
+        nationality=None,
+        passport_number=None,
+        arrival_date=None,
+        visa_expiration=None,
     ):
         session = SessionLocal()
 

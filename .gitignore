@@ -1,1 +1,39 @@
-/__pycache__
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.hypothesis/
+.coverage
+.coverage.*
+htmlcov/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Local app, IDE, and agent state
+.agents/
+.config/
+.local/
+.idea/
+.vscode/
+
+# Runtime output and temporary files
+logs/
+*.log
+*.db
+*.sqlite
+*.sqlite3
+*.sqlite-wal
+*.sqlite-shm
+test_output/
+tmp*/
+
+# OS-specific noise
+.DS_Store
+Thumbs.db

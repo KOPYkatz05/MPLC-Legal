@@ -3,23 +3,29 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QHBoxLayout,
     QLabel,
-    QPushButton,
     QGraphicsView,
     QGraphicsScene,
     QGraphicsPixmapItem,
     QFrame,
     QSizePolicy,
     QScrollBar,
-    QMessageBox,
 )
 
 from PySide6.QtCore import Qt, QRectF
 
-from PySide6.QtGui import QPixmap, QImage
+from PySide6.QtGui import QPixmap, QImage, QPainter
 
 import fitz
 
+from ui.foundation import create_button
 from utils.logger import logger
+
+
+def get_document_viewer_render_hints():
+    return (
+        QPainter.Antialiasing
+        | QPainter.SmoothPixmapTransform
+    )
 
 
 class DocumentViewerDialog(QDialog):
@@ -66,26 +72,20 @@ class DocumentViewerDialog(QDialog):
 
         self.title_label = QLabel("Document Viewer")
 
-        self.title_label.setStyleSheet(
-            "font-size: 14px; font-weight: 700;"
-        )
+        self.title_label.setObjectName("PanelTitle")
 
         header_layout.addWidget(self.title_label)
 
         header_layout.addStretch()
 
         # Zoom controls
-        zoom_out = QPushButton("Zoom Out")
-
-        zoom_out.setFixedHeight(28)
+        zoom_out = create_button("Zoom Out", "secondary", fixed_height=28)
 
         zoom_out.clicked.connect(self._zoom_out)
 
         self.zoom_label = QLabel("100%")
 
-        self.zoom_label.setStyleSheet(
-            "font-size: 12px; color: #71717A;"
-        )
+        self.zoom_label.setObjectName("MutedText")
 
         self.zoom_label.setFixedWidth(50)
 
@@ -93,21 +93,15 @@ class DocumentViewerDialog(QDialog):
             Qt.AlignCenter
         )
 
-        zoom_in = QPushButton("Zoom In")
-
-        zoom_in.setFixedHeight(28)
+        zoom_in = create_button("Zoom In", "secondary", fixed_height=28)
 
         zoom_in.clicked.connect(self._zoom_in)
 
-        reset_btn = QPushButton("Fit")
-
-        reset_btn.setFixedHeight(28)
+        reset_btn = create_button("Fit", "secondary", fixed_height=28)
 
         reset_btn.clicked.connect(self._fit_to_window)
 
-        close_btn = QPushButton("Close")
-
-        close_btn.setFixedHeight(28)
+        close_btn = create_button("Close", "secondary", fixed_height=28)
 
         close_btn.clicked.connect(self.accept)
 
@@ -127,9 +121,7 @@ class DocumentViewerDialog(QDialog):
 
         divider.setFixedHeight(1)
 
-        divider.setStyleSheet(
-            "background-color: #E4E4E7;"
-        )
+        divider.setObjectName("HeaderDivider")
 
         layout.addWidget(divider)
 
@@ -142,7 +134,7 @@ class DocumentViewerDialog(QDialog):
 
         self.view.setRenderHints(
             self.view.renderHints()
-            | Qt.SmoothPixmapTransform
+            | get_document_viewer_render_hints()
         )
 
         self.view.setBackgroundBrush(
@@ -206,7 +198,7 @@ class DocumentViewerDialog(QDialog):
         self._show_pixmap()
 
         self.title_label.setText(
-            f"Document Viewer — "
+            f"Document Viewer - "
             f"Page 1 of {doc.page_count}"
         )
 
@@ -282,9 +274,7 @@ class DocumentViewerDialog(QDialog):
 
         label = QLabel(message)
 
-        label.setStyleSheet(
-            "color: #DC2626; font-size: 14px;"
-        )
+        label.setObjectName("DangerText")
 
         self._scene.addWidget(label)
 

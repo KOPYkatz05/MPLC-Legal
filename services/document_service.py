@@ -31,6 +31,9 @@ class DocumentService:
         ocr_raw_data=None,
         ocr_confirmed_data=None,
     ):
+        if not document_type:
+            raise ValueError("document_type is required")
+
         session = SessionLocal()
 
         try:
@@ -46,26 +49,13 @@ class DocumentService:
                 exist_ok=True,
             )
 
-            file_extension = source_path.suffix
-
-            new_file_name = (
-                f"{document_type}{file_extension}"
-            )
-
-            destination_path = (
-                destination_folder / new_file_name
-            )
-
-            counter = 1
-            while destination_path.exists():
-                new_file_name = (
-                    f"{document_type}_{counter}"
-                    f"{file_extension}"
+            destination_path, new_file_name = (
+                self._build_destination_path(
+                    destination_folder,
+                    document_type,
+                    source_path.suffix,
                 )
-                destination_path = (
-                    destination_folder / new_file_name
-                )
-                counter += 1
+            )
 
             logger.info(
                 f"Uploading document "
@@ -130,6 +120,27 @@ class DocumentService:
 
         finally:
             session.close()
+
+    @staticmethod
+    def _build_destination_path(
+        destination_folder,
+        document_type,
+        file_extension,
+    ):
+        destination_folder = Path(destination_folder)
+        new_file_name = f"{document_type}{file_extension}"
+        destination_path = destination_folder / new_file_name
+
+        counter = 1
+        while destination_path.exists():
+            new_file_name = (
+                f"{document_type}_{counter}"
+                f"{file_extension}"
+            )
+            destination_path = destination_folder / new_file_name
+            counter += 1
+
+        return destination_path, new_file_name
 
     def get_documents(self, missionary_id):
         session = SessionLocal()
@@ -217,25 +228,13 @@ class DocumentService:
             if not existing:
                 return
 
-            try:
-                old_path = Path(existing.file_path)
-
-                if old_path.exists():
-                    old_path.unlink()
-
-            except Exception:
-                logger.warning(
-                    f"Could not delete old file: "
-                    f"{existing.file_path}"
-                )
-
-            session.delete(existing)
-
-            session.commit()
-
-            logger.info(
-                f"Deleted document {document_type} "
-                f"for missionary {missionary_id}"
+            self._delete_document_record(
+                session,
+                existing,
+                log_label=(
+                    f"{document_type} "
+                    f"for missionary {missionary_id}"
+                ),
             )
 
         except Exception:
@@ -244,6 +243,41 @@ class DocumentService:
             logger.exception(
                 "Failed to delete document by type"
             )
+
+        finally:
+            session.close()
+
+    def delete_document_by_id(self, document_id):
+        session = SessionLocal()
+
+        try:
+            existing = (
+                session.query(Document)
+                .filter_by(id=document_id)
+                .first()
+            )
+
+            if not existing:
+                return False
+
+            self._delete_document_record(
+                session,
+                existing,
+                log_label=(
+                    f"document ID {document_id}"
+                ),
+            )
+
+            return True
+
+        except Exception:
+            session.rollback()
+
+            logger.exception(
+                "Failed to delete document by ID"
+            )
+
+            return False
 
         finally:
             session.close()
@@ -302,3 +336,40 @@ class DocumentService:
 
         finally:
             session.close()
+
+    def _delete_document_record(
+        self,
+        session,
+        document,
+        log_label,
+    ):
+        try:
+            old_path = Path(document.file_path)
+
+            if old_path.exists():
+                old_path.unlink()
+
+        except Exception:
+            logger.warning(
+                f"Could not delete file: "
+                f"{document.file_path}"
+            )
+
+        missionary_id = document.missionary_id
+
+        session.delete(document)
+        session.commit()
+
+        logger.info(
+            f"Deleted {log_label}"
+        )
+
+        try:
+            self.workflow_validator.validate_workflows(
+                missionary_id
+            )
+        except Exception:
+            logger.warning(
+                "Deleted document, but workflow "
+                "recalculation failed"
+            )

@@ -3,15 +3,13 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QHBoxLayout,
     QLabel,
-    QPushButton,
     QFrame,
-    QScrollArea,
     QWidget,
-    QMessageBox,
 )
 
 from PySide6.QtCore import Qt
 
+from ui.foundation import create_button, create_card, show_message
 from database.db import SessionLocal
 
 from database.models.document import Document
@@ -162,9 +160,7 @@ class StageAdvanceDialog(QDialog):
 
         body = QWidget()
 
-        body.setStyleSheet(
-            "background-color: #F4F4F5;"
-        )
+        body.setObjectName("DialogBody")
 
         body_layout = QVBoxLayout()
 
@@ -177,13 +173,7 @@ class StageAdvanceDialog(QDialog):
         body.setLayout(body_layout)
 
         # Stage flow row
-        flow_frame = QFrame()
-
-        flow_frame.setStyleSheet(
-            "background-color: #FFFFFF; "
-            "border: 1px solid #E4E4E7; "
-            "border-radius: 10px;"
-        )
+        flow_frame = create_card()
 
         flow_layout = QHBoxLayout()
 
@@ -195,20 +185,11 @@ class StageAdvanceDialog(QDialog):
 
         from_label = QLabel(self.current_stage)
 
-        from_label.setStyleSheet(
-            "font-weight: 700; "
-            "font-size: 14px; "
-            "color: #3B82F6; "
-            "background: transparent;"
-        )
+        from_label.setObjectName("StageFromLabel")
 
         arrow = QLabel("→")
 
-        arrow.setStyleSheet(
-            "color: #A1A1AA; "
-            "font-size: 18px; "
-            "background: transparent;"
-        )
+        arrow.setObjectName("FlowArrow")
 
         to_stage = (
             self.next_stage or "✓ Complete"
@@ -216,12 +197,7 @@ class StageAdvanceDialog(QDialog):
 
         to_label = QLabel(to_stage)
 
-        to_label.setStyleSheet(
-            "font-weight: 700; "
-            "font-size: 14px; "
-            "color: #059669; "
-            "background: transparent;"
-        )
+        to_label.setObjectName("StageToLabel")
 
         flow_layout.addWidget(from_label)
 
@@ -251,13 +227,7 @@ class StageAdvanceDialog(QDialog):
 
             body_layout.addWidget(section_label)
 
-            docs_frame = QFrame()
-
-            docs_frame.setStyleSheet(
-                "background-color: #FFFFFF; "
-                "border: 1px solid #E4E4E7; "
-                "border-radius: 10px;"
-            )
+            docs_frame = create_card()
 
             docs_layout = QVBoxLayout()
 
@@ -278,29 +248,16 @@ class StageAdvanceDialog(QDialog):
                     "✓" if uploaded else "✗"
                 )
 
-                icon.setStyleSheet(
-                    (
-                        "color: #059669; "
-                        if uploaded
-                        else "color: #DC2626; "
-                    )
-                    + "font-weight: 700; "
-                    + "font-size: 14px; "
-                    + "background: transparent;"
+                icon.setObjectName(
+                    "StatusSuccess" if uploaded else "StatusDanger"
                 )
 
                 icon.setFixedWidth(20)
 
                 doc_label = QLabel(label)
 
-                doc_label.setStyleSheet(
-                    (
-                        "color: #18181B; "
-                        if uploaded
-                        else "color: #DC2626; "
-                    )
-                    + "font-size: 13px; "
-                    + "background: transparent;"
+                doc_label.setObjectName(
+                    "BodyText" if uploaded else "DangerText"
                 )
 
                 row.addWidget(icon)
@@ -326,11 +283,7 @@ class StageAdvanceDialog(QDialog):
 
             warn = QFrame()
 
-            warn.setStyleSheet(
-                "background-color: #FEF3C7; "
-                "border: 1px solid #FCD34D; "
-                "border-radius: 8px;"
-            )
+            warn.setObjectName("WarningBanner")
 
             warn_layout = QHBoxLayout()
 
@@ -342,11 +295,7 @@ class StageAdvanceDialog(QDialog):
 
             warn_icon = QLabel("⚠")
 
-            warn_icon.setStyleSheet(
-                "color: #D97706; "
-                "font-size: 16px; "
-                "background: transparent;"
-            )
+            warn_icon.setObjectName("WarningIcon")
 
             warn_text = QLabel(
                 f"{missing_count} required "
@@ -355,11 +304,7 @@ class StageAdvanceDialog(QDialog):
                 f"this may cause issues."
             )
 
-            warn_text.setStyleSheet(
-                "color: #92400E; "
-                "font-size: 12px; "
-                "background: transparent;"
-            )
+            warn_text.setObjectName("WarningBannerText")
 
             warn_text.setWordWrap(True)
 
@@ -403,7 +348,7 @@ class StageAdvanceDialog(QDialog):
 
         footer.setLayout(footer_layout)
 
-        cancel_btn = QPushButton("Cancel")
+        cancel_btn = create_button("Cancel", "secondary")
 
         cancel_btn.clicked.connect(self.reject)
 
@@ -424,15 +369,7 @@ class StageAdvanceDialog(QDialog):
                 "Advance Anyway (missing docs)"
             )
 
-        self.advance_btn = QPushButton(
-            advance_label
-        )
-
-        self.advance_btn.setObjectName(
-            "PrimaryButton"
-        )
-
-        self.advance_btn.setFixedHeight(34)
+        self.advance_btn = create_button(advance_label, "primary")
 
         self.advance_btn.clicked.connect(
             self._do_advance
@@ -444,15 +381,16 @@ class StageAdvanceDialog(QDialog):
 
     def _do_advance(self):
         if not self.all_uploaded:
-            confirm = QMessageBox.question(
+            confirm = show_message(
                 self,
                 "Missing Documents",
                 "Some required documents are "
                 "missing. Advance anyway?",
-                QMessageBox.Yes | QMessageBox.No,
+                kind="question",
+                buttons="yes_no",
             )
 
-            if confirm != QMessageBox.Yes:
+            if confirm not in {1, 16384}:
                 return
 
         session = SessionLocal()
@@ -544,11 +482,12 @@ class StageAdvanceDialog(QDialog):
                 "Failed to advance missionary stage"
             )
 
-            QMessageBox.critical(
+            show_message(
                 self,
                 "Error",
                 "Failed to advance stage. "
                 "Check logs for details.",
+                kind="critical",
             )
 
         finally:

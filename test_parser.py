@@ -1,18 +1,24 @@
 from services.ocr_service import OCRService
 from services.passport_parser import PassportParser
 
-ocr = OCRService()
 
-text = ocr.extract_text(
-    "test_output/page_1.png"
-)
+def main():
+    ocr = OCRService()
 
-print("\n===== OCR OUTPUT =====\n")
-print(text)
+    text = ocr.extract_text(
+        "test_output/page_1.png"
+    )
 
-parser = PassportParser()
+    print("\n===== OCR OUTPUT =====\n")
+    print(text)
 
-result = parser.parse(text)
+    parser = PassportParser()
 
-print("\n===== PARSED =====\n")
-print(result)
+    result = parser.parse(text)
+
+    print("\n===== PARSED =====\n")
+    print(result)
+
+
+if __name__ == "__main__":
+    main()
