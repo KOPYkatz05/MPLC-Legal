@@ -127,25 +127,44 @@ class StatCard(SimpleCardWidget):
         layout.setSpacing(3)
         self.setLayout(layout)
 
-        value_label = QLabel(str(value))
-        value_label.setObjectName("StatCount")
-        palette = value_label.palette()
+        self.value_label = QLabel(str(value))
+        self.value_label.setObjectName("StatCount")
+        palette = self.value_label.palette()
         palette.setColor(QPalette.WindowText, QColor(accent))
-        value_label.setPalette(palette)
+        self.value_label.setPalette(palette)
 
-        title_label = QLabel(title)
-        title_label.setObjectName("StatTitle")
-        title_label.setWordWrap(True)
+        self.title_label = QLabel(title)
+        self.title_label.setObjectName("StatTitle")
+        self.title_label.setWordWrap(True)
 
-        layout.addWidget(value_label)
-        layout.addWidget(title_label)
+        layout.addWidget(self.value_label)
+        layout.addWidget(self.title_label)
 
         if subtitle:
-            subtitle_label = QLabel(subtitle)
-            subtitle_label.setObjectName("StatSubtitle")
-            layout.addWidget(subtitle_label)
+            self.subtitle_label = QLabel(subtitle)
+            self.subtitle_label.setObjectName("StatSubtitle")
+            layout.addWidget(self.subtitle_label)
+        else:
+            self.subtitle_label = None
 
         layout.addStretch()
+
+    def setValue(self, value):
+        self.value_label.setText(str(value))
+
+    def setTitle(self, title):
+        self.title_label.setText(title)
+
+    def setSubtitle(self, subtitle):
+        if self.subtitle_label is None:
+            self.subtitle_label = QLabel(subtitle)
+            self.subtitle_label.setObjectName("StatSubtitle")
+            self.layout().insertWidget(
+                self.layout().count() - 1,
+                self.subtitle_label,
+            )
+        else:
+            self.subtitle_label.setText(subtitle)
 
 
 class DialogFooter(SimpleCardWidget):

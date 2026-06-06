@@ -139,6 +139,39 @@ class UploadRegressionTests(unittest.TestCase):
             upload_pipeline._ocr_service = old_service
             upload_pipeline._ocr_init_failed = old_failed
 
+    def test_ocr_pipeline_reports_worker_crash_without_exiting_app(self):
+        old_service = upload_pipeline._ocr_service
+        old_failed = upload_pipeline._ocr_init_failed
+
+        try:
+            upload_pipeline._ocr_service = None
+            upload_pipeline._ocr_init_failed = False
+
+            with patch(
+                "services.upload_pipeline.subprocess.run",
+                return_value=SimpleNamespace(
+                    returncode=3221225477,
+                    stderr="",
+                    stdout="",
+                ),
+            ):
+                result = upload_pipeline.run_ocr_on_images(
+                    image_paths=[Path("page1.png")],
+                    document_type="PASSPORT",
+                    ocr_fields=["passport_number"],
+                    export_settings={"pages": "all"},
+                )
+
+            self.assertEqual(result.ocr_status, "failed")
+            self.assertTrue(result.errors)
+            self.assertIn(
+                "PaddleOCR stopped unexpectedly",
+                result.errors[0],
+            )
+        finally:
+            upload_pipeline._ocr_service = old_service
+            upload_pipeline._ocr_init_failed = old_failed
+
     def test_pdf_ocr_defaults_to_all_pages(self):
         settings = upload_pipeline._normalize_ocr_export_settings(
             Path("passport.pdf"),
@@ -378,6 +411,29 @@ class UploadRegressionTests(unittest.TestCase):
         self.assertEqual(len(added), 2)
         self.assertEqual(len(controller.items), 2)
         self.assertEqual(controller.selected_index, 0)
+        self.assertIsNone(controller.items[0].document_type)
+        self.assertEqual(controller.items[0].workflow_stage, "GENERAL")
+
+    def test_upload_session_add_files_does_not_run_ocr_before_type_selection(self):
+        dialog = UploadSessionDialog(
+            SimpleNamespace(
+                id=1,
+                full_name="Test Missionary",
+                current_stage="GENERAL",
+            )
+        )
+        dialog.add_files(["passport.pdf"])
+
+        self.assertIsNone(dialog.controller.items[0].document_type)
+        self.assertIsNone(dialog.controller.items[0].ocr_result)
+        self.assertEqual(dialog.controller.items[0].status, "pending")
+        self.assertIsNone(dialog.type_combo.currentData())
+        self.assertIn(
+            "select a document type",
+            dialog.ocr_status_label.text().lower(),
+        )
+
+        dialog.close()
 
     def test_upload_session_derives_stage_from_document_type(self):
         controller = UploadSessionController(
@@ -496,6 +552,8 @@ class UploadRegressionTests(unittest.TestCase):
         dialog.ocr_checkbox.setChecked(False)
         dialog.add_files(["a.pdf", "b.pdf"])
 
+        passport_idx = dialog.type_combo.findData("PASSPORT")
+        dialog.type_combo.setCurrentIndex(passport_idx)
         dialog.field_edits["passport_number"].setText("P-12345")
         dialog.notes_editor.setPlainText("passport note")
         dialog.go_to_next_item()
@@ -531,6 +589,8 @@ class UploadRegressionTests(unittest.TestCase):
         dialog.ocr_checkbox.setChecked(False)
         dialog.add_files(["a.pdf", "b.pdf"])
 
+        passport_idx = dialog.type_combo.findData("PASSPORT")
+        dialog.type_combo.setCurrentIndex(passport_idx)
         dialog.field_edits["passport_number"].setText("P-CLICK-1")
         dialog.notes_editor.setPlainText("first file note")
 
@@ -577,6 +637,8 @@ class UploadRegressionTests(unittest.TestCase):
         dialog.ocr_checkbox.setChecked(False)
         dialog.add_files(["a.pdf", "b.pdf"])
 
+        passport_idx = dialog.type_combo.findData("PASSPORT")
+        dialog.type_combo.setCurrentIndex(passport_idx)
         dialog.field_edits["passport_number"].setText("P-CARD-1")
         dialog.notes_editor.setPlainText("first card note")
 
@@ -672,6 +734,8 @@ class UploadRegressionTests(unittest.TestCase):
         dialog.ocr_checkbox.setChecked(False)
         dialog.add_files(["passport.pdf"])
 
+        passport_idx = dialog.type_combo.findData("PASSPORT")
+        dialog.type_combo.setCurrentIndex(passport_idx)
         self.assertEqual(dialog.type_combo.currentData(), "PASSPORT")
         self.assertIn("passport_number", dialog.field_edits)
         self.assertNotIn(
@@ -692,6 +756,8 @@ class UploadRegressionTests(unittest.TestCase):
         dialog.ocr_checkbox.setChecked(False)
         dialog.add_files(["a.pdf", "b.pdf"])
 
+        passport_idx = dialog.type_combo.findData("PASSPORT")
+        dialog.type_combo.setCurrentIndex(passport_idx)
         dialog.field_edits["passport_number"].setText("FIRST")
         dialog.go_to_next_item()
 
@@ -733,7 +799,8 @@ class UploadRegressionTests(unittest.TestCase):
         dialog.render_ocr_fields(dialog.controller.items[0])
 
     def test_upload_session_fallback_uses_backdrop_snapshot(self):
-        self.assertFalse(FLUENT_DIALOG_AVAILABLE)
+        if FLUENT_DIALOG_AVAILABLE:
+            self.skipTest("Fallback shell is only used when qfluentwidgets is unavailable")
 
         window = MainWindow()
         window.resize(1400, 900)

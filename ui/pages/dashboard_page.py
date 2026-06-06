@@ -225,13 +225,9 @@ class DashboardPage(QWidget):
         # Scrollable content area
         # ======================================
 
-        scroll = create_scroll_area()
+        scroll = create_scroll_area(single_direction=True)
 
         scroll.setObjectName("DashboardScroll")
-
-        scroll.setHorizontalScrollBarPolicy(
-            Qt.ScrollBarAlwaysOff
-        )
 
         self.content_widget = QWidget()
 

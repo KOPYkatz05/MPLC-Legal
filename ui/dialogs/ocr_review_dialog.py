@@ -84,7 +84,7 @@ class OCRReviewDialog(QDialog):
                 img_label = QLabel()
                 img_label.setPixmap(scaled)
                 img_label.setAlignment(Qt.AlignCenter)
-                scroll = create_scroll_area()
+                scroll = create_scroll_area(single_direction=True)
                 scroll.setWidget(img_label)
                 scroll.setWidgetResizable(True)
                 preview_layout.addWidget(scroll)
@@ -130,7 +130,7 @@ class OCRReviewDialog(QDialog):
                 self.field_edits[field] = edit
                 form.addRow(f"{label}:", edit)
 
-        scroll_form = create_scroll_area()
+        scroll_form = create_scroll_area(single_direction=True)
         scroll_form.setWidget(form_widget)
         body.addWidget(scroll_form, stretch=1)
 

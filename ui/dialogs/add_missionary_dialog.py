@@ -3,7 +3,6 @@ from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QDialog,
     QFrame,
-    QGraphicsBlurEffect,
     QLabel,
     QVBoxLayout,
     QWidget,
@@ -44,13 +43,6 @@ class AddMissionaryDialog(MaskDialogBase):
         self.missionary_service = (
             MissionaryService()
         )
-
-        self._blur_target = (
-            self._resolve_blur_target(parent)
-        )
-
-        self._blur_effect = None
-        self._applied_blur = False
 
         self.setWindowTitle(
             "Add Missionary"
@@ -104,91 +96,11 @@ class AddMissionaryDialog(MaskDialogBase):
 
         self.widget.setFixedWidth(520)
 
-    def _resolve_blur_target(self, parent):
-        if not parent:
-            return None
-
-        window = parent.window()
-        if window and window is not parent:
-            central_widget_getter = getattr(
-                window,
-                "centralWidget",
-                None,
-            )
-
-            if callable(central_widget_getter):
-                central_widget = (
-                    central_widget_getter()
-                )
-
-                if central_widget:
-                    return central_widget
-
-        central_widget_getter = getattr(
-            parent,
-            "centralWidget",
-            None,
-        )
-
-        if callable(central_widget_getter):
-            central_widget = (
-                central_widget_getter()
-            )
-
-            if central_widget:
-                return central_widget
-
-        return parent
-
-    def _apply_backdrop_effect(self):
-        if not self._blur_target:
-            return
-
-        if self._blur_target.graphicsEffect():
-            return
-
-        self._blur_effect = (
-            QGraphicsBlurEffect(self)
-        )
-
-        self._blur_effect.setBlurRadius(10)
-
-        self._blur_target.setGraphicsEffect(
-            self._blur_effect
-        )
-
-        self._applied_blur = True
-
-    def _clear_backdrop_effect(self):
-        if (
-            not self._applied_blur
-            or not self._blur_target
-        ):
-            return
-
-        if (
-            self._blur_target.graphicsEffect()
-            is self._blur_effect
-        ):
-            self._blur_target.setGraphicsEffect(
-                None
-            )
-
-        self._blur_effect = None
-        self._applied_blur = False
-
     def showEvent(self, event):
-        self._apply_backdrop_effect()
         super().showEvent(event)
         self.full_name_input.setFocus()
 
-    def closeEvent(self, event):
-        self._clear_backdrop_effect()
-        super().closeEvent(event)
-
     def _onDone(self, code):
-        self._clear_backdrop_effect()
-
         if FLUENT_DIALOG_AVAILABLE:
             super()._onDone(code)
         else:

@@ -8,21 +8,18 @@ from datetime import date
 from pathlib import Path
 
 from PySide6.QtWidgets import (
+    QGridLayout,
     QWidget,
     QVBoxLayout,
     QHBoxLayout,
     QLabel,
     QListWidgetItem,
-    QInputDialog,
-    QFileDialog,
     QFormLayout,
-    QFrame,
+    QStackedWidget,
     QSizePolicy,
 )
 
 from PySide6.QtCore import Qt, QSize, QDate
-
-from PySide6.QtGui import QIcon, QColor
 
 from services.workflow_service import WorkflowService
 from services.document_service import DocumentService
@@ -35,18 +32,29 @@ from ui.dialogs.ocr_data_view_dialog import OcrDataViewDialog
 from ui.dialogs.stage_advance_dialog import StageAdvanceDialog
 from ui.dialogs.upload_session_dialog import UploadSessionDialog
 from ui.foundation import (
+    BodyLabel,
+    DialogFooter,
+    MaskDialogBase,
+    SectionTitle,
+    StatCard,
+    SubtitleLabel,
     create_button,
     create_card,
-    create_date_edit,
+    create_combo_box,
+    create_date_picker,
     create_list_widget,
     create_menu,
+    create_plain_text_edit,
+    create_pivot,
     create_scroll_area,
-    create_tab_widget,
     create_text_edit,
+    divider,
     show_message,
+    tune_fluent_scrollable,
 )
 from utils.constants import (
     DOCUMENTS,
+    WORKFLOW_REQUIREMENTS,
     WORKFLOW_STATUSES,
     WORKFLOW_STAGES,
 )
@@ -56,6 +64,39 @@ from services.workflow_validator import WorkflowValidator
 
 DATE_PLACEHOLDER = QDate(1900, 1, 1)
 DATE_EDIT_MAX_WIDTH = 180
+OVERVIEW_CONTENT_SPACING = 16
+WORKFLOW_LIST_MIN_HEIGHT = 220
+DOCUMENTS_LIST_MIN_HEIGHT = 340
+MISSING_LIST_MIN_HEIGHT = 260
+TIMELINE_LIST_MIN_HEIGHT = 260
+EMPTY_STATE_MIN_HEIGHT = 80
+WORKFLOW_CARD_MIN_HEIGHT = 84
+DOCUMENT_CARD_MIN_HEIGHT = 104
+MISSING_CARD_MIN_HEIGHT = 84
+MISSIONARY_DETAIL_SCROLL_STEP = 16
+
+STAGE_DISPLAY_NAMES = {
+    "INTERPOL": "Interpol",
+    "CARNET DE EXTRANJERIA": "Carnet de Extranjeria",
+    "PRORROGA": "Prorroga",
+    "CANCELACION": "Cancelacion",
+}
+
+WORKFLOW_STATUS_LABELS = {
+    "NOT STARTED": "Not started",
+    "IN PROGRESS": "In progress",
+    "WAITING": "Ready to advance",
+    "COMPLETED": "Completed",
+    "BLOCKED": "Blocked",
+}
+
+WORKFLOW_STATUS_TONES = {
+    "NOT STARTED": "muted",
+    "IN PROGRESS": "info",
+    "WAITING": "success",
+    "COMPLETED": "success",
+    "BLOCKED": "danger",
+}
 
 EDITABLE_DATE_FIELDS = [
     "arrival_date",
@@ -83,6 +124,47 @@ def open_document_with_default_app(file_path):
         return
 
     subprocess.Popen(["xdg-open", file_path])
+
+
+def _clear_layout(layout):
+    while layout.count():
+        item = layout.takeAt(0)
+        widget = item.widget()
+        child_layout = item.layout()
+        if widget is not None:
+            widget.deleteLater()
+        elif child_layout is not None:
+            _clear_layout(child_layout)
+
+
+def _set_scroll_step(widget, step=MISSIONARY_DETAIL_SCROLL_STEP):
+    for bar_name in ("verticalScrollBar", "horizontalScrollBar"):
+        bar_getter = getattr(widget, bar_name, None)
+        if callable(bar_getter):
+            bar = bar_getter()
+            if bar is not None and hasattr(bar, "setSingleStep"):
+                bar.setSingleStep(step)
+
+
+def _stage_display_name(stage):
+    return STAGE_DISPLAY_NAMES.get(stage, stage or "Not assigned")
+
+
+def _workflow_status_label(status):
+    return WORKFLOW_STATUS_LABELS.get(status, status.title() if status else "Unknown")
+
+
+def _workflow_status_tone(status):
+    return WORKFLOW_STATUS_TONES.get(status, "muted")
+
+
+def _format_datetime(value):
+    if not value:
+        return None
+    try:
+        return value.strftime("%b %d, %Y %I:%M %p")
+    except Exception:
+        return str(value)
 
 
 class MissionaryDetailPage(QWidget):
@@ -131,9 +213,7 @@ class MissionaryDetailPage(QWidget):
         # Page Header
         # ==========================================
 
-        header = QFrame()
-
-        header.setObjectName("PageHeader")
+        header = create_card(object_name="PageHeader")
 
         header_layout = QHBoxLayout()
 
@@ -145,7 +225,6 @@ class MissionaryDetailPage(QWidget):
 
         header.setLayout(header_layout)
 
-        # Name + stage in a vertical stack
         name_stage = QVBoxLayout()
 
         name_stage.setSpacing(4)
@@ -197,23 +276,14 @@ class MissionaryDetailPage(QWidget):
 
         main_layout.addWidget(header)
 
-        # Header divider
-        hdr_div = QFrame()
-
-        hdr_div.setObjectName("HeaderDivider")
-
-        hdr_div.setFixedHeight(1)
-
-        main_layout.addWidget(hdr_div)
+        main_layout.addWidget(divider())
 
         # ==========================================
         # Auto-advance banner (hidden by default)
         # ==========================================
 
-        self.advance_banner = QFrame()
-
-        self.advance_banner.setObjectName(
-            "SuccessBanner"
+        self.advance_banner = create_card(
+            object_name="SuccessBanner"
         )
 
         self.advance_banner.setVisible(False)
@@ -262,14 +332,20 @@ class MissionaryDetailPage(QWidget):
         main_layout.addWidget(self.advance_banner)
 
         # ==========================================
-        # Tabs
+        # Static tabs
         # ==========================================
 
-        self.tabs = create_tab_widget()
+        self.tabs = create_pivot()
+        self.tab_stack = QStackedWidget()
+        self._tab_route_indexes = {}
+        self.tab_stack.setObjectName("StaticTabStack")
 
-        main_layout.addWidget(
-            self.tabs, stretch=1
-        )
+        if self.tabs is not None:
+            self.tabs.setObjectName("StaticTabs")
+            self.tabs.currentItemChanged.connect(
+                self._select_static_tab
+            )
+            main_layout.addWidget(self.tabs)
 
         self._build_overview_tab()
 
@@ -279,15 +355,34 @@ class MissionaryDetailPage(QWidget):
 
         self._build_timeline_tab()
 
+        if self.tabs is not None:
+            self.tabs.setCurrentItem("overview")
+
+        main_layout.addWidget(
+            self.tab_stack, stretch=1
+        )
+
         # Connections
         self.workflow_list.itemDoubleClicked.connect(
             self.change_workflow_status
         )
 
+    def _add_static_tab(self, route_key, title, widget):
+        index = self.tab_stack.addWidget(widget)
+        self._tab_route_indexes[route_key] = index
+        if self.tabs is not None:
+            self.tabs.addItem(route_key, title)
+        return index
+
+    def _select_static_tab(self, route_key):
+        index = self._tab_route_indexes.get(route_key)
+        if index is not None:
+            self.tab_stack.setCurrentIndex(index)
+
     def _build_overview_tab(self):
         overview_tab = QWidget()
 
-        self.tabs.addTab(overview_tab, "Overview")
+        self._add_static_tab("overview", "Overview", overview_tab)
 
         tab_layout = QVBoxLayout()
 
@@ -295,7 +390,9 @@ class MissionaryDetailPage(QWidget):
 
         overview_tab.setLayout(tab_layout)
 
-        scroll = create_scroll_area()
+        scroll = create_scroll_area(single_direction=True)
+        scroll.setObjectName("PageSurface")
+        tune_fluent_scrollable(scroll)
 
         content = QWidget()
 
@@ -307,40 +404,29 @@ class MissionaryDetailPage(QWidget):
             32, 24, 32, 24
         )
 
-        content_layout.setSpacing(20)
+        content_layout.setSpacing(OVERVIEW_CONTENT_SPACING)
 
         content.setLayout(content_layout)
 
-        # ---- Workflow section ----
-        wf_section_hdr = QLabel("Workflow Stages")
+        content_layout.addWidget(
+            self._build_summary_section()
+        )
 
-        wf_section_hdr.setObjectName("SectionHeader")
-
-        content_layout.addWidget(wf_section_hdr)
-
-        self.workflow_list = create_list_widget()
-
-        self.workflow_list.setMaximumHeight(160)
-
-        content_layout.addWidget(self.workflow_list)
+        content_layout.addWidget(
+            self._build_workflow_section()
+        )
 
         # ---- Documents section ----
-        docs_hdr_row = QHBoxLayout()
-
-        docs_label = QLabel("Documents")
-
-        docs_label.setObjectName("SectionHeader")
-
-        self.batch_upload_btn = create_button(
-            "⬆  Batch Upload",
-            "secondary",
-            fixed_height=30,
+        content_layout.addWidget(
+            SectionTitle("Documents")
         )
-        self.batch_upload_btn.setMinimumWidth(132)
 
-        self.batch_upload_btn.clicked.connect(
-            self._batch_upload
+        docs_helper = QLabel(
+            "Start here if you need to add files. Upload one document, or batch upload several files."
         )
+        docs_helper.setObjectName("MutedText")
+        docs_helper.setWordWrap(True)
+        content_layout.addWidget(docs_helper)
 
         self.upload_button = create_button(
             "Upload Document",
@@ -348,6 +434,10 @@ class MissionaryDetailPage(QWidget):
             fixed_height=30,
         )
         self.upload_button.setMinimumWidth(150)
+        self.upload_button.setSizePolicy(
+            QSizePolicy.Fixed,
+            QSizePolicy.Fixed,
+        )
 
         self.upload_button.clicked.connect(
             self.upload_document
@@ -357,23 +447,22 @@ class MissionaryDetailPage(QWidget):
         button_row.setContentsMargins(0, 0, 0, 0)
         button_row.setSpacing(8)
         button_row.addWidget(self.upload_button)
-        button_row.addWidget(self.batch_upload_btn)
+        button_row.addStretch()
 
-        docs_hdr_row.addWidget(docs_label)
-        docs_hdr_row.addLayout(button_row)
-        docs_hdr_row.addStretch()
-
-        content_layout.addLayout(docs_hdr_row)
+        content_layout.addLayout(button_row)
 
         self.documents_list = create_list_widget()
-
         self.documents_list.setIconSize(
             QSize(60, 75)
         )
 
-        self.documents_list.setSpacing(2)
+        self.documents_list.setSpacing(8)
 
-        self.documents_list.setMinimumHeight(200)
+        self.documents_list.setMinimumHeight(
+            DOCUMENTS_LIST_MIN_HEIGHT
+        )
+        tune_fluent_scrollable(self.documents_list)
+        _set_scroll_step(self.documents_list)
 
         self.documents_list.setContextMenuPolicy(
             Qt.CustomContextMenu
@@ -392,17 +481,24 @@ class MissionaryDetailPage(QWidget):
         )
 
         # ---- Missing documents section ----
-        missing_label = QLabel("Missing Documents")
+        content_layout.addWidget(
+            SectionTitle("Missing Documents")
+        )
 
-        missing_label.setObjectName("SectionHeader")
-
-        content_layout.addWidget(missing_label)
+        missing_helper = QLabel(
+            "These are the files still needed to move the missionary forward. The top item is the highest priority."
+        )
+        missing_helper.setObjectName("MutedText")
+        missing_helper.setWordWrap(True)
+        content_layout.addWidget(missing_helper)
 
         self.missing_documents_list = create_list_widget()
-
-        self.missing_documents_list.setMaximumHeight(
-            160
+        self.missing_documents_list.setSpacing(8)
+        self.missing_documents_list.setMinimumHeight(
+            MISSING_LIST_MIN_HEIGHT
         )
+        tune_fluent_scrollable(self.missing_documents_list)
+        _set_scroll_step(self.missing_documents_list)
 
         content_layout.addWidget(
             self.missing_documents_list
@@ -414,10 +510,142 @@ class MissionaryDetailPage(QWidget):
 
         tab_layout.addWidget(scroll)
 
+    def _build_summary_section(self):
+        card = create_card()
+
+        layout = QVBoxLayout()
+        layout.setContentsMargins(22, 18, 22, 18)
+        layout.setSpacing(16)
+        card.setLayout(layout)
+
+        header_row = QHBoxLayout()
+        header_row.setContentsMargins(0, 0, 0, 0)
+        header_row.setSpacing(12)
+
+        title_stack = QVBoxLayout()
+        title_stack.setContentsMargins(0, 0, 0, 0)
+        title_stack.setSpacing(3)
+
+        title = QLabel("Overview at a glance")
+        title.setObjectName("PanelTitle")
+
+        title_stack.addWidget(title)
+
+        header_row.addLayout(title_stack)
+        header_row.addStretch()
+
+        self.summary_stage_chip = QLabel("No missionary loaded")
+        self.summary_stage_chip.setObjectName("StageBadge")
+        header_row.addWidget(self.summary_stage_chip)
+
+        layout.addLayout(header_row)
+
+        metrics_grid = QGridLayout()
+        metrics_grid.setContentsMargins(0, 0, 0, 0)
+        metrics_grid.setHorizontalSpacing(12)
+        metrics_grid.setVerticalSpacing(12)
+
+        self.summary_current_stage_card = StatCard(
+            "—",
+            "Current stage",
+            subtitle="Where this missionary is right now",
+            color="#2563EB",
+        )
+        self.summary_complete_card = StatCard(
+            "0",
+            "Required docs complete",
+            subtitle="For the current stage",
+            color="#059669",
+        )
+        self.summary_missing_card = StatCard(
+            "0",
+            "Required docs missing",
+            subtitle="Needs attention before advancing",
+            color="#DC2626",
+        )
+        self.summary_upload_card = StatCard(
+            "—",
+            "Last upload",
+            subtitle="Most recent file added",
+            color="#7C3AED",
+        )
+
+        metrics_grid.addWidget(self.summary_current_stage_card, 0, 0)
+        metrics_grid.addWidget(self.summary_complete_card, 0, 1)
+        metrics_grid.addWidget(self.summary_missing_card, 1, 0)
+        metrics_grid.addWidget(self.summary_upload_card, 1, 1)
+
+        layout.addLayout(metrics_grid)
+
+        action_card = create_card()
+        action_layout = QVBoxLayout()
+        action_layout.setContentsMargins(18, 16, 18, 16)
+        action_layout.setSpacing(8)
+        action_card.setLayout(action_layout)
+
+        action_title = QLabel("Recommended next step")
+        action_title.setObjectName("SectionHeader")
+
+        self.summary_next_action_label = QLabel(
+            "Select a missionary to see the next step."
+        )
+        self.summary_next_action_label.setWordWrap(True)
+
+        self.summary_activity_label = QLabel("")
+        self.summary_activity_label.setObjectName("MutedText")
+        self.summary_activity_label.setWordWrap(True)
+
+        self.summary_tip_label = QLabel(
+            "Tip: start with the missing documents in the current stage. If you are unsure, upload one file at a time and review the status after each upload."
+        )
+        self.summary_tip_label.setObjectName("MutedText")
+        self.summary_tip_label.setWordWrap(True)
+
+        action_layout.addWidget(action_title)
+        action_layout.addWidget(self.summary_next_action_label)
+        action_layout.addWidget(self.summary_activity_label)
+        action_layout.addWidget(self.summary_tip_label)
+
+        layout.addWidget(action_card)
+
+        return card
+
+    def _build_workflow_section(self):
+        card = create_card()
+
+        layout = QVBoxLayout()
+        layout.setContentsMargins(22, 18, 22, 18)
+        layout.setSpacing(12)
+        card.setLayout(layout)
+
+        layout.addWidget(SectionTitle("Workflow stages"))
+
+        helper = QLabel(
+            "The current stage is highlighted. Use the update button if a stage status needs to change."
+        )
+        helper.setObjectName("MutedText")
+        helper.setWordWrap(True)
+        layout.addWidget(helper)
+
+        self.workflow_list = create_list_widget()
+        self.workflow_list.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.workflow_list.itemDoubleClicked.connect(
+            self.change_workflow_status
+        )
+        self.workflow_list.setSpacing(8)
+        self.workflow_list.setMinimumHeight(
+            WORKFLOW_LIST_MIN_HEIGHT
+        )
+        tune_fluent_scrollable(self.workflow_list)
+        _set_scroll_step(self.workflow_list)
+        layout.addWidget(self.workflow_list)
+
+        return card
+
     def _build_details_tab(self):
         details_outer = QWidget()
 
-        self.tabs.addTab(details_outer, "Details")
+        self._add_static_tab("details", "Details", details_outer)
 
         outer_layout = QVBoxLayout()
 
@@ -425,7 +653,8 @@ class MissionaryDetailPage(QWidget):
 
         details_outer.setLayout(outer_layout)
 
-        scroll = create_scroll_area()
+        scroll = create_scroll_area(single_direction=True)
+        tune_fluent_scrollable(scroll)
 
         details_content = QWidget()
 
@@ -478,10 +707,10 @@ class MissionaryDetailPage(QWidget):
         )
 
         for field_key in EDITABLE_DATE_FIELDS:
-            date_edit = create_date_edit()
-            date_edit.setDate(DATE_PLACEHOLDER)
-            date_edit.setMaximumWidth(DATE_EDIT_MAX_WIDTH)
-            self._date_edits[field_key] = date_edit
+            date_picker = create_date_picker()
+            date_picker.setDate(DATE_PLACEHOLDER)
+            date_picker.setMaximumWidth(DATE_EDIT_MAX_WIDTH)
+            self._date_edits[field_key] = date_picker
 
             source_lbl = QLabel("")
             source_lbl.setObjectName("MiniMutedText")
@@ -492,7 +721,7 @@ class MissionaryDetailPage(QWidget):
             fw_layout.setContentsMargins(0, 0, 0, 0)
             fw_layout.setSpacing(2)
             field_widget.setLayout(fw_layout)
-            fw_layout.addWidget(date_edit)
+            fw_layout.addWidget(date_picker)
             fw_layout.addWidget(source_lbl)
 
             form.addRow(
@@ -524,7 +753,7 @@ class MissionaryDetailPage(QWidget):
     def _build_notes_tab(self):
         notes_tab = QWidget()
 
-        self.tabs.addTab(notes_tab, "Notes")
+        self._add_static_tab("notes", "Notes", notes_tab)
 
         notes_layout = QVBoxLayout()
 
@@ -574,97 +803,6 @@ class MissionaryDetailPage(QWidget):
             save_notes_btn,
             alignment=Qt.AlignRight,
         )
-
-    # ==========================================
-    # LOAD MISSIONARY
-    # ==========================================
-
-    def load_missionary(self, missionary):
-        self.current_missionary = missionary
-
-        logger.info(
-            f"Loading missionary details for "
-            f"{missionary.full_name}"
-        )
-
-        # Header
-        self.name_label.setText(missionary.full_name)
-
-        stage = missionary.current_stage or "—"
-
-        self.stage_badge.setText(f"  {stage}  ")
-
-        # Details tab
-        self.nationality_label.setText(
-            missionary.nationality or "-"
-        )
-
-        self.passport_label.setText(
-            missionary.passport_number or "-"
-        )
-
-        self._date_empty_on_load = set()
-        for field_key, date_edit in self._date_edits.items():
-            value = getattr(missionary, field_key, None)
-            if value:
-                date_edit.setDate(
-                    QDate(value.year, value.month, value.day)
-                )
-            else:
-                date_edit.setDate(DATE_PLACEHOLDER)
-                self._date_empty_on_load.add(field_key)
-
-        self._update_field_sources(missionary)
-
-        self.folder_label.setText(
-            missionary.folder_path or "-"
-        )
-
-        # Notes tab
-        self.notes_text.setPlainText(
-            missionary.notes or ""
-        )
-
-        # Workflow list
-        self.workflow_list.clear()
-
-        workflows = self.workflow_service.get_workflows(
-            missionary.id
-        )
-
-        for wf in workflows:
-            item_text = (
-                f"{wf.stage_name}  —  {wf.status}"
-            )
-
-            item = QListWidgetItem(item_text)
-
-            item.setData(Qt.UserRole, wf.id)
-
-            if wf.status == "COMPLETED":
-                item.setForeground(
-                    QColor("#059669")
-                )
-
-            elif wf.status == "WAITING":
-                item.setForeground(
-                    QColor("#D97706")
-                )
-
-            elif wf.status == "BLOCKED":
-                item.setForeground(
-                    QColor("#DC2626")
-                )
-
-            self.workflow_list.addItem(item)
-
-        self.load_documents()
-
-        self.load_missing_documents()
-
-        self._load_timeline()
-
-        self._update_advance_banner()
 
     def _update_advance_banner(self):
         if not hasattr(self, "current_missionary"):
@@ -722,34 +860,6 @@ class MissionaryDetailPage(QWidget):
             self.advance_banner.setVisible(False)
 
     # ==========================================
-    # WORKFLOW STATUS
-    # ==========================================
-
-    def change_workflow_status(self, item):
-        workflow_id = item.data(Qt.UserRole)
-
-        selected_status, ok = (
-            QInputDialog.getItem(
-                self,
-                "Change Status",
-                "Select new status:",
-                WORKFLOW_STATUSES,
-                0,
-                False,
-            )
-        )
-
-        if not ok:
-            return
-
-        self.workflow_service.update_workflow_status(
-            workflow_id, selected_status
-        )
-
-        if hasattr(self, "current_missionary"):
-            self._reload_missionary()
-
-    # ==========================================
     # ADVANCE STAGE
     # ==========================================
 
@@ -799,19 +909,8 @@ class MissionaryDetailPage(QWidget):
         if not hasattr(self, "current_missionary"):
             return
 
-        files, _ = QFileDialog.getOpenFileNames(
-            self,
-            "Select Documents",
-            "",
-            "Documents ("
-            "*.pdf *.png *.jpg *.jpeg "
-            "*.bmp *.tiff *.tif"
-            ")",
-        )
-
         dialog = UploadSessionDialog(
             self.current_missionary,
-            initial_files=files,
             parent=self,
         )
         dialog.exec()
@@ -844,7 +943,11 @@ class MissionaryDetailPage(QWidget):
 
         updates = {}
         for field_key, date_edit in self._date_edits.items():
-            qd = date_edit.date()
+            qd = (
+                date_edit.getDate()
+                if hasattr(date_edit, "getDate")
+                else date_edit.date()
+            )
             if (
                 field_key in self._date_empty_on_load
                 and qd == DATE_PLACEHOLDER
@@ -882,76 +985,6 @@ class MissionaryDetailPage(QWidget):
     def retranslate_ui(self):
         if hasattr(self, "save_dates_btn"):
             self.save_dates_btn.setText(tr("save_dates"))
-
-    # ==========================================
-    # DOCUMENTS LIST WITH THUMBNAILS
-    # ==========================================
-
-    def load_documents(self):
-        self.documents_list.clear()
-
-        self._document_data = []
-
-        documents = self.document_service.get_documents(
-            self.current_missionary.id
-        )
-
-        if not documents:
-            empty = QListWidgetItem(
-                "No documents uploaded yet."
-            )
-
-            empty.setForeground(QColor("#A1A1AA"))
-
-            empty.setFlags(
-                empty.flags() & ~Qt.ItemIsSelectable
-            )
-
-            self.documents_list.addItem(empty)
-
-            return
-
-        for doc in documents:
-            doc_config = DOCUMENTS.get(
-                doc.document_type, {}
-            )
-
-            label = doc_config.get(
-                "label", doc.document_type
-            )
-
-            item_text = (
-                f"{label}\n{doc.file_name}"
-            )
-
-            item = QListWidgetItem(item_text)
-
-            item.setData(Qt.UserRole, doc.id)
-
-            # Try thumbnail
-            try:
-                pixmap = self.thumb_service.get_pixmap(
-                    doc.file_path
-                )
-
-                if pixmap and not pixmap.isNull():
-                    item.setIcon(QIcon(pixmap))
-
-            except Exception:
-                pass
-
-            self.documents_list.addItem(item)
-
-            self._document_data.append({
-                "id": doc.id,
-                "document_type": doc.document_type,
-                "label": label,
-                "file_path": doc.file_path,
-                "file_name": doc.file_name,
-                "notes": doc.notes or "",
-                "ocr_raw_data": doc.ocr_raw_data,
-                "ocr_confirmed_data": doc.ocr_confirmed_data,
-            })
 
     def _show_doc_context_menu(self, pos):
         item = self.documents_list.itemAt(pos)
@@ -1028,7 +1061,7 @@ class MissionaryDetailPage(QWidget):
         if not doc:
             return
 
-        dialog = QDialog_Notes(
+        dialog = DocumentNotesDialog(
             doc, self.document_service, parent=self
         )
 
@@ -1138,98 +1171,723 @@ class MissionaryDetailPage(QWidget):
                 kind="critical",
             )
 
-    # ==========================================
-    # MISSING DOCUMENTS
-    # ==========================================
+    def load_missionary(self, missionary):
+        self.current_missionary = missionary
 
-    def load_missing_documents(self):
+        logger.info(
+            f"Loading missionary details for "
+            f"{missionary.full_name}"
+        )
+
+        self.name_label.setText(missionary.full_name)
+        stage = missionary.current_stage or "-"
+        self.stage_badge.setText(f"  {stage}  ")
+
+        self.nationality_label.setText(
+            missionary.nationality or "-"
+        )
+        self.passport_label.setText(
+            missionary.passport_number or "-"
+        )
+
+        self._date_empty_on_load = set()
+        for field_key, date_edit in self._date_edits.items():
+            value = getattr(missionary, field_key, None)
+            if value:
+                date_edit.setDate(
+                    QDate(value.year, value.month, value.day)
+                )
+            else:
+                date_edit.setDate(DATE_PLACEHOLDER)
+                self._date_empty_on_load.add(field_key)
+
+        self._update_field_sources(missionary)
+
+        self.folder_label.setText(
+            missionary.folder_path or "-"
+        )
+
+        self.notes_text.setPlainText(
+            missionary.notes or ""
+        )
+
+        workflows = self.workflow_service.get_workflows(
+            missionary.id
+        )
+        documents = self.document_service.get_documents(
+            missionary.id
+        )
+
+        self.load_workflow_stages(workflows)
+        self.load_documents(documents)
+        self.load_missing_documents(documents)
+        self._refresh_overview_summary(workflows, documents)
+        self._load_timeline()
+        self._update_advance_banner()
+
+    def load_workflow_stages(self, workflows=None):
+        self.workflow_list.clear()
+
+        if not hasattr(self, "current_missionary"):
+            return
+
+        if workflows is None:
+            workflows = self.workflow_service.get_workflows(
+                self.current_missionary.id
+            )
+
+        workflow_map = {
+            wf.stage_name: wf
+            for wf in workflows
+        }
+        current_stage = getattr(
+            self.current_missionary,
+            "current_stage",
+            None,
+        )
+
+        for stage_name in WORKFLOW_STAGES:
+            wf = workflow_map.get(stage_name)
+            if wf is None:
+                continue
+
+            item = QListWidgetItem()
+            widget = self._build_workflow_stage_widget(
+                wf,
+                is_current=(stage_name == current_stage),
+            )
+            item.setData(Qt.UserRole, wf.id)
+            item.setSizeHint(widget.sizeHint())
+            self.workflow_list.addItem(item)
+            self.workflow_list.setItemWidget(item, widget)
+
+        if self.workflow_list.count() == 0:
+            empty = QListWidgetItem(
+                "No workflow stages available."
+            )
+            empty.setFlags(
+                empty.flags() & ~Qt.ItemIsSelectable
+            )
+            self.workflow_list.addItem(empty)
+
+    def load_documents(self, documents=None):
+        self.documents_list.clear()
+        self._document_data = []
+
+        if not hasattr(self, "current_missionary"):
+            return
+
+        if documents is None:
+            documents = self.document_service.get_documents(
+                self.current_missionary.id
+            )
+
+        def _doc_sort_key(doc):
+            uploaded_at = getattr(doc, "uploaded_at", None)
+            if uploaded_at:
+                try:
+                    uploaded_value = uploaded_at.timestamp()
+                except Exception:
+                    uploaded_value = 0
+            else:
+                uploaded_value = -1
+            return (
+                uploaded_value,
+                (doc.document_type or "").lower(),
+                (doc.file_name or "").lower(),
+            )
+
+        documents = sorted(
+            documents,
+            key=_doc_sort_key,
+            reverse=True,
+        )
+
+        if not documents:
+            empty = QListWidgetItem()
+            widget = self._build_empty_state_card(
+                "No documents uploaded yet.",
+                "Use Upload Document to add the first file, or Batch Upload if you already have several files ready.",
+            )
+            empty.setSizeHint(widget.sizeHint())
+            empty.setFlags(empty.flags() & ~Qt.ItemIsSelectable)
+            self.documents_list.addItem(empty)
+            self.documents_list.setItemWidget(empty, widget)
+            return
+
+        for doc in documents:
+            doc_config = DOCUMENTS.get(doc.document_type, {})
+            label = doc_config.get(
+                "label", doc.document_type
+            )
+
+            item = QListWidgetItem()
+            item.setData(Qt.UserRole, doc.id)
+
+            try:
+                pixmap = self.thumb_service.get_pixmap(
+                    doc.file_path
+                )
+            except Exception:
+                pixmap = None
+
+            widget = self._build_document_item_widget(
+                doc,
+                label,
+                pixmap,
+            )
+            item.setSizeHint(widget.sizeHint())
+            self.documents_list.addItem(item)
+            self.documents_list.setItemWidget(item, widget)
+
+            self._document_data.append({
+                "id": doc.id,
+                "document_type": doc.document_type,
+                "label": label,
+                "file_path": doc.file_path,
+                "file_name": doc.file_name,
+                "notes": doc.notes or "",
+                "ocr_raw_data": doc.ocr_raw_data,
+                "ocr_confirmed_data": doc.ocr_confirmed_data,
+            })
+
+    def load_missing_documents(self, documents=None):
         self.missing_documents_list.clear()
 
         if not hasattr(self, "current_missionary"):
             return
 
-        stage = self.current_missionary.current_stage
-
-        if not stage:
-            no_stage = QListWidgetItem(
-                "No current stage assigned."
+        if documents is None:
+            documents = self.document_service.get_documents(
+                self.current_missionary.id
             )
 
-            no_stage.setForeground(
-                QColor("#A1A1AA")
-            )
+        uploaded_types = {
+            doc.document_type
+            for doc in documents
+        }
+        current_stage = getattr(
+            self.current_missionary,
+            "current_stage",
+            None,
+        )
 
-            no_stage.setFlags(
-                no_stage.flags()
-                & ~Qt.ItemIsSelectable
-            )
+        missing_groups = []
 
-            self.missing_documents_list.addItem(
-                no_stage
-            )
+        general_missing = [
+            doc_key
+            for doc_key, config in DOCUMENTS.items()
+            if config.get("required")
+            and config.get("stage") is None
+            and doc_key not in uploaded_types
+            and doc_key != "OTHER"
+        ]
+        if general_missing:
+            missing_groups.append((
+                "Always required",
+                general_missing,
+                True,
+            ))
 
+        stage_order = []
+        if current_stage in WORKFLOW_STAGES:
+            stage_order.append(current_stage)
+        stage_order.extend(
+            stage
+            for stage in WORKFLOW_STAGES
+            if stage != current_stage
+        )
+
+        seen = set()
+        for stage_name in stage_order:
+            missing = [
+                doc_key
+                for doc_key in WORKFLOW_REQUIREMENTS.get(
+                    stage_name, []
+                )
+                if doc_key not in uploaded_types
+            ]
+            if missing:
+                missing_groups.append((
+                    stage_name,
+                    missing,
+                    stage_name == current_stage,
+                ))
+                seen.add(stage_name)
+
+        if not missing_groups:
+            empty = QListWidgetItem()
+            widget = self._build_empty_state_card(
+                "All required documents are uploaded.",
+                "This missionary is clear to move forward once any final review is done.",
+                tone="success",
+            )
+            empty.setSizeHint(widget.sizeHint())
+            empty.setFlags(empty.flags() & ~Qt.ItemIsSelectable)
+            self.missing_documents_list.addItem(empty)
+            self.missing_documents_list.setItemWidget(empty, widget)
             return
 
-        missing = (
-            self.workflow_validator
-            .get_missing_documents(
+        for stage_name, missing_docs, is_current in missing_groups:
+            item = QListWidgetItem()
+            widget = self._build_missing_stage_widget(
+                stage_name,
+                missing_docs,
+                is_current=is_current,
+            )
+            item.setSizeHint(widget.sizeHint())
+            item.setFlags(item.flags() & ~Qt.ItemIsSelectable)
+            self.missing_documents_list.addItem(item)
+            self.missing_documents_list.setItemWidget(item, widget)
+
+    def _refresh_overview_summary(self, workflows=None, documents=None):
+        if not hasattr(self, "current_missionary"):
+            return
+
+        stage = getattr(self.current_missionary, "current_stage", None)
+        stage_display = _stage_display_name(stage)
+        self.summary_stage_chip.setText(stage_display)
+        self.summary_current_stage_card.setValue(stage_display)
+
+        if documents is None:
+            documents = self.document_service.get_documents(
+                self.current_missionary.id
+            )
+
+        uploaded_types = {
+            doc.document_type
+            for doc in documents
+        }
+        required_docs = list(
+            dict.fromkeys(
+                [
+                    doc_key
+                    for doc_key, config in DOCUMENTS.items()
+                    if config.get("required")
+                    and config.get("stage") is None
+                    and doc_key != "OTHER"
+                ]
+                + list(WORKFLOW_REQUIREMENTS.get(stage, []))
+            )
+        )
+        missing_current = [
+            doc_key
+            for doc_key in required_docs
+            if doc_key not in uploaded_types
+        ]
+
+        complete_count = len(required_docs) - len(missing_current)
+        total_count = len(required_docs)
+
+        self.summary_complete_card.setValue(
+            f"{complete_count}/{total_count}"
+        )
+        self.summary_missing_card.setValue(
+            str(len(missing_current))
+        )
+
+        latest_upload = None
+        for doc in documents:
+            uploaded_at = getattr(doc, "uploaded_at", None)
+            if uploaded_at and (
+                latest_upload is None or uploaded_at > latest_upload
+            ):
+                latest_upload = uploaded_at
+
+        self.summary_upload_card.setValue(
+            latest_upload.strftime("%b %d, %Y")
+            if latest_upload
+            else "No uploads yet"
+        )
+
+        latest_activity = self._find_latest_activity()
+
+        if missing_current:
+            next_doc = DOCUMENTS.get(
+                missing_current[0], {}
+            ).get("label", missing_current[0])
+            next_text = (
+                f"Next step: upload {next_doc}."
+            )
+        elif stage and stage in WORKFLOW_STAGES:
+            next_index = WORKFLOW_STAGES.index(stage) + 1
+            if next_index < len(WORKFLOW_STAGES):
+                next_text = (
+                    f"Next step: review the {stage_display} requirements, then advance to {_stage_display_name(WORKFLOW_STAGES[next_index])}."
+                )
+            else:
+                next_text = (
+                    "Next step: all stages are complete. Review the notes and finalize the record."
+                )
+        else:
+            next_text = (
+                "Next step: assign a workflow stage and start uploading the required documents."
+            )
+
+        self.summary_next_action_label.setText(next_text)
+        self.summary_activity_label.setText(
+            "Last update: "
+            + (_format_datetime(latest_activity) or "No activity yet")
+            + (
+                f" | Last upload: {_format_datetime(latest_upload)}"
+                if latest_upload
+                else " | Last upload: No uploads yet"
+            )
+        )
+
+        if missing_current:
+            tip = (
+                "Tip: start with the missing documents shown below. If you are unsure, upload one file at a time and review the status after each upload."
+            )
+        else:
+            tip = (
+                "Tip: everything required for the current stage is uploaded. Use Advance Stage when you are ready."
+            )
+        self.summary_tip_label.setText(tip)
+
+    def _find_latest_activity(self):
+        if not hasattr(self, "current_missionary"):
+            return None
+
+        latest = getattr(self.current_missionary, "created_at", None)
+
+        try:
+            from database.db import SessionLocal
+            from database.models.stage_history import StageHistory
+
+            session = SessionLocal()
+            try:
+                history = (
+                    session.query(StageHistory)
+                    .filter_by(
+                        missionary_id=self.current_missionary.id
+                    )
+                    .order_by(StageHistory.created_at.desc())
+                    .first()
+                )
+                if history and history.created_at:
+                    latest = (
+                        history.created_at
+                        if latest is None or history.created_at > latest
+                        else latest
+                    )
+            finally:
+                session.close()
+        except Exception:
+            logger.exception("Failed to collect latest activity")
+
+        return latest
+
+    def _build_empty_state_card(self, title, text, tone="muted"):
+        card = create_card()
+        card.setMinimumHeight(EMPTY_STATE_MIN_HEIGHT)
+        layout = QVBoxLayout()
+        layout.setContentsMargins(14, 12, 14, 12)
+        layout.setSpacing(4)
+        card.setLayout(layout)
+
+        title_lbl = QLabel(title)
+        title_lbl.setWordWrap(True)
+
+        text_lbl = QLabel(text)
+        text_lbl.setWordWrap(True)
+
+        layout.addWidget(title_lbl)
+        layout.addWidget(text_lbl)
+        return card
+
+    def _build_workflow_stage_widget(self, workflow, is_current=False):
+        card = create_card()
+        card.setMinimumHeight(WORKFLOW_CARD_MIN_HEIGHT)
+
+        layout = QHBoxLayout()
+        layout.setContentsMargins(12, 10, 12, 10)
+        layout.setSpacing(10)
+        card.setLayout(layout)
+
+        indicator = QLabel("●")
+        indicator.setFixedWidth(16)
+        indicator.setAlignment(Qt.AlignTop | Qt.AlignHCenter)
+
+        copy = QVBoxLayout()
+        copy.setContentsMargins(0, 0, 0, 0)
+        copy.setSpacing(4)
+
+        title_row = QHBoxLayout()
+        title_row.setContentsMargins(0, 0, 0, 0)
+        title_row.setSpacing(8)
+
+        title = QLabel(_stage_display_name(workflow.stage_name))
+
+        status = QLabel(_workflow_status_label(workflow.status))
+
+        title_row.addWidget(title)
+        title_row.addWidget(status)
+        title_row.addStretch()
+
+        hint = QLabel(
+            self._workflow_stage_hint(workflow, is_current)
+        )
+        hint.setWordWrap(True)
+
+        copy.addLayout(title_row)
+        copy.addWidget(hint)
+
+        action_button = create_button(
+            "Update status",
+            "subtle",
+            fixed_height=28,
+        )
+        action_button.clicked.connect(
+            lambda checked=False, workflow_id=workflow.id: self.change_workflow_status(workflow_id)
+        )
+
+        layout.addWidget(indicator)
+        layout.addLayout(copy, stretch=1)
+        layout.addWidget(action_button)
+        return card
+
+    def _workflow_stage_hint(self, workflow, is_current=False):
+        missing = []
+        current_stage = getattr(
+            self.current_missionary,
+            "current_stage",
+            None,
+        )
+        if workflow.stage_name == current_stage:
+            missing = self.workflow_validator.get_missing_documents(
                 self.current_missionary.id,
-                stage,
+                current_stage,
             )
+        if workflow.status == "WAITING":
+            return "Everything required for this stage is uploaded. You can advance now."
+        if workflow.status == "COMPLETED":
+            return "This stage has already been completed."
+        if workflow.status == "BLOCKED":
+            return "This stage still needs attention before it can move forward."
+        if is_current and missing:
+            return (
+                f"{len(missing)} required document(s) are still missing for this stage."
+            )
+        if is_current:
+            return "This is the active stage."
+        return "Use this row if you need to update the stage status."
+
+    def _build_document_item_widget(self, doc, label, pixmap=None):
+        card = create_card()
+        card.setMinimumHeight(DOCUMENT_CARD_MIN_HEIGHT)
+        layout = QHBoxLayout()
+        layout.setContentsMargins(12, 10, 12, 10)
+        layout.setSpacing(10)
+        card.setLayout(layout)
+
+        thumb = QLabel()
+        thumb.setObjectName("DocumentThumb")
+        thumb.setFixedSize(54, 64)
+        thumb.setAlignment(Qt.AlignCenter)
+
+        if pixmap and not pixmap.isNull():
+            thumb.setPixmap(
+                pixmap.scaled(
+                    48, 60, Qt.KeepAspectRatio, Qt.SmoothTransformation
+                )
+            )
+        else:
+            thumb.setText("DOC")
+
+        copy = QVBoxLayout()
+        copy.setContentsMargins(0, 0, 0, 0)
+        copy.setSpacing(4)
+
+        title_row = QHBoxLayout()
+        title_row.setContentsMargins(0, 0, 0, 0)
+        title_row.setSpacing(8)
+
+        title = QLabel(label)
+
+        status = QLabel("Uploaded")
+
+        title_row.addWidget(title)
+        title_row.addWidget(status)
+        title_row.addStretch()
+
+        file_name = QLabel(doc.file_name)
+        file_name.setWordWrap(True)
+
+        meta_text = []
+        uploaded_at = getattr(doc, "uploaded_at", None)
+        if uploaded_at:
+            meta_text.append(f"Uploaded {uploaded_at.strftime('%b %d, %Y')}")
+        if doc.workflow_stage:
+            meta_text.append(
+                f"Stage: {_stage_display_name(doc.workflow_stage)}"
+            )
+        if not meta_text:
+            meta_text.append("Added to the missionary record")
+
+        meta = QLabel("  \u2022  ".join(meta_text))
+        meta.setWordWrap(True)
+
+        copy.addLayout(title_row)
+        copy.addWidget(file_name)
+        copy.addWidget(meta)
+
+        actions = QHBoxLayout()
+        actions.setContentsMargins(0, 0, 0, 0)
+        actions.setSpacing(8)
+
+        view_btn = create_button("View", "primary", fixed_height=28)
+        view_btn.clicked.connect(
+            lambda checked=False, doc_id=doc.id: self._open_document_viewer(doc_id)
+        )
+        notes_btn = create_button("Notes", "secondary", fixed_height=28)
+        notes_btn.clicked.connect(
+            lambda checked=False, doc_id=doc.id: self._open_document_notes(doc_id)
+        )
+        open_btn = create_button("Open", "subtle", fixed_height=28)
+        open_btn.clicked.connect(
+            lambda checked=False, doc_id=doc.id: self._open_document_file(doc_id)
         )
 
-        if not missing:
-            all_good = QListWidgetItem(
-                "✓  All required documents uploaded."
-            )
+        actions.addStretch()
+        actions.addWidget(view_btn)
+        actions.addWidget(notes_btn)
+        actions.addWidget(open_btn)
 
-            all_good.setForeground(
-                QColor("#059669")
-            )
+        layout.addWidget(thumb)
+        layout.addLayout(copy, stretch=1)
+        layout.addLayout(actions)
+        return card
 
-            all_good.setFlags(
-                all_good.flags()
-                & ~Qt.ItemIsSelectable
-            )
+    def _build_missing_stage_widget(self, stage_name, missing_docs, is_current=False):
+        card = create_card()
+        card.setMinimumHeight(MISSING_CARD_MIN_HEIGHT)
 
-            self.missing_documents_list.addItem(
-                all_good
-            )
+        layout = QVBoxLayout()
+        layout.setContentsMargins(12, 10, 12, 10)
+        layout.setSpacing(6)
+        card.setLayout(layout)
 
+        header = QHBoxLayout()
+        header.setContentsMargins(0, 0, 0, 0)
+        header.setSpacing(6)
+
+        title_text = (
+            "Always required"
+            if stage_name == "Always required"
+            else f"Required for {_stage_display_name(stage_name)}"
+        )
+        title = QLabel(title_text)
+        title.setObjectName("MissingStageTitle")
+
+        if stage_name == "Always required":
+            badge_text = "Highest priority"
+        elif is_current:
+            badge_text = "Current priority"
+        else:
+            badge_text = "Upcoming"
+
+        badge = QLabel(badge_text)
+        badge.setObjectName("WarningBadge")
+
+        header.addWidget(title)
+        header.addWidget(badge)
+        header.addStretch()
+
+        layout.addLayout(header)
+
+        summary = QLabel(
+            self._missing_stage_summary(stage_name, len(missing_docs))
+        )
+        summary.setObjectName("MutedText")
+        summary.setWordWrap(True)
+        layout.addWidget(summary)
+
+        for doc_key in missing_docs:
+            doc_label = DOCUMENTS.get(doc_key, {}).get(
+                "label", doc_key
+            )
+            row = QHBoxLayout()
+            row.setContentsMargins(0, 0, 0, 0)
+            row.setSpacing(8)
+
+            icon = QLabel("✕")
+            icon.setObjectName("DangerText")
+            icon.setFixedWidth(18)
+
+            copy = QVBoxLayout()
+            copy.setContentsMargins(0, 0, 0, 0)
+            copy.setSpacing(2)
+
+            label = QLabel(doc_label)
+            label.setWordWrap(True)
+
+            hint = QLabel(self._missing_doc_reason(doc_key, stage_name))
+            hint.setWordWrap(True)
+
+            copy.addWidget(label)
+            copy.addWidget(hint)
+
+            row.addWidget(icon)
+            row.addLayout(copy, stretch=1)
+            layout.addLayout(row)
+
+        return card
+
+    def _missing_stage_summary(self, stage_name, count):
+        if stage_name == "Always required":
+            return f"{count} general document(s) are still needed for the case."
+        return f"{count} document(s) are still needed before this stage can move forward."
+
+    def _missing_doc_reason(self, doc_key, stage_name):
+        config = DOCUMENTS.get(doc_key, {})
+        ocr_fields = config.get("ocr_fields", [])
+        if stage_name == "Always required":
+            base = "Needed for identity checks and the full case record."
+        else:
+            base = f"Required before {_stage_display_name(stage_name)} can be completed."
+        if ocr_fields:
+            return base + " It also helps fill in the missionary record automatically."
+        return base
+
+    def _show_workflow_context_menu(self, pos):
+        item = self.workflow_list.itemAt(pos)
+        if not item:
             return
 
-        stage_item = QListWidgetItem(
-            f"— {stage} —"
+        workflow_id = item.data(Qt.UserRole)
+        if workflow_id is None:
+            return
+
+        menu = create_menu("", self)
+        update_action = menu.addAction("Update status")
+        action = menu.exec(self.workflow_list.mapToGlobal(pos))
+
+        if action == update_action:
+            self.change_workflow_status(workflow_id)
+
+    def change_workflow_status(self, item_or_id):
+        if hasattr(item_or_id, "data"):
+            workflow_id = item_or_id.data(Qt.UserRole)
+        else:
+            workflow_id = item_or_id
+
+        if workflow_id is None:
+            return
+
+        dialog = WorkflowStatusDialog(parent=self)
+
+        if not dialog.exec():
+            return
+
+        selected_status = dialog.selected_status()
+
+        self.workflow_service.update_workflow_status(
+            workflow_id, selected_status
         )
 
-        stage_item.setForeground(
-            QColor("#A1A1AA")
-        )
-
-        stage_item.setFlags(
-            stage_item.flags()
-            & ~Qt.ItemIsSelectable
-        )
-
-        self.missing_documents_list.addItem(
-            stage_item
-        )
-
-        for doc_key in missing:
-            label = (
-                DOCUMENTS.get(doc_key, {})
-                .get("label", doc_key)
-            )
-
-            item = QListWidgetItem(
-                f"  ✗  {label}"
-            )
-
-            item.setForeground(QColor("#DC2626"))
-
-            self.missing_documents_list.addItem(
-                item
-            )
+        if hasattr(self, "current_missionary"):
+            self._reload_missionary()
 
     # ==========================================
     # TIMELINE
@@ -1238,7 +1896,7 @@ class MissionaryDetailPage(QWidget):
     def _build_timeline_tab(self):
         timeline_tab = QWidget()
 
-        self.tabs.addTab(timeline_tab, "Timeline")
+        self._add_static_tab("timeline", "Timeline", timeline_tab)
 
         timeline_layout = QVBoxLayout()
 
@@ -1255,6 +1913,11 @@ class MissionaryDetailPage(QWidget):
         self.timeline_list = create_list_widget()
 
         self.timeline_list.setObjectName("TimelineList")
+        self.timeline_list.setSpacing(6)
+        self.timeline_list.setMinimumHeight(
+            TIMELINE_LIST_MIN_HEIGHT
+        )
+        tune_fluent_scrollable(self.timeline_list)
 
         timeline_layout.addWidget(
             self.timeline_list
@@ -1292,10 +1955,6 @@ class MissionaryDetailPage(QWidget):
                         "No stage transitions recorded."
                     )
 
-                    empty.setForeground(
-                        QColor("#A1A1AA")
-                    )
-
                     self.timeline_list.addItem(empty)
 
                     return
@@ -1319,10 +1978,6 @@ class MissionaryDetailPage(QWidget):
                     )
 
                     item = QListWidgetItem(text)
-
-                    item.setForeground(
-                        QColor("#18181B")
-                    )
 
                     self.timeline_list.addItem(item)
 
@@ -1441,14 +2096,57 @@ class MissionaryDetailPage(QWidget):
         return date_value.strftime("%B %d, %Y")
 
 
-# ==========================================
-# Document Notes Dialog (inline)
-# ==========================================
+class WorkflowStatusDialog(MaskDialogBase):
+    def __init__(self, parent=None):
+        super().__init__(parent)
 
-from PySide6.QtWidgets import QDialog
+        self.setWindowTitle("Change Status")
+        if hasattr(self, "setModal"):
+            self.setModal(True)
+        if hasattr(self, "setMinimumWidth"):
+            self.setMinimumWidth(420)
+
+        surface = getattr(self, "widget", self)
+        layout = QVBoxLayout()
+        layout.setContentsMargins(20, 20, 20, 16)
+        layout.setSpacing(12)
+        surface.setLayout(layout)
+
+        title = SubtitleLabel("Change workflow status")
+        layout.addWidget(title)
+
+        helper = BodyLabel(
+            "Choose the status that best describes what is happening "
+            "with this workflow stage."
+        )
+        helper.setWordWrap(True)
+        layout.addWidget(helper)
+
+        self.status_combo = create_combo_box()
+        for status in WORKFLOW_STATUSES:
+            self.status_combo.addItem(
+                _workflow_status_label(status),
+                status,
+            )
+        layout.addWidget(self.status_combo)
+
+        cancel_btn = create_button("Cancel", "secondary")
+        cancel_btn.clicked.connect(self.reject)
+
+        save_btn = create_button("Update Status", "primary")
+        save_btn.clicked.connect(self.accept)
+
+        footer = DialogFooter()
+        footer.add_action(cancel_btn)
+        footer.add_action(save_btn)
+        layout.addWidget(footer)
+
+    def selected_status(self):
+        status = self.status_combo.currentData()
+        return status or self.status_combo.currentText()
 
 
-class QDialog_Notes(QDialog):
+class DocumentNotesDialog(MaskDialogBase):
     def __init__(self, doc_data, doc_service, parent=None):
         super().__init__(parent)
 
@@ -1460,9 +2158,14 @@ class QDialog_Notes(QDialog):
             f"Notes — {doc_data['label']}"
         )
 
-        self.setMinimumWidth(460)
+        if hasattr(self, "setModal"):
+            self.setModal(True)
 
-        self.setMinimumHeight(320)
+        if hasattr(self, "setMinimumWidth"):
+            self.setMinimumWidth(460)
+
+        if hasattr(self, "setMinimumHeight"):
+            self.setMinimumHeight(320)
 
         layout = QVBoxLayout()
 
@@ -1470,9 +2173,14 @@ class QDialog_Notes(QDialog):
 
         layout.setSpacing(12)
 
-        self.setLayout(layout)
+        surface = getattr(self, "widget", self)
+        surface.setLayout(layout)
 
-        file_label = QLabel(
+        title = SubtitleLabel(f"Notes for {doc_data['label']}")
+
+        layout.addWidget(title)
+
+        file_label = BodyLabel(
             f"File: {doc_data['file_name']}"
         )
 
@@ -1480,7 +2188,7 @@ class QDialog_Notes(QDialog):
 
         layout.addWidget(file_label)
 
-        self.text_edit = create_text_edit()
+        self.text_edit = create_plain_text_edit()
 
         self.text_edit.setPlainText(
             doc_data.get("notes", "")
@@ -1494,8 +2202,6 @@ class QDialog_Notes(QDialog):
 
         layout.addWidget(self.text_edit, stretch=1)
 
-        btn_row = QHBoxLayout()
-
         cancel_btn = create_button("Cancel", "secondary")
 
         cancel_btn.clicked.connect(self.reject)
@@ -1504,13 +2210,11 @@ class QDialog_Notes(QDialog):
 
         save_btn.clicked.connect(self._save)
 
-        btn_row.addStretch()
+        footer = DialogFooter()
+        footer.add_action(cancel_btn)
+        footer.add_action(save_btn)
 
-        btn_row.addWidget(cancel_btn)
-
-        btn_row.addWidget(save_btn)
-
-        layout.addLayout(btn_row)
+        layout.addWidget(footer)
 
     def _save(self):
         notes = self.text_edit.toPlainText()

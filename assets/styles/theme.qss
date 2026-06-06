@@ -45,49 +45,6 @@ QScrollArea > QWidget > QWidget {
     background-color: transparent;
 }
 
-QScrollBar:vertical {
-    background: transparent;
-    width: 8px;
-    border-radius: 4px;
-    margin: 0px;
-}
-
-QScrollBar::handle:vertical {
-    background: #D4D4D8;
-    border-radius: 4px;
-    min-height: 24px;
-}
-
-QScrollBar::handle:vertical:hover {
-    background: #A1A1AA;
-}
-
-QScrollBar::add-line:vertical,
-QScrollBar::sub-line:vertical,
-QScrollBar::add-page:vertical,
-QScrollBar::sub-page:vertical {
-    height: 0px;
-    background: none;
-}
-
-QScrollBar:horizontal {
-    height: 8px;
-    background: transparent;
-    margin: 0px;
-}
-
-QScrollBar::handle:horizontal {
-    background: #D4D4D8;
-    border-radius: 4px;
-    min-width: 24px;
-}
-
-QScrollBar::add-line:horizontal,
-QScrollBar::sub-line:horizontal {
-    width: 0px;
-    background: none;
-}
-
 
 /* ==========================================
    SIDEBAR
@@ -351,7 +308,6 @@ QLabel#StatSubtitle {
     color: #71717A;
     background: transparent;
 }
-
 
 /* ==========================================
    LIST CARD
@@ -1363,16 +1319,27 @@ QDialog#UploadWorkspaceSurface QSplitter::handle {
 }
 
 QWidget#UploadWorkspaceSurface QFrame#UploadSurfaceCard,
-QDialog#UploadWorkspaceSurface QFrame#UploadSurfaceCard {
+QDialog#UploadWorkspaceSurface QFrame#UploadSurfaceCard,
+QWidget#UploadWorkspaceSurface QWidget#UploadSurfaceCard,
+QDialog#UploadWorkspaceSurface QWidget#UploadSurfaceCard {
     background: #FFFFFF;
     border: 1px solid rgba(148, 163, 184, 0.18);
     border-radius: 18px;
 }
 
 QWidget#UploadWorkspaceSurface QFrame#UploadSurfaceCard:hover,
-QDialog#UploadWorkspaceSurface QFrame#UploadSurfaceCard:hover {
+QDialog#UploadWorkspaceSurface QFrame#UploadSurfaceCard:hover,
+QWidget#UploadWorkspaceSurface QWidget#UploadSurfaceCard:hover,
+QDialog#UploadWorkspaceSurface QWidget#UploadSurfaceCard:hover {
     border-color: rgba(148, 163, 184, 0.24);
     background: #FFFFFF;
+}
+
+QWidget#UploadWorkspaceSurface QFrame#UploadPreviewToolbar,
+QDialog#UploadWorkspaceSurface QFrame#UploadPreviewToolbar {
+    background: rgba(248, 250, 252, 0.96);
+    border: 1px solid rgba(226, 232, 240, 0.95);
+    border-radius: 16px;
 }
 
 QWidget#UploadWorkspaceSurface QFrame#PageHeader,
@@ -1381,51 +1348,6 @@ QDialog#UploadWorkspaceSurface QFrame#PageHeader {
     border-top: 1px solid rgba(148, 163, 184, 0.12);
     border-bottom-left-radius: 18px;
     border-bottom-right-radius: 18px;
-}
-
-QLabel#UploadCompactStatus {
-    color: #64748B;
-    font-size: 12px;
-    font-weight: 600;
-    background: transparent;
-}
-
-QLabel#UploadSummaryChip {
-    border-radius: 999px;
-    padding: 5px 12px;
-    font-size: 11px;
-    font-weight: 700;
-    letter-spacing: 0.3px;
-    background: #F8FAFC;
-    border: 1px solid #E2E8F0;
-}
-
-QLabel#UploadSummaryChip[tone="success"] {
-    color: #166534;
-    background: rgba(34, 197, 94, 0.12);
-    border: 1px solid rgba(34, 197, 94, 0.22);
-}
-
-QLabel#UploadSummaryChip[tone="danger"] {
-    color: #991B1B;
-    background: rgba(239, 68, 68, 0.10);
-    border: 1px solid rgba(239, 68, 68, 0.20);
-}
-
-QLabel#UploadSummaryChip[tone="info"] {
-    color: #1D4ED8;
-    background: rgba(37, 99, 235, 0.10);
-    border: 1px solid rgba(37, 99, 235, 0.18);
-}
-
-QLabel#UploadCountBadge {
-    color: #334155;
-    background: #F8FAFC;
-    border: 1px solid #E2E8F0;
-    border-radius: 999px;
-    padding: 4px 12px;
-    font-size: 11px;
-    font-weight: 700;
 }
 
 QFrame#UploadDropZone {
@@ -1467,7 +1389,7 @@ QListWidget#UploadQueueList::item {
 QFrame#UploadQueueItemCard {
     background: rgba(255, 255, 255, 0.96);
     border: 1px solid rgba(226, 232, 240, 0.98);
-    border-radius: 16px;
+    border-radius: 12px;
 }
 
 QFrame#UploadQueueItemCard[selected="true"] {
@@ -1483,7 +1405,7 @@ QLabel#UploadFileIcon {
     background: rgba(37, 99, 235, 0.10);
     color: #1D4ED8;
     border: 1px solid rgba(37, 99, 235, 0.14);
-    border-radius: 12px;
+    border-radius: 10px;
     font-size: 11px;
     font-weight: 800;
     letter-spacing: 0.5px;
@@ -1491,7 +1413,7 @@ QLabel#UploadFileIcon {
 
 QLabel#UploadQueueTitle {
     color: #0F172A;
-    font-size: 14px;
+    font-size: 13px;
     font-weight: 650;
     background: transparent;
 }
@@ -1554,28 +1476,67 @@ QLabel#UploadStatusChip[status="skipped"] {
     border: 1px solid rgba(245, 158, 11, 0.22);
 }
 
-QListWidget#UploadPageList {
-    background: #F8FAFC;
+QLabel#UploadZoomBadge {
+    color: #475569;
+    background: #FFFFFF;
     border: 1px solid #E2E8F0;
-    border-radius: 16px;
-    padding: 8px;
-}
-
-QListWidget#UploadPageList::item {
     border-radius: 10px;
-    margin: 2px;
-    padding-left: 10px;
+    padding: 6px 10px;
+    min-width: 76px;
+    font-size: 11px;
+    font-weight: 600;
 }
 
-QListWidget#UploadPageList::item:selected {
-    background: #DBEAFE;
-    color: #1D4ED8;
+QComboBox#UploadPageInput {
+    background-color: #FFFFFF;
+    border: 1px solid #D4D4D8;
+    border-radius: 10px;
+    padding: 6px 10px;
+    min-height: 30px;
+    min-width: 152px;
+}
+
+QComboBox#UploadPageInput:focus {
+    border-color: #2563EB;
 }
 
 QGraphicsView#UploadPreviewCanvas {
-    background: #F8FAFC;
+    background: #FFFFFF;
     border: 1px solid #E2E8F0;
-    border-radius: 16px;
+    border-radius: 20px;
+}
+
+QPushButton#UploadNavButton {
+    background: #FFFFFF;
+    color: #475569;
+    border: 1px solid #E2E8F0;
+    border-radius: 10px;
+    padding: 0px 10px;
+    font-size: 13px;
+    font-weight: 600;
+}
+
+QPushButton#UploadNavButton:hover {
+    background: #F8FAFC;
+    border-color: #CBD5E1;
+}
+
+QPushButton#UploadNavButton:pressed {
+    background: #EEF2F7;
+}
+
+QPushButton#UploadNavButton:disabled {
+    color: #CBD5E1;
+    background: #F8FAFC;
+    border-color: #E2E8F0;
+}
+
+QLabel#UploadEmptyState {
+    color: #94A3B8;
+    font-size: 13px;
+    font-weight: 600;
+    padding: 18px;
+    background: transparent;
 }
 
 QLabel#UploadReadValue {
@@ -1645,7 +1606,16 @@ QFrame#UploadProgressStep[state="active"] QLabel#UploadStepBadge {
     color: #FFFFFF;
 }
 
+QFrame#UploadProgressStep[state="active"] QLabel#StrongText {
+    color: #1D4ED8;
+}
+
 QFrame#UploadProgressStep[state="complete"] QLabel#UploadStepBadge {
     background: #16A34A;
     color: #FFFFFF;
+}
+
+QFrame#UploadProgressStep[state="idle"] QLabel#UploadStepBadge {
+    background: #E2E8F0;
+    color: #1E293B;
 }

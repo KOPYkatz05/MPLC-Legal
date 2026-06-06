@@ -12,7 +12,7 @@ class AlertService:
     EXPIRATION_FIELDS = [
         ("visa_expiration", "Visa"),
         ("residency_expiration", "Residency (Carnet)"),
-        ("prorroga_expiration", "Prórroga"),
+        ("prorroga_expiration", "Pr\u00F3rroga"),
         ("passport_expiration", "Passport"),
     ]
 

@@ -64,7 +64,7 @@ class CalendarPage(QWidget):
         outer.addWidget(divider())
 
         # Scroll area for appointments
-        scroll = create_scroll_area()
+        scroll = create_scroll_area(single_direction=True)
 
         scroll.setObjectName("PageSurface")
 

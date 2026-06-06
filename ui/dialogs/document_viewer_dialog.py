@@ -1,3 +1,10 @@
+from ui.dialogs.document_rendering import (
+    get_document_viewer_render_hints,
+    get_pdf_page_count,
+    render_document_pixmap,
+)
+from ui.foundation import create_button
+from utils.logger import logger
 from PySide6.QtWidgets import (
     QDialog,
     QVBoxLayout,
@@ -12,20 +19,6 @@ from PySide6.QtWidgets import (
 )
 
 from PySide6.QtCore import Qt, QRectF
-
-from PySide6.QtGui import QPixmap, QImage, QPainter
-
-import fitz
-
-from ui.foundation import create_button
-from utils.logger import logger
-
-
-def get_document_viewer_render_hints():
-    return (
-        QPainter.Antialiasing
-        | QPainter.SmoothPixmapTransform
-    )
 
 
 class DocumentViewerDialog(QDialog):
@@ -177,33 +170,17 @@ class DocumentViewerDialog(QDialog):
             )
 
     def _load_pdf(self):
-        doc = fitz.open(self.file_path)
-
-        page = doc.load_page(0)
-
-        mat = fitz.Matrix(2, 2)
-
-        pix = page.get_pixmap(matrix=mat)
-
-        img = QImage(
-            pix.samples,
-            pix.width,
-            pix.height,
-            pix.stride,
-            QImage.Format_RGB888,
-        )
-
-        self._pixmap = QPixmap.fromImage(img)
+        self._pixmap = render_document_pixmap(self.file_path, 0)
 
         self._show_pixmap()
 
         self.title_label.setText(
             f"Document Viewer - "
-            f"Page 1 of {doc.page_count}"
+            f"Page 1 of {get_pdf_page_count(self.file_path)}"
         )
 
     def _load_image(self):
-        self._pixmap = QPixmap(self.file_path)
+        self._pixmap = render_document_pixmap(self.file_path)
 
         self._show_pixmap()
 

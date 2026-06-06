@@ -106,6 +106,13 @@ class ImageProcessingService:
 
             return
 
+        logger.info(
+            "OCR_IMAGE_CLEAN_BEGIN path=%s shape=%s dtype=%s",
+            image_path,
+            getattr(image, "shape", None),
+            getattr(image, "dtype", None),
+        )
+
         # =====================================
         # Preserve original color image
         # =====================================
@@ -132,6 +139,7 @@ class ImageProcessingService:
         )
 
         logger.info(
-            f"OCR image prepared: "
-            f"{image_path}"
+            "OCR_IMAGE_CLEAN_DONE path=%s shape=%s",
+            image_path,
+            getattr(sharpened, "shape", None),
         )

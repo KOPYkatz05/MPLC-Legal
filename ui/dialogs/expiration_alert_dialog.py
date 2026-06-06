@@ -3,7 +3,6 @@ from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QDialog,
     QFrame,
-    QGraphicsBlurEffect,
     QHBoxLayout,
     QLabel,
     QVBoxLayout,
@@ -31,11 +30,7 @@ class ExpirationAlertDialog(MaskDialogBase):
     def __init__(self, alerts, parent=None):
         super().__init__(parent)
 
-        self.alerts = alerts
-
-        self._blur_target = self._resolve_blur_target(parent)
-        self._blur_effect = None
-        self._applied_blur = False
+        self.alerts = list(alerts or [])
 
         self.setWindowTitle("Document Expiration Alerts")
 
@@ -56,9 +51,7 @@ class ExpirationAlertDialog(MaskDialogBase):
             QColor(15, 23, 42, 90),
         )
 
-        self._hBoxLayout.setContentsMargins(
-            24, 24, 24, 24
-        )
+        self._hBoxLayout.setContentsMargins(24, 24, 24, 24)
         self._hBoxLayout.removeWidget(self.widget)
         self._hBoxLayout.addWidget(
             self.widget,
@@ -66,79 +59,12 @@ class ExpirationAlertDialog(MaskDialogBase):
             Qt.AlignCenter,
         )
 
-        self.widget.setObjectName(
-            "ExpirationAlertSurface"
-        )
-        self.widget.setAttribute(
-            Qt.WA_StyledBackground,
-            True,
-        )
+        self.widget.setObjectName("ExpirationAlertSurface")
+        self.widget.setAttribute(Qt.WA_StyledBackground, True)
         self.widget.setFixedWidth(760)
         self.widget.setMinimumHeight(520)
 
-    def _resolve_blur_target(self, parent):
-        if not parent:
-            return None
-
-        window = parent.window()
-        if window and window is not parent:
-            central_widget_getter = getattr(
-                window,
-                "centralWidget",
-                None,
-            )
-
-            if callable(central_widget_getter):
-                central_widget = central_widget_getter()
-                if central_widget:
-                    return central_widget
-
-        central_widget_getter = getattr(
-            parent,
-            "centralWidget",
-            None,
-        )
-
-        if callable(central_widget_getter):
-            central_widget = central_widget_getter()
-            if central_widget:
-                return central_widget
-
-        return parent
-
-    def _apply_backdrop_effect(self):
-        if not self._blur_target:
-            return
-
-        if self._blur_target.graphicsEffect():
-            return
-
-        self._blur_effect = QGraphicsBlurEffect(self)
-        self._blur_effect.setBlurRadius(10)
-        self._blur_target.setGraphicsEffect(self._blur_effect)
-        self._applied_blur = True
-
-    def _clear_backdrop_effect(self):
-        if not self._applied_blur or not self._blur_target:
-            return
-
-        if self._blur_target.graphicsEffect() is self._blur_effect:
-            self._blur_target.setGraphicsEffect(None)
-
-        self._blur_effect = None
-        self._applied_blur = False
-
-    def showEvent(self, event):
-        self._apply_backdrop_effect()
-        super().showEvent(event)
-
-    def closeEvent(self, event):
-        self._clear_backdrop_effect()
-        super().closeEvent(event)
-
     def _onDone(self, code):
-        self._clear_backdrop_effect()
-
         if FLUENT_DIALOG_AVAILABLE:
             super()._onDone(code)
         else:
@@ -158,18 +84,15 @@ class ExpirationAlertDialog(MaskDialogBase):
         layout.addWidget(self._build_footer())
 
     def _build_header(self):
-        header = QFrame()
-        header.setObjectName("PageHeader")
+        header = create_card(object_name="PageHeader")
         header.setAttribute(Qt.WA_StyledBackground, True)
 
         header_layout = QHBoxLayout()
-        header_layout.setContentsMargins(
-            28, 24, 28, 18
-        )
+        header_layout.setContentsMargins(28, 24, 28, 18)
         header_layout.setSpacing(12)
         header.setLayout(header_layout)
 
-        icon = QLabel("⚠")
+        icon = QLabel("\u26A0")
         icon.setObjectName("WarningIcon")
 
         title_stack = QVBoxLayout()
@@ -209,22 +132,17 @@ class ExpirationAlertDialog(MaskDialogBase):
         body.setAttribute(Qt.WA_StyledBackground, True)
 
         body_layout = QVBoxLayout()
-        body_layout.setContentsMargins(
-            28, 20, 28, 20
-        )
+        body_layout.setContentsMargins(28, 20, 28, 20)
         body_layout.setSpacing(14)
         body.setLayout(body_layout)
 
         body_layout.addWidget(self._build_summary_card())
 
-        scroll = create_scroll_area()
+        scroll = create_scroll_area(single_direction=True)
 
         scroll_content = QWidget()
         scroll_content.setObjectName("DialogBody")
-        scroll_content.setAttribute(
-            Qt.WA_StyledBackground,
-            True,
-        )
+        scroll_content.setAttribute(Qt.WA_StyledBackground, True)
 
         scroll_layout = QVBoxLayout()
         scroll_layout.setContentsMargins(0, 0, 0, 0)
@@ -232,13 +150,10 @@ class ExpirationAlertDialog(MaskDialogBase):
         scroll_content.setLayout(scroll_layout)
 
         if not self.alerts:
-            empty = self._build_empty_state()
-            scroll_layout.addWidget(empty)
+            scroll_layout.addWidget(self._build_empty_state())
         else:
             for alert in self.alerts:
-                scroll_layout.addWidget(
-                    self._make_alert_row(alert)
-                )
+                scroll_layout.addWidget(self._make_alert_row(alert))
 
         scroll_layout.addStretch()
         scroll.setWidget(scroll_content)
@@ -266,9 +181,7 @@ class ExpirationAlertDialog(MaskDialogBase):
         card.setAttribute(Qt.WA_StyledBackground, True)
 
         card_layout = QHBoxLayout()
-        card_layout.setContentsMargins(
-            18, 16, 18, 16
-        )
+        card_layout.setContentsMargins(18, 16, 18, 16)
         card_layout.setSpacing(16)
         card.setLayout(card_layout)
 
@@ -299,24 +212,16 @@ class ExpirationAlertDialog(MaskDialogBase):
 
         detail_parts = []
         if overdue_count:
-            detail_parts.append(
-                f"{overdue_count} overdue"
-            )
+            detail_parts.append(f"{overdue_count} overdue")
         if urgent_count:
-            detail_parts.append(
-                f"{urgent_count} due within 7 days"
-            )
+            detail_parts.append(f"{urgent_count} due within 7 days")
         if soon_count:
-            detail_parts.append(
-                f"{soon_count} due within 15 days"
-            )
+            detail_parts.append(f"{soon_count} due within 15 days")
 
         if detail_parts:
             detail_text = ", ".join(detail_parts)
         else:
-            detail_text = (
-                "No active expirations in the urgent window."
-            )
+            detail_text = "No active expirations in the urgent window."
 
         detail = QLabel(detail_text)
         detail.setObjectName("MutedText")
@@ -333,15 +238,10 @@ class ExpirationAlertDialog(MaskDialogBase):
 
     def _build_empty_state(self):
         empty_card = create_card()
-        empty_card.setAttribute(
-            Qt.WA_StyledBackground,
-            True,
-        )
+        empty_card.setAttribute(Qt.WA_StyledBackground, True)
 
         empty_layout = QVBoxLayout()
-        empty_layout.setContentsMargins(
-            22, 20, 22, 20
-        )
+        empty_layout.setContentsMargins(22, 20, 22, 20)
         empty_layout.setSpacing(6)
         empty_card.setLayout(empty_layout)
 
@@ -360,19 +260,16 @@ class ExpirationAlertDialog(MaskDialogBase):
         return empty_card
 
     def _build_footer(self):
-        footer = QFrame()
-        footer.setObjectName("PageHeader")
+        footer = create_card(object_name="PageHeader")
         footer.setAttribute(Qt.WA_StyledBackground, True)
 
         footer_layout = QHBoxLayout()
-        footer_layout.setContentsMargins(
-            28, 12, 28, 16
-        )
+        footer_layout.setContentsMargins(28, 12, 28, 16)
         footer_layout.setSpacing(12)
         footer.setLayout(footer_layout)
 
         note = QLabel(
-            "These alerts cover visa, residency, and prórroga expirations."
+            "These alerts cover visa, residency, and pr\u00F3rroga expirations."
         )
         note.setObjectName("SubtleText")
         note.setWordWrap(True)
@@ -394,9 +291,7 @@ class ExpirationAlertDialog(MaskDialogBase):
         row.setAttribute(Qt.WA_StyledBackground, True)
 
         row_layout = QHBoxLayout()
-        row_layout.setContentsMargins(
-            16, 12, 16, 12
-        )
+        row_layout.setContentsMargins(16, 12, 16, 12)
         row_layout.setSpacing(14)
         row.setLayout(row_layout)
 

@@ -2,7 +2,9 @@ from PySide6.QtCore import QDate, Qt
 from PySide6.QtWidgets import (
     QComboBox,
     QDateEdit,
+    QDialog,
     QFrame,
+    QLabel,
     QLineEdit,
     QListWidget,
     QMenu,
@@ -10,6 +12,7 @@ from PySide6.QtWidgets import (
     QPlainTextEdit,
     QPushButton,
     QScrollArea,
+    QScrollBar,
     QSlider,
     QTableWidget,
     QTextEdit,
@@ -28,15 +31,24 @@ try:
         InfoBar,
         LineEdit as FluentLineEdit,
         ListWidget as FluentListWidget,
+        MaskDialogBase,
         MessageBox,
         PlainTextEdit as FluentPlainTextEdit,
+        Pivot as FluentPivot,
         PrimaryPushButton,
         PushButton,
         RoundMenu,
         ScrollArea as FluentScrollArea,
+        ScrollBar as FluentScrollBar,
+        ScrollBarHandleDisplayMode,
         SearchLineEdit,
         SimpleCardWidget,
         Slider as FluentSlider,
+        SmoothMode,
+        SmoothScrollArea,
+        SmoothScrollBar,
+        SmoothScrollDelegate,
+        SingleDirectionScrollArea,
         SubtitleLabel,
         TabWidget as FluentTabWidget,
         TableWidget,
@@ -46,7 +58,7 @@ try:
 
     FLUENT_AVAILABLE = True
 except Exception:
-    BodyLabel = None
+    BodyLabel = QLabel
     CardWidget = QFrame
     EditableComboBox = QComboBox
     FluentComboBox = QComboBox
@@ -55,19 +67,28 @@ except Exception:
     FluentLineEdit = QLineEdit
     FluentListWidget = QListWidget
     FluentPlainTextEdit = QPlainTextEdit
+    FluentPivot = None
     FluentScrollArea = QScrollArea
+    FluentScrollBar = QScrollBar
     FluentSlider = QSlider
     FluentTabWidget = QTabWidget
     FluentTextEdit = QTextEdit
     HeaderCardWidget = QFrame
     InfoBar = None
+    MaskDialogBase = QDialog
     MessageBox = None
     PrimaryPushButton = QPushButton
     PushButton = QPushButton
     RoundMenu = QMenu
     SearchLineEdit = QLineEdit
     SimpleCardWidget = QFrame
-    SubtitleLabel = None
+    ScrollBarHandleDisplayMode = None
+    SmoothMode = None
+    SmoothScrollArea = QScrollArea
+    SmoothScrollBar = QScrollBar
+    SmoothScrollDelegate = None
+    SingleDirectionScrollArea = QScrollArea
+    SubtitleLabel = QLabel
     TableWidget = QTableWidget
     TransparentPushButton = QPushButton
     FLUENT_AVAILABLE = False
@@ -202,8 +223,83 @@ def create_list_widget(object_name="", parent=None):
     return widget
 
 
-def create_scroll_area(object_name="", parent=None, transparent=True):
-    scroll = FluentScrollArea(parent)
+def tune_fluent_scrollable(
+    widget,
+    handle_display_mode=None,
+    smooth_mode=None,
+):
+    if handle_display_mode is None and ScrollBarHandleDisplayMode is not None:
+        handle_display_mode = ScrollBarHandleDisplayMode.ON_HOVER
+    if smooth_mode is None and SmoothMode is not None:
+        smooth_mode = SmoothMode.CONSTANT
+
+    if not FLUENT_AVAILABLE or widget is None:
+        return widget
+
+    delegates = []
+    for attr in ("scrollDelegate", "scrollDelagate", "delegate"):
+        delegate = getattr(widget, attr, None)
+        if delegate is not None:
+            delegates.append(delegate)
+
+    seen_bars = set()
+    for delegate in delegates:
+        for bar_name in ("vScrollBar", "hScrollBar"):
+            bar = getattr(delegate, bar_name, None)
+            if bar is None or id(bar) in seen_bars:
+                continue
+            seen_bars.add(id(bar))
+            if handle_display_mode is not None and hasattr(
+                bar, "setHandleDisplayMode"
+            ):
+                bar.setHandleDisplayMode(handle_display_mode)
+
+        if smooth_mode is not None:
+            for engine_name in (
+                "verticalSmoothScroll",
+                "horizonSmoothScroll",
+            ):
+                engine = getattr(delegate, engine_name, None)
+                if engine is not None and hasattr(engine, "setSmoothMode"):
+                    engine.setSmoothMode(smooth_mode)
+
+    if handle_display_mode is not None:
+        for bar_name in ("vScrollBar", "hScrollBar"):
+            bar = getattr(widget, bar_name, None)
+            if bar is None or id(bar) in seen_bars:
+                continue
+            if hasattr(bar, "setHandleDisplayMode"):
+                bar.setHandleDisplayMode(handle_display_mode)
+
+    if smooth_mode is not None:
+        if hasattr(widget, "smoothScroll") and hasattr(
+            widget.smoothScroll, "setSmoothMode"
+        ):
+            widget.smoothScroll.setSmoothMode(smooth_mode)
+        elif hasattr(widget, "setSmoothMode"):
+            try:
+                widget.setSmoothMode(smooth_mode)
+            except TypeError:
+                for orientation in (Qt.Vertical, Qt.Horizontal):
+                    try:
+                        widget.setSmoothMode(smooth_mode, orientation)
+                    except TypeError:
+                        continue
+
+    return widget
+
+
+def create_scroll_area(
+    object_name="",
+    parent=None,
+    transparent=True,
+    single_direction=False,
+    orientation=Qt.Vertical,
+):
+    if single_direction and FLUENT_AVAILABLE and SingleDirectionScrollArea is not None:
+        scroll = SingleDirectionScrollArea(parent, orientation)
+    else:
+        scroll = SmoothScrollArea(parent)
     if object_name:
         scroll.setObjectName(object_name)
     scroll.setWidgetResizable(True)
@@ -235,6 +331,10 @@ def create_slider(orientation=Qt.Horizontal, parent=None):
 
 def create_tab_widget(parent=None):
     return FluentTabWidget(parent)
+
+
+def create_pivot(parent=None):
+    return FluentPivot(parent) if FLUENT_AVAILABLE and FluentPivot else None
 
 
 def create_menu(title="", parent=None):
@@ -269,4 +369,3 @@ def show_message(parent, title, content, kind="information", buttons=None):
             QMessageBox.Yes | QMessageBox.No,
         )
     return QMessageBox.information(parent, title, content)
-

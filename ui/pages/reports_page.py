@@ -56,7 +56,7 @@ class ReportsPage(QWidget):
         outer.addWidget(divider())
 
         # Scroll area
-        scroll = create_scroll_area()
+        scroll = create_scroll_area(single_direction=True)
 
         scroll.setObjectName("PageSurface")
 
