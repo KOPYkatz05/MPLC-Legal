@@ -8,8 +8,8 @@ from database.models.document import Document
 
 from utils.constants import (
     WORKFLOW_STAGES,
-    WORKFLOW_REQUIREMENTS,
     DOCUMENTS,
+    required_documents_for_missionary,
 )
 
 from utils.logger import logger
@@ -114,9 +114,9 @@ class DashboardService:
                 # Only check CURRENT stage
                 stage = missionary.current_stage
 
-                required = WORKFLOW_REQUIREMENTS.get(
+                required = required_documents_for_missionary(
                     stage,
-                    [],
+                    missionary,
                 )
 
                 missionary_missing = []

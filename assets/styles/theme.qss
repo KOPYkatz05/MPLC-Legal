@@ -512,6 +512,39 @@ QProgressBar#DialogProgressBar::chunk {
     background-color: #3B82F6;
 }
 
+QFrame#ContentLoadingOverlay {
+    background: transparent;
+}
+
+QLabel#ContentLoadingOverlayBlur {
+    background: transparent;
+}
+
+QWidget#ContentLoadingOverlayScrim {
+    background: rgba(248, 250, 252, 0.46);
+}
+
+QFrame#ContentLoadingOverlayPanel {
+    background: rgba(255, 255, 255, 0.96);
+    border: 1px solid rgba(226, 232, 240, 0.95);
+    border-radius: 16px;
+    min-width: 300px;
+    max-width: 360px;
+}
+
+QLabel#ContentLoadingOverlayTitle {
+    color: #0F172A;
+    font-size: 16px;
+    font-weight: 700;
+    background: transparent;
+}
+
+QLabel#ContentLoadingOverlaySubtitle {
+    color: #64748B;
+    font-size: 13px;
+    background: transparent;
+}
+
 QTextEdit#NotesEditor,
 QTextEdit#DocumentNotesEditor,
 QPlainTextEdit#DocumentNotesEditor {
@@ -1421,6 +1454,13 @@ QLabel#UploadQueueTitle {
 QLabel#UploadQueueMeta {
     color: #64748B;
     font-size: 12px;
+    background: transparent;
+}
+
+QLabel#UploadOcrFieldLabel {
+    color: #334155;
+    font-size: 12px;
+    font-weight: 650;
     background: transparent;
 }
 

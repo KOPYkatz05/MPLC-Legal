@@ -54,9 +54,9 @@ from ui.foundation import (
 )
 from utils.constants import (
     DOCUMENTS,
-    WORKFLOW_REQUIREMENTS,
     WORKFLOW_STATUSES,
     WORKFLOW_STAGES,
+    required_documents_for_missionary,
 )
 from utils.i18n import tr, field_label
 from utils.logger import logger
@@ -1402,8 +1402,9 @@ class MissionaryDetailPage(QWidget):
         for stage_name in stage_order:
             missing = [
                 doc_key
-                for doc_key in WORKFLOW_REQUIREMENTS.get(
-                    stage_name, []
+                for doc_key in required_documents_for_missionary(
+                    stage_name,
+                    self.current_missionary,
                 )
                 if doc_key not in uploaded_types
             ]
@@ -1467,7 +1468,12 @@ class MissionaryDetailPage(QWidget):
                     and config.get("stage") is None
                     and doc_key != "OTHER"
                 ]
-                + list(WORKFLOW_REQUIREMENTS.get(stage, []))
+                + list(
+                    required_documents_for_missionary(
+                        stage,
+                        self.current_missionary,
+                    )
+                )
             )
         )
         missing_current = [

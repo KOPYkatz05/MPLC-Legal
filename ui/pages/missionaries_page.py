@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt
 
 from services.missionary_service import (
+    missionary_display_id,
     MissionaryService,
 )
 
@@ -123,7 +124,7 @@ class MissionariesPage(QWidget):
         filter_bar = FilterBar()
 
         self.search_input = create_line_edit(
-            "Search by name..."
+            "Search by ID or name..."
         )
 
         self.search_input.setMaximumWidth(280)
@@ -180,7 +181,7 @@ class MissionariesPage(QWidget):
         self.table.setColumnCount(5)
 
         self.table.setHorizontalHeaderLabels([
-            "ID",
+            "Missionary ID",
             "Full Name",
             "Nationality",
             "Passport Number",
@@ -260,6 +261,10 @@ class MissionariesPage(QWidget):
         filtered = []
 
         for m in self._all_missionaries:
+            display_id = (
+                missionary_display_id(m).lower()
+            )
+
             name = (m.full_name or "").lower()
 
             preferred = (
@@ -267,7 +272,8 @@ class MissionariesPage(QWidget):
             )
 
             if search_text and (
-                search_text not in name
+                search_text not in display_id
+                and search_text not in name
                 and search_text not in preferred
             ):
                 continue
@@ -326,7 +332,12 @@ class MissionariesPage(QWidget):
 
             self.table.setItem(
                 row, 0,
-                make_item(str(m.id)),
+                make_item(missionary_display_id(m)),
+            )
+
+            self.table.item(row, 0).setData(
+                Qt.UserRole,
+                m.id,
             )
 
             self.table.setItem(
@@ -426,7 +437,12 @@ class MissionariesPage(QWidget):
             if not id_item:
                 return
 
-            missionary_id = int(id_item.text())
+            missionary_id = id_item.data(
+                Qt.UserRole
+            )
+
+            if missionary_id is None:
+                missionary_id = int(id_item.text())
 
             selected = next(
                 (
@@ -484,7 +500,16 @@ class MissionariesPage(QWidget):
             id_item = self.table.item(row, 0)
 
             if id_item:
-                ids.append(int(id_item.text()))
+                missionary_id = id_item.data(
+                    Qt.UserRole
+                )
+
+                if missionary_id is None:
+                    missionary_id = int(
+                        id_item.text()
+                    )
+
+                ids.append(missionary_id)
 
         # Show simple menu
         menu = create_menu("", self)

@@ -81,6 +81,14 @@ DOCUMENTS = {
         ],
     },
 
+    "FBI": {
+        "label": "FBI",
+        "stage": "INTERPOL",
+        "required": False,
+        "ocr_fields": [],
+        "auto_updates": [],
+    },
+
     "TAM": {
         "label": "TAM",
         "stage": "INTERPOL",
@@ -296,6 +304,25 @@ WORKFLOW_REQUIREMENTS = {
     ]
     for stage in WORKFLOW_STAGES
 }
+
+
+def is_usa_missionary(missionary):
+    return (getattr(missionary, "nationality", None) or "").strip() == "USA"
+
+
+def visible_document_keys_for_missionary(missionary):
+    return [
+        document_key
+        for document_key in DOCUMENTS
+        if document_key != "FBI" or is_usa_missionary(missionary)
+    ]
+
+
+def required_documents_for_missionary(stage, missionary):
+    required = list(WORKFLOW_REQUIREMENTS.get(stage, []))
+    if stage == "INTERPOL" and is_usa_missionary(missionary):
+        required.append("FBI")
+    return list(dict.fromkeys(required))
 
 
 # ==========================================

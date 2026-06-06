@@ -21,6 +21,11 @@ class Missionary(Base):
         primary_key=True
     )
 
+    missionary_code = Column(
+        String,
+        unique=True,
+    )
+
     status = Column(
         String,
         default="ACTIVE"

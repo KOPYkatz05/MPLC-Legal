@@ -1,5 +1,5 @@
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QColor
+from PySide6.QtCore import Qt, QRegularExpression
+from PySide6.QtGui import QColor, QRegularExpressionValidator
 from PySide6.QtWidgets import (
     QDialog,
     QFrame,
@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (
 )
 
 from services.missionary_service import (
+    MissionaryCodeError,
     MissionaryService,
 )
 from ui.foundation import (
@@ -98,7 +99,7 @@ class AddMissionaryDialog(MaskDialogBase):
 
     def showEvent(self, event):
         super().showEvent(event)
-        self.full_name_input.setFocus()
+        self.missionary_id_input.setFocus()
 
     def _onDone(self, code):
         if FLUENT_DIALOG_AVAILABLE:
@@ -182,6 +183,18 @@ class AddMissionaryDialog(MaskDialogBase):
         layout.setSpacing(16)
         body.setLayout(layout)
 
+        self.missionary_id_input = create_line_edit(
+            "Enter numeric missionary ID",
+            "AddMissionaryInput",
+        )
+
+        self.missionary_id_input.setValidator(
+            QRegularExpressionValidator(
+                QRegularExpression(r"\d*"),
+                self.missionary_id_input,
+            )
+        )
+
         self.full_name_input = create_line_edit(
             "Enter full legal name",
             "AddMissionaryInput",
@@ -200,6 +213,13 @@ class AddMissionaryDialog(MaskDialogBase):
         self.arrival_date_input = (
             create_date_picker(
                 "AddMissionaryDatePicker"
+            )
+        )
+
+        layout.addWidget(
+            self._build_field(
+                "Missionary ID",
+                self.missionary_id_input,
             )
         )
 
@@ -345,6 +365,12 @@ class AddMissionaryDialog(MaskDialogBase):
                 .create_missionary(
                     full_name=full_name,
 
+                    missionary_code=(
+                        self.missionary_id_input
+                        .text()
+                        .strip()
+                    ),
+
                     nationality=(
                         self.nationality_input
                         .text()
@@ -370,6 +396,18 @@ class AddMissionaryDialog(MaskDialogBase):
             )
 
             self.accept()
+
+        except MissionaryCodeError as exc:
+            logger.warning(
+                f"Invalid missionary ID: {exc}"
+            )
+
+            show_message(
+                self,
+                "Invalid Missionary ID",
+                str(exc),
+                kind="warning",
+            )
 
         except Exception:
             logger.exception(

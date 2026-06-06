@@ -10,6 +10,7 @@ from ui.foundation import create_button, create_combo_box
 from utils.constants import (
     DOCUMENTS,
     WORKFLOW_STAGES,
+    visible_document_keys_for_missionary,
 )
 
 
@@ -17,8 +18,11 @@ class UploadDocumentDialog(QDialog):
     def __init__(
         self,
         parent=None,
+        missionary=None,
     ):
         super().__init__(parent)
+
+        self.missionary = missionary
 
         self.setWindowTitle(
             "Upload Document"
@@ -54,7 +58,8 @@ class UploadDocumentDialog(QDialog):
 
         self.type_combo = create_combo_box()
 
-        for key, config in DOCUMENTS.items():
+        for key in visible_document_keys_for_missionary(self.missionary):
+            config = DOCUMENTS[key]
             self._label_to_key[config["label"]] = key
             self.type_combo.addItem(
                 config["label"],

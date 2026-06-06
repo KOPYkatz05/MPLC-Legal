@@ -1,5 +1,6 @@
 from pathlib import Path
 
+from services.missionary_service import missionary_display_id
 from utils.i18n import tr
 from utils.logger import logger
 
@@ -91,7 +92,7 @@ class ExportService:
 
             for i, m in enumerate(missionaries, 2):
                 values = [
-                    m.id,
+                    missionary_display_id(m),
                     m.full_name or "",
                     m.nationality or "",
                     m.passport_number or "",
@@ -118,7 +119,7 @@ class ExportService:
                 ws.row_dimensions[i].height = 22
 
             col_widths = [
-                6, 30, 16, 18, 22, 14, 16, 16, 20, 20,
+                12, 30, 16, 18, 22, 14, 16, 16, 20, 20,
                 16, 16, 16, 16, 16, 40,
             ]
 

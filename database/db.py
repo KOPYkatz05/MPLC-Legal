@@ -32,6 +32,7 @@ def init_db():
 def _run_migrations():
     migrations = [
         "ALTER TABLE documents ADD COLUMN notes TEXT",
+        "ALTER TABLE missionaries ADD COLUMN missionary_code TEXT",
         "ALTER TABLE missionaries ADD COLUMN deleted_at DATETIME",
         "ALTER TABLE missionaries ADD COLUMN passport_expiration DATE",
         "ALTER TABLE missionaries ADD COLUMN interpol_appointment_date DATE",
@@ -50,3 +51,30 @@ def _run_migrations():
                 conn.commit()
             except Exception:
                 pass
+
+        try:
+            from sqlalchemy import text
+            conn.execute(
+                text(
+                    "UPDATE missionaries "
+                    "SET missionary_code = CAST(id AS TEXT) "
+                    "WHERE missionary_code IS NULL "
+                    "OR TRIM(missionary_code) = ''"
+                )
+            )
+            conn.commit()
+        except Exception:
+            pass
+
+        try:
+            from sqlalchemy import text
+            conn.execute(
+                text(
+                    "CREATE UNIQUE INDEX "
+                    "idx_missionaries_missionary_code "
+                    "ON missionaries(missionary_code)"
+                )
+            )
+            conn.commit()
+        except Exception:
+            pass

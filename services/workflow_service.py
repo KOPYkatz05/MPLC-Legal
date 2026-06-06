@@ -16,6 +16,10 @@ from utils.constants import (
 
 from utils.logger import logger
 
+from services.expiration_rules import (
+    apply_stage_completion_expiration,
+)
+
 from services.onedrive_service import (
     OneDriveService,
 )
@@ -103,6 +107,21 @@ class WorkflowService:
                 return
 
             workflow.status = new_status
+
+            if (
+                workflow.stage_name == "PRORROGA"
+                and new_status == "COMPLETED"
+            ):
+                missionary = (
+                    session.query(Missionary)
+                    .filter_by(id=workflow.missionary_id)
+                    .first()
+                )
+                if missionary:
+                    apply_stage_completion_expiration(
+                        missionary,
+                        workflow.stage_name,
+                    )
 
             session.commit()
 

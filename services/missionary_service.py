@@ -25,6 +25,25 @@ from services.workflow_service import (
 from utils.logger import logger
 
 
+class MissionaryCodeError(ValueError):
+    pass
+
+
+def missionary_display_id(missionary):
+    code = getattr(
+        missionary,
+        "missionary_code",
+        None,
+    )
+
+    code = (code or "").strip()
+
+    if code:
+        return code
+
+    return str(missionary.id)
+
+
 class MissionaryService:
     def __init__(self):
         self.onedrive_service = (
@@ -64,6 +83,7 @@ class MissionaryService:
     def create_missionary(
         self,
         full_name,
+        missionary_code,
         preferred_name=None,
         nationality=None,
         passport_number=None,
@@ -73,6 +93,33 @@ class MissionaryService:
         session = SessionLocal()
 
         try:
+            missionary_code = (
+                missionary_code or ""
+            ).strip()
+
+            if not missionary_code:
+                raise MissionaryCodeError(
+                    "Missionary ID is required."
+                )
+
+            if not missionary_code.isdigit():
+                raise MissionaryCodeError(
+                    "Missionary ID must contain numbers only."
+                )
+
+            existing = (
+                session.query(Missionary)
+                .filter_by(
+                    missionary_code=missionary_code
+                )
+                .first()
+            )
+
+            if existing:
+                raise MissionaryCodeError(
+                    "Missionary ID is already in use."
+                )
+
             folder_path = (
                 self.onedrive_service
                 .create_missionary_folders(
@@ -81,6 +128,8 @@ class MissionaryService:
             )
 
             missionary = Missionary(
+                missionary_code=missionary_code,
+
                 full_name=full_name,
 
                 preferred_name=preferred_name,
@@ -114,6 +163,10 @@ class MissionaryService:
             )
 
             return missionary
+
+        except MissionaryCodeError:
+            session.rollback()
+            raise
 
         except Exception:
             session.rollback()

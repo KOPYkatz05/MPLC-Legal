@@ -1,5 +1,15 @@
-from PySide6.QtCore import QTimer
-from PySide6.QtWidgets import QMainWindow
+from PySide6.QtCore import QEvent, QRectF, QSize, Qt, QTimer
+from PySide6.QtGui import QColor, QImage, QPainter, QPen, QPixmap
+from PySide6.QtWidgets import (
+    QFrame,
+    QGraphicsBlurEffect,
+    QGraphicsPixmapItem,
+    QGraphicsScene,
+    QLabel,
+    QMainWindow,
+    QVBoxLayout,
+    QWidget,
+)
 
 from services.settings_service import SettingsService
 from ui.foundation import AppShell, FLUENT_AVAILABLE, fluent_icon
@@ -18,6 +28,49 @@ try:
 except Exception:
     FluentWindow = QMainWindow
     NavigationItemPosition = None
+
+
+class LoadingSpinner(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._angle = 0
+        self._timer = QTimer(self)
+        self._timer.setInterval(50)
+        self._timer.timeout.connect(self._advance)
+        self.setFixedSize(52, 52)
+
+    def sizeHint(self):
+        return QSize(52, 52)
+
+    def start(self):
+        if not self._timer.isActive():
+            self._timer.start()
+        self.show()
+
+    def stop(self):
+        self._timer.stop()
+        self.hide()
+
+    def _advance(self):
+        self._angle = (self._angle + 30) % 360
+        self.update()
+
+    def paintEvent(self, event):
+        _ = event
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+
+        rect = QRectF(8, 8, self.width() - 16, self.height() - 16)
+        base_pen = QPen(QColor(226, 232, 240), 5)
+        base_pen.setCapStyle(Qt.RoundCap)
+        painter.setPen(base_pen)
+        painter.drawArc(rect, 0, 360 * 16)
+
+        accent_pen = QPen(QColor(37, 99, 235), 5)
+        accent_pen.setCapStyle(Qt.RoundCap)
+        painter.setPen(accent_pen)
+        painter.drawArc(rect, -self._angle * 16, -110 * 16)
+        painter.end()
 
 
 class _SidebarCompat:
@@ -57,6 +110,13 @@ class MainWindow(FluentWindow if FLUENT_AVAILABLE else QMainWindow):
         self.settings_service = SettingsService()
         self._nav_widgets = {}
         self._nav_titles = {}
+        self._content_overlay = None
+        self._content_overlay_blur = None
+        self._content_overlay_scrim = None
+        self._content_overlay_panel = None
+        self._content_overlay_spinner = None
+        self._content_overlay_title = None
+        self._content_overlay_subtitle = None
 
         self.setWindowTitle(tr("app_title"))
         self.resize(1400, 900)
@@ -94,7 +154,16 @@ class MainWindow(FluentWindow if FLUENT_AVAILABLE else QMainWindow):
             self._setup_fallback_shell()
 
         self.sidebar = _SidebarCompat(self)
+        self.stack.installEventFilter(self)
         self.set_current_key("dashboard")
+
+    def eventFilter(self, watched, event):
+        if (
+            watched is getattr(self, "stack", None)
+            and event.type() == QEvent.Resize
+        ):
+            self._sync_content_loading_overlay_geometry()
+        return super().eventFilter(watched, event)
 
     def _setup_fluent_shell(self):
         pages = [
@@ -209,6 +278,138 @@ class MainWindow(FluentWindow if FLUENT_AVAILABLE else QMainWindow):
 
     def go_to_calendar(self):
         self.set_current_key("appointments")
+
+    def show_content_loading_overlay(self, message="Reading document..."):
+        self._ensure_content_loading_overlay()
+        if self._content_overlay is None:
+            return
+
+        self._refresh_content_loading_overlay_snapshot()
+        self._content_overlay_title.setText(message or "Reading document...")
+        self._content_overlay_subtitle.setText(
+            "Please wait while OCR finishes."
+        )
+        self._sync_content_loading_overlay_geometry()
+        self._content_overlay.show()
+        self._content_overlay.raise_()
+        self._content_overlay_spinner.start()
+
+    def hide_content_loading_overlay(self):
+        if self._content_overlay is None:
+            return
+        self._content_overlay_spinner.stop()
+        self._content_overlay.hide()
+
+    def _ensure_content_loading_overlay(self):
+        if self._content_overlay is not None:
+            return
+        if not hasattr(self, "stack") or self.stack is None:
+            return
+
+        overlay = QFrame(self.stack)
+        overlay.setObjectName("ContentLoadingOverlay")
+        overlay.setAttribute(Qt.WA_StyledBackground, True)
+        overlay.hide()
+
+        blur = QLabel(overlay)
+        blur.setObjectName("ContentLoadingOverlayBlur")
+        blur.setScaledContents(True)
+
+        scrim = QWidget(overlay)
+        scrim.setObjectName("ContentLoadingOverlayScrim")
+        scrim.setAttribute(Qt.WA_StyledBackground, True)
+
+        panel = QFrame(overlay)
+        panel.setObjectName("ContentLoadingOverlayPanel")
+        panel.setAttribute(Qt.WA_StyledBackground, True)
+        panel.setFixedWidth(340)
+        panel_layout = QVBoxLayout()
+        panel_layout.setContentsMargins(28, 26, 28, 26)
+        panel_layout.setSpacing(10)
+        panel.setLayout(panel_layout)
+
+        spinner = LoadingSpinner(panel)
+        title = QLabel("Reading document...")
+        title.setObjectName("ContentLoadingOverlayTitle")
+        title.setAlignment(Qt.AlignCenter)
+        subtitle = QLabel("Please wait while OCR finishes.")
+        subtitle.setObjectName("ContentLoadingOverlaySubtitle")
+        subtitle.setAlignment(Qt.AlignCenter)
+        subtitle.setWordWrap(True)
+
+        panel_layout.addWidget(spinner, alignment=Qt.AlignCenter)
+        panel_layout.addWidget(title)
+        panel_layout.addWidget(subtitle)
+
+        layout = QVBoxLayout()
+        layout.setContentsMargins(24, 24, 24, 24)
+        layout.addStretch()
+        layout.addWidget(panel, alignment=Qt.AlignCenter)
+        layout.addStretch()
+        overlay.setLayout(layout)
+
+        self._content_overlay = overlay
+        self._content_overlay_blur = blur
+        self._content_overlay_scrim = scrim
+        self._content_overlay_panel = panel
+        self._content_overlay_spinner = spinner
+        self._content_overlay_title = title
+        self._content_overlay_subtitle = subtitle
+        self._sync_content_loading_overlay_geometry()
+
+    def _sync_content_loading_overlay_geometry(self):
+        if self._content_overlay is None:
+            return
+
+        rect = self.stack.rect()
+        self._content_overlay.setGeometry(rect)
+        self._content_overlay_blur.setGeometry(self._content_overlay.rect())
+        self._content_overlay_scrim.setGeometry(self._content_overlay.rect())
+        self._content_overlay_blur.lower()
+        self._content_overlay_scrim.raise_()
+        self._content_overlay_panel.raise_()
+
+    def _refresh_content_loading_overlay_snapshot(self):
+        if self._content_overlay is None:
+            return
+
+        was_visible = self._content_overlay.isVisible()
+        if was_visible:
+            self._content_overlay.hide()
+
+        capture = self.stack.grab()
+        if not capture.isNull():
+            self._content_overlay_blur.setPixmap(self._blur_pixmap(capture))
+
+        if was_visible:
+            self._content_overlay.show()
+
+    @staticmethod
+    def _blur_pixmap(pixmap, radius=18):
+        if pixmap.isNull():
+            return pixmap
+
+        scene = QGraphicsScene()
+        item = QGraphicsPixmapItem(pixmap)
+        effect = QGraphicsBlurEffect()
+        effect.setBlurRadius(radius)
+        item.setGraphicsEffect(effect)
+        scene.addItem(item)
+
+        result = QImage(
+            pixmap.size(),
+            QImage.Format_ARGB32_Premultiplied,
+        )
+        result.fill(Qt.transparent)
+
+        painter = QPainter(result)
+        scene.render(
+            painter,
+            QRectF(result.rect()),
+            QRectF(0, 0, pixmap.width(), pixmap.height()),
+        )
+        painter.end()
+        return QPixmap.fromImage(result)
 
     def _show_startup_alerts(self):
         try:

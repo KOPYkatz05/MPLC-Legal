@@ -9,7 +9,10 @@ from PySide6.QtWidgets import (
 
 from PySide6.QtCore import Qt
 
-from services.missionary_service import MissionaryService
+from services.missionary_service import (
+    missionary_display_id,
+    MissionaryService,
+)
 from ui.foundation import (
     PageHeader,
     configure_data_table,
@@ -125,7 +128,7 @@ class TrashPage(QWidget):
 
             self.table.setItem(
                 row, 0,
-                make_item(str(m.id)),
+                make_item(missionary_display_id(m)),
             )
 
             self.table.setItem(

@@ -22,12 +22,13 @@ from database.models.stage_history import StageHistory
 
 from utils.constants import (
     WORKFLOW_STAGES,
-    WORKFLOW_REQUIREMENTS,
     DOCUMENTS,
+    required_documents_for_missionary,
 )
 
 from utils.logger import logger
 from services.onedrive_service import OneDriveService
+from services.expiration_rules import apply_stage_completion_expiration
 
 
 class StageAdvanceDialog(QDialog):
@@ -89,8 +90,9 @@ class StageAdvanceDialog(QDialog):
         finally:
             session.close()
 
-        required = WORKFLOW_REQUIREMENTS.get(
-            self.current_stage, []
+        required = required_documents_for_missionary(
+            self.current_stage,
+            self.missionary,
         )
 
         self.doc_statuses = []
@@ -423,6 +425,11 @@ class StageAdvanceDialog(QDialog):
 
             if curr_wf:
                 curr_wf.status = "COMPLETED"
+
+            apply_stage_completion_expiration(
+                missionary,
+                self.current_stage,
+            )
 
             # Advance missionary stage
             if self.next_stage:

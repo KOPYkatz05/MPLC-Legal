@@ -13,8 +13,8 @@ from database.models.missionary import (
 )
 
 from utils.constants import (
-    WORKFLOW_REQUIREMENTS,
     WORKFLOW_STAGES,
+    required_documents_for_missionary,
 )
 
 from utils.logger import logger
@@ -73,9 +73,9 @@ class WorkflowValidator:
                     continue
 
                 required_documents = (
-                    WORKFLOW_REQUIREMENTS.get(
+                    required_documents_for_missionary(
                         stage_name,
-                        []
+                        missionary,
                     )
                 )
 
@@ -143,9 +143,13 @@ class WorkflowValidator:
             }
 
             required_documents = (
-                WORKFLOW_REQUIREMENTS.get(
+                required_documents_for_missionary(
                     workflow_stage,
-                    []
+                    (
+                        session.query(Missionary)
+                        .filter_by(id=missionary_id)
+                        .first()
+                    ),
                 )
             )
 

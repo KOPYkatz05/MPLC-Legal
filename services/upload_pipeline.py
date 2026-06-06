@@ -17,6 +17,7 @@ from database.models.missionary import Missionary
 from services.document_parser import DocumentParser
 from services.document_image_export_service import DocumentImageExportService
 from services.document_service import DocumentService
+from services.expiration_rules import set_entry_based_expiration
 from services.image_processing_service import ImageProcessingService
 from utils.constants import DOCUMENTS, MISSIONARY_DATE_FIELDS
 from utils.logger import logger
@@ -696,8 +697,15 @@ def apply_missionary_updates(
     doc_label = DOCUMENTS.get(document_type, {}).get(
         "label", document_type
     )
+    ignored_derived_fields = set()
+    if document_type == "TAM":
+        ignored_derived_fields.add("visa_expiration")
+    elif document_type == "CARNE_DE_EXTRANJERIA":
+        ignored_derived_fields.add("residency_expiration")
 
     for field in auto_update_fields:
+        if field in ignored_derived_fields:
+            continue
         value = confirmed_data.get(field, "")
         if not value:
             continue
@@ -708,7 +716,12 @@ def apply_missionary_updates(
         else:
             updates[field] = str(value).strip()
 
-    if not updates:
+    uses_entry_based_expiration = document_type in {
+        "TAM",
+        "CARNE_DE_EXTRANJERIA",
+    }
+
+    if not updates and not uses_entry_based_expiration:
         return []
 
     session = SessionLocal()
@@ -739,6 +752,30 @@ def apply_missionary_updates(
 
         for field, value in updates.items():
             setattr(missionary, field, value)
+
+        if document_type == "TAM" and updates.get("arrival_date"):
+            if set_entry_based_expiration(
+                missionary,
+                "visa_expiration",
+                1,
+                document_id=document_id,
+                document_type=document_type,
+                label=doc_label,
+            ):
+                updates["visa_expiration"] = missionary.visa_expiration
+
+        if document_type == "CARNE_DE_EXTRANJERIA":
+            if set_entry_based_expiration(
+                missionary,
+                "residency_expiration",
+                1,
+                document_id=document_id,
+                document_type=document_type,
+                label=doc_label,
+            ):
+                updates["residency_expiration"] = (
+                    missionary.residency_expiration
+                )
 
         session.commit()
         logger.info(
