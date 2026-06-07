@@ -2258,6 +2258,7 @@ class UploadSessionDialog(MaskDialogBase):
         self._saving_all = False
         self._save_all_index = 0
         self.after_save()
+        self.accept()
 
     def after_save(self):
         if self._is_closing:
