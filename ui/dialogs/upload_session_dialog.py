@@ -28,16 +28,13 @@ from services.document_service import DocumentService
 from services.upload_pipeline import (
     UploadPipelineResult,
     finalize_ocr_ingestion,
-    get_missing_for_missionary,
     prepare_ocr_ingestion,
 )
-from ui.dialogs.ocr_review_dialog import OCRReviewDialog
 from ui.dialogs.document_rendering import (
     get_document_viewer_render_hints,
     render_document_pixmap,
     render_pdf_page,
 )
-from ui.dialogs.upload_summary_dialog import UploadSummaryDialog
 from ui.foundation import (
     setup_dialog_shell,
     SmoothScrollDelegate,
@@ -161,7 +158,6 @@ class UploadOcrWorker(QObject):
             result = self.controller.run_ocr(
                 item,
                 parent=None,
-                review=False,
             )
             self.finished.emit(self.index, True, "", result)
         except Exception as exc:
@@ -440,17 +436,16 @@ class UploadSessionController:
             item.document_type,
         )
 
-    def run_ocr(self, item, parent=None, review=False):
+    def run_ocr(self, item, parent=None):
         ocr_fields = DOCUMENTS.get(item.document_type, {}).get(
             "ocr_fields", []
         )
         logger.info(
-            "UPLOAD_OCR_REQUEST file=%s type=%s fields=%s status=%s review=%s",
+            "UPLOAD_OCR_REQUEST file=%s type=%s fields=%s status=%s",
             item.file_name,
             item.document_type,
             list(ocr_fields),
             item.status,
-            review,
         )
         if not ocr_fields:
             item.ocr_result = None
@@ -492,9 +487,6 @@ class UploadSessionController:
         item.confirmed_data = dict(item.ocr_result.parsed_data or {})
         item.ocr_reviewed = False
 
-        if review:
-            self.review_ocr_result(item, parent=parent)
-
         self._apply_post_ocr_state(item)
         logger.info(
             "UPLOAD_OCR_STATE_APPLIED file=%s type=%s status=%s error=%s",
@@ -504,32 +496,6 @@ class UploadSessionController:
             item.error_text,
         )
         return item.ocr_result
-
-    def review_ocr_result(self, item, parent=None):
-        ocr_result = item.ocr_result
-        if ocr_result is None:
-            return False
-
-        ocr_fields = DOCUMENTS.get(item.document_type, {}).get(
-            "ocr_fields", []
-        )
-        if not ocr_fields:
-            return False
-
-        review = OCRReviewDialog(
-            ocr_fields=ocr_fields,
-            parsed_data=item.confirmed_data or ocr_result.parsed_data,
-            parent=parent or None,
-            ocr_status=ocr_result.ocr_status,
-            image_path=ocr_result.ocr_image_path,
-        )
-
-        if review.exec() == QDialog.Accepted:
-            item.confirmed_data = review.get_data()
-            item.ocr_reviewed = True
-            self._apply_post_ocr_state(item)
-            return True
-        return False
 
     def _apply_post_ocr_state(self, item):
         if item.ocr_result is None:
@@ -674,29 +640,6 @@ class UploadSessionController:
 
     def has_saved_items(self):
         return any(item.status == "saved" for item in self.items)
-
-    def summary(self):
-        current_stage = getattr(
-            self.missionary,
-            "current_stage",
-            None,
-        )
-        missing = []
-        if current_stage:
-            try:
-                missing = get_missing_for_missionary(
-                    self.missionary.id,
-                    current_stage,
-                )
-            except Exception:
-                logger.exception("Failed to collect upload summary")
-        return {
-            "uploaded": sum(1 for item in self.items if item.status == "saved"),
-            "failed": sum(1 for item in self.items if item.status == "failed"),
-            "skipped": sum(1 for item in self.items if item.status == "skipped"),
-            "updated_fields": sorted(set(self.updated_fields)),
-            "missing_documents": missing,
-        }
 
 
 class UploadSessionDialog(MaskDialogBase):
@@ -899,11 +842,8 @@ class UploadSessionDialog(MaskDialogBase):
         self.ocr_status_label.hide()
         self.autodetect_btn = create_button("Autodetect", "secondary")
         self.autodetect_btn.clicked.connect(self.run_ocr_for_selected)
-        self.review_ocr_btn = create_button("Review OCR", "secondary")
-        self.review_ocr_btn.clicked.connect(self.review_ocr_for_selected)
         ocr_tools.addStretch()
         ocr_tools.addWidget(self.autodetect_btn)
-        ocr_tools.addWidget(self.review_ocr_btn)
         middle_layout.addLayout(ocr_tools)
 
         self.duplicate_warning = QLabel("")
@@ -1188,13 +1128,6 @@ class UploadSessionDialog(MaskDialogBase):
         has_selection = item is not None
         can_edit = has_selection and not self._busy
         can_autodetect = can_edit and self._item_can_autodetect(item)
-        can_review = can_autodetect or (
-            can_edit
-            and item.has_ocr_fields
-            and item.ocr_result is not None
-            and item.status not in {"saved", "skipped", "ocr"}
-        )
-
         for name in (
             "type_combo",
             "stage_combo",
@@ -1205,7 +1138,6 @@ class UploadSessionDialog(MaskDialogBase):
         self._set_widget_enabled("remove_btn", can_edit)
         self._set_widget_enabled("next_btn", has_items and not self._busy)
         self._set_widget_enabled("autodetect_btn", can_autodetect)
-        self._set_widget_enabled("review_ocr_btn", can_review)
         self._set_widget_enabled(
             "save_current_btn",
             not self._busy and self._selected_item_can_save(),
@@ -1768,9 +1700,7 @@ class UploadSessionDialog(MaskDialogBase):
                 else:
                     self.status_label.setText(error or "Autodetect failed.")
 
-        if ok and pending == "review" and item is not None:
-            self._review_item_after_ocr(item)
-        elif ok and pending == "current":
+        if ok and pending == "current":
             self._save_current_after_ocr()
         elif pending == "all":
             self._save_all_next()
@@ -2224,36 +2154,6 @@ class UploadSessionDialog(MaskDialogBase):
         self.persist_current_editor_settings(item)
         self._run_ocr_async(self.controller.selected_index, reason="manual")
 
-    def review_ocr_for_selected(self, checked=False):
-        item = self.controller.selected_item()
-        if item is None:
-            return
-        if not item.document_type:
-            self.apply_ocr_banner(
-                "skipped",
-                "Select a document type before reviewing OCR.",
-            )
-            if _widget_alive(self.status_label):
-                self.status_label.setText(
-                    "Select a document type before reviewing OCR."
-                )
-            return
-        if item.ocr_result is None:
-            self._run_ocr_async(
-                self.controller.selected_index,
-                reason="review",
-                after="review",
-            )
-            return
-        if self._review_item_after_ocr(item):
-            self.render_ocr_fields(item)
-            self.refresh_queue()
-            self.update_progress()
-            self._update_action_states()
-
-    def _review_item_after_ocr(self, item):
-        return self.controller.review_ocr_result(item, parent=self)
-
     def save_current(self, checked=False):
         item = self.controller.selected_item()
         if item is None:
@@ -2357,9 +2257,9 @@ class UploadSessionDialog(MaskDialogBase):
 
         self._saving_all = False
         self._save_all_index = 0
-        self.after_save(show_summary=True)
+        self.after_save()
 
-    def after_save(self, show_summary=False):
+    def after_save(self):
         if self._is_closing:
             return
         logger.info(
@@ -2378,14 +2278,6 @@ class UploadSessionDialog(MaskDialogBase):
             self.clear_detail()
         self.update_progress()
         self._update_action_states()
-        if self.controller.items and (
-            show_summary
-            or all(
-                item.status in {"saved", "skipped", "failed"}
-                for item in self.controller.items
-            )
-        ):
-            self.show_summary()
 
     def go_to_next_item(self, checked=False):
         total = len(self.controller.items)
@@ -2464,36 +2356,6 @@ class UploadSessionDialog(MaskDialogBase):
         _refresh_style(frame)
         for label in labels:
             _refresh_style(label)
-
-    def show_summary(self):
-        if self._is_closing:
-            return
-        summary = self.controller.summary()
-        missing_labels = [
-            DOCUMENTS.get(key, {}).get("label", key)
-            for key in summary["missing_documents"]
-        ]
-        try:
-            if _widget_alive(self.status_label):
-                self.status_label.setText(
-                    f"{summary['uploaded']} uploaded, "
-                    f"{summary['failed']} failed, "
-                    f"{summary['skipped']} skipped."
-                )
-        except RuntimeError:
-            pass
-
-        self._summary_box = UploadSummaryDialog(
-            updated_fields=summary["updated_fields"],
-            missing_docs=missing_labels,
-            parent=self,
-            uploaded_count=summary["uploaded"],
-            failed_count=summary["failed"],
-            skipped_count=summary["skipped"],
-        )
-        self._summary_box.setWindowTitle("Upload Summary")
-        self._summary_box.setModal(True)
-        self._summary_box.exec()
 
     def dragEnterEvent(self, event):
         if event.mimeData().hasUrls():

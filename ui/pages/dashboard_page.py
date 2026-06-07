@@ -191,7 +191,7 @@ class DashboardPage(QWidget):
         title.setObjectName("PageTitle")
 
         self.refresh_btn = create_button(
-            "↻   Refresh",
+            "Refresh",
             "secondary",
         )
 
@@ -326,7 +326,7 @@ class DashboardPage(QWidget):
 
     def _build_expiring_section(self, expiring):
         self.content_layout.addWidget(
-            SectionHeader("⚠   Expiring Within 60 Days")
+            SectionHeader("Expiring Within 60 Days")
         )
 
         card = ListCard()
