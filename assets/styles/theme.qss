@@ -1344,6 +1344,20 @@ QDialog#AppDialogSurface {
     border-radius: 20px;
 }
 
+QWidget#UploadWorkspaceSurface,
+QDialog#UploadWorkspaceSurface {
+    background-color: #FFFFFF;
+    border: 1px solid #DADADF;
+    border-radius: 20px;
+}
+
+QWidget#FluentLoadingSurface,
+QDialog#FluentLoadingSurface {
+    background-color: #FFFFFF;
+    border: 1px solid #DADADF;
+    border-radius: 20px;
+}
+
 QWidget#AppDialogSurface QFrame#PageHeader,
 QDialog#AppDialogSurface QFrame#PageHeader {
     background-color: #FFFFFF;

@@ -4,8 +4,7 @@ from pathlib import Path
 import fitz
 from shiboken6 import isValid as shiboken_is_valid
 
-from PySide6.QtCore import QObject, QDate, QEvent, QPoint, QRectF, QSize, Qt, QThread, QTimer, Signal, Slot
-from PySide6.QtGui import QColor, QImage, QPainter, QPen, QPixmap
+from PySide6.QtCore import QObject, QDate, QEvent, QPoint, QSize, Qt, QThread, QTimer, Signal, Slot
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
@@ -50,6 +49,8 @@ from ui.foundation import (
     create_list_widget,
     create_plain_text_edit,
     create_scroll_area,
+    FluentLoadingDialog,
+    MaskDialogBase,
     show_message,
     tune_fluent_scrollable,
 )
@@ -62,14 +63,6 @@ from utils.constants import (
 )
 from utils.i18n import field_label, tr
 from utils.logger import logger
-
-try:
-    from qfluentwidgets import MaskDialogBase
-
-    FLUENT_DIALOG_AVAILABLE = True
-except Exception:
-    MaskDialogBase = QDialog
-    FLUENT_DIALOG_AVAILABLE = False
 
 
 SUPPORTED_EXTENSIONS = {
@@ -267,49 +260,6 @@ class UploadPreviewGraphicsView(QGraphicsView):
             return
         self._is_middle_panning = False
         self.viewport().unsetCursor()
-
-
-class UploadLoadingSpinner(QWidget):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self._angle = 0
-        self._timer = QTimer(self)
-        self._timer.setInterval(50)
-        self._timer.timeout.connect(self._advance)
-        self.setFixedSize(52, 52)
-
-    def sizeHint(self):
-        return QSize(52, 52)
-
-    def start(self):
-        if not self._timer.isActive():
-            self._timer.start()
-        self.show()
-
-    def stop(self):
-        self._timer.stop()
-        self.hide()
-
-    def _advance(self):
-        self._angle = (self._angle + 30) % 360
-        self.update()
-
-    def paintEvent(self, event):
-        _ = event
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-
-        rect = QRectF(8, 8, self.width() - 16, self.height() - 16)
-        base_pen = QPen(QColor(226, 232, 240), 5)
-        base_pen.setCapStyle(Qt.RoundCap)
-        painter.setPen(base_pen)
-        painter.drawArc(rect, 0, 360 * 16)
-
-        accent_pen = QPen(QColor(37, 99, 235), 5)
-        accent_pen.setCapStyle(Qt.RoundCap)
-        painter.setPen(accent_pen)
-        painter.drawArc(rect, -self._angle * 16, -110 * 16)
-        painter.end()
 
 
 class QueueItemWidget(QFrame):
@@ -753,11 +703,7 @@ class UploadSessionDialog(MaskDialogBase):
     ocr_finished_on_ui = Signal(int, bool, str, object, str)
 
     def __init__(self, missionary, initial_files=None, parent=None):
-        self._use_fluent_dialog = FLUENT_DIALOG_AVAILABLE and parent is not None
-        if self._use_fluent_dialog:
-            super().__init__(parent)
-        else:
-            QDialog.__init__(self, parent)
+        super().__init__(parent)
         self.controller = UploadSessionController(missionary)
         self.document = None
         self.current_pixmap = None
@@ -768,20 +714,13 @@ class UploadSessionDialog(MaskDialogBase):
         self.date_edits = {}
         self._detail_item_index = -1
         self._is_closing = False
-        self._ocr_loading_overlay = None
-        self._ocr_loading_blur = None
-        self._ocr_loading_scrim = None
-        self._ocr_loading_panel = None
-        self._ocr_loading_spinner = None
-        self._ocr_loading_title = None
-        self._ocr_loading_subtitle = None
+        self._content_loading_dialog = None
         self._busy = False
         self._ocr_thread = None
         self._ocr_worker = None
         self._pending_save_after_ocr = None
         self._saving_all = False
         self._save_all_index = 0
-        self._content_loading_overlay_visible = False
         self.ocr_finished_on_ui.connect(
             self._handle_ocr_finished,
             Qt.ConnectionType.QueuedConnection,
@@ -790,16 +729,13 @@ class UploadSessionDialog(MaskDialogBase):
         self.setWindowTitle("Upload Documents")
         self.setAcceptDrops(True)
 
-        if self._use_fluent_dialog:
-            self._configure_fluent_shell()
-        else:
-            self._configure_fallback_shell()
+        self._configure_shell()
 
         self.setup_ui()
         if initial_files:
             self.add_files(initial_files)
 
-    def _configure_fluent_shell(self):
+    def _configure_shell(self):
         self.surface = setup_dialog_shell(
             self,
             surface_width=1240,
@@ -807,16 +743,6 @@ class UploadSessionDialog(MaskDialogBase):
             shell_object_name="UploadWorkspaceDialog",
             surface_object_name="UploadWorkspaceSurface",
             use_masked_shell=True,
-        )
-
-    def _configure_fallback_shell(self):
-        self.surface = setup_dialog_shell(
-            self,
-            surface_width=1240,
-            surface_min_height=820,
-            shell_object_name="UploadWorkspaceDialog",
-            surface_object_name="UploadWorkspaceSurface",
-            use_masked_shell=False,
         )
 
     def _surface_widget(self):
@@ -1209,180 +1135,23 @@ class UploadSessionDialog(MaskDialogBase):
             self.update_progress()
         self._update_action_states()
 
-    def _resolve_content_loading_host(self):
-        parent = self.parentWidget()
-        if parent is None:
-            return None
-
-        window = parent.window()
-        if (
-            window is not None
-            and hasattr(window, "show_content_loading_overlay")
-            and hasattr(window, "hide_content_loading_overlay")
-        ):
-            return window
-        return None
-
     def _show_content_loading_overlay(self, message):
-        self._show_ocr_loading_overlay(message)
-        host = self._resolve_content_loading_host()
-        if host is None:
+        dialog = self._ensure_content_loading_dialog()
+        if dialog is None:
             return
-
-        host.show_content_loading_overlay(
-            "Reading document..."
-            if not message
-            else message
-        )
-        self._content_loading_overlay_visible = True
+        dialog.show_busy(message or "Reading document...")
 
     def _hide_content_loading_overlay(self):
-        self._hide_ocr_loading_overlay()
-        if not self._content_loading_overlay_visible:
-            return
+        dialog = self._content_loading_dialog
+        if dialog is not None:
+            dialog.hide_busy()
 
-        host = self._resolve_content_loading_host()
-        if host is not None:
-            host.hide_content_loading_overlay()
-        self._content_loading_overlay_visible = False
-
-    def _ocr_loading_parent(self):
-        return self.surface
-
-    @staticmethod
-    def _blur_pixmap(pixmap, radius=18):
-        if pixmap.isNull():
-            return pixmap
-
-        scene = QGraphicsScene()
-        item = QGraphicsPixmapItem(pixmap)
-        effect = item.graphicsEffect()
-        if effect is None:
-            from PySide6.QtWidgets import QGraphicsBlurEffect
-
-            effect = QGraphicsBlurEffect()
-            effect.setBlurRadius(radius)
-            item.setGraphicsEffect(effect)
-
-        scene.addItem(item)
-        result = QImage(
-            pixmap.size(),
-            QImage.Format_ARGB32_Premultiplied,
-        )
-        result.fill(Qt.transparent)
-
-        painter = QPainter(result)
-        scene.render(
-            painter,
-            QRectF(result.rect()),
-            QRectF(0, 0, pixmap.width(), pixmap.height()),
-        )
-        painter.end()
-        return QPixmap.fromImage(result)
-
-    def _ensure_ocr_loading_overlay(self):
-        if self._ocr_loading_overlay is not None:
-            return
-
-        parent = self._ocr_loading_parent()
-        if parent is None:
-            return
-
-        overlay = QFrame(parent)
-        overlay.setObjectName("ContentLoadingOverlay")
-        overlay.setAttribute(Qt.WA_StyledBackground, True)
-        overlay.hide()
-
-        blur = QLabel(overlay)
-        blur.setObjectName("ContentLoadingOverlayBlur")
-        blur.setScaledContents(True)
-
-        scrim = QWidget(overlay)
-        scrim.setObjectName("ContentLoadingOverlayScrim")
-        scrim.setAttribute(Qt.WA_StyledBackground, True)
-
-        panel = QFrame(overlay)
-        panel.setObjectName("ContentLoadingOverlayPanel")
-        panel.setAttribute(Qt.WA_StyledBackground, True)
-        panel.setFixedWidth(340)
-        panel_layout = QVBoxLayout()
-        panel_layout.setContentsMargins(28, 26, 28, 26)
-        panel_layout.setSpacing(10)
-        panel.setLayout(panel_layout)
-
-        spinner = UploadLoadingSpinner(panel)
-        title = QLabel("Reading document...")
-        title.setObjectName("ContentLoadingOverlayTitle")
-        title.setAlignment(Qt.AlignCenter)
-        subtitle = QLabel("Please wait while OCR finishes.")
-        subtitle.setObjectName("ContentLoadingOverlaySubtitle")
-        subtitle.setAlignment(Qt.AlignCenter)
-        subtitle.setWordWrap(True)
-
-        panel_layout.addWidget(spinner, alignment=Qt.AlignCenter)
-        panel_layout.addWidget(title)
-        panel_layout.addWidget(subtitle)
-
-        layout = QVBoxLayout()
-        layout.setContentsMargins(24, 24, 24, 24)
-        layout.addStretch()
-        layout.addWidget(panel, alignment=Qt.AlignCenter)
-        layout.addStretch()
-        overlay.setLayout(layout)
-
-        self._ocr_loading_overlay = overlay
-        self._ocr_loading_blur = blur
-        self._ocr_loading_scrim = scrim
-        self._ocr_loading_panel = panel
-        self._ocr_loading_spinner = spinner
-        self._ocr_loading_title = title
-        self._ocr_loading_subtitle = subtitle
-        self._sync_ocr_loading_overlay_geometry()
-
-    def _show_ocr_loading_overlay(self, message):
-        self._ensure_ocr_loading_overlay()
-        if self._ocr_loading_overlay is None:
-            return
-
-        parent = self._ocr_loading_parent()
-        if parent is None:
-            return
-
-        if self._ocr_loading_overlay.isVisible():
-            self._ocr_loading_overlay.hide()
-
-        capture = parent.grab()
-        if not capture.isNull():
-            self._ocr_loading_blur.setPixmap(self._blur_pixmap(capture))
-
-        self._ocr_loading_title.setText(message or "Reading document...")
-        self._ocr_loading_subtitle.setText(
-            "Please wait while OCR finishes."
-        )
-        self._sync_ocr_loading_overlay_geometry()
-        self._ocr_loading_overlay.show()
-        self._ocr_loading_overlay.raise_()
-        self._ocr_loading_spinner.start()
-
-    def _hide_ocr_loading_overlay(self):
-        if self._ocr_loading_overlay is None:
-            return
-        self._ocr_loading_spinner.stop()
-        self._ocr_loading_overlay.hide()
-
-    def _sync_ocr_loading_overlay_geometry(self):
-        if self._ocr_loading_overlay is None:
-            return
-        parent = self._ocr_loading_parent()
-        if parent is None:
-            return
-
-        self._ocr_loading_overlay.setGeometry(parent.rect())
-        self._ocr_loading_blur.setGeometry(self._ocr_loading_overlay.rect())
-        self._ocr_loading_scrim.setGeometry(self._ocr_loading_overlay.rect())
-        self._ocr_loading_blur.lower()
-        self._ocr_loading_scrim.raise_()
-        self._ocr_loading_panel.raise_()
+    def _ensure_content_loading_dialog(self):
+        dialog = self._content_loading_dialog
+        if dialog is None:
+            dialog = FluentLoadingDialog(self, title="Reading document...")
+            self._content_loading_dialog = dialog
+        return dialog
 
     def _set_widget_enabled(self, widget_name, enabled):
         widget = getattr(self, widget_name, None)
@@ -2746,6 +2515,7 @@ class UploadSessionDialog(MaskDialogBase):
             event.ignore()
             return
         self._is_closing = True
+        self._hide_content_loading_overlay()
         self.close_document()
         super().closeEvent(event)
 
@@ -2755,7 +2525,6 @@ class UploadSessionDialog(MaskDialogBase):
             QTimer.singleShot(0, self._apply_preview_zoom)
 
     def resizeEvent(self, event):
-        self._sync_ocr_loading_overlay_geometry()
         super().resizeEvent(event)
         if self._preview_item is not None and self._preview_zoom_mode in {
             "fit_window",
@@ -2764,10 +2533,11 @@ class UploadSessionDialog(MaskDialogBase):
             self._apply_preview_zoom()
 
     def _onDone(self, code):
-        if self._use_fluent_dialog:
-            super()._onDone(code)
-        else:
-            QDialog.done(self, code)
+        on_done = getattr(super(), "_onDone", None)
+        if callable(on_done):
+            on_done(code)
+            return
+        QDialog.done(self, code)
 
     def accept(self):
         if self._busy:
@@ -2775,11 +2545,13 @@ class UploadSessionDialog(MaskDialogBase):
                 self.status_label.setText("Please wait for the current upload action to finish.")
             return
         self._is_closing = True
+        self._hide_content_loading_overlay()
         self.close_document()
-        if self._use_fluent_dialog:
-            super().accept()
-        else:
-            QDialog.done(self, QDialog.Accepted)
+        accept = getattr(super(), "accept", None)
+        if callable(accept):
+            accept()
+            return
+        QDialog.done(self, QDialog.Accepted)
 
     def reject(self):
         if self._busy:
@@ -2787,11 +2559,13 @@ class UploadSessionDialog(MaskDialogBase):
                 self.status_label.setText("Please wait for the current upload action to finish.")
             return
         self._is_closing = True
+        self._hide_content_loading_overlay()
         self.close_document()
-        if self._use_fluent_dialog:
-            super().reject()
-        else:
-            QDialog.done(self, QDialog.Rejected)
+        reject = getattr(super(), "reject", None)
+        if callable(reject):
+            reject()
+            return
+        QDialog.done(self, QDialog.Rejected)
 
     def saved_any(self):
         return self.controller.has_saved_items()

@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
+    QProgressBar,
     QScrollArea,
     QScrollBar,
     QSlider,
@@ -37,6 +38,7 @@ try:
         ListWidget as FluentListWidget,
         MaskDialogBase,
         MessageBox,
+        IndeterminateProgressRing,
         PlainTextEdit as FluentPlainTextEdit,
         Pivot as FluentPivot,
         PrimaryPushButton,
@@ -81,6 +83,7 @@ except Exception:
     InfoBar = None
     MaskDialogBase = QDialog
     MessageBox = None
+    IndeterminateProgressRing = None
     PrimaryPushButton = QPushButton
     PushButton = QPushButton
     RoundMenu = QMenu
@@ -434,6 +437,75 @@ def setup_dialog_shell(
     refresh_widget_style(dialog)
     refresh_widget_style(surface)
     return surface
+
+
+class FluentLoadingDialog(MaskDialogBase):
+    def __init__(self, parent=None, title="Please wait", message="Reading document..."):
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        self.setModal(True)
+        self.setWindowModality(Qt.WindowModal)
+
+        self.surface = setup_dialog_shell(
+            self,
+            surface_width=420,
+            surface_min_width=360,
+            surface_min_height=220,
+            shell_object_name="FluentLoadingDialog",
+            surface_object_name="FluentLoadingSurface",
+            use_masked_shell=True,
+        )
+
+        layout = QVBoxLayout()
+        layout.setContentsMargins(28, 28, 28, 24)
+        layout.setSpacing(12)
+        layout.setAlignment(Qt.AlignCenter)
+        self.surface.setLayout(layout)
+
+        self._indicator = self._create_indicator(self.surface)
+        if self._indicator is not None:
+            layout.addWidget(self._indicator, alignment=Qt.AlignCenter)
+
+        self._title_label = SubtitleLabel(title)
+        self._title_label.setObjectName("FluentLoadingTitle")
+        self._title_label.setAlignment(Qt.AlignCenter)
+        layout.addWidget(self._title_label)
+
+        self._message_label = BodyLabel(message or "")
+        self._message_label.setObjectName("FluentLoadingMessage")
+        self._message_label.setAlignment(Qt.AlignCenter)
+        self._message_label.setWordWrap(True)
+        layout.addWidget(self._message_label)
+
+    @staticmethod
+    def _create_indicator(parent=None):
+        if FLUENT_AVAILABLE and IndeterminateProgressRing is not None:
+            indicator = IndeterminateProgressRing(parent)
+            indicator.setFixedSize(56, 56)
+            if hasattr(indicator, "setStrokeWidth"):
+                indicator.setStrokeWidth(4)
+            return indicator
+
+        indicator = QProgressBar(parent)
+        indicator.setObjectName("FluentLoadingProgress")
+        indicator.setRange(0, 0)
+        indicator.setTextVisible(False)
+        indicator.setFixedHeight(8)
+        return indicator
+
+    def set_message(self, message):
+        self._message_label.setText(message or "")
+
+    def show_busy(self, message=None):
+        if message is not None:
+            self.set_message(message)
+        self.show()
+        self.raise_()
+        self.activateWindow()
+        return self
+
+    def hide_busy(self):
+        self.hide()
 
 
 def create_button(text, variant="secondary", fixed_height=34, parent=None, icon=None):
