@@ -8,7 +8,7 @@ from PySide6.QtWidgets import (
 
 from PySide6.QtGui import QColor
 
-from ui.foundation import create_button, create_list_widget
+from ui.foundation import create_button, create_list_widget, setup_dialog_shell
 from utils.i18n import tr, field_label
 
 
@@ -28,13 +28,17 @@ class UploadSummaryDialog(QDialog):
         self._go_calendar = False
 
         self.setWindowTitle(tr("upload_summary_title"))
-        self.setModal(True)
-        self.resize(560, 460)
+        self.surface = setup_dialog_shell(
+            self,
+            surface_width=560,
+            surface_min_height=460,
+            use_masked_shell=False,
+        )
 
         layout = QVBoxLayout()
         layout.setContentsMargins(20, 16, 20, 16)
         layout.setSpacing(12)
-        self.setLayout(layout)
+        self.surface.setLayout(layout)
 
         title = QLabel(tr("upload_summary_title"))
         title.setObjectName("PageTitle")

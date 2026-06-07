@@ -50,6 +50,7 @@ from ui.foundation import (
     create_text_edit,
     divider,
     show_message,
+    setup_dialog_shell,
     tune_fluent_scrollable,
 )
 from utils.constants import (
@@ -2107,16 +2108,15 @@ class WorkflowStatusDialog(MaskDialogBase):
         super().__init__(parent)
 
         self.setWindowTitle("Change Status")
-        if hasattr(self, "setModal"):
-            self.setModal(True)
-        if hasattr(self, "setMinimumWidth"):
-            self.setMinimumWidth(420)
-
-        surface = getattr(self, "widget", self)
+        self.surface = setup_dialog_shell(
+            self,
+            surface_width=420,
+            use_masked_shell=True,
+        )
         layout = QVBoxLayout()
         layout.setContentsMargins(20, 20, 20, 16)
         layout.setSpacing(12)
-        surface.setLayout(layout)
+        self.surface.setLayout(layout)
 
         title = SubtitleLabel("Change workflow status")
         layout.addWidget(title)
@@ -2164,14 +2164,12 @@ class DocumentNotesDialog(MaskDialogBase):
             f"Notes — {doc_data['label']}"
         )
 
-        if hasattr(self, "setModal"):
-            self.setModal(True)
-
-        if hasattr(self, "setMinimumWidth"):
-            self.setMinimumWidth(460)
-
-        if hasattr(self, "setMinimumHeight"):
-            self.setMinimumHeight(320)
+        self.surface = setup_dialog_shell(
+            self,
+            surface_width=460,
+            surface_min_height=320,
+            use_masked_shell=True,
+        )
 
         layout = QVBoxLayout()
 
@@ -2179,8 +2177,7 @@ class DocumentNotesDialog(MaskDialogBase):
 
         layout.setSpacing(12)
 
-        surface = getattr(self, "widget", self)
-        surface.setLayout(layout)
+        self.surface.setLayout(layout)
 
         title = SubtitleLabel(f"Notes for {doc_data['label']}")
 

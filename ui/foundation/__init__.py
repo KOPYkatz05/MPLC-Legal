@@ -1,4 +1,10 @@
 from ui.foundation.fluent import (
+    APP_DIALOG_SHELL_MARGINS,
+    APP_DIALOG_SHELL_OBJECT_NAME,
+    APP_DIALOG_MASK_COLOR,
+    APP_DIALOG_SHADOW,
+    APP_DIALOG_SURFACE_OBJECT_NAME,
+    APP_DIALOG_SURFACE_RADIUS,
     FLUENT_AVAILABLE,
     BodyLabel,
     MaskDialogBase,
@@ -29,6 +35,8 @@ from ui.foundation.fluent import (
     SmoothScrollArea,
     SmoothScrollBar,
     SmoothScrollDelegate,
+    refresh_widget_style,
+    setup_dialog_shell,
     tune_fluent_scrollable,
     show_message,
 )
@@ -45,6 +53,12 @@ from ui.foundation.widgets import (
 
 __all__ = [
     "FLUENT_AVAILABLE",
+    "APP_DIALOG_SHELL_MARGINS",
+    "APP_DIALOG_SHELL_OBJECT_NAME",
+    "APP_DIALOG_MASK_COLOR",
+    "APP_DIALOG_SHADOW",
+    "APP_DIALOG_SURFACE_OBJECT_NAME",
+    "APP_DIALOG_SURFACE_RADIUS",
     "BodyLabel",
     "MaskDialogBase",
     "MessageBox",
@@ -82,6 +96,8 @@ __all__ = [
     "SmoothScrollArea",
     "SmoothScrollBar",
     "SmoothScrollDelegate",
+    "refresh_widget_style",
+    "setup_dialog_shell",
     "tune_fluent_scrollable",
     "show_message",
 ]

@@ -3,7 +3,7 @@ from ui.dialogs.document_rendering import (
     get_pdf_page_count,
     render_document_pixmap,
 )
-from ui.foundation import create_button
+from ui.foundation import create_button, setup_dialog_shell
 from utils.logger import logger
 from PySide6.QtWidgets import (
     QDialog,
@@ -29,7 +29,12 @@ class DocumentViewerDialog(QDialog):
 
         self.setWindowTitle("Document Viewer")
 
-        self.setMinimumSize(900, 700)
+        self.surface = setup_dialog_shell(
+            self,
+            surface_min_width=900,
+            surface_min_height=700,
+            use_masked_shell=False,
+        )
 
         self._scale = 1.0
 
@@ -50,7 +55,7 @@ class DocumentViewerDialog(QDialog):
 
         layout.setSpacing(0)
 
-        self.setLayout(layout)
+        self.surface.setLayout(layout)
 
         # Header
         header = QFrame()

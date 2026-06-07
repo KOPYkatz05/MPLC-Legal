@@ -9,7 +9,16 @@ from PySide6.QtWidgets import (
 
 from PySide6.QtCore import Qt
 
-from ui.foundation import create_button, create_card, show_message
+from ui.foundation import (
+    DialogFooter,
+    FLUENT_AVAILABLE,
+    MaskDialogBase,
+    PageHeader,
+    create_button,
+    create_card,
+    setup_dialog_shell,
+    show_message,
+)
 from database.db import SessionLocal
 
 from database.models.document import Document
@@ -31,26 +40,38 @@ from services.onedrive_service import OneDriveService
 from services.expiration_rules import apply_stage_completion_expiration
 
 
-class StageAdvanceDialog(QDialog):
+class StageAdvanceDialog(MaskDialogBase):
 
     def __init__(
         self,
         missionary,
         parent=None,
     ):
-        super().__init__(parent)
+        fluent_parent = parent.window() if parent is not None else None
+        self._use_fluent_dialog = FLUENT_AVAILABLE and fluent_parent is not None
+        if self._use_fluent_dialog:
+            super().__init__(fluent_parent)
+        else:
+            QDialog.__init__(self, parent)
 
         self.missionary = missionary
 
         self.setWindowTitle("Advance Stage")
-
-        self.setMinimumWidth(540)
-
-        self.setMinimumHeight(400)
+        self.surface = setup_dialog_shell(
+            self,
+            surface_width=540,
+            surface_min_height=400,
+        )
 
         self._load_data()
 
         self.setup_ui()
+
+    def _onDone(self, code):
+        if self._use_fluent_dialog:
+            super()._onDone(code)
+        else:
+            QDialog.done(self, code)
 
     def _load_data(self):
         self.current_stage = (
@@ -122,39 +143,18 @@ class StageAdvanceDialog(QDialog):
 
         layout.setSpacing(0)
 
-        self.setLayout(layout)
+        self.surface.setLayout(layout)
 
         # ==========================================
         # Header
         # ==========================================
 
-        header = QFrame()
-
-        header.setObjectName("PageHeader")
-
-        header_layout = QHBoxLayout()
-
-        header_layout.setContentsMargins(
-            24, 18, 24, 18
+        header = PageHeader(
+            "Stage Transition",
+            "Review required documents before moving this missionary forward.",
         )
 
-        header.setLayout(header_layout)
-
-        title = QLabel("Stage Transition")
-
-        title.setObjectName("PageTitle")
-
-        header_layout.addWidget(title)
-
         layout.addWidget(header)
-
-        divider = QFrame()
-
-        divider.setObjectName("HeaderDivider")
-
-        divider.setFixedHeight(1)
-
-        layout.addWidget(divider)
 
         # ==========================================
         # Body
@@ -163,6 +163,10 @@ class StageAdvanceDialog(QDialog):
         body = QWidget()
 
         body.setObjectName("DialogBody")
+        body.setAttribute(
+            Qt.WA_StyledBackground,
+            True,
+        )
 
         body_layout = QVBoxLayout()
 
@@ -328,35 +332,13 @@ class StageAdvanceDialog(QDialog):
         # Footer buttons
         # ==========================================
 
-        footer_divider = QFrame()
-
-        footer_divider.setObjectName(
-            "HeaderDivider"
-        )
-
-        footer_divider.setFixedHeight(1)
-
-        layout.addWidget(footer_divider)
-
-        footer = QFrame()
-
-        footer.setObjectName("PageHeader")
-
-        footer_layout = QHBoxLayout()
-
-        footer_layout.setContentsMargins(
-            24, 12, 24, 12
-        )
-
-        footer.setLayout(footer_layout)
+        footer = DialogFooter()
 
         cancel_btn = create_button("Cancel", "secondary")
 
         cancel_btn.clicked.connect(self.reject)
 
-        footer_layout.addStretch()
-
-        footer_layout.addWidget(cancel_btn)
+        footer.add_action(cancel_btn)
 
         if self.next_stage is None:
             advance_label = "Mark as Complete"
@@ -377,7 +359,7 @@ class StageAdvanceDialog(QDialog):
             self._do_advance
         )
 
-        footer_layout.addWidget(self.advance_btn)
+        footer.add_action(self.advance_btn)
 
         layout.addWidget(footer)
 

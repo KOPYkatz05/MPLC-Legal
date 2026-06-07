@@ -8,6 +8,7 @@ from PySide6.QtCore import QObject, QDate, QEvent, QPoint, QRectF, QSize, Qt, QT
 from PySide6.QtGui import QColor, QImage, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QCheckBox,
     QDialog,
     QFileDialog,
     QFormLayout,
@@ -39,6 +40,7 @@ from ui.dialogs.document_rendering import (
 )
 from ui.dialogs.upload_summary_dialog import UploadSummaryDialog
 from ui.foundation import (
+    setup_dialog_shell,
     SmoothScrollDelegate,
     create_button,
     create_card,
@@ -46,6 +48,7 @@ from ui.foundation import (
     create_date_picker,
     create_line_edit,
     create_list_widget,
+    create_plain_text_edit,
     create_scroll_area,
     show_message,
     tune_fluent_scrollable,
@@ -81,8 +84,6 @@ SUPPORTED_EXTENSIONS = {
 DATE_PLACEHOLDER = QDate(1900, 1, 1)
 PREVIEW_MIN_SCALE = 0.05
 PREVIEW_MAX_SCALE = 8.0
-
-
 def _widget_alive(widget):
     try:
         return widget is not None and shiboken_is_valid(widget)
@@ -111,6 +112,7 @@ class UploadQueueItem:
     duplicate_action: str = "replace"
     status: str = "pending"
     error_text: str = ""
+    notes: str = ""
     updated_fields: list = field(default_factory=list)
     saved_document_id: int | None = None
 
@@ -766,9 +768,6 @@ class UploadSessionDialog(MaskDialogBase):
         self.date_edits = {}
         self._detail_item_index = -1
         self._is_closing = False
-        self._backdrop_label = None
-        self._backdrop_scrim = None
-        self._surface_host = None
         self._ocr_loading_overlay = None
         self._ocr_loading_blur = None
         self._ocr_loading_scrim = None
@@ -801,121 +800,27 @@ class UploadSessionDialog(MaskDialogBase):
             self.add_files(initial_files)
 
     def _configure_fluent_shell(self):
-        self.setMaskColor(QColor(74, 80, 90, 84))
-        self.setShadowEffect(
-            70,
-            (0, 16),
-            QColor(15, 23, 42, 90),
+        self.surface = setup_dialog_shell(
+            self,
+            surface_width=1240,
+            surface_min_height=820,
+            shell_object_name="UploadWorkspaceDialog",
+            surface_object_name="UploadWorkspaceSurface",
+            use_masked_shell=True,
         )
-
-        self._hBoxLayout.setContentsMargins(24, 24, 24, 24)
-        self._hBoxLayout.removeWidget(self.widget)
-        self._hBoxLayout.addWidget(
-            self.widget,
-            1,
-            Qt.AlignCenter,
-        )
-
-        self.widget.setObjectName("UploadWorkspaceSurface")
-        self.widget.setAttribute(Qt.WA_StyledBackground, True)
-        self.widget.setFixedWidth(1240)
-        self.widget.setMinimumHeight(820)
 
     def _configure_fallback_shell(self):
-        self.setModal(True)
-        self.setWindowFlags(Qt.Dialog | Qt.FramelessWindowHint)
-        self.setAttribute(Qt.WA_TranslucentBackground, True)
-        self.setObjectName("UploadWorkspaceDialog")
-
-        host = self._resolve_backdrop_source()
-        if host is not None:
-            self.resize(host.size())
-        else:
-            self.resize(1400, 900)
-
-    def _resolve_backdrop_source(self):
-        parent = self.parentWidget()
-        if not parent:
-            return None
-
-        window = parent.window()
-        if window and window is not self:
-            return window
-
-        return parent
-
-    def _ensure_fallback_backdrop(self):
-        if self._use_fluent_dialog or self._backdrop_label is not None:
-            return
-
-        self._backdrop_label = QLabel(self)
-        self._backdrop_label.setObjectName("UploadBackdrop")
-        self._backdrop_label.setScaledContents(True)
-        self._backdrop_label.lower()
-
-        self._backdrop_scrim = QWidget(self)
-        self._backdrop_scrim.setObjectName("UploadBackdropScrim")
-        self._backdrop_scrim.lower()
-
-        self._sync_fallback_backdrop_geometry()
-
-    def _sync_fallback_backdrop_geometry(self):
-        if self._use_fluent_dialog:
-            return
-
-        rect = self.rect()
-        if self._backdrop_label is not None:
-            self._backdrop_label.setGeometry(rect)
-        if self._backdrop_scrim is not None:
-            self._backdrop_scrim.setGeometry(rect)
-
-    def _refresh_fallback_backdrop(self):
-        if self._use_fluent_dialog:
-            return
-
-        self._ensure_fallback_backdrop()
-
-        host = self._resolve_backdrop_source()
-        if host is None:
-            return
-
-        capture = host.grab()
-        if capture.isNull():
-            return
-
-        blurred = self._blur_pixmap(capture)
-        self._backdrop_label.setPixmap(blurred)
-
-    @staticmethod
-    def _blur_pixmap(pixmap, radius=18):
-        if pixmap.isNull():
-            return pixmap
-
-        scene = QGraphicsScene()
-        item = QGraphicsPixmapItem(pixmap)
-        effect = item.graphicsEffect()
-        if effect is None:
-            from PySide6.QtWidgets import QGraphicsBlurEffect
-
-            effect = QGraphicsBlurEffect()
-            effect.setBlurRadius(radius)
-            item.setGraphicsEffect(effect)
-
-        scene.addItem(item)
-        result = QImage(
-            pixmap.size(),
-            QImage.Format_ARGB32_Premultiplied,
+        self.surface = setup_dialog_shell(
+            self,
+            surface_width=1240,
+            surface_min_height=820,
+            shell_object_name="UploadWorkspaceDialog",
+            surface_object_name="UploadWorkspaceSurface",
+            use_masked_shell=False,
         )
-        result.fill(Qt.transparent)
 
-        painter = QPainter(result)
-        scene.render(
-            painter,
-            QRectF(result.rect()),
-            QRectF(0, 0, pixmap.width(), pixmap.height()),
-        )
-        painter.end()
-        return QPixmap.fromImage(result)
+    def _surface_widget(self):
+        return getattr(self, "surface", None)
 
     def setup_ui(self):
         root = self._build_shell()
@@ -932,31 +837,8 @@ class UploadSessionDialog(MaskDialogBase):
         self._update_action_states()
 
     def _build_shell(self):
-        if self._use_fluent_dialog:
-            surface = self.widget
-            root_target = surface
-        else:
-            self._ensure_fallback_backdrop()
-            self._surface_host = QFrame(self)
-            self._surface_host.setObjectName("UploadWorkspaceSurface")
-            self._surface_host.setAttribute(Qt.WA_StyledBackground, True)
-            self._surface_host.setFixedWidth(1240)
-            self._surface_host.setMinimumHeight(820)
-
-            shell_layout = QVBoxLayout()
-            shell_layout.setContentsMargins(24, 24, 24, 24)
-            shell_layout.setSpacing(0)
-            self.setLayout(shell_layout)
-            shell_layout.addWidget(
-                self._surface_host,
-                1,
-                Qt.AlignCenter,
-            )
-            surface = self._surface_host
-            root_target = surface
-
-        surface.setObjectName("UploadWorkspaceSurface")
-        surface.setAttribute(Qt.WA_StyledBackground, True)
+        surface = self.surface
+        root_target = surface
 
         root = QVBoxLayout()
         root.setContentsMargins(0, 0, 0, 0)
@@ -1074,10 +956,16 @@ class UploadSessionDialog(MaskDialogBase):
             self.duplicate_changed
         )
         summary_form.addRow("If duplicate", self.duplicate_combo)
+        self.notes_editor = create_plain_text_edit()
+        self.notes_editor.setFixedHeight(76)
+        summary_form.addRow("Notes", self.notes_editor)
         middle_layout.addLayout(summary_form)
 
         ocr_tools = QHBoxLayout()
         ocr_tools.setSpacing(10)
+        self.ocr_checkbox = QCheckBox("Run OCR automatically")
+        self.ocr_checkbox.setChecked(True)
+        self.ocr_checkbox.hide()
         self.ocr_status_label = QLabel("")
         self.ocr_status_label.setObjectName("OcrStatusBanner")
         self.ocr_status_label.setProperty("status", "skipped")
@@ -1115,6 +1003,10 @@ class UploadSessionDialog(MaskDialogBase):
         middle_layout.addWidget(self.details_empty_label, stretch=1)
 
         self.splitter.addWidget(self.middle_panel)
+
+    def _auto_ocr_enabled(self):
+        checkbox = getattr(self, "ocr_checkbox", None)
+        return checkbox is None or checkbox.isChecked()
 
     def _build_preview_panel(self):
         self.right_panel = create_card(object_name="UploadSurfaceCard")
@@ -1355,9 +1247,38 @@ class UploadSessionDialog(MaskDialogBase):
         self._content_loading_overlay_visible = False
 
     def _ocr_loading_parent(self):
-        if self._use_fluent_dialog:
-            return getattr(self, "widget", None)
-        return self._surface_host
+        return self.surface
+
+    @staticmethod
+    def _blur_pixmap(pixmap, radius=18):
+        if pixmap.isNull():
+            return pixmap
+
+        scene = QGraphicsScene()
+        item = QGraphicsPixmapItem(pixmap)
+        effect = item.graphicsEffect()
+        if effect is None:
+            from PySide6.QtWidgets import QGraphicsBlurEffect
+
+            effect = QGraphicsBlurEffect()
+            effect.setBlurRadius(radius)
+            item.setGraphicsEffect(effect)
+
+        scene.addItem(item)
+        result = QImage(
+            pixmap.size(),
+            QImage.Format_ARGB32_Premultiplied,
+        )
+        result.fill(Qt.transparent)
+
+        painter = QPainter(result)
+        scene.render(
+            painter,
+            QRectF(result.rect()),
+            QRectF(0, 0, pixmap.width(), pixmap.height()),
+        )
+        painter.end()
+        return QPixmap.fromImage(result)
 
     def _ensure_ocr_loading_overlay(self):
         if self._ocr_loading_overlay is not None:
@@ -1799,6 +1720,10 @@ class UploadSessionDialog(MaskDialogBase):
                 self.duplicate_combo.blockSignals(True)
                 self.duplicate_combo.setCurrentIndex(dup_idx)
                 self.duplicate_combo.blockSignals(False)
+        if _widget_alive(getattr(self, "notes_editor", None)):
+            self.notes_editor.blockSignals(True)
+            self.notes_editor.setPlainText(item.notes or "")
+            self.notes_editor.blockSignals(False)
         self.load_preview(item)
         self.render_ocr_fields(item)
         self.update_duplicate_warning(item)
@@ -1849,6 +1774,10 @@ class UploadSessionDialog(MaskDialogBase):
                 self.preview_status_badge.setText("Pending")
                 self.preview_status_badge.setProperty("status", "pending")
                 _refresh_style(self.preview_status_badge)
+            if _widget_alive(getattr(self, "notes_editor", None)):
+                self.notes_editor.blockSignals(True)
+                self.notes_editor.clear()
+                self.notes_editor.blockSignals(False)
         except RuntimeError:
             pass
         self._update_preview_meta_label(None)
@@ -1881,6 +1810,7 @@ class UploadSessionDialog(MaskDialogBase):
         should_run_ocr = (
             item.document_type
             and item.has_ocr_fields
+            and self._auto_ocr_enabled()
         )
         self._refresh_detail_after_type_change(item)
         self.refresh_queue()
@@ -2380,6 +2310,8 @@ class UploadSessionDialog(MaskDialogBase):
         if _widget_alive(self.page_combo) and self.page_combo.isVisible():
             if self.page_combo.currentIndex() >= 0:
                 item.export_settings["page"] = self.page_combo.currentIndex()
+        if _widget_alive(getattr(self, "notes_editor", None)):
+            item.notes = self.notes_editor.toPlainText().strip()
 
     def clear_ocr_form(self):
         try:
@@ -2566,7 +2498,7 @@ class UploadSessionDialog(MaskDialogBase):
             item.status,
         )
         self.persist_current_item_state()
-        if item.has_ocr_fields:
+        if item.has_ocr_fields and self._auto_ocr_enabled():
             if item.ocr_result is None:
                 self._run_ocr_async(
                     self.controller.selected_index,
@@ -2626,7 +2558,7 @@ class UploadSessionDialog(MaskDialogBase):
             self._set_queue_row(index)
             self.load_detail()
 
-            if item.has_ocr_fields:
+            if item.has_ocr_fields and self._auto_ocr_enabled():
                 if item.ocr_result is None:
                     self._run_ocr_async(index, reason="save_all", after="all")
                     return
@@ -2818,13 +2750,11 @@ class UploadSessionDialog(MaskDialogBase):
         super().closeEvent(event)
 
     def showEvent(self, event):
-        self._refresh_fallback_backdrop()
         super().showEvent(event)
         if self._preview_item is not None:
             QTimer.singleShot(0, self._apply_preview_zoom)
 
     def resizeEvent(self, event):
-        self._sync_fallback_backdrop_geometry()
         self._sync_ocr_loading_overlay_geometry()
         super().resizeEvent(event)
         if self._preview_item is not None and self._preview_zoom_mode in {

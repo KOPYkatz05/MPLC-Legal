@@ -12,7 +12,12 @@ from PySide6.QtWidgets import (
 
 from PySide6.QtCore import Qt
 
-from ui.foundation import create_button, create_table, show_message
+from ui.foundation import (
+    create_button,
+    create_table,
+    setup_dialog_shell,
+    show_message,
+)
 from database.db import SessionLocal
 
 from database.models.missionary import Missionary
@@ -38,10 +43,12 @@ class BatchStageAdvanceDialog(QDialog):
         self.missionary_ids = missionary_ids
 
         self.setWindowTitle("Batch Stage Advance")
-
-        self.setMinimumWidth(640)
-
-        self.setMinimumHeight(500)
+        self.surface = setup_dialog_shell(
+            self,
+            surface_width=640,
+            surface_min_height=500,
+            use_masked_shell=False,
+        )
 
         self._load_data()
 
@@ -138,7 +145,7 @@ class BatchStageAdvanceDialog(QDialog):
 
         layout.setSpacing(0)
 
-        self.setLayout(layout)
+        self.surface.setLayout(layout)
 
         # Header
         header = QFrame()

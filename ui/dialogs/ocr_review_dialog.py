@@ -17,6 +17,7 @@ from ui.foundation import (
     create_date_edit,
     create_line_edit,
     create_scroll_area,
+    setup_dialog_shell,
 )
 from utils.constants import MISSIONARY_DATE_FIELDS
 from utils.i18n import tr, field_label
@@ -45,14 +46,18 @@ class OCRReviewDialog(QDialog):
         self.date_edits = {}
 
         self.setWindowTitle(tr("ocr_review_title"))
-        self.setModal(True)
-        self.resize(900, 520)
+        self.surface = setup_dialog_shell(
+            self,
+            surface_width=900,
+            surface_min_height=520,
+            use_masked_shell=False,
+        )
 
         self.setup_ui()
 
     def setup_ui(self):
         root = QVBoxLayout()
-        self.setLayout(root)
+        self.surface.setLayout(root)
 
         status_key = f"ocr_status_{self.ocr_status}"
         status_text = tr(status_key)

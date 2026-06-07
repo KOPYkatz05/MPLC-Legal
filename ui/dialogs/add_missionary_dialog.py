@@ -13,6 +13,7 @@ from services.missionary_service import (
     MissionaryService,
 )
 from ui.foundation import (
+    setup_dialog_shell,
     DialogFooter,
     create_button,
     create_date_picker,
@@ -49,53 +50,16 @@ class AddMissionaryDialog(MaskDialogBase):
             "Add Missionary"
         )
 
-        if FLUENT_DIALOG_AVAILABLE:
-            self._configure_fluent_shell()
-        else:
-            self.setModal(True)
-            self.setMinimumWidth(520)
+        self.surface = setup_dialog_shell(
+            self,
+            surface_width=520,
+        )
 
         logger.info(
             "Opened Add Missionary dialog"
         )
 
         self.setup_ui()
-
-    def _configure_fluent_shell(self):
-        self.setMaskColor(
-            QColor(74, 80, 90, 84)
-        )
-
-        self.setShadowEffect(
-            70,
-            (0, 16),
-            QColor(15, 23, 42, 90),
-        )
-
-        self._hBoxLayout.setContentsMargins(
-            24, 24, 24, 24
-        )
-
-        self._hBoxLayout.removeWidget(
-            self.widget
-        )
-
-        self._hBoxLayout.addWidget(
-            self.widget,
-            1,
-            Qt.AlignCenter,
-        )
-
-        self.widget.setObjectName(
-            "AddMissionarySurface"
-        )
-
-        self.widget.setAttribute(
-            Qt.WA_StyledBackground,
-            True,
-        )
-
-        self.widget.setFixedWidth(520)
 
     def showEvent(self, event):
         super().showEvent(event)
@@ -108,11 +72,7 @@ class AddMissionaryDialog(MaskDialogBase):
             QDialog.done(self, code)
 
     def setup_ui(self):
-        surface = (
-            self.widget
-            if FLUENT_DIALOG_AVAILABLE
-            else self
-        )
+        surface = self.surface
 
         layout = QVBoxLayout()
 

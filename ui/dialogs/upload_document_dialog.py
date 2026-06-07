@@ -2,11 +2,19 @@ from PySide6.QtWidgets import (
     QDialog,
     QVBoxLayout,
     QFormLayout,
-    QHBoxLayout,
     QLabel,
+    QWidget,
 )
 
-from ui.foundation import create_button, create_combo_box
+from PySide6.QtCore import Qt
+
+from ui.foundation import (
+    DialogFooter,
+    PageHeader,
+    create_button,
+    create_combo_box,
+    setup_dialog_shell,
+)
 from utils.constants import (
     DOCUMENTS,
     WORKFLOW_STAGES,
@@ -28,9 +36,12 @@ class UploadDocumentDialog(QDialog):
             "Upload Document"
         )
 
-        self.setModal(True)
-
-        self.resize(460, 180)
+        self.surface = setup_dialog_shell(
+            self,
+            surface_width=500,
+            surface_min_height=260,
+            use_masked_shell=False,
+        )
 
         self._label_to_key = {}
 
@@ -38,19 +49,38 @@ class UploadDocumentDialog(QDialog):
 
     def setup_ui(self):
         layout = QVBoxLayout()
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
 
-        self.setLayout(layout)
+        self.surface.setLayout(layout)
+
+        header = PageHeader(
+            "Upload Document",
+            "Select the document type. "
+            "The workflow stage will be filled in automatically.",
+        )
+        layout.addWidget(header)
+
+        body = QWidget()
+        body.setObjectName("DialogBody")
+        body.setAttribute(Qt.WA_StyledBackground, True)
+
+        body_layout = QVBoxLayout()
+        body_layout.setContentsMargins(24, 20, 24, 20)
+        body_layout.setSpacing(14)
+        body.setLayout(body_layout)
 
         info = QLabel(
-            "Select the document type. "
-            "The workflow stage will be filled in automatically."
+            "Choose the document category before continuing "
+            "to the editor."
         )
-
+        info.setObjectName("MutedText")
         info.setWordWrap(True)
-
-        layout.addWidget(info)
+        body_layout.addWidget(info)
 
         form = QFormLayout()
+        form.setContentsMargins(0, 0, 0, 0)
+        form.setSpacing(10)
 
         # ==========================================
         # Document Type
@@ -88,13 +118,12 @@ class UploadDocumentDialog(QDialog):
             self.stage_combo,
         )
 
-        layout.addLayout(form)
+        body_layout.addLayout(form)
+        layout.addWidget(body, stretch=1)
 
         # ==========================================
         # Buttons
         # ==========================================
-
-        buttons = QHBoxLayout()
 
         self.cancel_btn = create_button("Cancel", "secondary")
 
@@ -105,13 +134,10 @@ class UploadDocumentDialog(QDialog):
 
         self.ok_btn.setDefault(True)
 
-        buttons.addStretch()
-
-        buttons.addWidget(self.cancel_btn)
-
-        buttons.addWidget(self.ok_btn)
-
-        layout.addLayout(buttons)
+        footer = DialogFooter()
+        footer.add_action(self.cancel_btn)
+        footer.add_action(self.ok_btn)
+        layout.addWidget(footer)
 
         # ==========================================
         # Connections

@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
     QDialog,
     QVBoxLayout,
     QHBoxLayout,
+    QWidget,
     QListWidgetItem,
     QGraphicsScene,
     QGraphicsPixmapItem,
@@ -25,7 +26,14 @@ from PySide6.QtWidgets import (
 from ui.widgets.crop_graphics_view import (
     CropGraphicsView,
 )
-from ui.foundation import create_button, create_list_widget, create_slider
+from ui.foundation import (
+    DialogFooter,
+    PageHeader,
+    create_button,
+    create_list_widget,
+    create_slider,
+    setup_dialog_shell,
+)
 
 
 class DocumentEditorDialog(QDialog):
@@ -51,7 +59,12 @@ class DocumentEditorDialog(QDialog):
             "Document Editor"
         )
 
-        self.setModal(True)
+        self.surface = setup_dialog_shell(
+            self,
+            surface_min_width=1200,
+            surface_min_height=800,
+            use_masked_shell=False,
+        )
 
         self.resize(
             1200,
@@ -65,18 +78,43 @@ class DocumentEditorDialog(QDialog):
     def setup_ui(self):
 
         main_layout = QVBoxLayout()
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
 
-        self.setLayout(
+        self.surface.setLayout(
             main_layout
         )
+
+        header = PageHeader(
+            "Document Editor",
+            "Review the selected page, rotation, and crop area before export.",
+        )
+
+        main_layout.addWidget(
+            header
+        )
+
+        body = QWidget()
+        body.setObjectName("DialogBody")
+        body.setAttribute(
+            Qt.WA_StyledBackground,
+            True,
+        )
+
+        body_layout = QVBoxLayout()
+        body_layout.setContentsMargins(24, 20, 24, 20)
+        body_layout.setSpacing(14)
+        body.setLayout(body_layout)
 
         # =====================================
         # Main Editor Area
         # =====================================
 
         editor_layout = QHBoxLayout()
+        editor_layout.setContentsMargins(0, 0, 0, 0)
+        editor_layout.setSpacing(12)
 
-        main_layout.addLayout(
+        body_layout.addLayout(
             editor_layout,
             stretch=1,
         )
@@ -131,32 +169,33 @@ class DocumentEditorDialog(QDialog):
             0
         )
 
-        main_layout.addWidget(
+        body_layout.addWidget(
             self.rotation_slider
+        )
+
+        main_layout.addWidget(
+            body,
+            stretch=1,
         )
 
         # =====================================
         # Buttons
         # =====================================
 
-        button_layout = QHBoxLayout()
-
         self.cancel_button = create_button("Cancel", "secondary")
 
         self.confirm_button = create_button("Confirm", "primary")
 
-        button_layout.addStretch()
-
-        button_layout.addWidget(
+        footer = DialogFooter()
+        footer.add_action(
             self.cancel_button
         )
-
-        button_layout.addWidget(
+        footer.add_action(
             self.confirm_button
         )
 
-        main_layout.addLayout(
-            button_layout
+        main_layout.addWidget(
+            footer
         )
 
         # =====================================

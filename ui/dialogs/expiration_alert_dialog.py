@@ -9,7 +9,12 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ui.foundation import create_button, create_card, create_scroll_area
+from ui.foundation import (
+    create_button,
+    create_card,
+    create_scroll_area,
+    setup_dialog_shell,
+)
 
 try:
     from qfluentwidgets import (
@@ -34,35 +39,13 @@ class ExpirationAlertDialog(MaskDialogBase):
 
         self.setWindowTitle("Document Expiration Alerts")
 
-        if FLUENT_DIALOG_AVAILABLE:
-            self._configure_fluent_shell()
-        else:
-            self.setModal(True)
-            self.setMinimumWidth(760)
-            self.setMinimumHeight(520)
+        self.surface = setup_dialog_shell(
+            self,
+            surface_width=760,
+            surface_min_height=520,
+        )
 
         self.setup_ui()
-
-    def _configure_fluent_shell(self):
-        self.setMaskColor(QColor(74, 80, 90, 84))
-        self.setShadowEffect(
-            70,
-            (0, 16),
-            QColor(15, 23, 42, 90),
-        )
-
-        self._hBoxLayout.setContentsMargins(24, 24, 24, 24)
-        self._hBoxLayout.removeWidget(self.widget)
-        self._hBoxLayout.addWidget(
-            self.widget,
-            1,
-            Qt.AlignCenter,
-        )
-
-        self.widget.setObjectName("ExpirationAlertSurface")
-        self.widget.setAttribute(Qt.WA_StyledBackground, True)
-        self.widget.setFixedWidth(760)
-        self.widget.setMinimumHeight(520)
 
     def _onDone(self, code):
         if FLUENT_DIALOG_AVAILABLE:
@@ -71,8 +54,7 @@ class ExpirationAlertDialog(MaskDialogBase):
             QDialog.done(self, code)
 
     def setup_ui(self):
-        surface = self.widget if FLUENT_DIALOG_AVAILABLE else self
-        surface.setObjectName("ExpirationAlertSurface")
+        surface = self.surface
 
         layout = QVBoxLayout()
         layout.setContentsMargins(0, 0, 0, 0)
