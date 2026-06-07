@@ -262,67 +262,6 @@ class UploadPreviewGraphicsView(QGraphicsView):
         self.viewport().unsetCursor()
 
 
-class QueueItemWidget(QFrame):
-    activated = Signal(int)
-
-    def __init__(self, item, index, selected=False, parent=None):
-        super().__init__(parent)
-        self.setObjectName("UploadQueueItemCard")
-        self.item = item
-        self.index = index
-
-        layout = QHBoxLayout()
-        layout.setContentsMargins(12, 9, 12, 9)
-        layout.setSpacing(10)
-        self.setLayout(layout)
-
-        icon = QLabel("PDF" if item.file_name.lower().endswith(".pdf") else "IMG")
-        icon.setObjectName("UploadFileIcon")
-        icon.setAlignment(Qt.AlignCenter)
-        icon.setFixedSize(36, 36)
-        icon.setAttribute(Qt.WA_TransparentForMouseEvents, True)
-
-        copy = QVBoxLayout()
-        copy.setContentsMargins(0, 0, 0, 0)
-        copy.setSpacing(4)
-
-        title = QLabel(item.file_name)
-        title.setObjectName("UploadQueueTitle")
-        title.setWordWrap(True)
-        title.setAttribute(Qt.WA_TransparentForMouseEvents, True)
-
-        meta = QLabel(
-            f"{UploadSessionDialog.document_type_text(item)}"
-            f"  ·  {item.file_size_text}"
-        )
-        meta.setObjectName("UploadQueueMeta")
-        meta.setAttribute(Qt.WA_TransparentForMouseEvents, True)
-
-        copy.addWidget(title)
-        copy.addWidget(meta)
-
-        badge = QLabel(UploadSessionDialog.status_text(item))
-        badge.setObjectName("UploadStatusChip")
-        badge.setProperty("status", item.status)
-        badge.setAlignment(Qt.AlignCenter)
-        badge.setMinimumWidth(82)
-        badge.setAttribute(Qt.WA_TransparentForMouseEvents, True)
-
-        layout.addWidget(icon)
-        layout.addLayout(copy, stretch=1)
-        layout.addWidget(badge, alignment=Qt.AlignTop)
-
-        if selected:
-            self.setProperty("selected", True)
-        _refresh_style(self)
-        _refresh_style(badge)
-
-    def mouseReleaseEvent(self, event):
-        if event.button() == Qt.LeftButton:
-            self.activated.emit(self.index)
-        super().mouseReleaseEvent(event)
-
-
 class UploadSessionController:
     def __init__(
         self,
@@ -814,7 +753,7 @@ class UploadSessionDialog(MaskDialogBase):
         self.queue_list.setObjectName("UploadQueueList")
         self.queue_list.setSelectionMode(QAbstractItemView.SingleSelection)
         self.queue_list.currentRowChanged.connect(self.select_item)
-        self.queue_list.setSpacing(8)
+        self.queue_list.setSpacing(0)
         left_layout.addWidget(self.queue_list, stretch=1)
 
         self.queue_empty_label = QLabel("No files selected yet.")
@@ -1344,17 +1283,17 @@ class UploadSessionDialog(MaskDialogBase):
             current = self.controller.selected_index
         self.queue_list.blockSignals(True)
         self.queue_list.clear()
-        for index, item in enumerate(self.controller.items):
+        for item in self.controller.items:
             list_item = QListWidgetItem()
-            list_item.setSizeHint(QSize(250, 66))
-            self.queue_list.addItem(list_item)
-            widget = QueueItemWidget(
-                item,
-                index,
-                selected=(index == current),
+            prefix = "PDF" if item.file_name.lower().endswith(".pdf") else "IMG"
+            document_type = self.document_type_text(item)
+            list_item.setText(
+                f"{prefix}  {item.file_name}  |  {document_type}  |  {item.file_size_text}"
             )
-            widget.activated.connect(self._activate_queue_card)
-            self.queue_list.setItemWidget(list_item, widget)
+            list_item.setToolTip(
+                f"{item.file_name}\n{document_type}\n{item.file_size_text}"
+            )
+            self.queue_list.addItem(list_item)
         if 0 <= current < self.queue_list.count():
             self.queue_list.setCurrentRow(current)
         self.queue_list.blockSignals(False)
@@ -1368,15 +1307,6 @@ class UploadSessionDialog(MaskDialogBase):
             self.queue_list.setCurrentRow(index)
         finally:
             self.queue_list.blockSignals(False)
-
-    def _activate_queue_card(self, index):
-        if (
-            self._is_closing
-            or index < 0
-            or index >= len(self.controller.items)
-        ):
-            return
-        self._switch_to_item(index, persist_current=True)
 
     def _detail_widgets_available(self):
         if self._is_closing:
@@ -2357,9 +2287,9 @@ class UploadSessionDialog(MaskDialogBase):
 
         self._saving_all = False
         self._save_all_index = 0
-        self.after_save(show_summary=True)
+        self.after_save(show_summary=True, close_after=True)
 
-    def after_save(self, show_summary=False):
+    def after_save(self, show_summary=False, close_after=False):
         if self._is_closing:
             return
         logger.info(
@@ -2386,6 +2316,8 @@ class UploadSessionDialog(MaskDialogBase):
             )
         ):
             self.show_summary()
+        if close_after and not self._is_closing:
+            self.accept()
 
     def go_to_next_item(self, checked=False):
         total = len(self.controller.items)
@@ -2569,3 +2501,4 @@ class UploadSessionDialog(MaskDialogBase):
 
     def saved_any(self):
         return self.controller.has_saved_items()
+
