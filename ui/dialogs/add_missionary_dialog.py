@@ -1,6 +1,7 @@
-from PySide6.QtCore import Qt, QRegularExpression
+from PySide6.QtCore import Qt, QRegularExpression, QStringListModel
 from PySide6.QtGui import QColor, QRegularExpressionValidator
 from PySide6.QtWidgets import (
+    QCompleter,
     QDialog,
     QFrame,
     QLabel,
@@ -8,6 +9,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from config import PASSPORT_COUNTRY_CODES
 from services.missionary_service import (
     MissionaryCodeError,
     MissionaryService,
@@ -16,6 +18,7 @@ from ui.foundation import (
     setup_dialog_shell,
     DialogFooter,
     create_button,
+    create_combo_box,
     create_date_picker,
     create_line_edit,
     show_message,
@@ -160,10 +163,41 @@ class AddMissionaryDialog(MaskDialogBase):
             "AddMissionaryInput",
         )
 
-        self.nationality_input = create_line_edit(
-            "Country of citizenship",
-            "AddMissionaryInput",
+        self.nationality_input = create_combo_box(
+            "AddMissionaryCombo",
+            editable=True,
         )
+        self.nationality_input.setPlaceholderText(
+            "Type to search passport country codes"
+        )
+
+        nationality_model = QStringListModel(
+            list(PASSPORT_COUNTRY_CODES),
+            self.nationality_input,
+        )
+        nationality_completer = QCompleter(
+            nationality_model,
+            self.nationality_input,
+        )
+        nationality_completer.setCaseSensitivity(
+            Qt.CaseInsensitive
+        )
+        nationality_completer.setFilterMode(
+            Qt.MatchContains
+        )
+        nationality_completer.setCompletionMode(
+            QCompleter.PopupCompletion
+        )
+        self.nationality_input.setCompleter(
+            nationality_completer
+        )
+        for code in PASSPORT_COUNTRY_CODES:
+            self.nationality_input.addItem(
+                code,
+                code,
+            )
+        if hasattr(self.nationality_input, "setCurrentIndex"):
+            self.nationality_input.setCurrentIndex(-1)
 
         self.passport_input = create_line_edit(
             "Passport number",
@@ -210,8 +244,8 @@ class AddMissionaryDialog(MaskDialogBase):
                 self.arrival_date_input,
                 (
                     "Use the arrival date only. "
-                    "Visa expiration will be added "
-                    "later from uploaded documents."
+                    "It should be the date the missionary arrived in "
+                    "the country, not the date they came to the mission. "
                 ),
             )
         )
@@ -297,6 +331,22 @@ class AddMissionaryDialog(MaskDialogBase):
             .toPython()
         )
 
+    def _selected_nationality(self):
+        nationality = self.nationality_input.currentData()
+        if nationality in PASSPORT_COUNTRY_CODES:
+            return nationality
+
+        typed = (
+            self.nationality_input.currentText()
+            .strip()
+            .upper()
+        )
+
+        if typed in PASSPORT_COUNTRY_CODES:
+            return typed
+
+        return None
+
     def save_missionary(self):
         try:
             full_name = (
@@ -331,11 +381,7 @@ class AddMissionaryDialog(MaskDialogBase):
                         .strip()
                     ),
 
-                    nationality=(
-                        self.nationality_input
-                        .text()
-                        .strip()
-                    ),
+                    nationality=self._selected_nationality(),
 
                     passport_number=(
                         self.passport_input
