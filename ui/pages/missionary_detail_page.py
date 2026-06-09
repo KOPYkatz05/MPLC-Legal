@@ -24,6 +24,7 @@ from PySide6.QtCore import Qt, QSize, QDate
 from services.workflow_service import WorkflowService
 from services.document_service import DocumentService
 from services.missionary_service import MissionaryService
+from services.expiration_rules import add_years
 from services.document_image_export_service import (
     DocumentImageExportService,
 )
@@ -75,6 +76,7 @@ WORKFLOW_CARD_MIN_HEIGHT = 84
 DOCUMENT_CARD_MIN_HEIGHT = 104
 MISSING_CARD_MIN_HEIGHT = 84
 MISSIONARY_DETAIL_SCROLL_STEP = 16
+AUTO_DERIVED_VISA_SOURCE_LABEL = "Auto-derived from arrival date"
 
 STAGE_DISPLAY_NAMES = {
     "INTERPOL": "Interpol",
@@ -166,6 +168,17 @@ def _format_datetime(value):
         return value.strftime("%b %d, %Y %I:%M %p")
     except Exception:
         return str(value)
+
+
+def _parse_field_sources(field_sources):
+    if not field_sources:
+        return {}
+
+    try:
+        parsed = json.loads(field_sources)
+        return parsed if isinstance(parsed, dict) else {}
+    except (json.JSONDecodeError, TypeError):
+        return {}
 
 
 class MissionaryDetailPage(QWidget):
@@ -895,6 +908,9 @@ class MissionaryDetailPage(QWidget):
             self.current_missionary,
             parent=self,
         )
+        dialog.appointment_dates_updated.connect(
+            self._refresh_calendar_after_appointment_upload
+        )
         dialog.exec()
 
         if dialog.saved_any():
@@ -914,6 +930,9 @@ class MissionaryDetailPage(QWidget):
             self.current_missionary,
             parent=self,
         )
+        dialog.appointment_dates_updated.connect(
+            self._refresh_calendar_after_appointment_upload
+        )
         dialog.exec()
 
         if dialog.saved_any():
@@ -921,13 +940,18 @@ class MissionaryDetailPage(QWidget):
 
         return
 
+    def _refresh_calendar_after_appointment_upload(self, missionary_id, fields):
+        _ = missionary_id
+        if not fields:
+            return
+
+        calendar_page = getattr(self.main_window, "calendar_page", None)
+        load_data = getattr(calendar_page, "load_data", None)
+        if callable(load_data):
+            load_data()
+
     def _update_field_sources(self, missionary):
-        sources = {}
-        if missionary.field_sources:
-            try:
-                sources = json.loads(missionary.field_sources)
-            except (json.JSONDecodeError, TypeError):
-                sources = {}
+        sources = _parse_field_sources(missionary.field_sources)
 
         for field_key, source_lbl in self._date_source_labels.items():
             info = sources.get(field_key)
@@ -943,6 +967,26 @@ class MissionaryDetailPage(QWidget):
             return
 
         updates = {}
+        sources = _parse_field_sources(
+            getattr(self.current_missionary, "field_sources", None)
+        )
+        current_arrival = getattr(
+            self.current_missionary,
+            "arrival_date",
+            None,
+        )
+        current_visa = getattr(
+            self.current_missionary,
+            "visa_expiration",
+            None,
+        )
+        current_visa_source = sources.get("visa_expiration", {})
+        current_visa_is_auto = (
+            current_visa_source.get("label")
+            == AUTO_DERIVED_VISA_SOURCE_LABEL
+            or current_visa_source.get("document_type") == "TAM"
+        )
+
         for field_key, date_edit in self._date_edits.items():
             qd = (
                 date_edit.getDate()
@@ -959,6 +1003,61 @@ class MissionaryDetailPage(QWidget):
             updates[field_key] = date(
                 qd.year(), qd.month(), qd.day()
             )
+
+        arrival_date = updates.get("arrival_date", current_arrival)
+        visa_date = updates.get("visa_expiration", current_visa)
+
+        if arrival_date:
+            derived_visa = add_years(arrival_date, 1)
+            if derived_visa:
+                old_derived_visa = (
+                    add_years(current_arrival, 1)
+                    if current_arrival
+                    else None
+                )
+                current_visa_was_auto = (
+                    current_visa_is_auto
+                    or (
+                        current_visa is not None
+                        and old_derived_visa is not None
+                        and current_visa == old_derived_visa
+                    )
+                    or current_visa is None
+                )
+
+                if arrival_date != current_arrival:
+                    if current_visa_was_auto:
+                        if visa_date in {None, current_visa, old_derived_visa}:
+                            updates["visa_expiration"] = derived_visa
+                            sources["visa_expiration"] = {
+                                "label": AUTO_DERIVED_VISA_SOURCE_LABEL,
+                            }
+                        else:
+                            updates["visa_expiration"] = visa_date
+                            if visa_date == derived_visa:
+                                sources["visa_expiration"] = {
+                                    "label": AUTO_DERIVED_VISA_SOURCE_LABEL,
+                                }
+                            else:
+                                sources.pop("visa_expiration", None)
+                    else:
+                        updates["visa_expiration"] = visa_date
+                        if visa_date == derived_visa:
+                            sources["visa_expiration"] = {
+                                "label": AUTO_DERIVED_VISA_SOURCE_LABEL,
+                            }
+                        else:
+                            sources.pop("visa_expiration", None)
+                else:
+                    if visa_date == derived_visa:
+                        sources["visa_expiration"] = {
+                            "label": AUTO_DERIVED_VISA_SOURCE_LABEL,
+                        }
+                    elif visa_date != current_visa:
+                        sources.pop("visa_expiration", None)
+
+        if sources:
+            updates["field_sources"] = json.dumps(sources)
 
         if not updates:
             return
@@ -1192,6 +1291,9 @@ class MissionaryDetailPage(QWidget):
         )
 
         self._date_empty_on_load = set()
+        sources = _parse_field_sources(
+            getattr(missionary, "field_sources", None)
+        )
         for field_key, date_edit in self._date_edits.items():
             value = getattr(missionary, field_key, None)
             if value:
@@ -1201,6 +1303,32 @@ class MissionaryDetailPage(QWidget):
             else:
                 date_edit.setDate(DATE_PLACEHOLDER)
                 self._date_empty_on_load.add(field_key)
+
+        arrival_date = getattr(missionary, "arrival_date", None)
+        visa_source = sources.get("visa_expiration", {})
+        visa_is_manual = (
+            visa_source.get("label")
+            and visa_source.get("label")
+            != AUTO_DERIVED_VISA_SOURCE_LABEL
+            and visa_source.get("document_type") != "TAM"
+        )
+        visa_edit = self._date_edits.get("visa_expiration")
+        if (
+            arrival_date
+            and visa_edit is not None
+            and not getattr(missionary, "visa_expiration", None)
+            and not visa_is_manual
+        ):
+            derived_visa = add_years(arrival_date, 1)
+            if derived_visa:
+                visa_edit.setDate(
+                    QDate(
+                        derived_visa.year,
+                        derived_visa.month,
+                        derived_visa.day,
+                    )
+                )
+                self._date_empty_on_load.discard("visa_expiration")
 
         self._update_field_sources(missionary)
 

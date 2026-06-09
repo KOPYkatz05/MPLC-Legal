@@ -1,277 +1,842 @@
-from ui.dialogs.document_rendering import (
-    get_document_viewer_render_hints,
-    get_pdf_page_count,
-    render_document_pixmap,
-)
-from ui.foundation import create_button, setup_dialog_shell
-from utils.logger import logger
+from pathlib import Path
+
+import fitz
+from shiboken6 import isValid as shiboken_is_valid
+
+from PySide6.QtCore import QEvent, QPoint, QSize, Qt, QTimer, Signal
 from PySide6.QtWidgets import (
-    QDialog,
-    QVBoxLayout,
+    QApplication,
+    QFrame,
+    QGraphicsPixmapItem,
+    QGraphicsScene,
+    QGraphicsView,
     QHBoxLayout,
     QLabel,
-    QGraphicsView,
-    QGraphicsScene,
-    QGraphicsPixmapItem,
-    QFrame,
     QSizePolicy,
-    QScrollBar,
+    QVBoxLayout,
+    QWidget,
 )
 
-from PySide6.QtCore import Qt, QRectF
+from ui.dialogs.document_rendering import (
+    SUPPORTED_IMAGE_EXTENSIONS,
+    get_document_viewer_render_hints,
+    render_document_pixmap,
+    render_pdf_page,
+)
+from ui.foundation import (
+    MaskDialogBase,
+    SmoothScrollDelegate,
+    create_button,
+    create_card,
+    create_combo_box,
+    setup_dialog_shell,
+    tune_fluent_scrollable,
+)
+from utils.logger import logger
 
 
-class DocumentViewerDialog(QDialog):
-    def __init__(self, file_path, parent=None):
+PREVIEW_MIN_SCALE = 0.05
+PREVIEW_MAX_SCALE = 8.0
+
+
+def _widget_alive(widget):
+    try:
+        return widget is not None and shiboken_is_valid(widget)
+    except Exception:
+        return False
+
+
+class DocumentPreviewGraphicsView(QGraphicsView):
+    zoom_requested = Signal(float, QPoint)
+
+    def __init__(self, parent=None):
         super().__init__(parent)
+        self._preview_interactions_enabled = False
+        self._is_middle_panning = False
+        self._last_pan_pos = QPoint()
+        self.scrollDelegate = None
 
-        self.file_path = file_path
+        self.setTransformationAnchor(QGraphicsView.AnchorUnderMouse)
+        self.setResizeAnchor(QGraphicsView.AnchorViewCenter)
+
+        if SmoothScrollDelegate is not None:
+            self.scrollDelegate = SmoothScrollDelegate(self)
+            tune_fluent_scrollable(self)
+
+        self.viewport().installEventFilter(self)
+
+    def set_preview_interactions_enabled(self, enabled):
+        self._preview_interactions_enabled = enabled
+        if not enabled:
+            self._stop_middle_pan()
+
+    def eventFilter(self, watched, event):
+        if watched == self.viewport() and event.type() == QEvent.Type.Wheel:
+            if self._handle_wheel_zoom(event):
+                return True
+        return super().eventFilter(watched, event)
+
+    def wheelEvent(self, event):
+        if not self._handle_wheel_zoom(event):
+            super().wheelEvent(event)
+
+    def _handle_wheel_zoom(self, event):
+        if not self._preview_interactions_enabled:
+            return False
+
+        delta = event.angleDelta().y() or event.angleDelta().x()
+        if delta == 0:
+            return False
+
+        factor = 1.25 if delta > 0 else 0.8
+        self.zoom_requested.emit(factor, event.position().toPoint())
+        event.accept()
+        return True
+
+    def mousePressEvent(self, event):
+        if (
+            self._preview_interactions_enabled
+            and event.button() == Qt.MiddleButton
+        ):
+            self._is_middle_panning = True
+            self._last_pan_pos = event.position().toPoint()
+            self.viewport().setCursor(Qt.ClosedHandCursor)
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if self._is_middle_panning:
+            current_pos = event.position().toPoint()
+            delta = current_pos - self._last_pan_pos
+            self.horizontalScrollBar().setValue(
+                self.horizontalScrollBar().value() - delta.x()
+            )
+            self.verticalScrollBar().setValue(
+                self.verticalScrollBar().value() - delta.y()
+            )
+            self._last_pan_pos = current_pos
+            event.accept()
+            return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if self._is_middle_panning and event.button() == Qt.MiddleButton:
+            self._stop_middle_pan()
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
+
+    def _stop_middle_pan(self):
+        if not self._is_middle_panning:
+            return
+        self._is_middle_panning = False
+        self.viewport().unsetCursor()
+
+
+class DocumentViewerDialog(MaskDialogBase):
+    def __init__(self, file_path, parent=None):
+        owned_parent = None
+        dialog_parent = parent
+        if dialog_parent is None:
+            owned_parent = QApplication.activeWindow() or QWidget()
+            owned_parent.resize(1040, 760)
+
+        super().__init__(dialog_parent or owned_parent)
+        self._owned_mask_parent = owned_parent
+        self.file_path = str(file_path)
+        self.path = Path(file_path)
+        self.document = None
+        self.current_pixmap = None
+        self._preview_item = None
+        self._preview_scale = 1.0
+        self._preview_zoom_mode = "fit_window"
+        self._is_closing = False
+        self._active_screen = None
+        self._screen_changed_connected = False
+        self._tracked_parent_window = None
+        self._responsive_geometry_timer = QTimer(self)
+        self._responsive_geometry_timer.setSingleShot(True)
+        self._responsive_geometry_timer.setInterval(80)
+        self._responsive_geometry_timer.timeout.connect(
+            self._apply_responsive_shell_geometry
+        )
 
         self.setWindowTitle("Document Viewer")
-
         self.surface = setup_dialog_shell(
             self,
-            surface_min_width=900,
-            surface_min_height=700,
-            use_masked_shell=False,
+            shell_object_name="UploadWorkspaceDialog",
+            surface_object_name="UploadWorkspaceSurface",
+            use_masked_shell=True,
+            fit_to_content=False,
         )
-
-        self._scale = 1.0
-
-        self._pixmap = None
-
-        self._scene = QGraphicsScene()
-
-        self._item = None
+        self.surface.setMinimumSize(0, 0)
 
         self.setup_ui()
+        self._ensure_screen_tracking()
+        self._apply_responsive_shell_geometry()
+        self.load_document()
 
-        self._load_document()
+    def _ensure_screen_tracking(self):
+        window_handle = self.windowHandle()
+        if window_handle is not None and not self._screen_changed_connected:
+            window_handle.screenChanged.connect(self._on_screen_changed)
+            self._screen_changed_connected = True
 
-    def setup_ui(self):
-        layout = QVBoxLayout()
+        parent_window = self._parent_window()
+        tracked_parent = getattr(self, "_tracked_parent_window", None)
+        if parent_window is not tracked_parent:
+            if _widget_alive(tracked_parent):
+                tracked_parent.removeEventFilter(self)
+            self._tracked_parent_window = parent_window
+            if _widget_alive(parent_window):
+                parent_window.installEventFilter(self)
 
-        layout.setContentsMargins(0, 0, 0, 0)
+        self._bind_active_screen(self._responsive_screen())
 
-        layout.setSpacing(0)
+    def _parent_window(self):
+        parent = self.parentWidget()
+        if parent is None:
+            return None
+        return parent.window()
 
-        self.surface.setLayout(layout)
+    def _parent_container(self):
+        return self.parentWidget()
 
-        # Header
-        header = QFrame()
+    def _screen_for_widget(self, widget):
+        if not _widget_alive(widget):
+            return None
 
-        header.setObjectName("PageHeader")
+        rect = widget.rect()
+        if rect.isValid() and not rect.isEmpty():
+            screen = QApplication.screenAt(
+                widget.mapToGlobal(rect.center())
+            )
+            if screen is not None:
+                return screen
 
-        header_layout = QHBoxLayout()
+        window_handle = widget.windowHandle()
+        if window_handle is not None:
+            return window_handle.screen()
+        return None
 
-        header_layout.setContentsMargins(16, 10, 16, 10)
+    def _responsive_screen(self):
+        screen = self._screen_for_widget(self._parent_container())
+        if screen is not None:
+            return screen
 
-        header.setLayout(header_layout)
+        screen = self._screen_for_widget(self._parent_window())
+        if screen is not None:
+            return screen
 
-        self.title_label = QLabel("Document Viewer")
+        screen = self._screen_for_widget(self)
+        if screen is not None:
+            return screen
 
-        self.title_label.setObjectName("PanelTitle")
+        window_handle = self.windowHandle()
+        if window_handle is not None:
+            return window_handle.screen()
+        return QApplication.primaryScreen()
 
-        header_layout.addWidget(self.title_label)
+    def _bind_active_screen(self, screen):
+        current = getattr(self, "_active_screen", None)
+        if current is screen:
+            return
 
-        header_layout.addStretch()
-
-        # Zoom controls
-        zoom_out = create_button("Zoom Out", "secondary", fixed_height=28)
-
-        zoom_out.clicked.connect(self._zoom_out)
-
-        self.zoom_label = QLabel("100%")
-
-        self.zoom_label.setObjectName("MutedText")
-
-        self.zoom_label.setFixedWidth(50)
-
-        self.zoom_label.setAlignment(
-            Qt.AlignCenter
-        )
-
-        zoom_in = create_button("Zoom In", "secondary", fixed_height=28)
-
-        zoom_in.clicked.connect(self._zoom_in)
-
-        reset_btn = create_button("Fit", "secondary", fixed_height=28)
-
-        reset_btn.clicked.connect(self._fit_to_window)
-
-        close_btn = create_button("Close", "secondary", fixed_height=28)
-
-        close_btn.clicked.connect(self.accept)
-
-        header_layout.addWidget(zoom_out)
-
-        header_layout.addWidget(self.zoom_label)
-
-        header_layout.addWidget(zoom_in)
-
-        header_layout.addWidget(reset_btn)
-
-        header_layout.addWidget(close_btn)
-
-        layout.addWidget(header)
-
-        divider = QFrame()
-
-        divider.setFixedHeight(1)
-
-        divider.setObjectName("HeaderDivider")
-
-        layout.addWidget(divider)
-
-        # Graphics view
-        self.view = QGraphicsView()
-
-        self.view.setScene(self._scene)
-
-        self.view.setAlignment(Qt.AlignCenter)
-
-        self.view.setRenderHints(
-            self.view.renderHints()
-            | get_document_viewer_render_hints()
-        )
-
-        self.view.setBackgroundBrush(
-            Qt.GlobalColor.lightGray
-        )
-
-        self.view.setSizePolicy(
-            QSizePolicy.Expanding,
-            QSizePolicy.Expanding,
-        )
-
-        layout.addWidget(self.view, stretch=1)
-
-    def _load_document(self):
-        try:
-            path = self.file_path.lower()
-
-            if path.endswith(".pdf"):
-                self._load_pdf()
-
-            elif path.endswith((
-                ".png", ".jpg", ".jpeg",
-                ".bmp", ".tiff", ".tif",
-                ".webp",
-            )):
-                self._load_image()
-
-            else:
-                self._show_error(
-                    "Unsupported file format."
+        if _widget_alive(current):
+            try:
+                current.availableGeometryChanged.disconnect(
+                    self._on_screen_geometry_changed
                 )
+            except (TypeError, RuntimeError):
+                pass
 
-                return
+        self._active_screen = screen
 
-        except Exception:
-            logger.exception("Document load failed")
+        if _widget_alive(screen):
+            try:
+                screen.availableGeometryChanged.connect(
+                    self._on_screen_geometry_changed
+                )
+            except (TypeError, RuntimeError):
+                pass
 
-            self._show_error(
-                "Failed to load document."
+    def _on_screen_changed(self, screen):
+        self._bind_active_screen(screen)
+        self._schedule_responsive_shell_geometry()
+
+    def _on_screen_geometry_changed(self, geometry):
+        _ = geometry
+        self._schedule_responsive_shell_geometry()
+
+    def _schedule_responsive_shell_geometry(self):
+        timer = getattr(self, "_responsive_geometry_timer", None)
+        if timer is None:
+            return
+        timer.start()
+
+    def _apply_responsive_shell_geometry(self):
+        surface = getattr(self, "surface", None)
+        if not _widget_alive(surface):
+            return
+
+        self._ensure_screen_tracking()
+        screen = self._responsive_screen()
+        if screen is None:
+            return
+
+        available = screen.availableGeometry()
+        parent_container = self._parent_container()
+        container_size = (
+            parent_container.size()
+            if _widget_alive(parent_container)
+            else QSize(available.width(), available.height())
+        )
+        horizontal_margin = 96
+        vertical_margin = 48
+        container_width = min(available.width(), container_size.width())
+        container_height = min(available.height(), container_size.height())
+        max_width = max(1, container_width - horizontal_margin)
+        max_height = max(1, container_height - vertical_margin)
+
+        preferred_width = max(900, int(container_width * 0.82))
+        preferred_height = max(640, int(container_height * 0.84))
+        target_width = min(preferred_width, max_width)
+        target_height = min(preferred_height, max_height)
+
+        if _widget_alive(parent_container):
+            self.setMaximumSize(16777215, 16777215)
+            self.resize(container_size)
+        else:
+            self.setMaximumSize(
+                target_width + horizontal_margin,
+                target_height + vertical_margin,
+            )
+            self.resize(
+                target_width + horizontal_margin,
+                target_height + vertical_margin,
             )
 
-    def _load_pdf(self):
-        self._pixmap = render_document_pixmap(self.file_path, 0)
+        self.setMinimumSize(0, 0)
+        surface.setFixedSize(target_width, target_height)
 
-        self._show_pixmap()
+    def _clear_screen_tracking(self):
+        parent_window = getattr(self, "_tracked_parent_window", None)
+        if _widget_alive(parent_window):
+            parent_window.removeEventFilter(self)
+        self._tracked_parent_window = None
 
-        self.title_label.setText(
-            f"Document Viewer - "
-            f"Page 1 of {get_pdf_page_count(self.file_path)}"
+    def eventFilter(self, watched, event):
+        if watched is getattr(self, "_tracked_parent_window", None):
+            if event.type() in {
+                QEvent.Type.Move,
+                QEvent.Type.Resize,
+                QEvent.Type.Show,
+            }:
+                self._ensure_screen_tracking()
+                self._schedule_responsive_shell_geometry()
+        return super().eventFilter(watched, event)
+
+    def setup_ui(self):
+        root = QVBoxLayout()
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+        self.surface.setLayout(root)
+
+        header = QFrame()
+        header.setObjectName("PageHeader")
+        header.setAttribute(Qt.WA_StyledBackground, True)
+        header_layout = QHBoxLayout()
+        header_layout.setContentsMargins(24, 16, 24, 16)
+        header_layout.setSpacing(12)
+        header.setLayout(header_layout)
+
+        title_stack = QVBoxLayout()
+        title_stack.setContentsMargins(0, 0, 0, 0)
+        title_stack.setSpacing(4)
+        self.preview_name_label = QLabel(self.path.name or "Document Viewer")
+        self.preview_name_label.setObjectName("PanelTitle")
+        self.preview_meta_label = QLabel("Loading document...")
+        self.preview_meta_label.setObjectName("MutedText")
+        title_stack.addWidget(self.preview_name_label)
+        title_stack.addWidget(self.preview_meta_label)
+
+        self.file_type_badge = QLabel("Document")
+        self.file_type_badge.setObjectName("UploadStatusChip")
+        self.file_type_badge.setProperty("status", "ready")
+        self.file_type_badge.setAlignment(Qt.AlignCenter)
+        self.file_type_badge.setMinimumWidth(72)
+
+        self.close_btn = create_button("Close", "secondary")
+        self.close_btn.clicked.connect(self.accept)
+
+        header_layout.addLayout(title_stack, stretch=1)
+        header_layout.addWidget(self.file_type_badge, alignment=Qt.AlignTop)
+        header_layout.addWidget(self.close_btn, alignment=Qt.AlignTop)
+        root.addWidget(header)
+
+        body = QFrame()
+        body.setObjectName("DialogBody")
+        body.setAttribute(Qt.WA_StyledBackground, True)
+        body_layout = QVBoxLayout()
+        body_layout.setContentsMargins(18, 18, 18, 18)
+        body_layout.setSpacing(12)
+        body.setLayout(body_layout)
+
+        self.preview_card = create_card(object_name="UploadSurfaceCard")
+        self.preview_card.setAttribute(Qt.WA_StyledBackground, True)
+        card_layout = QVBoxLayout()
+        card_layout.setContentsMargins(18, 18, 18, 18)
+        card_layout.setSpacing(12)
+        self.preview_card.setLayout(card_layout)
+
+        self.preview_toolbar = QFrame()
+        self.preview_toolbar.setObjectName("UploadPreviewToolbar")
+        self.preview_toolbar.setAttribute(Qt.WA_StyledBackground, True)
+        toolbar_layout = QHBoxLayout()
+        toolbar_layout.setContentsMargins(14, 12, 14, 12)
+        toolbar_layout.setSpacing(10)
+        self.preview_toolbar.setLayout(toolbar_layout)
+
+        page_group = QHBoxLayout()
+        page_group.setContentsMargins(0, 0, 0, 0)
+        page_group.setSpacing(8)
+        self.page_label = QLabel("Page")
+        self.page_label.setObjectName("MutedText")
+        self.page_combo = create_combo_box(object_name="UploadPageInput")
+        self.page_combo.setMinimumWidth(152)
+        self.page_combo.currentIndexChanged.connect(self.change_page)
+        self.page_prev_btn = self._make_preview_button(
+            "<",
+            self.go_to_previous_page,
+            width=34,
+            tooltip="Previous page",
         )
+        self.page_next_btn = self._make_preview_button(
+            ">",
+            self.go_to_next_page,
+            width=34,
+            tooltip="Next page",
+        )
+        page_group.addWidget(self.page_label)
+        page_group.addWidget(self.page_combo)
+        page_group.addWidget(self.page_prev_btn)
+        page_group.addWidget(self.page_next_btn)
+        toolbar_layout.addLayout(page_group)
+        toolbar_layout.addStretch()
+
+        zoom_group = QHBoxLayout()
+        zoom_group.setContentsMargins(0, 0, 0, 0)
+        zoom_group.setSpacing(8)
+        self.preview_zoom_label = QLabel("Fit 100%")
+        self.preview_zoom_label.setObjectName("UploadZoomBadge")
+        self.preview_zoom_label.setAlignment(Qt.AlignCenter)
+        self.preview_zoom_out_btn = self._make_preview_button(
+            "-",
+            self.zoom_out_preview,
+            width=34,
+            tooltip="Zoom out",
+        )
+        self.preview_zoom_in_btn = self._make_preview_button(
+            "+",
+            self.zoom_in_preview,
+            width=34,
+            tooltip="Zoom in",
+        )
+        self.preview_fit_width_btn = self._make_preview_button(
+            "Width",
+            self.fit_preview_width,
+            tooltip="Fit to width",
+        )
+        self.preview_fit_window_btn = self._make_preview_button(
+            "Fit",
+            self.fit_preview_window,
+            tooltip="Fit whole page",
+        )
+        self.preview_reset_btn = self._make_preview_button(
+            "100%",
+            self.reset_preview_zoom,
+            tooltip="Actual size",
+        )
+        zoom_group.addWidget(self.preview_zoom_label)
+        zoom_group.addWidget(self.preview_zoom_out_btn)
+        zoom_group.addWidget(self.preview_zoom_in_btn)
+        zoom_group.addWidget(self.preview_fit_width_btn)
+        zoom_group.addWidget(self.preview_fit_window_btn)
+        zoom_group.addWidget(self.preview_reset_btn)
+        toolbar_layout.addLayout(zoom_group)
+        card_layout.addWidget(self.preview_toolbar)
+
+        self.scene = QGraphicsScene()
+        self.graphics_view = DocumentPreviewGraphicsView()
+        self.graphics_view.setScene(self.scene)
+        self.graphics_view.setAlignment(Qt.AlignCenter)
+        self.graphics_view.setRenderHints(
+            self.graphics_view.renderHints()
+            | get_document_viewer_render_hints()
+        )
+        self.graphics_view.setFrameShape(QFrame.NoFrame)
+        self.graphics_view.setBackgroundBrush(Qt.GlobalColor.white)
+        self.graphics_view.setObjectName("UploadPreviewCanvas")
+        self.graphics_view.setSizePolicy(
+            QSizePolicy.Expanding,
+            QSizePolicy.Expanding,
+        )
+        self.graphics_view.zoom_requested.connect(self._zoom_preview_by)
+        card_layout.addWidget(self.graphics_view, stretch=1)
+
+        self.preview_empty_label = QLabel("Preview unavailable.")
+        self.preview_empty_label.setObjectName("UploadEmptyState")
+        self.preview_empty_label.setAlignment(Qt.AlignCenter)
+        self.preview_empty_label.setWordWrap(True)
+        card_layout.addWidget(self.preview_empty_label, stretch=1)
+
+        body_layout.addWidget(self.preview_card, stretch=1)
+        root.addWidget(body, stretch=1)
+
+    def _make_preview_button(self, text, slot, width=None, tooltip=""):
+        button = create_button(text, "subtle", fixed_height=28)
+        button.setObjectName("UploadNavButton")
+        if width is not None:
+            button.setFixedWidth(width)
+        if tooltip:
+            button.setToolTip(tooltip)
+        button.clicked.connect(slot)
+        return button
+
+    def load_document(self):
+        self.close_document()
+        self._preview_zoom_mode = "fit_window"
+        self._preview_scale = 1.0
+        self._set_page_controls_visible(False)
+        self.page_combo.blockSignals(True)
+        self.page_combo.clear()
+        self.page_combo.blockSignals(False)
+
+        if not self.path.exists():
+            self._show_empty_state("Cannot open document file.")
+            return
+
+        suffix = self.path.suffix.lower()
+        try:
+            if suffix == ".pdf":
+                self._load_pdf()
+            elif suffix in SUPPORTED_IMAGE_EXTENSIONS:
+                self._load_image()
+            else:
+                self._show_empty_state("Unsupported file format.")
+        except Exception:
+            logger.exception("Document load failed")
+            self._show_empty_state("Failed to load document.")
+
+    def _load_pdf(self):
+        self.document = fitz.open(str(self.path))
+        page_count = self.document.page_count
+        if page_count <= 0:
+            self._show_empty_state("Preview unavailable.")
+            return
+
+        self.page_combo.blockSignals(True)
+        self.page_combo.clear()
+        for page_index in range(page_count):
+            self.page_combo.addItem(f"Page {page_index + 1}", page_index)
+        self.page_combo.setCurrentIndex(0)
+        self.page_combo.blockSignals(False)
+
+        self.file_type_badge.setText("PDF")
+        self._set_page_controls_visible(page_count > 1)
+        self.change_page(0)
 
     def _load_image(self):
-        self._pixmap = render_document_pixmap(self.file_path)
+        self.current_pixmap = render_document_pixmap(str(self.path))
+        self.file_type_badge.setText("Image")
+        self._update_preview_meta_label()
+        self.update_preview(reset_zoom=True)
 
-        self._show_pixmap()
+    def close_document(self):
+        if self.document is not None:
+            self.document.close()
+        self.document = None
 
-        self.title_label.setText("Document Viewer")
-
-    def _show_pixmap(self):
-        if self._pixmap is None:
+    def change_page(self, index):
+        if self._is_closing:
+            return
+        if self.document is None or index < 0:
+            self._update_preview_meta_label()
             return
 
-        self._scene.clear()
+        self.current_pixmap = render_pdf_page(self.document, index)
+        self._update_preview_meta_label()
+        self.update_preview(reset_zoom=True)
 
-        self._item = QGraphicsPixmapItem(
-            self._pixmap
-        )
+    def go_to_previous_page(self, checked=False):
+        current = self.page_combo.currentIndex()
+        if current > 0:
+            self.page_combo.setCurrentIndex(current - 1)
 
-        self._scene.addItem(self._item)
+    def go_to_next_page(self, checked=False):
+        current = self.page_combo.currentIndex()
+        if current + 1 < self.page_combo.count():
+            self.page_combo.setCurrentIndex(current + 1)
 
-        self._scene.setSceneRect(
-            QRectF(self._pixmap.rect())
-        )
+    def _set_page_controls_visible(self, visible):
+        for widget in (
+            self.page_label,
+            self.page_combo,
+            self.page_prev_btn,
+            self.page_next_btn,
+        ):
+            if _widget_alive(widget):
+                widget.setVisible(visible)
 
-        self._scale = 1.0
+    def _set_preview_controls_enabled(self, enabled):
+        for widget in (
+            self.preview_zoom_label,
+            self.preview_zoom_out_btn,
+            self.preview_zoom_in_btn,
+            self.preview_fit_width_btn,
+            self.preview_fit_window_btn,
+            self.preview_reset_btn,
+        ):
+            if _widget_alive(widget):
+                widget.setEnabled(enabled)
 
-        self._update_zoom()
+    def update_preview(self, reset_zoom=False):
+        if self._is_closing or not _widget_alive(self.scene):
+            return
+        if reset_zoom:
+            self._preview_zoom_mode = "fit_window"
+            self._preview_scale = 1.0
 
-    def _zoom_in(self):
-        self._scale *= 1.25
-
-        self._update_zoom()
-
-    def _zoom_out(self):
-        self._scale *= 0.8
-
-        self._update_zoom()
-
-    def _fit_to_window(self):
-        if self._pixmap is None:
+        self.scene.clear()
+        self._preview_item = None
+        if self.current_pixmap is None or self.current_pixmap.isNull():
+            self._show_empty_state("Preview unavailable.")
             return
 
-        view_rect = self.view.viewport().rect()
+        pix_item = QGraphicsPixmapItem(self.current_pixmap)
+        pix_item.setTransformationMode(Qt.SmoothTransformation)
+        self.scene.addItem(pix_item)
+        self.scene.setSceneRect(pix_item.boundingRect())
+        self._preview_item = pix_item
+        self.preview_empty_label.hide()
+        self.graphics_view.show()
+        self._set_preview_controls_enabled(True)
+        self.graphics_view.set_preview_interactions_enabled(True)
+        self._apply_preview_zoom()
 
-        pix_rect = self._pixmap.rect()
+    def _show_empty_state(self, message):
+        self.current_pixmap = None
+        self._preview_item = None
+        self.scene.clear()
+        self.preview_empty_label.setText(message)
+        self.preview_empty_label.show()
+        self.graphics_view.hide()
+        self._set_preview_controls_enabled(False)
+        self.graphics_view.set_preview_interactions_enabled(False)
+        self._update_preview_zoom_label()
+        self.preview_meta_label.setText(message)
+        self.file_type_badge.setText("Unavailable")
 
-        scale_w = (
-            view_rect.width() - 40
-        ) / pix_rect.width()
+    def _preview_base_scale(self, mode):
+        if self._preview_item is None or self.current_pixmap is None:
+            return 1.0
 
-        scale_h = (
-            view_rect.height() - 40
-        ) / pix_rect.height()
+        view_rect = self.graphics_view.viewport().rect()
+        pix_rect = self.current_pixmap.rect()
+        if (
+            view_rect.width() <= 0
+            or view_rect.height() <= 0
+            or pix_rect.width() <= 0
+            or pix_rect.height() <= 0
+        ):
+            return 1.0
 
-        self._scale = min(scale_w, scale_h, 1.0)
-
-        self._update_zoom()
-
-    def _update_zoom(self):
-        if self._item is None:
-            return
-
-        self._item.setScale(self._scale)
-
-        self.zoom_label.setText(
-            f"{int(self._scale * 100)}%"
+        padding = 40
+        width_scale = max((view_rect.width() - padding) / pix_rect.width(), 0.05)
+        height_scale = max(
+            (view_rect.height() - padding) / pix_rect.height(),
+            0.05,
         )
 
-    def _show_error(self, message):
-        self._scene.clear()
+        if mode == "fit_width":
+            return width_scale
+        return min(width_scale, height_scale)
 
-        label = QLabel(message)
+    def _apply_preview_zoom(self, recenter=True, anchor_view_pos=None):
+        if self._preview_item is None or self.current_pixmap is None:
+            return
 
-        label.setObjectName("DangerText")
+        anchor_item_pos = None
+        if not recenter and anchor_view_pos is not None:
+            anchor_scene_pos = self.graphics_view.mapToScene(anchor_view_pos)
+            anchor_item_pos = self._preview_item.mapFromScene(anchor_scene_pos)
 
-        self._scene.addWidget(label)
+        if self._preview_zoom_mode in {"fit_window", "fit_width"}:
+            scale = self._preview_base_scale(self._preview_zoom_mode)
+            self._preview_scale = scale
+        else:
+            scale = min(
+                max(self._preview_scale, PREVIEW_MIN_SCALE),
+                PREVIEW_MAX_SCALE,
+            )
+            self._preview_scale = scale
+
+        self._preview_item.setScale(scale)
+        self.scene.setSceneRect(self._preview_item.sceneBoundingRect())
+        if anchor_item_pos is not None:
+            new_anchor_scene_pos = self._preview_item.mapToScene(anchor_item_pos)
+            new_anchor_pos = self.graphics_view.mapFromScene(new_anchor_scene_pos)
+            delta = new_anchor_pos - anchor_view_pos
+            self.graphics_view.horizontalScrollBar().setValue(
+                self.graphics_view.horizontalScrollBar().value() + delta.x()
+            )
+            self.graphics_view.verticalScrollBar().setValue(
+                self.graphics_view.verticalScrollBar().value() + delta.y()
+            )
+        elif recenter:
+            self.graphics_view.centerOn(self._preview_item)
+        self._update_preview_zoom_label()
+
+    def _update_preview_zoom_label(self):
+        if not _widget_alive(self.preview_zoom_label):
+            return
+
+        percent = max(int(round(self._preview_scale * 100)), 1)
+        if self._preview_zoom_mode == "fit_width":
+            prefix = "Fit W"
+        elif self._preview_zoom_mode == "fit_window":
+            prefix = "Fit"
+        else:
+            prefix = ""
+
+        self.preview_zoom_label.setText(f"{prefix} {percent}%".strip())
+
+    def _update_preview_meta_label(self):
+        if not _widget_alive(self.preview_meta_label):
+            return
+
+        parts = [self._file_kind_text(), self._file_size_text()]
+        page_count = getattr(self.document, "page_count", 0) if self.document else 0
+        if page_count > 1 and self.page_combo.currentIndex() >= 0:
+            current_page = self.page_combo.currentIndex() + 1
+            parts.append(f"Page {current_page} of {page_count}")
+        elif page_count == 1:
+            parts.append("Single page")
+
+        self.preview_meta_label.setText(" · ".join(part for part in parts if part))
+
+    def _file_kind_text(self):
+        if self.path.suffix.lower() == ".pdf":
+            return "PDF document"
+        if self.path.suffix.lower() in SUPPORTED_IMAGE_EXTENSIONS:
+            return "Image document"
+        return "Document"
+
+    def _file_size_text(self):
+        try:
+            size = self.path.stat().st_size
+        except OSError:
+            return "Unknown size"
+
+        if size >= 1024 * 1024:
+            return f"{size / (1024 * 1024):.1f} MB"
+        if size >= 1024:
+            return f"{size / 1024:.0f} KB"
+        return f"{size} B"
+
+    def zoom_in_preview(self, checked=False):
+        self._zoom_preview_by(1.25)
+
+    def zoom_out_preview(self, checked=False):
+        self._zoom_preview_by(0.8)
+
+    def _zoom_preview_by(self, factor, anchor_view_pos=None):
+        if self.current_pixmap is None or self._preview_item is None:
+            return
+        self._preview_zoom_mode = "manual"
+        self._preview_scale = min(
+            max(self._preview_scale * factor, PREVIEW_MIN_SCALE),
+            PREVIEW_MAX_SCALE,
+        )
+        self._apply_preview_zoom(
+            recenter=anchor_view_pos is None,
+            anchor_view_pos=anchor_view_pos,
+        )
+
+    def fit_preview_width(self, checked=False):
+        if self.current_pixmap is None or self._preview_item is None:
+            return
+        self._preview_zoom_mode = "fit_width"
+        self._apply_preview_zoom()
+
+    def fit_preview_window(self, checked=False):
+        if self.current_pixmap is None or self._preview_item is None:
+            return
+        self._preview_zoom_mode = "fit_window"
+        self._apply_preview_zoom()
+
+    def reset_preview_zoom(self, checked=False):
+        if self.current_pixmap is None or self._preview_item is None:
+            return
+        self._preview_zoom_mode = "manual"
+        self._preview_scale = 1.0
+        self._apply_preview_zoom()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if self._preview_item is not None and self._preview_zoom_mode in {
+            "fit_window",
+            "fit_width",
+        }:
+            self._apply_preview_zoom()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._ensure_screen_tracking()
+        self._schedule_responsive_shell_geometry()
+        if self._preview_item is not None:
+            QTimer.singleShot(0, self._apply_preview_zoom)
+
+    def moveEvent(self, event):
+        super().moveEvent(event)
+        self._ensure_screen_tracking()
+        self._schedule_responsive_shell_geometry()
+
+    def closeEvent(self, event):
+        self._is_closing = True
+        self._clear_screen_tracking()
+        self.close_document()
+        super().closeEvent(event)
+
+    def accept(self):
+        self._is_closing = True
+        self._clear_screen_tracking()
+        self.close_document()
+        accept = getattr(super(), "accept", None)
+        if callable(accept):
+            accept()
+            return
+        self.done(self.Accepted)
+
+    def reject(self):
+        self._is_closing = True
+        self._clear_screen_tracking()
+        self.close_document()
+        reject = getattr(super(), "reject", None)
+        if callable(reject):
+            reject()
+            return
+        self.done(self.Rejected)
 
     def keyPressEvent(self, event):
         if event.key() == Qt.Key_Plus:
-            self._zoom_in()
-
+            self.zoom_in_preview()
         elif event.key() == Qt.Key_Minus:
-            self._zoom_out()
-
+            self.zoom_out_preview()
         elif event.key() == Qt.Key_0:
-            self._fit_to_window()
-
+            self.fit_preview_window()
         elif event.key() == Qt.Key_Escape:
             self.accept()
-
         else:
             super().keyPressEvent(event)

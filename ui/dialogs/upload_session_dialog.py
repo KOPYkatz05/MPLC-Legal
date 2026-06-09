@@ -75,6 +75,13 @@ SUPPORTED_EXTENSIONS = {
 DATE_PLACEHOLDER = QDate(1900, 1, 1)
 PREVIEW_MIN_SCALE = 0.05
 PREVIEW_MAX_SCALE = 8.0
+APPOINTMENT_UPDATE_FIELDS = {
+    "interpol_appointment_date",
+    "biometric_appointment_date",
+    "pickup_appointment_date",
+}
+
+
 def _widget_alive(widget):
     try:
         return widget is not None and shiboken_is_valid(widget)
@@ -645,6 +652,7 @@ class UploadSessionController:
 
 class UploadSessionDialog(MaskDialogBase):
     ocr_finished_on_ui = Signal(int, bool, str, object, str)
+    appointment_dates_updated = Signal(int, list)
 
     def __init__(self, missionary, initial_files=None, parent=None):
         super().__init__(parent)
@@ -668,6 +676,7 @@ class UploadSessionDialog(MaskDialogBase):
         self._active_screen = None
         self._screen_changed_connected = False
         self._tracked_parent_window = None
+        self._emitted_appointment_update_fields = set()
         self._responsive_geometry_timer = QTimer(self)
         self._responsive_geometry_timer.setSingleShot(True)
         self._responsive_geometry_timer.setInterval(80)
@@ -2466,6 +2475,28 @@ class UploadSessionDialog(MaskDialogBase):
             self.clear_detail()
         self.update_progress()
         self._update_action_states()
+        self._emit_appointment_dates_updated_if_needed()
+
+    def _appointment_updated_fields(self):
+        return sorted(
+            set(self.controller.updated_fields)
+            & APPOINTMENT_UPDATE_FIELDS
+        )
+
+    def _emit_appointment_dates_updated_if_needed(self):
+        fields = set(self._appointment_updated_fields())
+        new_fields = sorted(
+            fields - self._emitted_appointment_update_fields
+        )
+        if not new_fields:
+            return
+
+        missionary_id = getattr(self.controller.missionary, "id", None)
+        if missionary_id is None:
+            return
+
+        self._emitted_appointment_update_fields.update(new_fields)
+        self.appointment_dates_updated.emit(missionary_id, new_fields)
 
     def go_to_next_item(self, checked=False):
         total = len(self.controller.items)

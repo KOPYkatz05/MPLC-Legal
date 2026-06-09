@@ -61,10 +61,6 @@ LABEL_FIELD_MAP = {
             ["fecha de ingreso", "ingreso", "arribo", "llegada"],
             "arrival_date",
         ),
-        (
-            ["fecha de vencimiento", "vencimiento", "vence", "validez"],
-            "visa_expiration",
-        ),
     ],
     "CARNE_DE_EXTRANJERIA": [
         (

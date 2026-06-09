@@ -95,11 +95,9 @@ DOCUMENTS = {
         "required": True,
         "ocr_fields": [
             "arrival_date",
-            "visa_expiration",
         ],
         "auto_updates": [
             "arrival_date",
-            "visa_expiration",
         ],
     },
 
