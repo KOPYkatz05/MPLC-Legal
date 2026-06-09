@@ -235,6 +235,42 @@ QTableWidget#MissionaryTable::item:selected {
     color: #1D4ED8;
 }
 
+QPushButton#MissionaryCellCopyButton {
+    background-color: transparent;
+    color: #71717A;
+    border: 1px solid transparent;
+    border-radius: 7px;
+    padding: 3px;
+}
+
+QPushButton#MissionaryCellCopyButton:hover {
+    background-color: #F4F4F5;
+    border-color: #E4E4E7;
+    color: #18181B;
+}
+
+QWidget#AppDialogSurface QListWidget#MissionaryColumnList,
+QDialog#AppDialogSurface QListWidget#MissionaryColumnList {
+    background-color: #FFFFFF;
+    border: 1px solid #E4E4E7;
+    border-radius: 8px;
+    outline: 0;
+    padding: 6px;
+}
+
+QWidget#AppDialogSurface QListWidget#MissionaryColumnList::item,
+QDialog#AppDialogSurface QListWidget#MissionaryColumnList::item {
+    min-height: 30px;
+    padding: 4px 8px;
+    border-radius: 6px;
+}
+
+QWidget#AppDialogSurface QListWidget#MissionaryColumnList::item:selected,
+QDialog#AppDialogSurface QListWidget#MissionaryColumnList::item:selected {
+    background-color: #EFF6FF;
+    color: #1D4ED8;
+}
+
 QHeaderView {
     background-color: #FAFAFA;
     border: none;
