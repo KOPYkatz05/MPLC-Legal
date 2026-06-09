@@ -373,6 +373,7 @@ def setup_dialog_shell(
     surface_width=None,
     surface_min_width=None,
     surface_min_height=None,
+    fit_to_content=True,
     shell_object_name=APP_DIALOG_SHELL_OBJECT_NAME,
     surface_object_name=APP_DIALOG_SURFACE_OBJECT_NAME,
     shell_margins=APP_DIALOG_SHELL_MARGINS,
@@ -384,6 +385,7 @@ def setup_dialog_shell(
     _ = transparent_masked_shell
     has_fluent_shell = hasattr(dialog, "_hBoxLayout") and hasattr(dialog, "widget")
     using_fluent_shell = use_masked_shell and has_fluent_shell
+    surface_alignment = Qt.AlignCenter
 
     if shell_object_name:
         dialog.setObjectName(shell_object_name)
@@ -396,7 +398,7 @@ def setup_dialog_shell(
         dialog._hBoxLayout.addWidget(
             dialog.widget,
             1,
-            Qt.AlignCenter,
+            surface_alignment,
         )
 
         surface = dialog.widget
@@ -413,7 +415,7 @@ def setup_dialog_shell(
         dialog.setLayout(root)
 
         surface = QFrame(dialog)
-        root.addWidget(surface, 1, Qt.AlignCenter)
+        root.addWidget(surface, 1, surface_alignment)
         _apply_surface_shadow(surface, shadow)
 
     if surface_object_name:
@@ -427,12 +429,13 @@ def setup_dialog_shell(
     if surface_min_height is not None:
         surface.setMinimumHeight(surface_min_height)
 
-    _fit_dialog_surface_to_content(
-        dialog,
-        surface,
-        surface_width,
-        adjust_dialog=not using_fluent_shell,
-    )
+    if fit_to_content:
+        _fit_dialog_surface_to_content(
+            dialog,
+            surface,
+            surface_width,
+            adjust_dialog=not using_fluent_shell,
+        )
     _clip_surface_to_rounded_rect(surface)
     refresh_widget_style(dialog)
     refresh_widget_style(surface)

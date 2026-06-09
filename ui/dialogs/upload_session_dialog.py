@@ -6,6 +6,7 @@ from shiboken6 import isValid as shiboken_is_valid
 
 from PySide6.QtCore import QObject, QDate, QEvent, QPoint, QSize, Qt, QThread, QTimer, Signal, Slot
 from PySide6.QtWidgets import (
+    QApplication,
     QAbstractItemView,
     QCheckBox,
     QDialog,
@@ -664,6 +665,15 @@ class UploadSessionDialog(MaskDialogBase):
         self._pending_save_after_ocr = None
         self._saving_all = False
         self._save_all_index = 0
+        self._active_screen = None
+        self._screen_changed_connected = False
+        self._tracked_parent_window = None
+        self._responsive_geometry_timer = QTimer(self)
+        self._responsive_geometry_timer.setSingleShot(True)
+        self._responsive_geometry_timer.setInterval(80)
+        self._responsive_geometry_timer.timeout.connect(
+            self._apply_responsive_shell_geometry
+        )
         self.ocr_finished_on_ui.connect(
             self._handle_ocr_finished,
             Qt.ConnectionType.QueuedConnection,
@@ -681,15 +691,191 @@ class UploadSessionDialog(MaskDialogBase):
     def _configure_shell(self):
         self.surface = setup_dialog_shell(
             self,
-            surface_width=1240,
-            surface_min_height=820,
             shell_object_name="UploadWorkspaceDialog",
             surface_object_name="UploadWorkspaceSurface",
             use_masked_shell=True,
+            fit_to_content=False,
         )
+        self.surface.setMinimumSize(0, 0)
+
+    def _ensure_screen_tracking(self):
+        window_handle = self.windowHandle()
+        if window_handle is not None and not self._screen_changed_connected:
+            window_handle.screenChanged.connect(self._on_screen_changed)
+            self._screen_changed_connected = True
+
+        parent_window = self._parent_window()
+        tracked_parent = getattr(self, "_tracked_parent_window", None)
+        if parent_window is not tracked_parent:
+            if _widget_alive(tracked_parent):
+                tracked_parent.removeEventFilter(self)
+            self._tracked_parent_window = parent_window
+            if _widget_alive(parent_window):
+                parent_window.installEventFilter(self)
+
+        self._bind_active_screen(self._responsive_screen())
+
+    def _parent_window(self):
+        parent = self.parentWidget()
+        if parent is None:
+            return None
+        return parent.window()
+
+    def _parent_container(self):
+        return self.parentWidget()
+
+    def _screen_for_widget(self, widget):
+        if not _widget_alive(widget):
+            return None
+
+        rect = widget.rect()
+        if rect.isValid() and not rect.isEmpty():
+            screen = QApplication.screenAt(
+                widget.mapToGlobal(rect.center())
+            )
+            if screen is not None:
+                return screen
+
+        window_handle = widget.windowHandle()
+        if window_handle is not None:
+            return window_handle.screen()
+        return None
+
+    def _responsive_screen(self):
+        screen = self._screen_for_widget(self._parent_container())
+        if screen is not None:
+            return screen
+
+        screen = self._screen_for_widget(self._parent_window())
+        if screen is not None:
+            return screen
+
+        screen = self._screen_for_widget(self)
+        if screen is not None:
+            return screen
+
+        window_handle = self.windowHandle()
+        if window_handle is not None:
+            return window_handle.screen()
+        return QApplication.primaryScreen()
+
+    def _bind_active_screen(self, screen):
+        current = getattr(self, "_active_screen", None)
+        if current is screen:
+            return
+
+        if _widget_alive(current):
+            try:
+                current.availableGeometryChanged.disconnect(
+                    self._on_screen_geometry_changed
+                )
+            except (TypeError, RuntimeError):
+                pass
+
+        self._active_screen = screen
+
+        if _widget_alive(screen):
+            try:
+                screen.availableGeometryChanged.connect(
+                    self._on_screen_geometry_changed
+                )
+            except (TypeError, RuntimeError):
+                pass
+
+    def _on_screen_changed(self, screen):
+        self._bind_active_screen(screen)
+        self._schedule_responsive_shell_geometry()
+
+    def _on_screen_geometry_changed(self, geometry):
+        _ = geometry
+        self._schedule_responsive_shell_geometry()
+
+    def _schedule_responsive_shell_geometry(self):
+        timer = getattr(self, "_responsive_geometry_timer", None)
+        if timer is None:
+            return
+        timer.start()
+
+    def _apply_responsive_shell_geometry(self):
+        surface = getattr(self, "surface", None)
+        splitter = getattr(self, "splitter", None)
+        if not _widget_alive(surface):
+            return
+
+        self._ensure_screen_tracking()
+        screen = self._responsive_screen()
+        if screen is None:
+            return
+
+        available = screen.availableGeometry()
+        parent_container = self._parent_container()
+        container_size = (
+            parent_container.size()
+            if _widget_alive(parent_container)
+            else QSize(available.width(), available.height())
+        )
+        horizontal_margin = 96
+        vertical_margin = 48
+        container_width = min(available.width(), container_size.width())
+        container_height = min(available.height(), container_size.height())
+        max_width = max(1, container_width - horizontal_margin)
+        max_height = max(1, container_height - vertical_margin)
+
+        preferred_width = max(1120, int(container_width * 0.82))
+        preferred_height = max(640, int(container_height * 0.84))
+        target_width = min(preferred_width, max_width)
+        target_height = min(preferred_height, max_height)
+
+        if _widget_alive(parent_container):
+            self.setMaximumSize(16777215, 16777215)
+            self.resize(container_size)
+        else:
+            self.setMaximumSize(
+                target_width + horizontal_margin,
+                target_height + vertical_margin,
+            )
+            self.resize(
+                target_width + horizontal_margin,
+                target_height + vertical_margin,
+            )
+
+        self.setMinimumSize(0, 0)
+        surface.setFixedSize(target_width, target_height)
+
+        if _widget_alive(splitter):
+            splitter.setSizes(
+                self._responsive_splitter_sizes(target_width)
+            )
+
+    def _responsive_splitter_sizes(self, total_width):
+        if total_width <= 0:
+            return [240, 320, 480]
+
+        if total_width < 1100:
+            ratios = (0.22, 0.28, 0.50)
+        elif total_width < 1350:
+            ratios = (0.23, 0.30, 0.47)
+        else:
+            ratios = (0.24, 0.31, 0.45)
+
+        sizes = [max(1, int(total_width * ratio)) for ratio in ratios]
+        remainder = total_width - sum(sizes)
+        sizes[-1] = max(1, sizes[-1] + remainder)
+        return sizes
 
     def _surface_widget(self):
         return getattr(self, "surface", None)
+
+    def eventFilter(self, watched, event):
+        if watched is getattr(self, "_tracked_parent_window", None):
+            if event.type() in {
+                QEvent.Type.Move,
+                QEvent.Type.Resize,
+                QEvent.Type.Show,
+            }:
+                self._ensure_screen_tracking()
+                self._schedule_responsive_shell_geometry()
+        return super().eventFilter(watched, event)
 
     def setup_ui(self):
         root = self._build_shell()
@@ -698,6 +884,8 @@ class UploadSessionDialog(MaskDialogBase):
         self._build_preview_panel()
         self._build_progress_panel(root)
         self._build_footer(root)
+        self._ensure_screen_tracking()
+        self._apply_responsive_shell_geometry()
         self._set_page_controls_visible(False)
         self._set_preview_controls_enabled(False)
         self._set_busy(False)
@@ -1001,7 +1189,6 @@ class UploadSessionDialog(MaskDialogBase):
         self.splitter.setStretchFactor(0, 1)
         self.splitter.setStretchFactor(1, 1)
         self.splitter.setStretchFactor(2, 2)
-        self.splitter.setSizes([300, 430, 770])
 
     def _build_progress_panel(self, root):
         self.progress_card = create_card(object_name="UploadSurfaceCard")
@@ -2379,11 +2566,17 @@ class UploadSessionDialog(MaskDialogBase):
             return
         self._is_closing = True
         self._hide_content_loading_overlay()
+        parent_window = getattr(self, "_tracked_parent_window", None)
+        if _widget_alive(parent_window):
+            parent_window.removeEventFilter(self)
+        self._tracked_parent_window = None
         self.close_document()
         super().closeEvent(event)
 
     def showEvent(self, event):
         super().showEvent(event)
+        self._ensure_screen_tracking()
+        self._schedule_responsive_shell_geometry()
         if self._preview_item is not None:
             QTimer.singleShot(0, self._apply_preview_zoom)
 
@@ -2394,6 +2587,11 @@ class UploadSessionDialog(MaskDialogBase):
             "fit_width",
         }:
             self._apply_preview_zoom()
+
+    def moveEvent(self, event):
+        super().moveEvent(event)
+        self._ensure_screen_tracking()
+        self._schedule_responsive_shell_geometry()
 
     def _onDone(self, code):
         on_done = getattr(super(), "_onDone", None)
