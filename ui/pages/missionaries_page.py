@@ -749,7 +749,7 @@ class MissionariesPage(QWidget):
                     index: QHeaderView.Interactive
                     for index, column in enumerate(columns)
                 },
-                selection_mode=QAbstractItemView.MultiSelection,
+                selection_mode=QAbstractItemView.ExtendedSelection,
                 sorting=True,
             )
 
@@ -1235,6 +1235,7 @@ class MissionariesPage(QWidget):
         ok = self.export_service.export_missionaries_to_excel(
             self._all_missionaries,
             file_path,
+            columns=self._visible_columns(),
         )
 
         if ok:

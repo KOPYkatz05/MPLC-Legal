@@ -1,6 +1,7 @@
 PySide6
 PySide6-Fluent-Widgets
 SQLAlchemy
+openpyxl
 python-dotenv
 setuptools
 
@@ -16,3 +17,4 @@ PyMuPDF
 PySide6
 python-dotenv
 SQLAlchemy
+openpyxl
