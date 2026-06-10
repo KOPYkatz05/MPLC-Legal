@@ -23,6 +23,7 @@ def init_db():
     from database.models.workflow import WorkflowStage
     from database.models.document import Document
     from database.models.stage_history import StageHistory
+    from database.models.secretary_work import SecretaryProject, SecretaryTask
 
     Base.metadata.create_all(bind=engine)
 
@@ -41,6 +42,43 @@ def _run_migrations():
         "ALTER TABLE missionaries ADD COLUMN field_sources TEXT",
         "ALTER TABLE documents ADD COLUMN ocr_raw_data TEXT",
         "ALTER TABLE documents ADD COLUMN ocr_confirmed_data TEXT",
+        """
+        CREATE TABLE secretary_projects (
+            id INTEGER PRIMARY KEY,
+            title VARCHAR NOT NULL,
+            description VARCHAR,
+            status VARCHAR NOT NULL DEFAULT 'ACTIVE',
+            priority VARCHAR NOT NULL DEFAULT 'NORMAL',
+            due_date DATE,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            completed_at DATETIME
+        )
+        """,
+        """
+        CREATE TABLE secretary_tasks (
+            id INTEGER PRIMARY KEY,
+            title VARCHAR NOT NULL,
+            description VARCHAR,
+            status VARCHAR NOT NULL DEFAULT 'OPEN',
+            priority VARCHAR NOT NULL DEFAULT 'NORMAL',
+            due_date DATE,
+            project_id INTEGER,
+            missionary_id INTEGER,
+            appointment_field VARCHAR,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            completed_at DATETIME,
+            FOREIGN KEY(project_id) REFERENCES secretary_projects(id),
+            FOREIGN KEY(missionary_id) REFERENCES missionaries(id)
+        )
+        """,
+        "CREATE INDEX idx_secretary_projects_status ON secretary_projects(status)",
+        "CREATE INDEX idx_secretary_projects_due_date ON secretary_projects(due_date)",
+        "CREATE INDEX idx_secretary_tasks_status ON secretary_tasks(status)",
+        "CREATE INDEX idx_secretary_tasks_due_date ON secretary_tasks(due_date)",
+        "CREATE INDEX idx_secretary_tasks_project_id ON secretary_tasks(project_id)",
+        "CREATE INDEX idx_secretary_tasks_missionary_id ON secretary_tasks(missionary_id)",
     ]
 
     with engine.connect() as conn:

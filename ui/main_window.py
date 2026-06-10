@@ -17,6 +17,7 @@ from ui.pages.calendar_page import CalendarPage
 from ui.pages.dashboard_page import DashboardPage
 from ui.pages.missionaries_page import MissionariesPage
 from ui.pages.missionary_detail_page import MissionaryDetailPage
+from ui.pages.office_work_page import OfficeWorkPage
 from ui.pages.reports_page import ReportsPage
 from ui.pages.settings_page import SettingsPage
 from ui.pages.trash_page import TrashPage
@@ -79,10 +80,11 @@ class _SidebarCompat:
         self._index_to_key = {
             0: "dashboard",
             1: "missionaries",
-            3: "appointments",
-            4: "reports",
-            5: "trash",
-            6: "settings",
+            3: "office_work",
+            4: "appointments",
+            5: "reports",
+            6: "trash",
+            7: "settings",
         }
 
     def setCurrentRow(self, row):
@@ -133,6 +135,7 @@ class MainWindow(FluentWindow if FLUENT_AVAILABLE else QMainWindow):
         self.dashboard_page = DashboardPage(self)
         self.missionaries_page = MissionariesPage(self)
         self.detail_page = MissionaryDetailPage(self)
+        self.office_work_page = OfficeWorkPage(self)
         self.calendar_page = CalendarPage(self)
         self.reports_page = ReportsPage(self)
         self.trash_page = TrashPage(self)
@@ -141,6 +144,7 @@ class MainWindow(FluentWindow if FLUENT_AVAILABLE else QMainWindow):
         self._nav_keys = {
             "dashboard": "sidebar_dashboard",
             "missionaries": "sidebar_missionaries",
+            "office_work": "sidebar_office_work",
             "appointments": "sidebar_appointments",
             "reports": "sidebar_reports",
             "trash": "sidebar_trash",
@@ -178,10 +182,11 @@ class MainWindow(FluentWindow if FLUENT_AVAILABLE else QMainWindow):
         self.stackedWidget.addWidget(self.detail_page)
 
         for widget, key, icon_name, _stack_index in [
-            (self.calendar_page, "appointments", "CALENDAR", 3),
-            (self.reports_page, "reports", "DOCUMENT", 4),
-            (self.trash_page, "trash", "DELETE", 5),
-            (self.settings_page, "settings", "SETTING", 6),
+            (self.office_work_page, "office_work", "EDIT", 3),
+            (self.calendar_page, "appointments", "CALENDAR", 4),
+            (self.reports_page, "reports", "DOCUMENT", 5),
+            (self.trash_page, "trash", "DELETE", 6),
+            (self.settings_page, "settings", "SETTING", 7),
         ]:
             self._add_fluent_nav_page(widget, key, icon_name)
 
@@ -210,6 +215,7 @@ class MainWindow(FluentWindow if FLUENT_AVAILABLE else QMainWindow):
             self.dashboard_page,
             self.missionaries_page,
             self.detail_page,
+            self.office_work_page,
             self.calendar_page,
             self.reports_page,
             self.trash_page,
@@ -220,10 +226,11 @@ class MainWindow(FluentWindow if FLUENT_AVAILABLE else QMainWindow):
         for key, index, group in [
             ("dashboard", 0, "Work"),
             ("missionaries", 1, "Work"),
-            ("appointments", 3, "Work"),
-            ("reports", 4, "Insights"),
-            ("trash", 5, "System"),
-            ("settings", 6, "System"),
+            ("office_work", 3, "Work"),
+            ("appointments", 4, "Work"),
+            ("reports", 5, "Insights"),
+            ("trash", 6, "System"),
+            ("settings", 7, "System"),
         ]:
             self.shell.add_nav_item(key, tr(self._nav_keys[key]), index, group)
 
@@ -261,10 +268,12 @@ class MainWindow(FluentWindow if FLUENT_AVAILABLE else QMainWindow):
         elif stack_index == 1:
             self.missionaries_page.load_data()
         elif stack_index == 3:
-            self.calendar_page.load_data()
+            self.office_work_page.load_data()
         elif stack_index == 4:
-            self.reports_page.load_data()
+            self.calendar_page.load_data()
         elif stack_index == 5:
+            self.reports_page.load_data()
+        elif stack_index == 6:
             self.trash_page.load_data()
 
     def retranslate_ui(self):

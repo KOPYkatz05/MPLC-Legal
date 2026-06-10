@@ -27,6 +27,7 @@ QWidget {
 
 QWidget#MissionariesPage,
 QWidget#CalendarPage,
+QWidget#OfficeWorkPage,
 QWidget#ReportsPage,
 QWidget#SettingsPage,
 QWidget#TrashPage,
@@ -904,6 +905,44 @@ QWidget#CalendarEmptyState {
     background-color: #FFFFFF;
     border: 1px solid #E4E4E7;
     border-radius: 8px;
+}
+
+
+/* ==========================================
+   OFFICE WORK
+   ========================================== */
+
+QFrame#OfficeWorkTabs {
+    background-color: #FFFFFF;
+    border-bottom: 1px solid #E4E4E7;
+}
+
+QFrame#OfficeWorkRow,
+QWidget#OfficeWorkRow {
+    background-color: #FFFFFF;
+    border: 1px solid #E4E4E7;
+    border-radius: 8px;
+}
+
+QFrame#OfficeWorkRow:hover,
+QWidget#OfficeWorkRow:hover {
+    background-color: #FAFAFA;
+    border-color: #CBD5E1;
+}
+
+QFrame#OfficeWorkSectionHeader {
+    background: transparent;
+}
+
+QWidget#OfficeWorkSummaryRow {
+    background: transparent;
+}
+
+QLabel#OfficeWorkFieldLabel {
+    color: #3F3F46;
+    font-size: 12px;
+    font-weight: 600;
+    background: transparent;
 }
 
 
