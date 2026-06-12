@@ -60,11 +60,29 @@ def test_sync_backfills_existing_missionary_dates(appointment_env):
     session = appointment_env()
     try:
         appointment = session.query(Appointment).one()
+        assert appointment.appointment_uid
         assert appointment.missionary_id == missionary_id
         assert appointment.appointment_field == "interpol_appointment_date"
         assert appointment.appointment_type == "Interpol"
         assert appointment.scheduled_date == date(2026, 6, 1)
         assert appointment.status == APPOINTMENT_STATUS_SCHEDULED
+    finally:
+        session.close()
+
+
+def test_sync_is_idempotent_for_same_scheduled_date(appointment_env):
+    missionary_id = _create_missionary(
+        appointment_env,
+        interpol_appointment_date=date(2026, 6, 1),
+    )
+
+    service = AppointmentService()
+    service.sync_from_missionary_dates(missionary_id)
+    service.sync_from_missionary_dates(missionary_id)
+
+    session = appointment_env()
+    try:
+        assert session.query(Appointment).count() == 1
     finally:
         session.close()
 
@@ -88,6 +106,7 @@ def test_complete_appointment_clears_matching_date(appointment_env):
         missionary = session.query(Missionary).filter_by(id=missionary_id).one()
         assert appointment.status == APPOINTMENT_STATUS_COMPLETED
         assert appointment.marked_at is not None
+        assert appointment.closed_at is not None
         assert missionary.interpol_appointment_date is None
     finally:
         session.close()
@@ -137,6 +156,7 @@ def test_missed_appointment_invalidates_documents_and_creates_task(appointment_e
         task = session.query(SecretaryTask).one()
 
         assert appointment.status == APPOINTMENT_STATUS_MISSED
+        assert appointment.closed_at is not None
         assert missionary.interpol_appointment_date is None
         assert {doc.status for doc in documents} == {"STALE"}
         assert all(doc.invalidated_at is not None for doc in documents)
@@ -145,6 +165,30 @@ def test_missed_appointment_invalidates_documents_and_creates_task(appointment_e
         assert "Get new Interpol pago" in task.title
     finally:
         session.close()
+
+
+def test_list_methods_split_scheduled_from_history(appointment_env):
+    missionary_id = _create_missionary(
+        appointment_env,
+        interpol_appointment_date=date(2026, 6, 1),
+    )
+    service = AppointmentService()
+    service.sync_from_missionary_dates(missionary_id)
+
+    session = appointment_env()
+    appointment_id = session.query(Appointment).one().id
+    session.close()
+
+    assert len(service.list_scheduled_appointments()) == 1
+    assert service.list_history_appointments() == []
+
+    service.complete_appointment(appointment_id)
+
+    assert service.list_scheduled_appointments() == []
+    history = service.list_history_appointments()
+    assert len(history) == 1
+    assert history[0]["status"] == APPOINTMENT_STATUS_COMPLETED
+    assert history[0]["appointment_uid"]
 
 
 def test_new_date_after_missed_creates_new_scheduled_attempt(appointment_env):
@@ -183,6 +227,43 @@ def test_new_date_after_missed_creates_new_scheduled_attempt(appointment_env):
             APPOINTMENT_STATUS_SCHEDULED,
         ]
         assert appointments[1].scheduled_date == date(2026, 6, 10)
+    finally:
+        session.close()
+
+
+def test_new_date_retires_existing_scheduled_attempt(appointment_env):
+    missionary_id = _create_missionary(
+        appointment_env,
+        interpol_appointment_date=date(2026, 6, 1),
+    )
+    service = AppointmentService()
+    service.sync_from_missionary_dates(missionary_id)
+
+    session = appointment_env()
+    missionary = session.query(Missionary).filter_by(id=missionary_id).one()
+    missionary.interpol_appointment_date = date(2026, 6, 10)
+    session.commit()
+    session.close()
+
+    service.sync_from_missionary_dates(
+        missionary_id,
+        ["interpol_appointment_date"],
+    )
+
+    session = appointment_env()
+    try:
+        appointments = (
+            session.query(Appointment)
+            .order_by(Appointment.scheduled_date)
+            .all()
+        )
+        assert [appointment.status for appointment in appointments] == [
+            APPOINTMENT_STATUS_MISSED,
+            APPOINTMENT_STATUS_SCHEDULED,
+        ]
+        assert appointments[0].status_reason == (
+            "Replaced by updated missionary appointment date"
+        )
     finally:
         session.close()
 

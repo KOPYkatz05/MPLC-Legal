@@ -8,6 +8,9 @@ from ui.pages.calendar_page import (
     CALENDAR_MODE_WEEK,
     TAB_CALENDAR,
     TAB_HISTORY,
+    APPOINTMENT_STATUS_COMPLETED,
+    APPOINTMENT_STATUS_MISSED,
+    APPOINTMENT_STATUS_SCHEDULED,
     CalendarPage,
     appointment_bucket,
     month_grid_dates,
@@ -22,6 +25,7 @@ def _appointment(
     appointment_type="Interpol",
     days_offset=0,
     today=None,
+    status=APPOINTMENT_STATUS_SCHEDULED,
 ):
     today = today or date(2026, 6, 9)
     appt_date = today + timedelta(days=days_offset)
@@ -36,6 +40,7 @@ def _appointment(
         field="interpol_appointment_date",
         days_offset=days_offset,
         bucket=bucket,
+        status=status,
         appointment_id=99,
     )
 
@@ -53,6 +58,11 @@ def _build_page(monkeypatch, qapp, appointments):
     monkeypatch.setattr(
         calendar_page.CalendarPage,
         "_collect_appointments",
+        lambda self: list(appointments),
+    )
+    monkeypatch.setattr(
+        calendar_page.CalendarPage,
+        "_collect_history_appointments",
         lambda self: list(appointments),
     )
     main_window = SimpleNamespace()
@@ -110,6 +120,7 @@ def test_history_filters_by_search_type_and_status(monkeypatch, qapp):
             full_name="Jayna Suzanne Koyle",
             appointment_type="Pickup",
             days_offset=5,
+            status=APPOINTMENT_STATUS_MISSED,
         ),
         _appointment(
             full_name="Lucille Victoria Skidmore",
@@ -135,12 +146,11 @@ def test_history_filters_by_search_type_and_status(monkeypatch, qapp):
 
         page.history_search_edit.clear()
         _select_combo_value(page.history_type_combo, "Pickup")
-        _select_combo_value(page.history_status_combo, "upcoming")
+        _select_combo_value(page.history_status_combo, APPOINTMENT_STATUS_MISSED)
         assert [
             item.full_name for item in page._apply_history_filters(appointments)
         ] == [
             "Jayna Suzanne Koyle",
-            "Lucille Victoria Skidmore",
         ]
     finally:
         page.close()
@@ -205,23 +215,27 @@ def test_overflow_jump_filters_history_to_exact_date(monkeypatch, qapp):
         page.close()
 
 
-def test_needs_attention_includes_overdue_and_today(monkeypatch, qapp):
+def test_history_status_filter_can_show_missed_only(monkeypatch, qapp):
     appointments = [
-        _appointment(full_name="Past Person", days_offset=-3),
-        _appointment(full_name="Today Person", days_offset=0),
-        _appointment(full_name="Future Person", days_offset=3),
+        _appointment(
+            full_name="Missed Person",
+            days_offset=-3,
+            status=APPOINTMENT_STATUS_MISSED,
+        ),
+        _appointment(
+            full_name="Completed Person",
+            days_offset=-1,
+            status=APPOINTMENT_STATUS_COMPLETED,
+        ),
     ]
     page = _build_page(monkeypatch, qapp, appointments)
 
     try:
-        _select_combo_value(page.history_status_combo, "needs_attention")
+        _select_combo_value(page.history_status_combo, APPOINTMENT_STATUS_MISSED)
 
         assert [
             item.full_name for item in page._apply_history_filters(appointments)
-        ] == [
-            "Past Person",
-            "Today Person",
-        ]
+        ] == ["Missed Person"]
     finally:
         page.close()
 
@@ -240,6 +254,24 @@ def test_calendar_page_smoke_defaults_to_calendar_week(monkeypatch, qapp):
         assert page._selected_tab == TAB_CALENDAR
     finally:
         page.close()
+
+
+def test_collect_appointments_reads_scheduled_service_without_backfill(monkeypatch):
+    class FakeAppointmentService:
+        def backfill_all(self):
+            raise AssertionError("calendar collection should not backfill")
+
+        def list_scheduled_appointments(self):
+            return []
+
+    monkeypatch.setattr(
+        calendar_page,
+        "AppointmentService",
+        FakeAppointmentService,
+    )
+    page = CalendarPage.__new__(CalendarPage)
+
+    assert CalendarPage._collect_appointments(page) == []
 
 
 def test_calendar_toolbar_is_grouped_with_calendar_body(monkeypatch, qapp):
@@ -262,6 +294,40 @@ def test_calendar_toolbar_is_grouped_with_calendar_body(monkeypatch, qapp):
         parent_layout = toolbar.parentWidget().layout()
         assert parent_layout.indexOf(overdue_strip) < parent_layout.indexOf(toolbar)
         assert parent_layout.indexOf(toolbar) < parent_layout.indexOf(grid)
+    finally:
+        page.close()
+
+
+def test_overdue_strip_opens_actionable_scheduled_overdue_details(monkeypatch, qapp):
+    appointments = [
+        _appointment(full_name="Overdue One", days_offset=-10),
+        _appointment(full_name="Overdue Two", days_offset=-9),
+        _appointment(full_name="Overdue Three", days_offset=-8),
+        _appointment(full_name="Overdue Four", days_offset=-7),
+        _appointment(full_name="Visible Person", days_offset=1),
+    ]
+    page = _build_page(monkeypatch, qapp, appointments)
+
+    try:
+        page._show_overdue_calendar_details()
+
+        assert page._selected_tab == TAB_CALENDAR
+        assert page.tab_stack.currentIndex() == page.calendar_index
+        assert page._show_overdue_detail is True
+        assert (
+            page.findChild(
+                calendar_page.QWidget,
+                "CalendarCompleteAppointmentButton",
+            )
+            is not None
+        )
+        assert (
+            page.findChild(
+                calendar_page.QWidget,
+                "CalendarMissedAppointmentButton",
+            )
+            is not None
+        )
     finally:
         page.close()
 
@@ -305,9 +371,13 @@ def test_history_uses_focus_card_for_single_missionary_search(monkeypatch, qapp)
         page.close()
 
 
-def test_history_rows_include_complete_and_missed_actions(monkeypatch, qapp):
+def test_history_rows_hide_complete_and_missed_actions_for_closed_items(monkeypatch, qapp):
     appointments = [
-        _appointment(full_name="Addelyn Sylvia Holt", days_offset=-1),
+        _appointment(
+            full_name="Addelyn Sylvia Holt",
+            days_offset=-1,
+            status=APPOINTMENT_STATUS_COMPLETED,
+        ),
     ]
     page = _build_page(monkeypatch, qapp, appointments)
 
@@ -320,17 +390,30 @@ def test_history_rows_include_complete_and_missed_actions(monkeypatch, qapp):
                 calendar_page.QWidget,
                 "CalendarCompleteAppointmentButton",
             )
-            is not None
+            is None
         )
         assert (
             page.findChild(
                 calendar_page.QWidget,
                 "CalendarMissedAppointmentButton",
             )
-            is not None
+            is None
         )
     finally:
         page.close()
+
+
+def test_completed_history_rows_use_completed_text_and_success_tone():
+    appointment = _appointment(
+        full_name="Addelyn Sylvia Holt",
+        days_offset=-14,
+        status=APPOINTMENT_STATUS_COMPLETED,
+    )
+
+    assert calendar_page.appointment_status_text(appointment) == "Completed"
+    assert calendar_page.appointment_tone(appointment) == "success"
+
+
 from datetime import date, timedelta
 from types import SimpleNamespace
 
@@ -341,6 +424,9 @@ from ui.pages.calendar_page import (
     CALENDAR_MODE_WEEK,
     TAB_CALENDAR,
     TAB_HISTORY,
+    APPOINTMENT_STATUS_COMPLETED,
+    APPOINTMENT_STATUS_MISSED,
+    APPOINTMENT_STATUS_SCHEDULED,
     CalendarPage,
     appointment_bucket,
     month_grid_dates,
@@ -355,6 +441,7 @@ def _appointment(
     appointment_type="Interpol",
     days_offset=0,
     today=None,
+    status=APPOINTMENT_STATUS_SCHEDULED,
 ):
     today = today or date(2026, 6, 9)
     appt_date = today + timedelta(days=days_offset)
@@ -369,6 +456,7 @@ def _appointment(
         field="interpol_appointment_date",
         days_offset=days_offset,
         bucket=bucket,
+        status=status,
     )
 
 
@@ -385,6 +473,11 @@ def _build_page(monkeypatch, qapp, appointments):
     monkeypatch.setattr(
         calendar_page.CalendarPage,
         "_collect_appointments",
+        lambda self: list(appointments),
+    )
+    monkeypatch.setattr(
+        calendar_page.CalendarPage,
+        "_collect_history_appointments",
         lambda self: list(appointments),
     )
     main_window = SimpleNamespace()
@@ -442,6 +535,7 @@ def test_history_filters_by_search_type_and_status(monkeypatch, qapp):
             full_name="Jayna Suzanne Koyle",
             appointment_type="Pickup",
             days_offset=5,
+            status=APPOINTMENT_STATUS_MISSED,
         ),
         _appointment(
             full_name="Lucille Victoria Skidmore",
@@ -467,12 +561,11 @@ def test_history_filters_by_search_type_and_status(monkeypatch, qapp):
 
         page.history_search_edit.clear()
         _select_combo_value(page.history_type_combo, "Pickup")
-        _select_combo_value(page.history_status_combo, "upcoming")
+        _select_combo_value(page.history_status_combo, APPOINTMENT_STATUS_MISSED)
         assert [
             item.full_name for item in page._apply_history_filters(appointments)
         ] == [
             "Jayna Suzanne Koyle",
-            "Lucille Victoria Skidmore",
         ]
     finally:
         page.close()
@@ -537,23 +630,27 @@ def test_overflow_jump_filters_history_to_exact_date(monkeypatch, qapp):
         page.close()
 
 
-def test_needs_attention_includes_overdue_and_today(monkeypatch, qapp):
+def test_history_status_filter_can_show_missed_only(monkeypatch, qapp):
     appointments = [
-        _appointment(full_name="Past Person", days_offset=-3),
-        _appointment(full_name="Today Person", days_offset=0),
-        _appointment(full_name="Future Person", days_offset=3),
+        _appointment(
+            full_name="Missed Person",
+            days_offset=-3,
+            status=APPOINTMENT_STATUS_MISSED,
+        ),
+        _appointment(
+            full_name="Completed Person",
+            days_offset=-1,
+            status=APPOINTMENT_STATUS_COMPLETED,
+        ),
     ]
     page = _build_page(monkeypatch, qapp, appointments)
 
     try:
-        _select_combo_value(page.history_status_combo, "needs_attention")
+        _select_combo_value(page.history_status_combo, APPOINTMENT_STATUS_MISSED)
 
         assert [
             item.full_name for item in page._apply_history_filters(appointments)
-        ] == [
-            "Past Person",
-            "Today Person",
-        ]
+        ] == ["Missed Person"]
     finally:
         page.close()
 

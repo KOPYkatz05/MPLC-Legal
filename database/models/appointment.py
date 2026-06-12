@@ -1,7 +1,10 @@
+import uuid
+
 from sqlalchemy import Column
 from sqlalchemy import Date
 from sqlalchemy import DateTime
 from sqlalchemy import ForeignKey
+from sqlalchemy import Index
 from sqlalchemy import Integer
 from sqlalchemy import String
 
@@ -27,6 +30,13 @@ class Appointment(Base):
     id = Column(
         Integer,
         primary_key=True,
+    )
+
+    appointment_uid = Column(
+        String,
+        default=lambda: uuid.uuid4().hex,
+        unique=True,
+        nullable=False,
     )
 
     missionary_id = Column(
@@ -60,6 +70,18 @@ class Appointment(Base):
         DateTime(timezone=True),
     )
 
+    closed_at = Column(
+        DateTime(timezone=True),
+    )
+
+    status_reason = Column(
+        String,
+    )
+
+    superseded_by_uid = Column(
+        String,
+    )
+
     notes = Column(
         String,
     )
@@ -74,3 +96,13 @@ class Appointment(Base):
         server_default=func.now(),
         onupdate=func.now(),
     )
+
+
+Index(
+    "idx_appointments_scheduled_unique",
+    Appointment.missionary_id,
+    Appointment.appointment_field,
+    Appointment.scheduled_date,
+    unique=True,
+    sqlite_where=Appointment.status == APPOINTMENT_STATUS_SCHEDULED,
+)

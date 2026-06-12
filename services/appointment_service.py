@@ -44,6 +44,10 @@ APPOINTMENT_DEFINITIONS = {
 }
 
 APPOINTMENT_FIELDS = tuple(APPOINTMENT_DEFINITIONS.keys())
+APPOINTMENT_HISTORY_STATUSES = (
+    APPOINTMENT_STATUS_COMPLETED,
+    APPOINTMENT_STATUS_MISSED,
+)
 
 
 class AppointmentService:
@@ -75,6 +79,29 @@ class AppointmentService:
                 if scheduled_date is None:
                     continue
 
+                now = datetime.now()
+                (
+                    session.query(Appointment)
+                    .filter(
+                        Appointment.missionary_id == missionary.id,
+                        Appointment.appointment_field == field,
+                        Appointment.status == APPOINTMENT_STATUS_SCHEDULED,
+                        Appointment.scheduled_date != scheduled_date,
+                    )
+                    .update(
+                        {
+                            Appointment.status: APPOINTMENT_STATUS_MISSED,
+                            Appointment.marked_at: now,
+                            Appointment.closed_at: now,
+                            Appointment.updated_at: now,
+                            Appointment.status_reason: (
+                                "Replaced by updated missionary appointment date"
+                            ),
+                        },
+                        synchronize_session=False,
+                    )
+                )
+
                 existing = (
                     session.query(Appointment)
                     .filter_by(
@@ -104,6 +131,48 @@ class AppointmentService:
             session.rollback()
             logger.exception("Failed to sync appointment dates")
             raise
+        finally:
+            session.close()
+
+    def list_scheduled_appointments(self):
+        return self._list_appointments_by_statuses(
+            (APPOINTMENT_STATUS_SCHEDULED,),
+        )
+
+    def list_history_appointments(self):
+        return self._list_appointments_by_statuses(
+            APPOINTMENT_HISTORY_STATUSES,
+            newest_first=True,
+        )
+
+    def _list_appointments_by_statuses(self, statuses, newest_first=False):
+        session = SessionLocal()
+        try:
+            query = (
+                session.query(Appointment, Missionary)
+                .join(Missionary, Appointment.missionary_id == Missionary.id)
+                .filter(
+                    Appointment.status.in_(tuple(statuses)),
+                    Missionary.status == "ACTIVE",
+                )
+            )
+            if newest_first:
+                query = query.order_by(
+                    Appointment.scheduled_date.desc(),
+                    Appointment.appointment_type,
+                    Missionary.full_name,
+                )
+            else:
+                query = query.order_by(
+                    Appointment.scheduled_date,
+                    Appointment.appointment_type,
+                    Missionary.full_name,
+                )
+
+            return [
+                self._appointment_snapshot(appointment, missionary)
+                for appointment, missionary in query.all()
+            ]
         finally:
             session.close()
 
@@ -142,6 +211,7 @@ class AppointmentService:
         status,
         create_follow_up=False,
         invalidate_documents=False,
+        status_reason=None,
     ):
         session = SessionLocal()
         try:
@@ -161,9 +231,15 @@ class AppointmentService:
             if missionary is None:
                 raise ValueError("Missionary not found.")
 
+            if appointment.status != APPOINTMENT_STATUS_SCHEDULED:
+                raise ValueError("Appointment is already closed.")
+
+            now = datetime.now()
             appointment.status = status
-            appointment.marked_at = datetime.now()
-            appointment.updated_at = datetime.now()
+            appointment.marked_at = now
+            appointment.closed_at = now
+            appointment.updated_at = now
+            appointment.status_reason = status_reason
 
             if (
                 hasattr(missionary, appointment.appointment_field)
@@ -246,3 +322,20 @@ class AppointmentService:
             missionary_id=missionary.id,
             appointment_field=appointment.appointment_field,
         )
+
+    def _appointment_snapshot(self, appointment, missionary):
+        return {
+            "id": appointment.id,
+            "appointment_uid": appointment.appointment_uid,
+            "missionary_id": missionary.id,
+            "full_name": missionary.full_name or "",
+            "current_stage": missionary.current_stage or "",
+            "appointment_field": appointment.appointment_field,
+            "appointment_type": appointment.appointment_type,
+            "scheduled_date": appointment.scheduled_date,
+            "status": appointment.status,
+            "marked_at": appointment.marked_at,
+            "closed_at": appointment.closed_at,
+            "status_reason": appointment.status_reason or "",
+            "superseded_by_uid": appointment.superseded_by_uid,
+        }

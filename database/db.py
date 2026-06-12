@@ -1,6 +1,7 @@
 from sqlalchemy import create_engine
 from sqlalchemy.orm import declarative_base
 from sqlalchemy.orm import sessionmaker
+import uuid
 
 DATABASE_URL = "sqlite:///data/app.db"
 
@@ -49,6 +50,10 @@ def _run_migrations():
         "ALTER TABLE missionaries ADD COLUMN tramite_contrasena TEXT",
         "ALTER TABLE documents ADD COLUMN ocr_raw_data TEXT",
         "ALTER TABLE documents ADD COLUMN ocr_confirmed_data TEXT",
+        "ALTER TABLE appointments ADD COLUMN appointment_uid VARCHAR",
+        "ALTER TABLE appointments ADD COLUMN closed_at DATETIME",
+        "ALTER TABLE appointments ADD COLUMN status_reason VARCHAR",
+        "ALTER TABLE appointments ADD COLUMN superseded_by_uid VARCHAR",
         """
         CREATE TABLE secretary_projects (
             id INTEGER PRIMARY KEY,
@@ -89,6 +94,7 @@ def _run_migrations():
         """
         CREATE TABLE appointments (
             id INTEGER PRIMARY KEY,
+            appointment_uid VARCHAR NOT NULL,
             missionary_id INTEGER NOT NULL,
             appointment_field VARCHAR NOT NULL,
             appointment_type VARCHAR NOT NULL,
@@ -101,6 +107,7 @@ def _run_migrations():
             FOREIGN KEY(missionary_id) REFERENCES missionaries(id)
         )
         """,
+        "CREATE UNIQUE INDEX idx_appointments_uid ON appointments(appointment_uid)",
         "CREATE INDEX idx_appointments_missionary_id ON appointments(missionary_id)",
         "CREATE INDEX idx_appointments_status ON appointments(status)",
         "CREATE INDEX idx_appointments_scheduled_date ON appointments(scheduled_date)",
@@ -142,6 +149,69 @@ def _run_migrations():
         except Exception:
             pass
 
+        try:
+            from sqlalchemy import text
+            rows = conn.execute(
+                text(
+                    "SELECT id FROM appointments "
+                    "WHERE appointment_uid IS NULL "
+                    "OR TRIM(appointment_uid) = ''"
+                )
+            ).fetchall()
+            for row in rows:
+                conn.execute(
+                    text(
+                        "UPDATE appointments "
+                        "SET appointment_uid = :appointment_uid "
+                        "WHERE id = :id"
+                    ),
+                    {
+                        "appointment_uid": uuid.uuid4().hex,
+                        "id": row[0],
+                    },
+                )
+            conn.commit()
+        except Exception:
+            pass
+
+        try:
+            from sqlalchemy import text
+            duplicate_groups = conn.execute(
+                text(
+                    "SELECT missionary_id, appointment_field, scheduled_date, "
+                    "MIN(id) AS keep_id "
+                    "FROM appointments "
+                    "WHERE status = 'SCHEDULED' "
+                    "GROUP BY missionary_id, appointment_field, scheduled_date "
+                    "HAVING COUNT(*) > 1"
+                )
+            ).fetchall()
+            for row in duplicate_groups:
+                conn.execute(
+                    text(
+                        "UPDATE appointments "
+                        "SET status = 'MISSED', "
+                        "marked_at = COALESCE(marked_at, CURRENT_TIMESTAMP), "
+                        "closed_at = COALESCE(closed_at, CURRENT_TIMESTAMP), "
+                        "status_reason = "
+                        "'Duplicate scheduled cita reconciled during migration' "
+                        "WHERE status = 'SCHEDULED' "
+                        "AND missionary_id = :missionary_id "
+                        "AND appointment_field = :appointment_field "
+                        "AND scheduled_date = :scheduled_date "
+                        "AND id != :keep_id"
+                    ),
+                    {
+                        "missionary_id": row[0],
+                        "appointment_field": row[1],
+                        "scheduled_date": row[2],
+                        "keep_id": row[3],
+                    },
+                )
+            conn.commit()
+        except Exception:
+            pass
+
         appointment_backfills = [
             (
                 "interpol_appointment_date",
@@ -162,8 +232,9 @@ def _run_migrations():
                 conn.execute(
                     text(
                         "INSERT INTO appointments "
-                        "(missionary_id, appointment_field, appointment_type, scheduled_date, status) "
-                        "SELECT id, :field, :label, "
+                        "(appointment_uid, missionary_id, appointment_field, "
+                        "appointment_type, scheduled_date, status) "
+                        "SELECT lower(hex(randomblob(16))), id, :field, :label, "
                         f"{field}, 'SCHEDULED' "
                         "FROM missionaries m "
                         f"WHERE {field} IS NOT NULL "
@@ -187,6 +258,22 @@ def _run_migrations():
                     "CREATE UNIQUE INDEX "
                     "idx_missionaries_missionary_code "
                     "ON missionaries(missionary_code)"
+                )
+            )
+            conn.commit()
+        except Exception:
+            pass
+
+        try:
+            from sqlalchemy import text
+            conn.execute(
+                text(
+                    "CREATE UNIQUE INDEX "
+                    "idx_appointments_scheduled_unique "
+                    "ON appointments("
+                    "missionary_id, appointment_field, scheduled_date"
+                    ") "
+                    "WHERE status = 'SCHEDULED'"
                 )
             )
             conn.commit()
