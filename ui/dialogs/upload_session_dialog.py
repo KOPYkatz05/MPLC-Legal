@@ -2383,8 +2383,7 @@ class UploadSessionDialog(MaskDialogBase):
 
         self._saving_all = False
         self._save_all_index = 0
-        self.after_save()
-        self.accept(, close_after=True)
+        self.after_save(close_after=True)
 
     def after_save(self, close_after=False):
         if self._is_closing:
@@ -2406,6 +2405,8 @@ class UploadSessionDialog(MaskDialogBase):
         self.update_progress()
         self._update_action_states()
         self._emit_appointment_dates_updated_if_needed()
+        if close_after and not self._is_closing:
+            self.accept()
 
     def _appointment_updated_fields(self):
         return sorted(
@@ -2439,8 +2440,6 @@ class UploadSessionDialog(MaskDialogBase):
 
         self._emitted_appointment_update_fields.update(new_fields)
         self.appointment_dates_updated.emit(missionary_id, new_fields)
-        if close_after and not self._is_closing:
-            self.accept()
 
     def go_to_next_item(self, checked=False):
         total = len(self.controller.items)

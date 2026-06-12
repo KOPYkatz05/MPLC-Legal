@@ -207,6 +207,16 @@ class DocumentParser:
         if all(result.get(field) for field in ocr_fields):
             return result
 
+        if (
+            document_type == INTERPOL_CITA_DOCUMENT_TYPE
+            and rows
+            and any(
+                self._layout_rows_contain_label(rows, labels)
+                for labels in label_map.values()
+            )
+        ):
+            return result
+
         fallback = self._parse_by_fields(text, document_type, ocr_fields)
         for field, value in fallback.items():
             if not result.get(field):
@@ -314,8 +324,8 @@ class DocumentParser:
 
     def _date_from_layout_rows(self, rows, labels):
         for row_index, row in enumerate(rows):
-            row_text = self._normalize(self._row_text(row))
-            if not any(label in row_text for label in labels):
+            label_spans = self._label_spans_in_row(row, labels)
+            if not label_spans:
                 continue
 
             date_on_label_row = self._extract_all_dates(
@@ -324,9 +334,6 @@ class DocumentParser:
             if date_on_label_row:
                 return date_on_label_row[0]
 
-            label_left = min(item["x0"] for item in row["items"])
-            label_right = max(item["x1"] for item in row["items"])
-            label_center = (label_left + label_right) / 2
             candidates = []
 
             for candidate_row in rows[row_index + 1:]:
@@ -336,35 +343,128 @@ class DocumentParser:
                 vertical_distance = candidate_row["cy"] - row["cy"]
                 if vertical_distance < 0:
                     continue
-                if vertical_distance > 80:
+                if vertical_distance > 220:
                     break
 
-                dates = self._extract_all_dates(
-                    self._row_text(candidate_row)
-                )
-                if not dates:
-                    continue
-
-                candidate_left = min(
-                    item["x0"]
-                    for item in candidate_row["items"]
-                )
-                candidate_right = max(
-                    item["x1"]
-                    for item in candidate_row["items"]
-                )
-                candidate_center = (candidate_left + candidate_right) / 2
-                candidates.append((
-                    vertical_distance,
-                    abs(candidate_center - label_center),
-                    dates[0],
-                ))
+                for date_candidate in self._date_candidates_in_row(
+                    candidate_row
+                ):
+                    for label_span in label_spans:
+                        horizontal_distance = abs(
+                            date_candidate["center"] - label_span["center"]
+                        )
+                        overlap = min(
+                            date_candidate["right"],
+                            label_span["right"],
+                        ) - max(
+                            date_candidate["left"],
+                            label_span["left"],
+                        )
+                        tolerance = max(
+                            160.0,
+                            (label_span["right"] - label_span["left"]) * 2.5,
+                        )
+                        if overlap < 0 and horizontal_distance > tolerance:
+                            continue
+                        candidates.append((
+                            vertical_distance,
+                            horizontal_distance,
+                            date_candidate["date"],
+                        ))
 
             if candidates:
                 candidates.sort(key=lambda item: (item[0], item[1]))
                 return candidates[0][2]
 
         return None
+
+    def _layout_rows_contain_label(self, rows, labels):
+        return any(
+            self._label_spans_in_row(row, labels)
+            for row in rows
+        )
+
+    def _label_spans_in_row(self, row, labels):
+        items = row.get("items", [])
+        spans = []
+        normalized_labels = [
+            self._normalize(label).strip(" :ï¼š=-")
+            for label in labels
+        ]
+
+        for index, item in enumerate(items):
+            item_text = self._normalize(item["text"]).strip(" :ï¼š=-")
+            for label in normalized_labels:
+                if item_text == label or label in item_text:
+                    spans.append(self._span_from_items([item]))
+
+        for label in normalized_labels:
+            label_word_count = len(label.split())
+            max_window = min(len(items), label_word_count + 1)
+            for start in range(len(items)):
+                for end in range(
+                    start + 1,
+                    min(len(items), start + max_window) + 1,
+                ):
+                    window_items = items[start:end]
+                    text = self._normalize(
+                        " ".join(item["text"] for item in window_items)
+                    ).strip(" :ï¼š=-")
+                    if text == label:
+                        spans.append(self._span_from_items(window_items))
+
+        deduped = []
+        seen = set()
+        for span in spans:
+            key = (
+                round(span["left"], 2),
+                round(span["right"], 2),
+                round(span["center"], 2),
+            )
+            if key not in seen:
+                deduped.append(span)
+                seen.add(key)
+        return deduped
+
+    def _span_from_items(self, items):
+        left = min(item["x0"] for item in items)
+        right = max(item["x1"] for item in items)
+        return {
+            "left": left,
+            "right": right,
+            "center": (left + right) / 2,
+        }
+
+    def _date_candidates_in_row(self, row):
+        candidates = []
+        for item in row.get("items", []):
+            dates = self._extract_all_dates(item["text"])
+            for parsed_date in dates:
+                candidates.append({
+                    "date": parsed_date,
+                    "left": item["x0"],
+                    "right": item["x1"],
+                    "center": (item["x0"] + item["x1"]) / 2,
+                })
+
+        if candidates:
+            return candidates
+
+        dates = self._extract_all_dates(self._row_text(row))
+        if not dates:
+            return []
+
+        left = min(item["x0"] for item in row["items"])
+        right = max(item["x1"] for item in row["items"])
+        return [
+            {
+                "date": parsed_date,
+                "left": left,
+                "right": right,
+                "center": (left + right) / 2,
+            }
+            for parsed_date in dates
+        ]
 
     def _layout_item(self, item, page_number=0):
         text = str(item.get("text") or "").strip()
