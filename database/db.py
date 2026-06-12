@@ -49,6 +49,61 @@ def _run_migrations():
         "ALTER TABLE missionaries ADD COLUMN tramite_contrasena TEXT",
         "ALTER TABLE documents ADD COLUMN ocr_raw_data TEXT",
         "ALTER TABLE documents ADD COLUMN ocr_confirmed_data TEXT",
+        """
+        CREATE TABLE secretary_projects (
+            id INTEGER PRIMARY KEY,
+            title VARCHAR NOT NULL,
+            description VARCHAR,
+            status VARCHAR NOT NULL DEFAULT 'ACTIVE',
+            priority VARCHAR NOT NULL DEFAULT 'NORMAL',
+            due_date DATE,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            completed_at DATETIME
+        )
+        """,
+        """
+        CREATE TABLE secretary_tasks (
+            id INTEGER PRIMARY KEY,
+            title VARCHAR NOT NULL,
+            description VARCHAR,
+            status VARCHAR NOT NULL DEFAULT 'OPEN',
+            priority VARCHAR NOT NULL DEFAULT 'NORMAL',
+            due_date DATE,
+            project_id INTEGER,
+            missionary_id INTEGER,
+            appointment_field VARCHAR,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            completed_at DATETIME,
+            FOREIGN KEY(project_id) REFERENCES secretary_projects(id),
+            FOREIGN KEY(missionary_id) REFERENCES missionaries(id)
+        )
+        """,
+        "CREATE INDEX idx_secretary_projects_status ON secretary_projects(status)",
+        "CREATE INDEX idx_secretary_projects_due_date ON secretary_projects(due_date)",
+        "CREATE INDEX idx_secretary_tasks_status ON secretary_tasks(status)",
+        "CREATE INDEX idx_secretary_tasks_due_date ON secretary_tasks(due_date)",
+        "CREATE INDEX idx_secretary_tasks_project_id ON secretary_tasks(project_id)",
+        "CREATE INDEX idx_secretary_tasks_missionary_id ON secretary_tasks(missionary_id)",
+        """
+        CREATE TABLE appointments (
+            id INTEGER PRIMARY KEY,
+            missionary_id INTEGER NOT NULL,
+            appointment_field VARCHAR NOT NULL,
+            appointment_type VARCHAR NOT NULL,
+            scheduled_date DATE NOT NULL,
+            status VARCHAR NOT NULL DEFAULT 'SCHEDULED',
+            marked_at DATETIME,
+            notes VARCHAR,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY(missionary_id) REFERENCES missionaries(id)
+        )
+        """,
+        "CREATE INDEX idx_appointments_missionary_id ON appointments(missionary_id)",
+        "CREATE INDEX idx_appointments_status ON appointments(status)",
+        "CREATE INDEX idx_appointments_scheduled_date ON appointments(scheduled_date)",
     ]
 
     with engine.connect() as conn:
