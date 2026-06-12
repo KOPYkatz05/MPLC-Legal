@@ -1,8 +1,14 @@
+import shutil
 from types import SimpleNamespace
+from pathlib import Path
+from uuid import uuid4
 
 from PySide6.QtWidgets import QWidget
 
-from ui.dialogs.upload_session_dialog import UploadSessionDialog
+from ui.dialogs.upload_session_dialog import (
+    UploadSessionDialog,
+    supported_upload_files_from_paths,
+)
 from ui.pages import missionary_detail_page as detail_module
 
 
@@ -147,3 +153,39 @@ def test_upload_document_refreshes_calendar_when_dialog_emits(monkeypatch):
     detail_module.MissionaryDetailPage.upload_document(page)
 
     assert calendar.load_count == 1
+
+
+def test_supported_upload_files_from_paths_expands_folder():
+    root = Path("test_upload_tmp") / str(uuid4())
+    try:
+        folder = root / "missionary"
+        nested = folder / "nested"
+        nested.mkdir(parents=True)
+        pdf = folder / "passport.pdf"
+        image = nested / "photo.JPG"
+        unsupported = nested / "notes.txt"
+        pdf.write_text("pdf")
+        image.write_text("image")
+        unsupported.write_text("notes")
+
+        files = supported_upload_files_from_paths([folder])
+
+        assert files == [str(pdf), str(image)]
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def test_supported_upload_files_from_paths_keeps_direct_files():
+    root = Path("test_upload_tmp") / str(uuid4())
+    try:
+        root.mkdir(parents=True)
+        pdf = root / "visa.pdf"
+        unsupported = root / "notes.docx"
+        pdf.write_text("pdf")
+        unsupported.write_text("doc")
+
+        files = supported_upload_files_from_paths([pdf, unsupported])
+
+        assert files == [str(pdf)]
+    finally:
+        shutil.rmtree(root, ignore_errors=True)

@@ -5,6 +5,7 @@ import fitz
 from shiboken6 import isValid as shiboken_is_valid
 
 from PySide6.QtCore import QObject, QDate, QEvent, QPoint, QSize, Qt, QThread, QTimer, Signal, Slot
+from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
     QApplication,
     QAbstractItemView,
@@ -45,6 +46,7 @@ from ui.foundation import (
     create_date_picker,
     create_line_edit,
     create_list_widget,
+    create_menu,
     create_plain_text_edit,
     create_scroll_area,
     FluentLoadingDialog,
@@ -80,6 +82,28 @@ APPOINTMENT_UPDATE_FIELDS = {
     "biometric_appointment_date",
     "pickup_appointment_date",
 }
+
+
+def supported_upload_files_from_paths(paths):
+    files = []
+    for raw_path in paths or []:
+        path = Path(raw_path)
+        if path.is_dir():
+            files.extend(
+                str(child)
+                for child in sorted(
+                    path.rglob("*"),
+                    key=lambda child_path: (
+                        len(child_path.relative_to(path).parts),
+                        str(child_path).lower(),
+                    ),
+                )
+                if child.is_file()
+                and child.suffix.lower() in SUPPORTED_EXTENSIONS
+            )
+        elif path.is_file() and path.suffix.lower() in SUPPORTED_EXTENSIONS:
+            files.append(str(path))
+    return files
 
 
 def _widget_alive(widget):
@@ -634,7 +658,7 @@ class UploadSessionDialog(MaskDialogBase):
 
         self.setup_ui()
         if initial_files:
-            self.add_files(initial_files)
+            self.add_files(supported_upload_files_from_paths(initial_files))
 
     def _configure_shell(self):
         self.surface = setup_dialog_shell(
@@ -875,14 +899,21 @@ class UploadSessionDialog(MaskDialogBase):
         drop_icon = QLabel("Upload")
         drop_icon.setObjectName("UploadDropIcon")
         drop_icon.setAlignment(Qt.AlignCenter)
-        drop_copy = QLabel("Drop files here or browse")
+        drop_copy = QLabel("Drop files or folders here, or browse")
         drop_copy.setObjectName("UploadDropTitle")
         drop_copy.setAlignment(Qt.AlignCenter)
         drop_hint = QLabel("PDF, JPG, PNG up to 25 MB each")
         drop_hint.setObjectName("MiniMutedText")
         drop_hint.setAlignment(Qt.AlignCenter)
-        browse_btn = create_button("Browse Files", "secondary")
-        browse_btn.clicked.connect(self.pick_files)
+        browse_btn = create_button("Browse", "secondary")
+        browse_menu = create_menu("", browse_btn)
+        files_action = QAction("Files...", browse_menu)
+        folder_action = QAction("Folder...", browse_menu)
+        browse_menu.addAction(files_action)
+        browse_menu.addAction(folder_action)
+        files_action.triggered.connect(self.pick_files)
+        folder_action.triggered.connect(self.pick_folder)
+        browse_btn.setMenu(browse_menu)
         drop_layout.addWidget(drop_icon)
         drop_layout.addWidget(drop_copy)
         drop_layout.addWidget(drop_hint)
@@ -1354,11 +1385,7 @@ class UploadSessionDialog(MaskDialogBase):
         if not folder:
             return
 
-        files = [
-            str(path)
-            for path in Path(folder).rglob("*")
-            if path.is_file() and path.suffix.lower() in SUPPORTED_EXTENSIONS
-        ]
+        files = supported_upload_files_from_paths([folder])
         if not files:
             show_message(
                 self,
@@ -2529,7 +2556,7 @@ class UploadSessionDialog(MaskDialogBase):
             for url in event.mimeData().urls()
             if url.isLocalFile()
         ]
-        self.add_files(files)
+        self.add_files(supported_upload_files_from_paths(files))
         event.acceptProposedAction()
 
     def closeEvent(self, event):
