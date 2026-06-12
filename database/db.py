@@ -23,6 +23,7 @@ def init_db():
     from database.models.workflow import WorkflowStage
     from database.models.document import Document
     from database.models.stage_history import StageHistory
+    from database.models.residency_event import ResidencyEvent
 
     Base.metadata.create_all(bind=engine)
 
@@ -43,6 +44,26 @@ def _run_migrations():
         "ALTER TABLE missionaries ADD COLUMN tramite_contrasena TEXT",
         "ALTER TABLE documents ADD COLUMN ocr_raw_data TEXT",
         "ALTER TABLE documents ADD COLUMN ocr_confirmed_data TEXT",
+        (
+            "CREATE TABLE residency_events ("
+            "id INTEGER NOT NULL, "
+            "missionary_id INTEGER NOT NULL, "
+            "event_type VARCHAR NOT NULL, "
+            "sequence_number INTEGER NOT NULL, "
+            "status VARCHAR, "
+            "document_id INTEGER, "
+            "approved_at DATETIME DEFAULT CURRENT_TIMESTAMP, "
+            "notes VARCHAR, "
+            "created_at DATETIME DEFAULT CURRENT_TIMESTAMP, "
+            "PRIMARY KEY (id), "
+            "FOREIGN KEY(missionary_id) REFERENCES missionaries (id), "
+            "FOREIGN KEY(document_id) REFERENCES documents (id)"
+            ")"
+        ),
+        (
+            "CREATE INDEX idx_residency_events_missionary_type_sequence "
+            "ON residency_events(missionary_id, event_type, sequence_number)"
+        ),
     ]
 
     with engine.connect() as conn:

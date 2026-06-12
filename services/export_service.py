@@ -18,7 +18,6 @@ class ExportService:
             "Visa Expiration",
             tr("export_passport_exp"),
             "Residency Expiration",
-            "Prórroga Expiration",
             "Carnet Issue Date",
             "Cancelación Date",
             tr("export_interpol_appt"),
@@ -101,7 +100,6 @@ class ExportService:
                     fmt_date(m.visa_expiration),
                     fmt_date(m.passport_expiration),
                     fmt_date(m.residency_expiration),
-                    fmt_date(m.prorroga_expiration),
                     fmt_date(m.carnet_issue_date),
                     fmt_date(m.cancelacion_date),
                     fmt_date(m.interpol_appointment_date),
@@ -119,7 +117,7 @@ class ExportService:
                 ws.row_dimensions[i].height = 22
 
             col_widths = [
-                12, 30, 16, 18, 22, 14, 16, 16, 20, 20,
+                12, 30, 16, 18, 22, 14, 16, 16, 20,
                 16, 16, 16, 16, 16, 40,
             ]
 

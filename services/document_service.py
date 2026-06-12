@@ -356,6 +356,21 @@ class DocumentService:
             )
 
         missionary_id = document.missionary_id
+        document_id = document.id
+
+        try:
+            from database.models.residency_event import ResidencyEvent
+
+            (
+                session.query(ResidencyEvent)
+                .filter_by(document_id=document_id)
+                .update({"document_id": None})
+            )
+        except Exception:
+            logger.warning(
+                "Could not clear residency event document references "
+                f"for document ID {document_id}"
+            )
 
         session.delete(document)
         session.commit()

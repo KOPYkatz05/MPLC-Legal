@@ -172,7 +172,6 @@ class ReportsPage(QWidget):
                     for field in [
                         "visa_expiration",
                         "residency_expiration",
-                        "prorroga_expiration",
                     ]:
                         val = getattr(m, field, None)
 

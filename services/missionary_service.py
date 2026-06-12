@@ -423,6 +423,9 @@ class MissionaryService:
             from database.models.stage_history import (
                 StageHistory,
             )
+            from database.models.residency_event import (
+                ResidencyEvent,
+            )
 
             (
                 session.query(Document)
@@ -442,6 +445,14 @@ class MissionaryService:
 
             (
                 session.query(StageHistory)
+                .filter_by(
+                    missionary_id=missionary_id
+                )
+                .delete()
+            )
+
+            (
+                session.query(ResidencyEvent)
                 .filter_by(
                     missionary_id=missionary_id
                 )

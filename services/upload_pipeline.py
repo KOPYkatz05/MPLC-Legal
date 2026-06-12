@@ -19,6 +19,7 @@ from services.document_image_export_service import DocumentImageExportService
 from services.document_service import DocumentService
 from services.expiration_rules import set_entry_based_expiration
 from services.image_processing_service import ImageProcessingService
+from services.residency_service import ResidencyService
 from utils.constants import DOCUMENTS, MISSIONARY_DATE_FIELDS
 from utils.logger import logger
 
@@ -768,7 +769,11 @@ def finalize_ocr_ingestion(
     )
 
     updated_fields = []
-    if confirmed_data and doc:
+    residency_document = document_type in {
+        "CARNE_DE_EXTRANJERIA",
+        "APROBACION_DE_PRORROGA",
+    }
+    if doc and (confirmed_data or residency_document):
         updated_fields = apply_missionary_updates(
             missionary.id,
             document_type,
@@ -880,6 +885,8 @@ def apply_missionary_updates(
         ignored_derived_fields.add("visa_expiration")
     elif document_type == "CARNE_DE_EXTRANJERIA":
         ignored_derived_fields.add("residency_expiration")
+    elif document_type == "APROBACION_DE_PRORROGA":
+        ignored_derived_fields.add("prorroga_expiration")
 
     for field in auto_update_fields:
         if field in ignored_derived_fields:
@@ -897,6 +904,7 @@ def apply_missionary_updates(
     uses_entry_based_expiration = document_type in {
         "TAM",
         "CARNE_DE_EXTRANJERIA",
+        "APROBACION_DE_PRORROGA",
     }
 
     if not updates and not uses_entry_based_expiration:
@@ -943,17 +951,38 @@ def apply_missionary_updates(
                 updates["visa_expiration"] = missionary.visa_expiration
 
         if document_type == "CARNE_DE_EXTRANJERIA":
-            if set_entry_based_expiration(
+            event = ResidencyService().approve_initial_residency_in_session(
+                session,
                 missionary,
-                "residency_expiration",
-                1,
                 document_id=document_id,
-                document_type=document_type,
-                label=doc_label,
-            ):
+            )
+            if event and missionary.residency_expiration:
                 updates["residency_expiration"] = (
                     missionary.residency_expiration
                 )
+                sources["residency_expiration"] = {
+                    "document_id": document_id,
+                    "document_type": document_type,
+                    "label": doc_label,
+                }
+
+        if document_type == "APROBACION_DE_PRORROGA":
+            event = ResidencyService().approve_next_prorroga_in_session(
+                session,
+                missionary,
+                document_id=document_id,
+            )
+            if event and missionary.residency_expiration:
+                updates["residency_expiration"] = (
+                    missionary.residency_expiration
+                )
+                sources["residency_expiration"] = {
+                    "document_id": document_id,
+                    "document_type": document_type,
+                    "label": doc_label,
+                }
+
+        missionary.field_sources = json.dumps(sources)
 
         session.commit()
         logger.info(

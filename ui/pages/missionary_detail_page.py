@@ -25,6 +25,7 @@ from services.workflow_service import WorkflowService
 from services.document_service import DocumentService
 from services.missionary_service import MissionaryService
 from services.expiration_rules import add_years
+from services.residency_service import ResidencyService
 from services.document_image_export_service import (
     DocumentImageExportService,
 )
@@ -106,7 +107,6 @@ EDITABLE_DATE_FIELDS = [
     "visa_expiration",
     "passport_expiration",
     "residency_expiration",
-    "prorroga_expiration",
     "carnet_issue_date",
     "cancelacion_date",
     "interpol_appointment_date",
@@ -197,6 +197,8 @@ class MissionaryDetailPage(QWidget):
 
         self.missionary_service = MissionaryService()
 
+        self.residency_service = ResidencyService()
+
         self.workflow_validator = WorkflowValidator()
 
         self.thumb_service = ThumbnailService()
@@ -208,6 +210,7 @@ class MissionaryDetailPage(QWidget):
         self._date_source_labels = {}
         self._credential_source_labels = {}
         self._date_empty_on_load = set()
+        self._residency_timeline_labels = {}
 
         self.setup_ui()
 
@@ -789,6 +792,9 @@ class MissionaryDetailPage(QWidget):
         btn_row.addStretch()
         btn_row.addWidget(self.save_dates_btn)
         details_layout.addWidget(card)
+        details_layout.addWidget(
+            self._build_residency_timeline_card()
+        )
         details_layout.addLayout(btn_row)
 
         details_layout.addStretch()
@@ -796,6 +802,52 @@ class MissionaryDetailPage(QWidget):
         scroll.setWidget(details_content)
 
         outer_layout.addWidget(scroll)
+
+    def _build_residency_timeline_card(self):
+        card = create_card()
+
+        layout = QVBoxLayout()
+        layout.setContentsMargins(24, 18, 24, 18)
+        layout.setSpacing(12)
+        card.setLayout(layout)
+
+        title = QLabel("Residency timeline")
+        title.setObjectName("SectionHeader")
+        layout.addWidget(title)
+
+        hint = QLabel(
+            "Current residency expiration is derived from the original "
+            "arrival date and approved prorrogas."
+        )
+        hint.setObjectName("MutedText")
+        hint.setWordWrap(True)
+        layout.addWidget(hint)
+
+        self._residency_timeline_labels = {}
+        for key, label_text in [
+            ("initial", "Initial residency"),
+            ("prorroga_1", "Prorroga 1"),
+            ("prorroga_2", "Prorroga 2"),
+        ]:
+            row = QWidget()
+            row_layout = QHBoxLayout()
+            row_layout.setContentsMargins(0, 0, 0, 0)
+            row_layout.setSpacing(12)
+            row.setLayout(row_layout)
+
+            label = QLabel(label_text)
+            label.setObjectName("MiniMutedText")
+            value = QLabel("Pending")
+            value.setObjectName("ReadOnlyValue")
+            value.setWordWrap(True)
+
+            row_layout.addWidget(label)
+            row_layout.addStretch()
+            row_layout.addWidget(value)
+            layout.addWidget(row)
+            self._residency_timeline_labels[key] = value
+
+        return card
 
     def _build_notes_tab(self):
         notes_tab = QWidget()
@@ -1379,6 +1431,7 @@ class MissionaryDetailPage(QWidget):
                 self._date_empty_on_load.discard("visa_expiration")
 
         self._update_field_sources(missionary)
+        self._refresh_residency_timeline(missionary.id)
 
         self.folder_label.setText(
             missionary.folder_path or "-"
@@ -1401,6 +1454,43 @@ class MissionaryDetailPage(QWidget):
         self._refresh_overview_summary(workflows, documents)
         self._load_timeline()
         self._update_advance_banner()
+
+    def _refresh_residency_timeline(self, missionary_id):
+        if not self._residency_timeline_labels:
+            return
+
+        rows = self.residency_service.get_residency_timeline(
+            missionary_id
+        )
+        key_map = {
+            ("INITIAL_RESIDENCY", 0): "initial",
+            ("PRORROGA", 1): "prorroga_1",
+            ("PRORROGA", 2): "prorroga_2",
+        }
+
+        for row in rows:
+            key = key_map.get(
+                (
+                    row.get("event_type"),
+                    row.get("sequence_number"),
+                )
+            )
+            label = self._residency_timeline_labels.get(key)
+            if label is None:
+                continue
+
+            target = self.format_date(
+                row.get("target_expiration")
+            )
+            status = row.get("status") or "PENDING"
+            if status == "APPROVED":
+                text = f"Approved - expires {target}"
+                document_id = row.get("document_id")
+                if document_id:
+                    text += f" - Document #{document_id}"
+            else:
+                text = f"Pending - target {target}"
+            label.setText(text)
 
     def load_workflow_stages(self, workflows=None):
         self.workflow_list.clear()

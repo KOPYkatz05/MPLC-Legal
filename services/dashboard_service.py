@@ -18,7 +18,6 @@ from utils.logger import logger
 EXPIRY_FIELDS = [
     ("visa_expiration", "Visa Expiration"),
     ("residency_expiration", "Residency Expiration"),
-    ("prorroga_expiration", "Prórroga Expiration"),
 ]
 
 EXPIRY_WINDOW_DAYS = 60

@@ -75,13 +75,12 @@ def set_entry_based_expiration(
 
 
 def apply_prorroga_completion_expiration(missionary):
-    return set_entry_based_expiration(
-        missionary,
-        "residency_expiration",
-        2,
-        document_type="PRORROGA",
-        label="Prorroga completed",
+    logger.info(
+        "Skipping residency expiration update for missionary %s: "
+        "prorroga approval is tracked from approval documents.",
+        getattr(missionary, "id", None),
     )
+    return False
 
 
 def apply_stage_completion_expiration(missionary, stage_name):
