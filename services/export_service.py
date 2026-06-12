@@ -29,6 +29,7 @@ class ExportService:
         missionaries,
         output_path,
         columns=None,
+        columns=None,
     ):
         try:
             import openpyxl
@@ -40,6 +41,11 @@ class ExportService:
                 Side,
             )
 
+            export_columns = self._export_columns(columns)
+            headers = [
+                column["label"]
+                for column in export_columns
+            ]
             export_columns = self._export_columns(columns)
             headers = [
                 column["label"]
@@ -104,6 +110,8 @@ class ExportService:
                     fmt_date(m.biometric_appointment_date),
                     fmt_date(m.pickup_appointment_date),
                     m.notes or "",
+                    column["getter"](m)
+                    for column in export_columns
                 ]
 
                 for col, val in enumerate(values, 1):
@@ -120,9 +128,10 @@ class ExportService:
             ]
 
             for col, width in enumerate(col_widths, 1):
+            for col, column in enumerate(export_columns, 1):
                 ws.column_dimensions[
                     ws.cell(row=1, column=col).column_letter
-                ].width = column["width"]
+                ].width = column["column["width"]"]
 
             ws.freeze_panes = "A2"
             wb.save(output_path)
@@ -140,6 +149,105 @@ class ExportService:
             )
 
             return False
+
+    def _export_columns(self, columns):
+        if columns:
+            return [
+                {
+                    "label": column.label,
+                    "getter": column.getter,
+                    "width": self._excel_width(
+                        getattr(column, "default_width", 120)
+                    ),
+                }
+                for column in columns
+            ]
+
+        return self._legacy_export_columns()
+
+    @staticmethod
+    def _fmt_date(value):
+        if not value:
+            return ""
+
+        return value.strftime("%d/%m/%Y")
+
+    @staticmethod
+    def _excel_width(pixel_width):
+        return max(12, min(48, round(pixel_width / 8)))
+
+    def _legacy_export_columns(self):
+        return [
+            {
+                "label": header,
+                "getter": getter,
+                "width": width,
+            }
+            for header, getter, width in [
+                ("ID", missionary_display_id, 12),
+                ("Full Name", lambda m: m.full_name or "", 30),
+                ("Nationality", lambda m: m.nationality or "", 16),
+                ("Passport Number", lambda m: m.passport_number or "", 18),
+                ("Current Stage", lambda m: m.current_stage or "", 22),
+                (
+                    "Arrival Date",
+                    lambda m: self._fmt_date(m.arrival_date),
+                    14,
+                ),
+                (
+                    "Visa Expiration",
+                    lambda m: self._fmt_date(m.visa_expiration),
+                    16,
+                ),
+                (
+                    tr("export_passport_exp"),
+                    lambda m: self._fmt_date(m.passport_expiration),
+                    16,
+                ),
+                (
+                    "Residency Expiration",
+                    lambda m: self._fmt_date(m.residency_expiration),
+                    20,
+                ),
+                (
+                    "Prorroga Expiration",
+                    lambda m: self._fmt_date(m.prorroga_expiration),
+                    20,
+                ),
+                (
+                    "Carnet Issue Date",
+                    lambda m: self._fmt_date(m.carnet_issue_date),
+                    16,
+                ),
+                (
+                    "Cancelacion Date",
+                    lambda m: self._fmt_date(m.cancelacion_date),
+                    16,
+                ),
+                (
+                    tr("export_interpol_appt"),
+                    lambda m: self._fmt_date(
+                        m.interpol_appointment_date
+                    ),
+                    16,
+                ),
+                (
+                    tr("export_biometric_appt"),
+                    lambda m: self._fmt_date(
+                        m.biometric_appointment_date
+                    ),
+                    16,
+                ),
+                (
+                    tr("export_pickup_appt"),
+                    lambda m: self._fmt_date(
+                        m.pickup_appointment_date
+                    ),
+                    16,
+                ),
+                ("Notes", lambda m: m.notes or "", 40),
+            ]
+        ]
 
     def _export_columns(self, columns):
         if columns:

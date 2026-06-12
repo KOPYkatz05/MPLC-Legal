@@ -1,17 +1,35 @@
 from dataclasses import dataclass
+from dataclasses import dataclass
 from datetime import date, timedelta
 from itertools import groupby
+from itertools import groupby
 
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QColor, QPalette
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QPalette
 from PySide6.QtWidgets import (
     QButtonGroup,
     QFrame,
     QGridLayout,
+    QButtonGroup,
+    QFrame,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QPushButton,
+    QPushButton,
     QSizePolicy,
+    QStackedWidget,
+    QVBoxLayout,
+    QWidget,
+)
+
+try:
+    from qfluentwidgets import SegmentedWidget, TransparentToolButton
+except Exception:
+    SegmentedWidget = None
+    TransparentToolButton = None
     QStackedWidget,
     QVBoxLayout,
     QWidget,
@@ -105,6 +123,98 @@ class AppointmentItem:
     days_offset: int
     bucket: str
     appointment_id: int = 0
+
+
+def appointment_bucket(appt_date, today):
+    days_offset = (appt_date - today).days
+
+    if days_offset < 0:
+        return "overdue"
+    if days_offset == 0:
+        return "today"
+    if days_offset <= 7:
+        return "next_7"
+    return "later"
+
+
+def appointment_distance_text(days_offset):
+    if days_offset < 0:
+        days = abs(days_offset)
+        return f"{days} day{'s' if days != 1 else ''} overdue"
+    if days_offset == 0:
+        return "Due today"
+    return f"In {days_offset} day{'s' if days_offset != 1 else ''}"
+
+
+def week_start_for(value):
+    return value - timedelta(days=value.weekday())
+
+
+def month_grid_dates(year, month):
+    first_day = date(year, month, 1)
+    if month == 12:
+        next_month = date(year + 1, 1, 1)
+    else:
+        next_month = date(year, month + 1, 1)
+
+    start = week_start_for(first_day)
+    end = week_start_for(next_month - timedelta(days=1)) + timedelta(days=6)
+    days = (end - start).days + 1
+    return [start + timedelta(days=offset) for offset in range(days)]
+
+
+def visible_range_for_mode(mode, anchor_date):
+    if mode == CALENDAR_MODE_MONTH:
+        return month_grid_dates(anchor_date.year, anchor_date.month)
+
+    start = week_start_for(anchor_date)
+    return [start + timedelta(days=offset) for offset in range(7)]
+
+
+def add_months(value, months):
+    month_index = value.month - 1 + months
+    year = value.year + month_index // 12
+    month = month_index % 12 + 1
+    return date(year, month, 1)
+
+BUCKET_ORDER = ["overdue", "today", "next_7", "later"]
+BUCKET_LABELS = {
+    "overdue": "Overdue",
+    "today": "Today",
+    "next_7": "Next 7 Days",
+    "later": "Later",
+}
+BUCKET_TONES = {
+    "overdue": "danger",
+    "today": "warning",
+    "next_7": "caution",
+    "later": "success",
+}
+SUMMARY_COLORS = {
+    "overdue": "#DC2626",
+    "today": "#D97706",
+    "this_week": "#2563EB",
+    "total": "#059669",
+}
+
+CALENDAR_MODE_WEEK = "week"
+CALENDAR_MODE_MONTH = "month"
+TAB_CALENDAR = "calendar"
+TAB_HISTORY = "history"
+WEEKDAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+
+
+@dataclass(frozen=True)
+class AppointmentItem:
+    missionary_id: int
+    full_name: str
+    current_stage: str
+    date: date
+    type: str
+    color: str
+    field: str
+    days_offset: int
+    bucket: str
 
 
 def appointment_bucket(appt_date, today):
@@ -299,6 +409,75 @@ class CalendarPage(QWidget):
         scroll.setObjectName("PageSurface")
 
         content = QWidget()
+        content.setObjectName("PageSurface")
+        self.history_layout = QVBoxLayout()
+        self.history_layout.setContentsMargins(32, 24, 32, 24)
+        self.history_layout.setSpacing(18)
+        content.setLayout(self.history_layout)
+
+        scroll.setWidget(content)
+        tab_layout.addWidget(scroll, stretch=1)
+        self.history_index = self.tab_stack.addWidget(tab)
+
+    def _build_history_filter_bar(self):
+        self.history_filter_bar = FilterBar()
+
+        self.history_search_edit = create_search_edit("Search missionary")
+        self.history_search_edit.textChanged.connect(self._render_history)
+        self.history_filter_bar.add_filter(
+            self.history_search_edit,
+            stretch=1,
+        )
+
+        self.history_type_combo = create_combo_box()
+        for label in ["All Types", "Interpol", "Biometric", "Pickup"]:
+            self.history_type_combo.addItem(label, label)
+        self.history_type_combo.currentIndexChanged.connect(
+            lambda _=None: self._render_history()
+        )
+        self.history_filter_bar.add_filter(self.history_type_combo)
+
+        self.history_status_combo = create_combo_box()
+        for label, value in [
+            ("All", "all"),
+            ("Needs Attention", "needs_attention"),
+            ("Overdue", "overdue"),
+            ("Today", "today"),
+            ("Next 7 Days", "next_7"),
+            ("Upcoming", "upcoming"),
+        ]:
+            self.history_status_combo.addItem(label, value)
+        self.history_status_combo.currentIndexChanged.connect(
+            lambda _=None: self._render_history()
+        )
+        self.history_filter_bar.add_filter(self.history_status_combo)
+
+        self.history_sort_combo = create_combo_box()
+        for label, value in [
+            ("Date Ascending", "asc"),
+            ("Date Descending", "desc"),
+        ]:
+            self.history_sort_combo.addItem(label, value)
+        self.history_sort_combo.currentIndexChanged.connect(
+            lambda _=None: self._render_history()
+        )
+        self.history_filter_bar.add_filter(self.history_sort_combo)
+
+        self.history_date_label = QLabel("")
+        self.history_date_label.setObjectName("CalendarHistoryDateFilter")
+        self.history_date_label.setVisible(False)
+        self.history_filter_bar.add_filter(self.history_date_label)
+
+        self.clear_history_date_btn = create_button(
+            "Clear Date",
+            "subtle",
+            fixed_height=30,
+        )
+        self.clear_history_date_btn.clicked.connect(
+            self._clear_history_date_filter
+        )
+        self.clear_history_date_btn.setVisible(False)
+        self.history_filter_bar.add_filter(self.clear_history_date_btn)
         content.setObjectName("PageSurface")
         self.history_layout = QVBoxLayout()
         self.history_layout.setContentsMargins(32, 24, 32, 24)
@@ -874,6 +1053,232 @@ class CalendarPage(QWidget):
     def _go_previous_range(self):
         if self._calendar_mode == CALENDAR_MODE_MONTH:
             self._anchor_date = add_months(self._anchor_date, -1)
+        try:
+            missionaries = (
+                session.query(Missionary)
+                .filter_by(status="ACTIVE")
+                .all()
+            )
+            today = date.today()
+            appointments = []
+
+            for missionary in missionaries:
+                for field, label, color in APPOINTMENT_FIELDS:
+                    appt_date = getattr(missionary, field, None)
+                    if not appt_date:
+                        continue
+
+                    days_offset = (appt_date - today).days
+                    appointments.append(
+                        AppointmentItem(
+                            missionary_id=missionary.id,
+                            full_name=missionary.full_name or "",
+                            current_stage=missionary.current_stage or "",
+                            date=appt_date,
+                            type=label,
+                            color=color,
+                            field=field,
+                            days_offset=days_offset,
+                            bucket=self._appointment_bucket(
+                                appt_date,
+                                today,
+                            ),
+                        )
+                    )
+
+            return sorted(
+                appointments,
+                key=lambda item: (
+                    item.date,
+                    item.type,
+                    item.full_name.casefold(),
+                ),
+            )
+        finally:
+            session.close()
+
+    def _appointment_bucket(self, appt_date, today):
+        return appointment_bucket(appt_date, today)
+
+    def _select_tab(self, key):
+        if key == TAB_HISTORY:
+            self.tab_stack.setCurrentIndex(self.history_index)
+        else:
+            self.tab_stack.setCurrentIndex(self.calendar_index)
+            key = TAB_CALENDAR
+
+        self._selected_tab = key
+        if self.tab_control is not None:
+            current_key = getattr(self.tab_control, "currentRouteKey", lambda: None)()
+            if current_key != key:
+                self.tab_control.setCurrentItem(key)
+        elif key in self.tab_buttons:
+            self.tab_buttons[key].setChecked(True)
+
+    def _render_calendar(self):
+        self._clear_layout(self.calendar_layout)
+        self._build_summary_cards()
+        self._build_calendar_toolbar()
+
+        visible_dates = visible_range_for_mode(
+            self._calendar_mode,
+            self._anchor_date,
+        )
+        visible_set = set(visible_dates)
+        filtered = self._apply_calendar_filters(self._appointments)
+        visible_items = [
+            item for item in filtered if item.date in visible_set
+        ]
+
+        self._build_overdue_strip(filtered, visible_set)
+
+        grid_card = create_card()
+        grid_card.setObjectName("CalendarGridCard")
+        grid_layout = QGridLayout()
+        grid_layout.setContentsMargins(14, 14, 14, 14)
+        grid_layout.setHorizontalSpacing(8)
+        grid_layout.setVerticalSpacing(8)
+        grid_card.setLayout(grid_layout)
+
+        for column, label in enumerate(WEEKDAY_LABELS):
+            header = QLabel(label.upper())
+            header.setObjectName("CalendarWeekdayHeader")
+            header.setAlignment(Qt.AlignCenter)
+            grid_layout.addWidget(header, 0, column)
+            grid_layout.setColumnStretch(column, 1)
+
+        day_items = self._appointments_by_date(visible_items)
+        today = date.today()
+        for index, day in enumerate(visible_dates):
+            row = index // 7 + 1
+            column = index % 7
+            grid_layout.addWidget(
+                self._make_day_cell(
+                    day,
+                    day_items.get(day, []),
+                    today,
+                    self._calendar_mode,
+                ),
+                row,
+                column,
+            )
+            grid_layout.setRowStretch(row, 1)
+
+        self.calendar_layout.addWidget(grid_card)
+
+        if not self._appointments:
+            self.calendar_layout.addWidget(
+                self._make_empty_state("No scheduled appointments.")
+            )
+        elif not visible_items:
+            self.calendar_layout.addWidget(
+                self._make_empty_state(
+                    "No appointments in this calendar range."
+                )
+            )
+
+        self.calendar_layout.addStretch()
+
+    def _build_summary_cards(self):
+        today = date.today()
+        week_dates = set(visible_range_for_mode(CALENDAR_MODE_WEEK, today))
+        counts = {
+            "overdue": 0,
+            "today": 0,
+            "this_week": 0,
+        }
+
+        for item in self._appointments:
+            if item.bucket == "overdue":
+                counts["overdue"] += 1
+            if item.date == today:
+                counts["today"] += 1
+            if item.date in week_dates:
+                counts["this_week"] += 1
+
+        row = QHBoxLayout()
+        row.setSpacing(16)
+
+        cards = [
+            ("overdue", counts["overdue"], "Overdue"),
+            ("today", counts["today"], "Today"),
+            ("this_week", counts["this_week"], "This Week"),
+            ("total", len(self._appointments), "Total Scheduled"),
+        ]
+
+        for key, value, title in cards:
+            row.addWidget(
+                StatCard(
+                    value,
+                    title,
+                    color=SUMMARY_COLORS[key],
+                )
+            )
+
+        wrapper = QWidget()
+        wrapper.setObjectName("CalendarSummaryRow")
+        wrapper.setLayout(row)
+        self.calendar_layout.addWidget(wrapper)
+
+    def _build_calendar_toolbar(self):
+        toolbar = create_card(object_name="CalendarToolbar")
+        toolbar.setObjectName("CalendarToolbar")
+        layout = QHBoxLayout()
+        layout.setContentsMargins(16, 12, 16, 12)
+        layout.setSpacing(8)
+        toolbar.setLayout(layout)
+
+        self._add_mode_control(layout)
+
+        layout.addSpacing(8)
+
+        previous_btn = self._make_nav_arrow_button("LEFT_ARROW", "Previous")
+        previous_btn.clicked.connect(self._go_previous_range)
+        layout.addWidget(previous_btn)
+
+        today_btn = create_button(
+            "Today",
+            "secondary",
+            fixed_height=30,
+        )
+        today_btn.clicked.connect(self._go_today)
+        layout.addWidget(today_btn)
+
+        next_btn = self._make_nav_arrow_button("RIGHT_ARROW", "Next")
+        next_btn.clicked.connect(self._go_next_range)
+        layout.addWidget(next_btn)
+
+        self.range_title_label = QLabel(self._calendar_range_title())
+        self.range_title_label.setObjectName("CalendarRangeTitle")
+        self.range_title_label.setAlignment(Qt.AlignCenter)
+        layout.addWidget(self.range_title_label, stretch=1)
+
+        self.calendar_search_edit = create_search_edit("Search calendar")
+        self.calendar_search_edit.setText(
+            getattr(self, "_calendar_search_text", "")
+        )
+        self.calendar_search_edit.textChanged.connect(
+            self._calendar_search_changed
+        )
+        layout.addWidget(self.calendar_search_edit, stretch=1)
+
+        self.calendar_type_combo = create_combo_box()
+        selected_type = getattr(self, "_calendar_type_filter", "All Types")
+        for label in ["All Types", "Interpol", "Biometric", "Pickup"]:
+            self.calendar_type_combo.addItem(label, label)
+        self._select_combo_value(self.calendar_type_combo, selected_type)
+        self.calendar_type_combo.currentIndexChanged.connect(
+            lambda _=None: self._calendar_type_changed()
+        )
+        layout.addWidget(self.calendar_type_combo)
+
+        self.calendar_layout.addWidget(toolbar)
+
+    def _make_nav_arrow_button(self, icon_name, tooltip):
+        icon = fluent_icon(icon_name)
+        if FLUENT_AVAILABLE and TransparentToolButton is not None and icon:
+            button = TransparentToolButton(icon, self)
+            button.setFixedSize(32, 30)
         else:
             self._anchor_date = self._anchor_date - timedelta(days=7)
         self._render_calendar()
