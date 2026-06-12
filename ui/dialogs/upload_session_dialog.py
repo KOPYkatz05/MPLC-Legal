@@ -2495,6 +2495,18 @@ class UploadSessionDialog(MaskDialogBase):
         if missionary_id is None:
             return
 
+        try:
+            from services.appointment_service import AppointmentService
+
+            AppointmentService().sync_from_missionary_dates(
+                missionary_id,
+                new_fields,
+            )
+        except Exception:
+            logger.exception(
+                "Failed to sync appointment attempts after upload"
+            )
+
         self._emitted_appointment_update_fields.update(new_fields)
         self.appointment_dates_updated.emit(missionary_id, new_fields)
 

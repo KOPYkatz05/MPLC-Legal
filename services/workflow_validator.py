@@ -48,7 +48,8 @@ class WorkflowValidator:
             documents = (
                 session.query(Document)
                 .filter_by(
-                    missionary_id=missionary_id
+                    missionary_id=missionary_id,
+                    status="ACTIVE",
                 )
                 .all()
             )
@@ -132,7 +133,8 @@ class WorkflowValidator:
             documents = (
                 session.query(Document)
                 .filter_by(
-                    missionary_id=missionary_id
+                    missionary_id=missionary_id,
+                    status="ACTIVE",
                 )
                 .all()
             )

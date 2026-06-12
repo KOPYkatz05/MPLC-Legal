@@ -27,6 +27,7 @@ QWidget {
 
 QWidget#MissionariesPage,
 QWidget#CalendarPage,
+QWidget#OfficeWorkPage,
 QWidget#ReportsPage,
 QWidget#SettingsPage,
 QWidget#TrashPage,
@@ -231,6 +232,42 @@ QTableWidget#MissionaryTable::item {
 }
 
 QTableWidget#MissionaryTable::item:selected {
+    background-color: #EFF6FF;
+    color: #1D4ED8;
+}
+
+QPushButton#MissionaryCellCopyButton {
+    background-color: transparent;
+    color: #71717A;
+    border: 1px solid transparent;
+    border-radius: 7px;
+    padding: 3px;
+}
+
+QPushButton#MissionaryCellCopyButton:hover {
+    background-color: #F4F4F5;
+    border-color: #E4E4E7;
+    color: #18181B;
+}
+
+QWidget#AppDialogSurface QListWidget#MissionaryColumnList,
+QDialog#AppDialogSurface QListWidget#MissionaryColumnList {
+    background-color: #FFFFFF;
+    border: 1px solid #E4E4E7;
+    border-radius: 8px;
+    outline: 0;
+    padding: 6px;
+}
+
+QWidget#AppDialogSurface QListWidget#MissionaryColumnList::item,
+QDialog#AppDialogSurface QListWidget#MissionaryColumnList::item {
+    min-height: 30px;
+    padding: 4px 8px;
+    border-radius: 6px;
+}
+
+QWidget#AppDialogSurface QListWidget#MissionaryColumnList::item:selected,
+QDialog#AppDialogSurface QListWidget#MissionaryColumnList::item:selected {
     background-color: #EFF6FF;
     color: #1D4ED8;
 }
@@ -621,6 +658,253 @@ QLabel#AlertBadge[tone="caution"] {
     background-color: #FEF3C7;
     color: #92400E;
     border: 1px solid #FCD34D;
+}
+
+
+/* ==========================================
+   CALENDAR AGENDA
+   ========================================== */
+
+QWidget#CalendarSummaryRow {
+    background: transparent;
+}
+
+QFrame#CalendarTopTabs {
+    background-color: #FFFFFF;
+    border-bottom: 1px solid #E4E4E7;
+}
+
+QPushButton#CalendarTabButton,
+QPushButton#CalendarModeButton {
+    background-color: transparent;
+    color: #52525B;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    padding: 0px 14px;
+    font-size: 13px;
+    font-weight: 600;
+}
+
+QPushButton#CalendarTabButton:hover,
+QPushButton#CalendarModeButton:hover {
+    background-color: #F4F4F5;
+    color: #27272A;
+}
+
+QPushButton#CalendarTabButton:checked,
+QPushButton#CalendarModeButton:checked {
+    background-color: #EFF6FF;
+    color: #1D4ED8;
+    border-color: #BFDBFE;
+}
+
+QFrame#CalendarToolbar,
+QWidget#CalendarToolbar,
+QFrame#HistoryFilterBar,
+QWidget#HistoryFilterBar,
+QFrame#CalendarOverdueStrip {
+    background-color: #FFFFFF;
+    border: 1px solid #E4E4E7;
+    border-radius: 8px;
+}
+
+QFrame#CalendarGridCard,
+QWidget#CalendarGridCard {
+    background-color: #FAFAFA;
+    border: 1px solid #E4E4E7;
+    border-radius: 14px;
+}
+
+QFrame#CalendarToolbar,
+QWidget#CalendarToolbar {
+    border-bottom-left-radius: 0px;
+    border-bottom-right-radius: 0px;
+    border-bottom: none;
+}
+
+QFrame#CalendarGridCard,
+QWidget#CalendarGridCard {
+    border-top-left-radius: 0px;
+    border-top-right-radius: 0px;
+}
+
+QLabel#CalendarRangeTitle {
+    color: #18181B;
+    font-size: 15px;
+    font-weight: 700;
+    background: transparent;
+}
+
+QLabel#CalendarWeekdayHeader {
+    color: #71717A;
+    font-size: 11px;
+    font-weight: 700;
+    background-color: transparent;
+    border: none;
+    padding: 2px 0px 6px 0px;
+}
+
+QFrame#CalendarDayCell {
+    background-color: #FFFFFF;
+    border: 1px solid #ECEEF2;
+    border-radius: 10px;
+    min-height: 132px;
+}
+
+QFrame#CalendarDayCell[outsideMonth="true"] {
+    background-color: #F8F9FB;
+    border-color: #F1F2F4;
+}
+
+QFrame#CalendarDayCell[today="true"] {
+    background-color: #F8FBFF;
+    border: 1px solid #93C5FD;
+}
+
+QLabel#CalendarDayNumber {
+    color: #18181B;
+    font-size: 13px;
+    font-weight: 700;
+    background: transparent;
+}
+
+QLabel#CalendarDayNumber[today="true"] {
+    color: #FFFFFF;
+    background-color: #2563EB;
+    border-radius: 10px;
+    padding: 1px 7px;
+}
+
+QLabel#CalendarDayCount {
+    background-color: #E4E4E7;
+    color: #3F3F46;
+    border-radius: 9px;
+    padding: 1px 7px;
+    font-size: 11px;
+    font-weight: 700;
+}
+
+QFrame#CalendarAppointmentChip {
+    background-color: #FCFCFD;
+    border: 1px solid #E5E7EB;
+    border-radius: 8px;
+}
+
+QFrame#CalendarAppointmentChip:hover {
+    background-color: #FFFFFF;
+    border-color: #CBD5E1;
+}
+
+QFrame#CalendarAppointmentChipAccent {
+    border-radius: 3px;
+}
+
+QPushButton#CalendarAppointmentChipButton {
+    background-color: transparent;
+    border: none;
+    color: #18181B;
+    text-align: left;
+    padding: 0px 7px;
+    font-size: 11px;
+    font-weight: 600;
+}
+
+QPushButton#CalendarOverflowButton {
+    background-color: transparent;
+    color: #2563EB;
+    border: none;
+    padding: 2px 4px;
+    text-align: left;
+    font-size: 11px;
+    font-weight: 700;
+}
+
+QPushButton#CalendarOverflowButton:hover {
+    color: #1D4ED8;
+    text-decoration: underline;
+}
+
+QLabel#CalendarHistoryDateFilter {
+    background-color: #EFF6FF;
+    color: #1D4ED8;
+    border: 1px solid #BFDBFE;
+    border-radius: 10px;
+    padding: 3px 10px;
+    font-size: 11px;
+    font-weight: 700;
+}
+
+QFrame#CalendarEmptyState,
+QWidget#CalendarEmptyState {
+    background-color: #FFFFFF;
+    border: 1px solid #E4E4E7;
+    border-radius: 8px;
+}
+
+QFrame#CalendarHistoryFocusCard,
+QWidget#CalendarHistoryFocusCard {
+    background-color: #FFFFFF;
+    border: 1px solid #E4E4E7;
+    border-radius: 8px;
+}
+
+QFrame#CalendarHistoryFocusRow,
+QFrame#CalendarHistoryFocusRowAlt {
+    background-color: #FFFFFF;
+    border-bottom: 1px solid #F3F4F6;
+}
+
+QFrame#CalendarHistoryFocusRowAlt {
+    background-color: #FBFBFC;
+}
+
+QFrame#CalendarHistoryFocusRow:hover,
+QFrame#CalendarHistoryFocusRowAlt:hover {
+    background-color: #F8FAFC;
+}
+
+QLabel#CalendarHistoryFocusMeta {
+    color: #64748B;
+    font-size: 12px;
+    background: transparent;
+}
+
+
+/* ==========================================
+   OFFICE WORK
+   ========================================== */
+
+QFrame#OfficeWorkTabs {
+    background-color: #FFFFFF;
+    border-bottom: 1px solid #E4E4E7;
+}
+
+QFrame#OfficeWorkRow,
+QWidget#OfficeWorkRow {
+    background-color: #FFFFFF;
+    border: 1px solid #E4E4E7;
+    border-radius: 8px;
+}
+
+QFrame#OfficeWorkRow:hover,
+QWidget#OfficeWorkRow:hover {
+    background-color: #FAFAFA;
+    border-color: #CBD5E1;
+}
+
+QFrame#OfficeWorkSectionHeader {
+    background: transparent;
+}
+
+QWidget#OfficeWorkSummaryRow {
+    background: transparent;
+}
+
+QLabel#OfficeWorkFieldLabel {
+    color: #3F3F46;
+    font-size: 12px;
+    font-weight: 600;
+    background: transparent;
 }
 
 

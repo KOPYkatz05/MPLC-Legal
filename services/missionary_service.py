@@ -21,6 +21,10 @@ from services.onedrive_service import (
 from services.workflow_service import (
     WorkflowService,
 )
+from services.appointment_service import (
+    APPOINTMENT_FIELDS,
+    AppointmentService,
+)
 
 from utils.logger import logger
 
@@ -218,6 +222,16 @@ class MissionaryService:
                     )
 
             session.commit()
+
+            appointment_fields = (
+                set(field_updates)
+                & set(APPOINTMENT_FIELDS)
+            )
+            if appointment_fields:
+                AppointmentService().sync_from_missionary_dates(
+                    missionary_id,
+                    appointment_fields,
+                )
 
             logger.info(
                 f"Saved field updates for "

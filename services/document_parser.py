@@ -29,6 +29,16 @@ SPANISH_MONTHS = {
 
 
 LABEL_FIELD_MAP = {
+    "CONSTANCIA_DE_TRAMITE_CARNE_DE_EXTRANJERIA": [
+        (
+            ["usuario", "user"],
+            "tramite_usuario",
+        ),
+        (
+            ["contraseña", "contrasena", "contraseÃ±a", "password"],
+            "tramite_contrasena",
+        ),
+    ],
     "CONSTANCIA_DE_CITA_INTERPOL": [
         (
             ["fecha de cita", "cita interpol", "cita:"],
