@@ -111,6 +111,14 @@ LAYOUT_APPOINTMENT_DATE_LABELS = {
     INTERPOL_CITA_DOCUMENT_TYPE: {
         "interpol_appointment_date": ("fecha cita",),
     },
+    "TAM": {
+        "arrival_date": (
+            "fecha de ingreso",
+            "ingreso",
+            "arribo",
+            "llegada",
+        ),
+    },
 }
 
 
