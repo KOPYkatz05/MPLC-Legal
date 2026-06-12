@@ -193,11 +193,9 @@ DOCUMENTS = {
         "ocr_fields": [
             "carnet_number",
             "carnet_issue_date",
-            "residency_expiration",
         ],
         "auto_updates": [
             "carnet_issue_date",
-            "residency_expiration",
         ],
     },
 
@@ -225,6 +223,14 @@ DOCUMENTS = {
         "label": "Declaración Jurada",
         "stage": "PRORROGA",
         "required": True,
+        "ocr_fields": [],
+        "auto_updates": [],
+    },
+
+    "CONSTANCIA_DE_PRORROGA": {
+        "label": "Constancia de Prórroga",
+        "stage": "PRORROGA",
+        "required": False,
         "ocr_fields": [],
         "auto_updates": [],
     },

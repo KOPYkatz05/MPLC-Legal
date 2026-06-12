@@ -10,6 +10,7 @@ from ui.dialogs.upload_session_dialog import (
     supported_upload_files_from_paths,
 )
 from ui.pages import missionary_detail_page as detail_module
+from utils.constants import DOCUMENTS
 
 
 def _build_upload_dialog(qapp):
@@ -189,3 +190,21 @@ def test_supported_upload_files_from_paths_keeps_direct_files():
         assert files == [str(pdf)]
     finally:
         shutil.rmtree(root, ignore_errors=True)
+
+
+def test_carne_upload_only_reviews_issue_date_not_residency_expiration():
+    config = DOCUMENTS["CARNE_DE_EXTRANJERIA"]
+
+    assert "carnet_issue_date" in config["ocr_fields"]
+    assert "residency_expiration" not in config["ocr_fields"]
+    assert "residency_expiration" not in config["auto_updates"]
+
+
+def test_constancia_de_prorroga_is_selectable_without_ocr():
+    config = DOCUMENTS["CONSTANCIA_DE_PRORROGA"]
+
+    assert config["label"] == "Constancia de Prórroga"
+    assert config["stage"] == "PRORROGA"
+    assert config["required"] is False
+    assert config["ocr_fields"] == []
+    assert config["auto_updates"] == []
