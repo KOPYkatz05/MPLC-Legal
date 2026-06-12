@@ -82,6 +82,7 @@ class DocumentService:
                 missionary_id=missionary.id,
                 document_type=document_type,
                 workflow_stage=workflow_stage,
+                status="ACTIVE",
                 file_name=new_file_name,
                 file_path=str(destination_path),
                 ocr_raw_data=raw_json,
@@ -192,6 +193,7 @@ class DocumentService:
                 .filter_by(
                     missionary_id=missionary_id,
                     document_type=document_type,
+                    status="ACTIVE",
                 )
                 .first()
             )
@@ -221,6 +223,7 @@ class DocumentService:
                 .filter_by(
                     missionary_id=missionary_id,
                     document_type=document_type,
+                    status="ACTIVE",
                 )
                 .first()
             )

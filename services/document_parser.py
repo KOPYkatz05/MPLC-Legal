@@ -26,6 +26,16 @@ SPANISH_MONTHS = {
 
 
 LABEL_FIELD_MAP = {
+    "CONSTANCIA_DE_TRAMITE_CARNE_DE_EXTRANJERIA": [
+        (
+            ["usuario", "user"],
+            "tramite_usuario",
+        ),
+        (
+            ["contraseña", "contrasena", "contraseÃ±a", "password"],
+            "tramite_contrasena",
+        ),
+    ],
     "CONSTANCIA_DE_CITA_INTERPOL": [
         (
             ["fecha de cita", "cita interpol", "cita:"],
@@ -88,6 +98,12 @@ DATE_FIELDS = {
 }
 
 
+CREDENTIAL_FIELDS = {
+    "tramite_usuario",
+    "tramite_contrasena",
+}
+
+
 class DocumentParser:
 
     def parse(self, text, document_type):
@@ -103,6 +119,8 @@ class DocumentParser:
 
         if document_type == "PASSPORT":
             return self._parse_passport(text)
+        if document_type == "CONSTANCIA_DE_TRAMITE_CARNE_DE_EXTRANJERIA":
+            return self._parse_tramite_credentials(text, ocr_fields)
 
         return self._parse_by_fields(
             text, document_type, ocr_fields
@@ -140,6 +158,41 @@ class DocumentParser:
         logger.info(f"Passport parse result: {list(result.keys())}")
         return result
 
+    def _parse_tramite_credentials(self, text, ocr_fields):
+        result = {}
+        normalized_text = self._normalize(text)
+
+        if "tramite_usuario" in ocr_fields:
+            usuario = self._extract_tramite_usuario(text, normalized_text)
+            if usuario:
+                result["tramite_usuario"] = usuario
+
+        if "tramite_contrasena" in ocr_fields:
+            contrasena = self._extract_tramite_contrasena(
+                text,
+                normalized_text,
+            )
+            if contrasena:
+                result["tramite_contrasena"] = contrasena
+
+        return result
+
+    def _extract_tramite_usuario(self, text, normalized_text):
+        return self._extract_credential_value(
+            text,
+            normalized_text,
+            "tramite_usuario",
+            prefer_previous=False,
+        )
+
+    def _extract_tramite_contrasena(self, text, normalized_text):
+        return self._extract_credential_value(
+            text,
+            normalized_text,
+            "tramite_contrasena",
+            prefer_previous=True,
+        )
+
     def _parse_by_fields(self, text, document_type, ocr_fields):
         result = {}
         normalized_text = self._normalize(text)
@@ -164,12 +217,153 @@ class DocumentParser:
                 found = self._fallback_date_for_field(field, all_dates)
                 if found:
                     result[field] = found
+            elif field in CREDENTIAL_FIELDS:
+                found = self._extract_credential_value(
+                    text,
+                    normalized_text,
+                    field,
+                )
+                if found:
+                    result[field] = found
             elif field == "carnet_number":
                 carnet = self._extract_carnet_number(text)
                 if carnet:
                     result[field] = carnet
 
         return result
+
+    def _extract_credential_value(
+        self,
+        text,
+        normalized_text,
+        field,
+        prefer_previous=False,
+    ):
+        label_patterns = [
+            patterns
+            for patterns, mapped_field
+            in LABEL_FIELD_MAP.get(
+                "CONSTANCIA_DE_TRAMITE_CARNE_DE_EXTRANJERIA",
+                [],
+            )
+            if mapped_field == field
+        ]
+        labels = label_patterns[0] if label_patterns else []
+        if not labels:
+            return None
+
+        lines = text.splitlines()
+        norm_lines = normalized_text.splitlines()
+
+        for i, norm_line in enumerate(norm_lines):
+            if not any(self._normalize(label) in norm_line for label in labels):
+                continue
+
+            line = lines[i] if i < len(lines) else ""
+            value = self._value_after_credential_label(line, labels)
+            if value:
+                if self._is_credential_candidate(value):
+                    return value
+                continue
+
+            if prefer_previous:
+                value = self._nearest_credential_candidate(
+                    lines,
+                    range(i - 1, max(i - 8, -1), -1),
+                    stop_on_gap=True,
+                )
+                if value:
+                    return value
+
+            value = self._nearest_credential_candidate(
+                lines,
+                range(i + 1, min(i + 8, len(lines))),
+            )
+            if value:
+                return value
+
+        for label in labels:
+            label_index = normalized_text.find(self._normalize(label))
+            if label_index < 0:
+                continue
+            snippet = text[label_index: label_index + 180]
+            value = self._value_after_credential_label(snippet, labels)
+            if value and self._is_credential_candidate(value):
+                return value
+
+        return None
+
+    def _nearest_credential_candidate(
+        self,
+        lines,
+        indexes,
+        stop_on_gap=False,
+    ):
+        for index in indexes:
+            if index < 0 or index >= len(lines):
+                continue
+            if stop_on_gap and not lines[index].strip():
+                return None
+            normalized = self._normalize(lines[index])
+            if any(
+                label in normalized
+                for label in ("usuario", "user", "contrasena", "password")
+            ):
+                return None
+            value = self._clean_credential_value(lines[index])
+            if value and self._is_credential_candidate(value):
+                return value
+        return None
+
+    def _value_after_credential_label(self, text, labels):
+        label_pattern = "|".join(
+            re.escape(label)
+            for label in sorted(labels, key=len, reverse=True)
+        )
+        next_label_pattern = (
+            r"usuario|user|contrase(?:n|ñ)a|password"
+        )
+        match = re.search(
+            rf"(?:{label_pattern})\s*[:=\-]?\s*(.*?)"
+            rf"(?=\s+(?:{next_label_pattern})\s*[:=\-]?|$)",
+            text,
+            re.IGNORECASE,
+        )
+        if not match:
+            return None
+        return self._clean_credential_value(match.group(1))
+
+    def _clean_credential_value(self, value):
+        if not value:
+            return None
+        value = re.sub(r"\s+", " ", str(value)).strip(" \t\r\n:=-")
+        value = re.sub(
+            r"^(usuario|user|contrase(?:n|ñ)a|password)\s*[:=\-]?\s*",
+            "",
+            value,
+            flags=re.IGNORECASE,
+        ).strip(" \t\r\n:=-")
+        if not value:
+            return None
+        if len(value) > 80:
+            value = value[:80].strip()
+        return value
+
+    def _is_credential_candidate(self, value):
+        normalized = self._normalize(value)
+        if normalized in {
+            "usuario",
+            "user",
+            "contrasena",
+            "password",
+            "enlace de",
+        }:
+            return False
+        if "http" in normalized or "@" in value:
+            return False
+        if " " in value:
+            return False
+        return bool(re.fullmatch(r"[A-Za-z0-9._-]{4,40}", value))
 
     def _extract_date_near_labels(
         self, text, normalized_text, patterns

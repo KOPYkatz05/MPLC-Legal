@@ -34,6 +34,8 @@ try:
         FluentIcon,
         HeaderCardWidget,
         InfoBar,
+        InfoBadge,
+        InfoLevel,
         LineEdit as FluentLineEdit,
         ListWidget as FluentListWidget,
         MaskDialogBase,
@@ -41,6 +43,7 @@ try:
         IndeterminateProgressRing,
         PlainTextEdit as FluentPlainTextEdit,
         Pivot as FluentPivot,
+        PillPushButton,
         PrimaryPushButton,
         PushButton,
         RoundMenu,
@@ -56,6 +59,7 @@ try:
         SmoothScrollDelegate,
         SingleDirectionScrollArea,
         SubtitleLabel,
+        StrongBodyLabel,
         TabWidget as FluentTabWidget,
         TableWidget,
         TextEdit as FluentTextEdit,
@@ -64,12 +68,20 @@ try:
 
     FLUENT_AVAILABLE = True
 except Exception:
+    class _FallbackInfoLevel:
+        ERROR = None
+        WARNING = None
+        ATTENTION = None
+        SUCCESS = None
+
     BodyLabel = QLabel
     CardWidget = QFrame
     EditableComboBox = QComboBox
     FluentComboBox = QComboBox
     FluentDatePicker = QDateEdit
     FluentIcon = None
+    InfoBadge = QLabel
+    InfoLevel = _FallbackInfoLevel
     FluentLineEdit = QLineEdit
     FluentListWidget = QListWidget
     FluentPlainTextEdit = QPlainTextEdit
@@ -84,6 +96,7 @@ except Exception:
     MaskDialogBase = QDialog
     MessageBox = None
     IndeterminateProgressRing = None
+    PillPushButton = QPushButton
     PrimaryPushButton = QPushButton
     PushButton = QPushButton
     RoundMenu = QMenu
@@ -96,6 +109,7 @@ except Exception:
     SmoothScrollDelegate = None
     SingleDirectionScrollArea = QScrollArea
     SubtitleLabel = QLabel
+    StrongBodyLabel = QLabel
     TableWidget = QTableWidget
     TransparentPushButton = QPushButton
     FLUENT_AVAILABLE = False
@@ -531,6 +545,18 @@ def create_button(text, variant="secondary", fixed_height=34, parent=None, icon=
     return _set_fixed_height(button, fixed_height)
 
 
+def create_pill_button(text, parent=None, icon=None):
+    if FLUENT_AVAILABLE and PillPushButton is not None:
+        if icon is not None:
+            button = PillPushButton(icon, text, parent)
+        else:
+            button = PillPushButton(parent)
+            button.setText(text)
+    else:
+        button = create_button(text, "subtle", fixed_height=30, parent=parent, icon=icon)
+    return button
+
+
 def create_line_edit(placeholder="", object_name="SearchInput", parent=None):
     line_edit = FluentLineEdit(parent)
     if object_name and not FLUENT_AVAILABLE:
@@ -545,6 +571,18 @@ def create_search_edit(placeholder="", object_name="SearchInput", parent=None):
         edit.setObjectName(object_name)
     edit.setPlaceholderText(placeholder)
     return _set_fixed_height(edit, 34)
+
+
+def create_info_badge(value, level=None, parent=None, object_name="InfoBadge"):
+    if FLUENT_AVAILABLE and InfoBadge is not None:
+        if level is None:
+            return InfoBadge(value, parent)
+        return InfoBadge(value, parent, level)
+
+    badge = QLabel(str(value), parent)
+    if object_name and not FLUENT_AVAILABLE:
+        badge.setObjectName(object_name)
+    return badge
 
 
 def create_text_edit(object_name="NotesEditor", parent=None):

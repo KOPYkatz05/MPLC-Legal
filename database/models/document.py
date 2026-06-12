@@ -74,6 +74,22 @@ class Document(Base):
         nullable=True,
     )
 
+    status = Column(
+        String,
+        default="ACTIVE",
+        nullable=False,
+    )
+
+    invalidated_at = Column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
+    invalidated_reason = Column(
+        String,
+        nullable=True,
+    )
+
     ocr_raw_data = Column(
         String,
         nullable=True,

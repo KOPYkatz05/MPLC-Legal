@@ -24,12 +24,23 @@ except Exception:
     TransparentToolButton = None
 
 from database.db import SessionLocal
+from database.models.appointment import (
+    APPOINTMENT_STATUS_SCHEDULED,
+    Appointment,
+)
 from database.models.missionary import Missionary
+from services.appointment_service import AppointmentService
 from ui.foundation import (
+    BodyLabel,
     FLUENT_AVAILABLE,
+    InfoLevel,
     FilterBar,
     PageHeader,
     StatCard,
+    StrongBodyLabel,
+    create_header_card,
+    create_info_badge,
+    create_pill_button,
     create_button,
     create_card,
     create_combo_box,
@@ -38,6 +49,7 @@ from ui.foundation import (
     create_search_edit,
     divider,
     fluent_icon,
+    show_message,
 )
 from utils.logger import logger
 
@@ -60,6 +72,12 @@ BUCKET_TONES = {
     "today": "warning",
     "next_7": "caution",
     "later": "success",
+}
+BUCKET_INFO_LEVELS = {
+    "overdue": InfoLevel.ERROR,
+    "today": InfoLevel.WARNING,
+    "next_7": InfoLevel.ATTENTION,
+    "later": InfoLevel.SUCCESS,
 }
 SUMMARY_COLORS = {
     "overdue": "#DC2626",
@@ -86,6 +104,7 @@ class AppointmentItem:
     field: str
     days_offset: int
     bucket: str
+    appointment_id: int = 0
 
 
 def appointment_bucket(appt_date, today):
@@ -362,40 +381,60 @@ class CalendarPage(QWidget):
             logger.exception("Failed to load calendar data")
 
     def _collect_appointments(self):
+        AppointmentService().backfill_all()
+
         session = SessionLocal()
 
         try:
             missionaries = (
-                session.query(Missionary)
-                .filter_by(status="ACTIVE")
+                session.query(Appointment, Missionary)
+                .join(Missionary, Appointment.missionary_id == Missionary.id)
+                .filter(
+                    Appointment.status == APPOINTMENT_STATUS_SCHEDULED,
+                    Missionary.status == "ACTIVE",
+                )
                 .all()
             )
             today = date.today()
             appointments = []
 
-            for missionary in missionaries:
-                for field, label, color in APPOINTMENT_FIELDS:
-                    appt_date = getattr(missionary, field, None)
-                    if not appt_date:
-                        continue
+            for appointment, missionary in missionaries:
+                field_config = next(
+                    (
+                        item
+                        for item in APPOINTMENT_FIELDS
+                        if item[0] == appointment.appointment_field
+                    ),
+                    None,
+                )
+                if field_config is None:
+                    continue
 
-                    days_offset = (appt_date - today).days
-                    appointments.append(
-                        AppointmentItem(
-                            missionary_id=missionary.id,
-                            full_name=missionary.full_name or "",
-                            current_stage=missionary.current_stage or "",
-                            date=appt_date,
-                            type=label,
-                            color=color,
-                            field=field,
-                            days_offset=days_offset,
-                            bucket=self._appointment_bucket(
-                                appt_date,
-                                today,
-                            ),
-                        )
+                field, label, color = field_config
+                appt_date = appointment.scheduled_date
+                if not appt_date:
+                    continue
+                if getattr(missionary, field, None) != appt_date:
+                    continue
+
+                days_offset = (appt_date - today).days
+                appointments.append(
+                    AppointmentItem(
+                        appointment_id=appointment.id,
+                        missionary_id=missionary.id,
+                        full_name=missionary.full_name or "",
+                        current_stage=missionary.current_stage or "",
+                        date=appt_date,
+                        type=label,
+                        color=color,
+                        field=field,
+                        days_offset=days_offset,
+                        bucket=self._appointment_bucket(
+                            appt_date,
+                            today,
+                        ),
                     )
+                )
 
             return sorted(
                 appointments,
@@ -429,7 +468,6 @@ class CalendarPage(QWidget):
     def _render_calendar(self):
         self._clear_layout(self.calendar_layout)
         self._build_summary_cards()
-        self._build_calendar_toolbar()
 
         visible_dates = visible_range_for_mode(
             self._calendar_mode,
@@ -441,7 +479,18 @@ class CalendarPage(QWidget):
             item for item in filtered if item.date in visible_set
         ]
 
-        self._build_overdue_strip(filtered, visible_set)
+        calendar_stack = QWidget()
+        calendar_stack.setObjectName("CalendarStack")
+        stack_layout = QVBoxLayout()
+        stack_layout.setContentsMargins(0, 0, 0, 0)
+        stack_layout.setSpacing(0)
+        calendar_stack.setLayout(stack_layout)
+
+        overdue_strip = self._build_overdue_strip(filtered, visible_set)
+        if overdue_strip is not None:
+            stack_layout.addWidget(overdue_strip)
+
+        stack_layout.addWidget(self._build_calendar_toolbar())
 
         grid_card = create_card()
         grid_card.setObjectName("CalendarGridCard")
@@ -475,7 +524,9 @@ class CalendarPage(QWidget):
             )
             grid_layout.setRowStretch(row, 1)
 
-        self.calendar_layout.addWidget(grid_card)
+        stack_layout.addWidget(grid_card)
+
+        self.calendar_layout.addWidget(calendar_stack)
 
         if not self._appointments:
             self.calendar_layout.addWidget(
@@ -583,7 +634,7 @@ class CalendarPage(QWidget):
         )
         layout.addWidget(self.calendar_type_combo)
 
-        self.calendar_layout.addWidget(toolbar)
+        return toolbar
 
     def _make_nav_arrow_button(self, icon_name, tooltip):
         icon = fluent_icon(icon_name)
@@ -656,7 +707,7 @@ class CalendarPage(QWidget):
             if item.bucket == "overdue" and item.date not in visible_set
         ]
         if not overdue:
-            return
+            return None
 
         strip = QFrame()
         strip.setObjectName("CalendarOverdueStrip")
@@ -684,7 +735,7 @@ class CalendarPage(QWidget):
             layout.addWidget(more)
 
         layout.addStretch()
-        self.calendar_layout.addWidget(strip)
+        return strip
 
     def _make_day_cell(self, day, appointments, today, mode):
         cell = QFrame()
@@ -872,10 +923,16 @@ class CalendarPage(QWidget):
             self.history_layout.addStretch()
             return
 
-        self._build_history_sections(
-            filtered,
-            self.history_sort_combo.currentData() or "asc",
-        )
+        unique_missionaries = {item.missionary_id for item in filtered}
+        if len(unique_missionaries) == 1:
+            self.history_layout.addWidget(
+                self._make_history_list_card(filtered)
+            )
+        else:
+            self._build_history_sections(
+                filtered,
+                self.history_sort_combo.currentData() or "asc",
+            )
         self.history_layout.addStretch()
 
     def _apply_history_filters(self, appointments):
@@ -941,6 +998,139 @@ class CalendarPage(QWidget):
                 self.history_layout.addWidget(
                     self._make_day_card(appt_date, list(day_items))
                 )
+
+    def _make_history_list_card(self, appointments):
+        card = create_header_card(
+            appointments[0].full_name,
+            object_name="CalendarHistoryFocusCard",
+        )
+        card.setObjectName("CalendarHistoryFocusCard")
+
+        header = card.headerLayout
+        header.addStretch()
+        header.addWidget(
+            create_info_badge(
+                f"{len(appointments)} appointment"
+                f"{'s' if len(appointments) != 1 else ''}",
+                level=BUCKET_INFO_LEVELS[appointments[0].bucket],
+            )
+        )
+
+        body_layout = card.viewLayout
+        body_layout.setContentsMargins(0, 0, 0, 0)
+        body_layout.setSpacing(0)
+
+        content = QWidget()
+        content.setObjectName("CalendarHistoryFocusList")
+        list_layout = QVBoxLayout()
+        list_layout.setContentsMargins(0, 0, 0, 0)
+        list_layout.setSpacing(0)
+        content.setLayout(list_layout)
+        body_layout.addWidget(content)
+
+        subtitle = BodyLabel(
+            appointments[0].current_stage or "No current stage"
+        )
+        subtitle.setObjectName("CalendarHistoryFocusMeta")
+        subtitle.setContentsMargins(18, 0, 18, 10)
+        list_layout.addWidget(subtitle)
+
+        for index, appointment in enumerate(appointments):
+            list_layout.addWidget(
+                self._make_history_list_row(
+                    appointment,
+                    alternate=index % 2 == 1,
+                )
+            )
+
+        return card
+
+    def _make_history_list_row(self, appointment, alternate=False):
+        row = QFrame()
+        row.setObjectName(
+            "CalendarHistoryFocusRowAlt"
+            if alternate
+            else "CalendarHistoryFocusRow"
+        )
+
+        layout = QHBoxLayout()
+        layout.setContentsMargins(18, 12, 18, 12)
+        layout.setSpacing(12)
+        row.setLayout(layout)
+
+        left_stack = QVBoxLayout()
+        left_stack.setContentsMargins(0, 0, 0, 0)
+        left_stack.setSpacing(4)
+
+        top_line = QHBoxLayout()
+        top_line.setContentsMargins(0, 0, 0, 0)
+        top_line.setSpacing(10)
+
+        type_badge = QLabel(appointment.type)
+        type_badge.setObjectName("CalendarTypeBadge")
+        type_badge.setStyleSheet(
+            "QLabel#CalendarTypeBadge {"
+            f"background-color: {appointment.color};"
+            "color: white;"
+            "border-radius: 999px;"
+            "padding: 3px 10px;"
+            "font-size: 11px;"
+            "font-weight: 700;"
+            "}"
+        )
+        type_badge.setAlignment(Qt.AlignCenter)
+        top_line.addWidget(type_badge)
+
+        top_line.addWidget(
+            StrongBodyLabel(appointment.date.strftime("%A, %B %d, %Y"))
+        )
+        top_line.addStretch()
+        top_line.addWidget(
+            create_info_badge(
+                appointment_distance_text(appointment.days_offset),
+                level=BUCKET_INFO_LEVELS[appointment.bucket],
+            )
+        )
+
+        top_wrapper = QWidget()
+        top_wrapper.setLayout(top_line)
+        left_stack.addWidget(top_wrapper)
+
+        left_stack.addWidget(
+            BodyLabel(
+                f"Stage: {appointment.current_stage or 'No current stage'}"
+            )
+        )
+
+        left_wrapper = QWidget()
+        left_wrapper.setLayout(left_stack)
+        layout.addWidget(left_wrapper, stretch=1)
+
+        view_btn = create_pill_button("View")
+        view_btn.setFixedHeight(28)
+        view_btn.clicked.connect(
+            lambda _=None, m_id=appointment.missionary_id:
+            self._open_missionary(m_id)
+        )
+        complete_btn = create_pill_button("Complete")
+        complete_btn.setObjectName("CalendarCompleteAppointmentButton")
+        complete_btn.setFixedHeight(28)
+        complete_btn.clicked.connect(
+            lambda _=None, appt=appointment:
+            self._complete_appointment(appt)
+        )
+        missed_btn = create_pill_button("Missed")
+        missed_btn.setObjectName("CalendarMissedAppointmentButton")
+        missed_btn.setFixedHeight(28)
+        missed_btn.clicked.connect(
+            lambda _=None, appt=appointment:
+            self._miss_appointment(appt)
+        )
+        layout.addWidget(complete_btn)
+        layout.addWidget(missed_btn)
+        layout.addWidget(view_btn)
+
+        return row
 
     def _make_section_header(self, bucket, count):
         row = QFrame()
@@ -1075,9 +1265,86 @@ class CalendarPage(QWidget):
             lambda _=None, m_id=appointment.missionary_id:
             self._open_missionary(m_id)
         )
+        complete_btn = create_button("Complete", "success", fixed_height=28)
+        complete_btn.setObjectName("CalendarCompleteAppointmentButton")
+        complete_btn.clicked.connect(
+            lambda _=None, appt=appointment:
+            self._complete_appointment(appt)
+        )
+        missed_btn = create_button("Missed", "danger", fixed_height=28)
+        missed_btn.setObjectName("CalendarMissedAppointmentButton")
+        missed_btn.clicked.connect(
+            lambda _=None, appt=appointment:
+            self._miss_appointment(appt)
+        )
+        layout.addWidget(complete_btn)
+        layout.addWidget(missed_btn)
         layout.addWidget(view_btn)
 
         return row
+
+    def _complete_appointment(self, appointment):
+        if not appointment.appointment_id:
+            return
+
+        try:
+            AppointmentService().complete_appointment(
+                appointment.appointment_id
+            )
+            show_message(
+                self,
+                "Appointment Completed",
+                f"{appointment.type} appointment marked complete.",
+            )
+            self.load_data()
+        except Exception:
+            logger.exception("Failed to complete appointment")
+            show_message(
+                self,
+                "Appointment Error",
+                "Could not mark the appointment complete.",
+                kind="critical",
+            )
+
+    def _miss_appointment(self, appointment):
+        if not appointment.appointment_id:
+            return
+
+        confirm = show_message(
+            self,
+            "Mark Appointment Missed?",
+            (
+                f"This will mark the {appointment.type} appointment as missed, "
+                "hide it from overdue, and create a follow-up task for the new "
+                "pago/cita."
+            ),
+            kind="question",
+            buttons="yes_no",
+        )
+        if confirm not in {1, 16384}:
+            return
+
+        try:
+            AppointmentService().miss_appointment(
+                appointment.appointment_id
+            )
+            show_message(
+                self,
+                "Appointment Missed",
+                (
+                    f"{appointment.type} appointment marked missed. "
+                    "A follow-up task was created."
+                ),
+            )
+            self.load_data()
+        except Exception:
+            logger.exception("Failed to mark appointment missed")
+            show_message(
+                self,
+                "Appointment Error",
+                "Could not mark the appointment missed.",
+                kind="critical",
+            )
 
     def _show_history_for_date(self, filter_date):
         self._history_exact_date = filter_date

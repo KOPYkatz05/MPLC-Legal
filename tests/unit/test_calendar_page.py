@@ -36,6 +36,7 @@ def _appointment(
         field="interpol_appointment_date",
         days_offset=days_offset,
         bucket=bucket,
+        appointment_id=99,
     )
 
 
@@ -237,5 +238,96 @@ def test_calendar_page_smoke_defaults_to_calendar_week(monkeypatch, qapp):
         assert page._calendar_mode == CALENDAR_MODE_WEEK
         assert page.tab_stack.currentIndex() == page.calendar_index
         assert page._selected_tab == TAB_CALENDAR
+    finally:
+        page.close()
+
+
+def test_calendar_toolbar_is_grouped_with_calendar_body(monkeypatch, qapp):
+    appointments = [
+        _appointment(full_name="Overdue Person", days_offset=-10),
+        _appointment(full_name="Visible Person", days_offset=1),
+    ]
+    page = _build_page(monkeypatch, qapp, appointments)
+
+    try:
+        toolbar = page.findChild(calendar_page.QFrame, "CalendarToolbar")
+        grid = page.findChild(calendar_page.QFrame, "CalendarGridCard")
+        overdue_strip = page.findChild(calendar_page.QFrame, "CalendarOverdueStrip")
+
+        assert toolbar is not None
+        assert grid is not None
+        assert overdue_strip is not None
+        assert toolbar.parentWidget() is grid.parentWidget()
+
+        parent_layout = toolbar.parentWidget().layout()
+        assert parent_layout.indexOf(overdue_strip) < parent_layout.indexOf(toolbar)
+        assert parent_layout.indexOf(toolbar) < parent_layout.indexOf(grid)
+    finally:
+        page.close()
+
+
+def test_history_uses_focus_card_for_single_missionary_search(monkeypatch, qapp):
+    appointments = [
+        _appointment(
+            full_name="Addelyn Sylvia Holt",
+            appointment_type="Interpol",
+            days_offset=-63,
+        ),
+        _appointment(
+            full_name="Addelyn Sylvia Holt",
+            appointment_type="Biometric",
+            days_offset=4,
+        ),
+        _appointment(full_name="Someone Else", days_offset=2),
+    ]
+    page = _build_page(monkeypatch, qapp, appointments)
+
+    try:
+        page._select_tab(TAB_HISTORY)
+        page.history_search_edit.setText("Holt")
+
+        focus_card = page.history_layout.itemAt(0).widget()
+        focus_list = focus_card.findChild(
+            calendar_page.QWidget,
+            "CalendarHistoryFocusList",
+        )
+        stale_day_card = focus_card.findChild(
+            calendar_page.QWidget,
+            "CalendarDayCard",
+        )
+        assert focus_card is not None
+        assert focus_card.objectName() == "CalendarHistoryFocusCard"
+        assert focus_list is not None
+        assert focus_card.viewLayout.count() == 1
+        assert focus_list.layout().count() == 3
+        assert stale_day_card is None
+    finally:
+        page.close()
+
+
+def test_history_rows_include_complete_and_missed_actions(monkeypatch, qapp):
+    appointments = [
+        _appointment(full_name="Addelyn Sylvia Holt", days_offset=-1),
+    ]
+    page = _build_page(monkeypatch, qapp, appointments)
+
+    try:
+        page._select_tab(TAB_HISTORY)
+        page.history_search_edit.setText("Holt")
+
+        assert (
+            page.findChild(
+                calendar_page.QWidget,
+                "CalendarCompleteAppointmentButton",
+            )
+            is not None
+        )
+        assert (
+            page.findChild(
+                calendar_page.QWidget,
+                "CalendarMissedAppointmentButton",
+            )
+            is not None
+        )
     finally:
         page.close()

@@ -206,6 +206,7 @@ class MissionaryDetailPage(QWidget):
         self._document_data = []
         self._date_edits = {}
         self._date_source_labels = {}
+        self._credential_source_labels = {}
         self._date_empty_on_load = set()
 
         self.setup_ui()
@@ -708,6 +709,8 @@ class MissionaryDetailPage(QWidget):
 
         self.nationality_label = make_field()
         self.passport_label = make_field()
+        self.tramite_usuario_label = make_field()
+        self.tramite_contrasena_label = make_field()
         self.folder_label = make_field()
         self.folder_label.setWordWrap(True)
 
@@ -719,6 +722,36 @@ class MissionaryDetailPage(QWidget):
             row_label("Passport Number:"),
             self.passport_label,
         )
+
+        credential_rows = [
+            (
+                "tramite_usuario",
+                "Trámite Usuario:",
+                self.tramite_usuario_label,
+            ),
+            (
+                "tramite_contrasena",
+                "Trámite Contraseña:",
+                self.tramite_contrasena_label,
+            ),
+        ]
+        for field_key, label_text, value_label in credential_rows:
+            source_lbl = QLabel("")
+            source_lbl.setObjectName("MiniMutedText")
+            self._credential_source_labels[field_key] = source_lbl
+
+            field_widget = QWidget()
+            fw_layout = QVBoxLayout()
+            fw_layout.setContentsMargins(0, 0, 0, 0)
+            fw_layout.setSpacing(2)
+            field_widget.setLayout(fw_layout)
+            fw_layout.addWidget(value_label)
+            fw_layout.addWidget(source_lbl)
+
+            form.addRow(
+                row_label(label_text),
+                field_widget,
+            )
 
         for field_key in EDITABLE_DATE_FIELDS:
             date_picker = create_date_picker()
@@ -954,6 +987,15 @@ class MissionaryDetailPage(QWidget):
         sources = _parse_field_sources(missionary.field_sources)
 
         for field_key, source_lbl in self._date_source_labels.items():
+            info = sources.get(field_key)
+            if info and info.get("label"):
+                source_lbl.setText(
+                    tr("field_from_source", label=info["label"])
+                )
+            else:
+                source_lbl.setText("")
+
+        for field_key, source_lbl in self._credential_source_labels.items():
             info = sources.get(field_key)
             if info and info.get("label"):
                 source_lbl.setText(
@@ -1288,6 +1330,12 @@ class MissionaryDetailPage(QWidget):
         )
         self.passport_label.setText(
             missionary.passport_number or "-"
+        )
+        self.tramite_usuario_label.setText(
+            getattr(missionary, "tramite_usuario", None) or "-"
+        )
+        self.tramite_contrasena_label.setText(
+            getattr(missionary, "tramite_contrasena", None) or "-"
         )
 
         self._date_empty_on_load = set()

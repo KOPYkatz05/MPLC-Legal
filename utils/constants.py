@@ -164,8 +164,14 @@ DOCUMENTS = {
         ),
         "stage": "CARNET DE EXTRANJERIA",
         "required": True,
-        "ocr_fields": [],
-        "auto_updates": [],
+        "ocr_fields": [
+            "tramite_usuario",
+            "tramite_contrasena",
+        ],
+        "auto_updates": [
+            "tramite_usuario",
+            "tramite_contrasena",
+        ],
     },
 
     "CITA_RECOJO": {
@@ -347,6 +353,8 @@ OCR_FIELDS = [
     "prorroga_expiration",
     "cancelacion_date",
     "visa_expiration",
+    "tramite_usuario",
+    "tramite_contrasena",
 ]
 
 
