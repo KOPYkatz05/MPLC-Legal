@@ -39,6 +39,8 @@ def _run_migrations():
         "ALTER TABLE missionaries ADD COLUMN biometric_appointment_date DATE",
         "ALTER TABLE missionaries ADD COLUMN pickup_appointment_date DATE",
         "ALTER TABLE missionaries ADD COLUMN field_sources TEXT",
+        "ALTER TABLE missionaries ADD COLUMN tramite_usuario TEXT",
+        "ALTER TABLE missionaries ADD COLUMN tramite_contrasena TEXT",
         "ALTER TABLE documents ADD COLUMN ocr_raw_data TEXT",
         "ALTER TABLE documents ADD COLUMN ocr_confirmed_data TEXT",
     ]

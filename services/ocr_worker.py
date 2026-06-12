@@ -71,7 +71,8 @@ def main(argv=None):
                 index,
                 _image_summary(image_path),
             )
-            text = service.extract_text(image_path)
+            page_result = service.extract_page(image_path)
+            text = page_result.get("text", "")
             logger.info(
                 "OCR_WORKER_EXTRACT_DONE pid=%s page=%s chars=%s",
                 os.getpid(),
@@ -82,6 +83,7 @@ def main(argv=None):
                 "page": index,
                 "image_path": str(image_path),
                 "text": text,
+                "lines": page_result.get("lines", []),
             })
 
         output_path = Path(args.output)

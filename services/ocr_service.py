@@ -98,6 +98,12 @@ class OCRService:
         self,
         image_path,
     ):
+        return self.extract_page(image_path).get("text", "")
+
+    def extract_page(
+        self,
+        image_path,
+    ):
         path = Path(image_path)
         logger.info(
             "OCR_SERVICE_EXTRACT_BEGIN pid=%s image=%s exists=%s bytes=%s",
@@ -127,6 +133,7 @@ class OCRService:
             )
 
             extracted_text = []
+            extracted_lines = []
 
             if not result:
                 logger.warning(
@@ -134,7 +141,10 @@ class OCRService:
                     f"{image_path}"
                 )
 
-                return ""
+                return {
+                    "text": "",
+                    "lines": [],
+                }
 
             for page in result:
                 if not page:
@@ -143,9 +153,13 @@ class OCRService:
                 for line in page:
                     try:
                         text = line[1][0]
+                        confidence = line[1][1] if len(line[1]) > 1 else None
 
                         extracted_text.append(
                             text
+                        )
+                        extracted_lines.append(
+                            self._line_payload(line, text, confidence)
                         )
 
                     except Exception:
@@ -166,7 +180,10 @@ class OCRService:
                 len(final_text),
             )
 
-            return final_text
+            return {
+                "text": final_text,
+                "lines": extracted_lines,
+            }
 
         except Exception:
             logger.exception(
@@ -175,3 +192,30 @@ class OCRService:
             )
 
             raise
+
+    @staticmethod
+    def _line_payload(line, text, confidence):
+        bbox = line[0] if line else []
+        xs = []
+        ys = []
+        for point in bbox or []:
+            try:
+                xs.append(float(point[0]))
+                ys.append(float(point[1]))
+            except Exception:
+                continue
+
+        payload = {
+            "text": text,
+            "bbox": bbox,
+        }
+        if xs and ys:
+            payload.update({
+                "x0": min(xs),
+                "y0": min(ys),
+                "x1": max(xs),
+                "y1": max(ys),
+            })
+        if confidence is not None:
+            payload["confidence"] = confidence
+        return payload

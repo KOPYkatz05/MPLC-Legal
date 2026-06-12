@@ -8,6 +8,9 @@ from utils.constants import DOCUMENTS
 from utils.logger import logger
 
 
+TRAMITE_DOCUMENT_TYPE = "CONSTANCIA_DE_TRAMITE_CARNE_DE_EXTRANJERIA"
+INTERPOL_CITA_DOCUMENT_TYPE = "CONSTANCIA_DE_CITA_INTERPOL"
+
 SPANISH_MONTHS = {
     "enero": 1,
     "febrero": 2,
@@ -88,9 +91,28 @@ DATE_FIELDS = {
 }
 
 
+CREDENTIAL_FIELDS = {
+    "tramite_usuario",
+    "tramite_contrasena",
+}
+
+
+LAYOUT_APPOINTMENT_DATE_LABELS = {
+    INTERPOL_CITA_DOCUMENT_TYPE: {
+        "interpol_appointment_date": ("fecha cita",),
+    },
+}
+
+
+TRAMITE_CREDENTIAL_LABELS = {
+    "tramite_usuario": ("usuario", "user"),
+    "tramite_contrasena": ("contrasena", "contraseña", "password"),
+}
+
+
 class DocumentParser:
 
-    def parse(self, text, document_type):
+    def parse(self, text, document_type, layout_pages=None):
         doc_config = DOCUMENTS.get(document_type, {})
         ocr_fields = doc_config.get("ocr_fields", [])
 
@@ -103,6 +125,19 @@ class DocumentParser:
 
         if document_type == "PASSPORT":
             return self._parse_passport(text)
+        if document_type == TRAMITE_DOCUMENT_TYPE:
+            return self._parse_tramite_credentials(
+                text,
+                ocr_fields,
+                layout_pages=layout_pages,
+            )
+        if document_type in LAYOUT_APPOINTMENT_DATE_LABELS:
+            return self._parse_layout_appointment_dates(
+                text,
+                document_type,
+                ocr_fields,
+                layout_pages=layout_pages,
+            )
 
         return self._parse_by_fields(
             text, document_type, ocr_fields
@@ -140,6 +175,300 @@ class DocumentParser:
         logger.info(f"Passport parse result: {list(result.keys())}")
         return result
 
+    def _parse_layout_appointment_dates(
+        self,
+        text,
+        document_type,
+        ocr_fields,
+        layout_pages=None,
+    ):
+        result = {}
+        rows = self._layout_rows(layout_pages or [])
+        label_map = LAYOUT_APPOINTMENT_DATE_LABELS.get(document_type, {})
+
+        for field in ocr_fields:
+            labels = label_map.get(field)
+            if not labels:
+                continue
+            value = self._date_from_layout_rows(rows, labels)
+            if value:
+                result[field] = value
+
+        if all(result.get(field) for field in ocr_fields):
+            return result
+
+        fallback = self._parse_by_fields(text, document_type, ocr_fields)
+        for field, value in fallback.items():
+            if not result.get(field):
+                result[field] = value
+        return result
+
+    def _parse_tramite_credentials(
+        self,
+        text,
+        ocr_fields,
+        layout_pages=None,
+    ):
+        result = self._parse_tramite_credentials_from_layout(
+            layout_pages or [],
+            ocr_fields,
+        )
+        if all(result.get(field) for field in ocr_fields):
+            return result
+
+        fallback = self._parse_tramite_credentials_from_text(
+            text,
+            ocr_fields,
+        )
+        for field, value in fallback.items():
+            if not result.get(field):
+                result[field] = value
+        return result
+
+    def _parse_tramite_credentials_from_layout(
+        self,
+        layout_pages,
+        ocr_fields,
+    ):
+        result = {}
+        used_values = set()
+        rows = self._layout_rows(layout_pages)
+        for field in ocr_fields:
+            if field not in CREDENTIAL_FIELDS:
+                continue
+            value = self._credential_from_layout_rows(
+                rows,
+                field,
+                used_values,
+            )
+            if value:
+                result[field] = value
+                used_values.add(value)
+        return result
+
+    def _layout_rows(self, layout_pages):
+        items = []
+        for page in layout_pages or []:
+            page_number = page.get("page", 0)
+            for item in page.get("words") or page.get("lines") or []:
+                normalized = self._layout_item(item, page_number)
+                if normalized:
+                    items.append(normalized)
+
+        if not items:
+            return []
+
+        heights = [
+            max(item["y1"] - item["y0"], 1.0)
+            for item in items
+        ]
+        median_height = sorted(heights)[len(heights) // 2]
+        threshold = max(median_height * 0.8, 3.0)
+        rows = []
+
+        for item in sorted(
+            items,
+            key=lambda value: (
+                value["page"],
+                value["cy"],
+                value["x0"],
+            ),
+        ):
+            if (
+                rows
+                and rows[-1]["page"] == item["page"]
+                and abs(rows[-1]["cy"] - item["cy"]) <= threshold
+            ):
+                rows[-1]["items"].append(item)
+                count = len(rows[-1]["items"])
+                rows[-1]["cy"] = (
+                    (rows[-1]["cy"] * (count - 1)) + item["cy"]
+                ) / count
+            else:
+                rows.append({
+                    "page": item["page"],
+                    "cy": item["cy"],
+                    "items": [item],
+                })
+
+        for row in rows:
+            row["items"].sort(key=lambda item: item["x0"])
+
+        return rows
+
+    def _row_text(self, row):
+        return " ".join(
+            item["text"]
+            for item in row.get("items", [])
+        )
+
+    def _date_from_layout_rows(self, rows, labels):
+        for row_index, row in enumerate(rows):
+            row_text = self._normalize(self._row_text(row))
+            if not any(label in row_text for label in labels):
+                continue
+
+            date_on_label_row = self._extract_all_dates(
+                self._row_text(row)
+            )
+            if date_on_label_row:
+                return date_on_label_row[0]
+
+            label_left = min(item["x0"] for item in row["items"])
+            label_right = max(item["x1"] for item in row["items"])
+            label_center = (label_left + label_right) / 2
+            candidates = []
+
+            for candidate_row in rows[row_index + 1:]:
+                if candidate_row["page"] != row["page"]:
+                    break
+
+                vertical_distance = candidate_row["cy"] - row["cy"]
+                if vertical_distance < 0:
+                    continue
+                if vertical_distance > 80:
+                    break
+
+                dates = self._extract_all_dates(
+                    self._row_text(candidate_row)
+                )
+                if not dates:
+                    continue
+
+                candidate_left = min(
+                    item["x0"]
+                    for item in candidate_row["items"]
+                )
+                candidate_right = max(
+                    item["x1"]
+                    for item in candidate_row["items"]
+                )
+                candidate_center = (candidate_left + candidate_right) / 2
+                candidates.append((
+                    vertical_distance,
+                    abs(candidate_center - label_center),
+                    dates[0],
+                ))
+
+            if candidates:
+                candidates.sort(key=lambda item: (item[0], item[1]))
+                return candidates[0][2]
+
+        return None
+
+    def _layout_item(self, item, page_number=0):
+        text = str(item.get("text") or "").strip()
+        if not text:
+            return None
+
+        x0 = item.get("x0")
+        y0 = item.get("y0")
+        x1 = item.get("x1")
+        y1 = item.get("y1")
+        if None in {x0, y0, x1, y1}:
+            bbox = item.get("bbox") or []
+            xs = []
+            ys = []
+            for point in bbox:
+                try:
+                    xs.append(float(point[0]))
+                    ys.append(float(point[1]))
+                except Exception:
+                    continue
+            if xs and ys:
+                x0, y0, x1, y1 = min(xs), min(ys), max(xs), max(ys)
+
+        try:
+            x0 = float(x0)
+            y0 = float(y0)
+            x1 = float(x1)
+            y1 = float(y1)
+        except (TypeError, ValueError):
+            return None
+
+        return {
+            "text": text,
+            "x0": x0,
+            "y0": y0,
+            "x1": x1,
+            "y1": y1,
+            "cy": (y0 + y1) / 2,
+            "page": int(item.get("page", page_number)),
+        }
+
+    def _credential_from_layout_rows(
+        self,
+        rows,
+        field,
+        used_values=None,
+    ):
+        labels = TRAMITE_CREDENTIAL_LABELS.get(field, ())
+        used_values = used_values or set()
+
+        for row in rows:
+            items = row["items"]
+            for index, item in enumerate(items):
+                if not self._is_credential_label(
+                    item["text"],
+                    labels,
+                    require_marker=True,
+                ):
+                    continue
+
+                inline_value = self._value_after_credential_label(
+                    item["text"],
+                    labels,
+                )
+                if (
+                    inline_value
+                    and inline_value not in used_values
+                    and self._is_credential_candidate(inline_value)
+                ):
+                    return inline_value
+
+                right_candidates = [
+                    candidate["text"]
+                    for candidate in items[index + 1:]
+                    if candidate["x0"] >= item["x1"] - 2
+                ]
+                for candidate in right_candidates:
+                    cleaned = self._clean_credential_value(candidate)
+                    if (
+                        cleaned
+                        and cleaned not in used_values
+                        and self._is_credential_candidate(cleaned)
+                    ):
+                        return cleaned
+
+        return None
+
+    def _is_credential_label(self, text, labels, require_marker=False):
+        if require_marker and not any(
+            marker in str(text)
+            for marker in (":", "：")
+        ):
+            return False
+        normalized = self._normalize(text).strip(" :：=-")
+        return normalized in labels
+
+    def _parse_tramite_credentials_from_text(self, text, ocr_fields):
+        result = {}
+        normalized_text = self._normalize(text)
+        used_values = set()
+        for field in ocr_fields:
+            if field not in CREDENTIAL_FIELDS:
+                continue
+            value = self._extract_credential_value(
+                text,
+                normalized_text,
+                field,
+                used_values=used_values,
+            )
+            if value:
+                result[field] = value
+                used_values.add(value)
+        return result
+
     def _parse_by_fields(self, text, document_type, ocr_fields):
         result = {}
         normalized_text = self._normalize(text)
@@ -164,12 +493,104 @@ class DocumentParser:
                 found = self._fallback_date_for_field(field, all_dates)
                 if found:
                     result[field] = found
+            elif field in CREDENTIAL_FIELDS:
+                found = self._extract_credential_value(
+                    text,
+                    normalized_text,
+                    field,
+                )
+                if found:
+                    result[field] = found
             elif field == "carnet_number":
                 carnet = self._extract_carnet_number(text)
                 if carnet:
                     result[field] = carnet
 
         return result
+
+    def _extract_credential_value(
+        self,
+        text,
+        normalized_text,
+        field,
+        used_values=None,
+    ):
+        labels = TRAMITE_CREDENTIAL_LABELS.get(field, ())
+        used_values = used_values or set()
+        lines = text.splitlines()
+        norm_lines = normalized_text.splitlines()
+
+        for index in range(len(norm_lines)):
+            line = lines[index] if index < len(lines) else ""
+            if not any(
+                self._is_credential_label(part, labels)
+                for part in line.split()
+            ):
+                continue
+
+            value = self._value_after_credential_label(line, labels)
+            if (
+                value
+                and value not in used_values
+                and self._is_credential_candidate(value)
+            ):
+                return value
+
+            for next_index in range(index + 1, min(index + 6, len(lines))):
+                value = self._clean_credential_value(lines[next_index])
+                if (
+                    value
+                    and value not in used_values
+                    and self._is_credential_candidate(value)
+                ):
+                    return value
+
+        return None
+
+    def _value_after_credential_label(self, text, labels):
+        label_pattern = "|".join(
+            re.escape(label)
+            for label in sorted(labels, key=len, reverse=True)
+        )
+        match = re.search(
+            rf"(?:{label_pattern})\s*[:：=\-]?\s*(.+)$",
+            text,
+            re.IGNORECASE,
+        )
+        if not match:
+            return None
+        return self._clean_credential_value(match.group(1))
+
+    def _clean_credential_value(self, value):
+        if not value:
+            return None
+        value = re.sub(r"\s+", " ", str(value)).strip(" \t\r\n:：=-")
+        value = re.sub(
+            r"^(usuario|user|contrasena|contraseña|password)\s*[:：=\-]?\s*",
+            "",
+            value,
+            flags=re.IGNORECASE,
+        ).strip(" \t\r\n:：=-")
+        return value or None
+
+    def _is_credential_candidate(self, value):
+        if not value:
+            return False
+        normalized = self._normalize(value).strip()
+        if normalized in {
+            "usuario",
+            "user",
+            "contrasena",
+            "password",
+            "enlace",
+            "enlace de",
+        }:
+            return False
+        if "http" in normalized or "@" in normalized:
+            return False
+        if " " in normalized:
+            return False
+        return bool(re.fullmatch(r"[a-z0-9._-]{4,40}", normalized))
 
     def _extract_date_near_labels(
         self, text, normalized_text, patterns

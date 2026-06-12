@@ -25,6 +25,23 @@ from utils.logger import logger
 _ocr_service = None
 _ocr_init_failed = False
 OCR_SUBPROCESS_TIMEOUT_SECONDS = 180
+OCR_LAYOUT_AUDIT_MAX_CHARS = 200_000
+
+
+def _compact_layout_for_audit(value):
+    if not value:
+        return value
+    try:
+        encoded = json.dumps(value, ensure_ascii=False, default=str)
+    except Exception:
+        return None
+    if len(encoded) <= OCR_LAYOUT_AUDIT_MAX_CHARS:
+        return value
+    return {
+        "omitted": True,
+        "reason": "layout payload too large",
+        "chars": len(encoded),
+    }
 
 
 @dataclass
@@ -36,25 +53,32 @@ class UploadPipelineResult:
     ocr_image_paths: list = field(default_factory=list)
     raw_text: Optional[str] = None
     raw_text_by_page: list = field(default_factory=list)
+    layout_pages: list = field(default_factory=list)
     document_type: Optional[str] = None
     ocr_fields: list = field(default_factory=list)
     export_settings: dict = field(default_factory=dict)
     errors: list = field(default_factory=list)
 
     def to_audit_payload(self):
-        return {
+        payload = {
             "status": self.ocr_status,
             "document_type": self.document_type,
             "ocr_fields": self.ocr_fields,
             "parsed_data": self.parsed_data,
             "raw_text": self.raw_text,
-            "raw_text_by_page": self.raw_text_by_page,
+            "raw_text_by_page": _compact_layout_for_audit(
+                self.raw_text_by_page
+            ),
             "image_paths": [
                 str(path) for path in self.ocr_image_paths
             ],
             "export_settings": self.export_settings,
             "errors": self.errors,
         }
+        compact_layout = _compact_layout_for_audit(self.layout_pages)
+        if compact_layout:
+            payload["layout_pages"] = compact_layout
+        return payload
 
 
 @dataclass
@@ -262,6 +286,125 @@ def _get_page_indexes(file_path, export_settings):
     return [int(page or 0)]
 
 
+def extract_pdf_layout_pages(file_path, export_settings=None):
+    file_path = Path(file_path)
+    if file_path.suffix.lower() != ".pdf":
+        return []
+
+    settings = _normalize_ocr_export_settings(
+        file_path,
+        export_settings or {},
+    )
+    pages = []
+    try:
+        import fitz
+
+        page_indexes = _get_page_indexes(file_path, settings)
+        with fitz.open(str(file_path)) as document:
+            for output_index, page_index in enumerate(page_indexes):
+                if page_index < 0 or page_index >= len(document):
+                    continue
+                page = document.load_page(page_index)
+                words = []
+                for word in page.get_text("words"):
+                    try:
+                        x0, y0, x1, y1, text, block, line, word_no = word[:8]
+                    except ValueError:
+                        continue
+                    words.append({
+                        "text": text,
+                        "x0": float(x0),
+                        "y0": float(y0),
+                        "x1": float(x1),
+                        "y1": float(y1),
+                        "block": int(block),
+                        "line": int(line),
+                        "word": int(word_no),
+                    })
+                pages.append({
+                    "page": output_index,
+                    "source_page": page_index,
+                    "source": "pdf_words",
+                    "width": float(page.rect.width),
+                    "height": float(page.rect.height),
+                    "words": words,
+                })
+    except Exception:
+        logger.exception("Failed to extract PDF OCR layout")
+        return []
+
+    return pages
+
+
+def text_pages_from_layout(layout_pages):
+    pages = []
+    for page in layout_pages or []:
+        words = page.get("words") or page.get("lines") or []
+        if not words:
+            continue
+        sorted_words = sorted(
+            words,
+            key=lambda item: (
+                item.get("y0", 0),
+                item.get("x0", 0),
+            ),
+        )
+        text = "\n".join(
+            str(item.get("text") or "").strip()
+            for item in sorted_words
+            if str(item.get("text") or "").strip()
+        )
+        pages.append({
+            "page": page.get("page", 0),
+            "image_path": None,
+            "text": text,
+        })
+    return pages
+
+
+def try_layout_only_ocr(
+    document_type,
+    ocr_fields,
+    layout_pages,
+    export_settings,
+):
+    if not layout_pages:
+        return None
+
+    parser = DocumentParser()
+    parsed = parser.parse(
+        "",
+        document_type,
+        layout_pages=layout_pages,
+    )
+    parsed = _serialize_parsed(parsed)
+    filled = sum(
+        1 for field in ocr_fields
+        if parsed.get(field)
+    )
+    if filled != len(ocr_fields):
+        return None
+
+    raw_text_by_page = text_pages_from_layout(layout_pages)
+    raw_text = "\n\n".join(
+        item["text"]
+        for item in raw_text_by_page
+        if item["text"]
+    )
+    return UploadPipelineResult(
+        parsed_data=parsed,
+        ocr_status="success",
+        raw_text=raw_text,
+        raw_text_by_page=raw_text_by_page,
+        document_type=document_type,
+        ocr_fields=list(ocr_fields),
+        export_settings=_serialize_export_settings(
+            export_settings or {}
+        ),
+        layout_pages=layout_pages,
+    )
+
+
 def run_ocr_pipeline(
     image_path,
     document_type,
@@ -285,6 +428,7 @@ def run_ocr_on_images(
     parent=None,
     ocr_fields=None,
     export_settings=None,
+    layout_pages=None,
 ):
     ocr_fields = ocr_fields or DOCUMENTS.get(
         document_type, {}
@@ -327,6 +471,7 @@ def run_ocr_on_images(
         ),
         ocr_image_path=image_paths[0],
         ocr_image_paths=image_paths,
+        layout_pages=layout_pages or [],
     )
 
     try:
@@ -348,7 +493,16 @@ def run_ocr_on_images(
             os.getpid(),
             document_type,
         )
-        page_texts = extract_ocr_texts(image_paths, parent=parent)
+        try:
+            page_texts = extract_ocr_texts(image_paths, parent=parent)
+        except Exception:
+            if result.layout_pages:
+                logger.exception(
+                    "OCR text extraction failed; using available layout pages"
+                )
+                page_texts = []
+            else:
+                raise
         logger.info(
             "OCR_PIPELINE_EXTRACT_DONE pid=%s document_type=%s pages=%s chars_by_page=%s",
             os.getpid(),
@@ -363,19 +517,23 @@ def run_ocr_on_images(
         result.raw_text = raw_text
         result.raw_text_by_page = page_texts
         parser = DocumentParser()
-        parsed = parser.parse(raw_text, document_type)
+        parsed = parser.parse(
+            raw_text,
+            document_type,
+            layout_pages=result.layout_pages or page_texts,
+        )
         result.parsed_data = _serialize_parsed(parsed)
 
         filled = sum(
             1 for f in ocr_fields
             if result.parsed_data.get(f)
         )
-        if not raw_text.strip():
-            result.ocr_status = "failed"
-        elif filled == len(ocr_fields):
+        if filled == len(ocr_fields):
             result.ocr_status = "success"
         elif filled > 0:
             result.ocr_status = "partial"
+        elif not raw_text.strip():
+            result.ocr_status = "failed"
         else:
             result.ocr_status = "failed"
 
@@ -424,11 +582,12 @@ def _extract_ocr_texts_in_process(image_paths, parent=None):
 
     page_texts = []
     for page_index, image in enumerate(image_paths):
-        page_text = ocr.extract_text(str(image))
+        page_result = ocr.extract_page(str(image))
         page_texts.append({
             "page": page_index,
             "image_path": str(image),
-            "text": page_text,
+            "text": page_result.get("text", ""),
+            "lines": page_result.get("lines", []),
         })
     return page_texts
 
@@ -540,6 +699,24 @@ def prepare_ocr_ingestion(
             ),
         )
 
+    layout_pages = extract_pdf_layout_pages(
+        source_file,
+        export_settings,
+    )
+    layout_result = try_layout_only_ocr(
+        document_type,
+        ocr_fields,
+        layout_pages,
+        export_settings,
+    )
+    if layout_result is not None:
+        logger.info(
+            "OCR_LAYOUT_ONLY_SUCCESS document_type=%s fields=%s",
+            document_type,
+            list(layout_result.parsed_data.keys()),
+        )
+        return layout_result
+
     image_paths = export_pages_for_ocr(
         source_file,
         export_settings,
@@ -552,6 +729,7 @@ def prepare_ocr_ingestion(
         parent=parent,
         ocr_fields=ocr_fields,
         export_settings=export_settings,
+        layout_pages=layout_pages,
     )
 
     if not image_paths and ocr_fields:

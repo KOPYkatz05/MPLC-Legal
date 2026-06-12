@@ -52,6 +52,14 @@ class Missionary(Base):
         String
     )
 
+    tramite_usuario = Column(
+        String
+    )
+
+    tramite_contrasena = Column(
+        String
+    )
+
     # ======================================
     # Process Tracking
     # ======================================
