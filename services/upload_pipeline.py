@@ -27,6 +27,8 @@ _ocr_service = None
 _ocr_init_failed = False
 OCR_SUBPROCESS_TIMEOUT_SECONDS = 180
 OCR_LAYOUT_AUDIT_MAX_CHARS = 200_000
+OCR_MODE_IN_PROCESS = "in_process"
+OCR_MODE_SUBPROCESS = "subprocess"
 
 
 def _compact_layout_for_audit(value):
@@ -122,6 +124,18 @@ def get_ocr_service(parent=None):
             if progress:
                 progress.close()
     return _ocr_service
+
+
+def ocr_runtime_mode():
+    mode = os.environ.get("MISSION_LEGAL_OCR_MODE", "").strip().lower()
+    mode = mode.replace("-", "_")
+    if mode in {"subprocess", "process", "worker"}:
+        return OCR_MODE_SUBPROCESS
+    if mode in {"in_process", "inprocess", "process_local", "local"}:
+        return OCR_MODE_IN_PROCESS
+    if os.environ.get("MISSION_LEGAL_OCR_IN_PROCESS") == "1":
+        return OCR_MODE_IN_PROCESS
+    return OCR_MODE_IN_PROCESS
 
 
 def export_for_ocr(
@@ -554,6 +568,15 @@ def run_ocr_on_images(
 
 
 def extract_ocr_texts(image_paths, parent=None):
+    mode = ocr_runtime_mode()
+    if mode == OCR_MODE_SUBPROCESS:
+        logger.info(
+            "OCR_EXTRACT_MODE pid=%s mode=subprocess env_mode=%s",
+            os.getpid(),
+            os.environ.get("MISSION_LEGAL_OCR_MODE"),
+        )
+        return _extract_ocr_texts_subprocess(image_paths)
+
     if _ocr_service is not None or _ocr_init_failed:
         logger.info(
             "OCR_EXTRACT_MODE pid=%s mode=in_process cached_service=%s init_failed=%s",
@@ -563,15 +586,12 @@ def extract_ocr_texts(image_paths, parent=None):
         )
         return _extract_ocr_texts_in_process(image_paths, parent=parent)
 
-    if os.environ.get("MISSION_LEGAL_OCR_IN_PROCESS") == "1":
-        logger.info(
-            "OCR_EXTRACT_MODE pid=%s mode=in_process env=MISSION_LEGAL_OCR_IN_PROCESS",
-            os.getpid(),
-        )
-        return _extract_ocr_texts_in_process(image_paths, parent=parent)
-
-    logger.info("OCR_EXTRACT_MODE pid=%s mode=subprocess", os.getpid())
-    return _extract_ocr_texts_subprocess(image_paths)
+    logger.info(
+        "OCR_EXTRACT_MODE pid=%s mode=in_process runtime_mode=%s",
+        os.getpid(),
+        mode,
+    )
+    return _extract_ocr_texts_in_process(image_paths, parent=parent)
 
 
 def _extract_ocr_texts_in_process(image_paths, parent=None):

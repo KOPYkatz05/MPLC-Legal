@@ -1,4 +1,5 @@
 from pathlib import Path
+import time
 
 import fitz
 
@@ -7,6 +8,9 @@ from PIL import Image
 from PySide6.QtCore import QRectF
 
 from utils.logger import logger
+
+
+OCR_PDF_RENDER_DPI = 300
 
 
 class DocumentImageExportService:
@@ -20,6 +24,7 @@ class DocumentImageExportService:
         output_path,
     ):
 
+        started_at = time.monotonic()
         logger.info(
             "OCR_PDF_RENDER_BEGIN pdf=%s page=%s rotation=%s crop=%s output=%s",
             pdf_path,
@@ -39,12 +44,13 @@ class DocumentImageExportService:
             )
 
             pix = page.get_pixmap(
-                dpi=400
+                dpi=OCR_PDF_RENDER_DPI
             )
             logger.info(
-                "OCR_PDF_RENDER_PIXMAP pdf=%s page=%s width=%s height=%s stride=%s alpha=%s",
+                "OCR_PDF_RENDER_PIXMAP pdf=%s page=%s dpi=%s width=%s height=%s stride=%s alpha=%s",
                 pdf_path,
                 page_index,
+                OCR_PDF_RENDER_DPI,
                 pix.width,
                 pix.height,
                 pix.stride,
@@ -105,10 +111,11 @@ class DocumentImageExportService:
         )
 
         logger.info(
-            "OCR_PDF_RENDER_DONE output=%s mode=%s size=%s",
+            "OCR_PDF_RENDER_DONE output=%s mode=%s size=%s elapsed=%.2fs",
             output_path,
             image.mode,
             image.size,
+            time.monotonic() - started_at,
         )
 
         return output_path

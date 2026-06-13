@@ -28,8 +28,11 @@ from PySide6.QtWidgets import (
 from services.document_image_export_service import DocumentImageExportService
 from services.document_service import DocumentService
 from services.upload_pipeline import (
+    OCR_MODE_SUBPROCESS,
     UploadPipelineResult,
     finalize_ocr_ingestion,
+    get_ocr_service,
+    ocr_runtime_mode,
     prepare_ocr_ingestion,
 )
 from ui.dialogs.document_rendering import (
@@ -201,6 +204,21 @@ class UploadOcrWorker(QObject):
             except Exception:
                 pass
             self.finished.emit(self.index, False, str(exc), None)
+
+
+class UploadOcrWarmupWorker(QObject):
+    finished = Signal(bool, str)
+
+    def run(self):
+        try:
+            service = get_ocr_service(parent=None)
+            if service is None:
+                self.finished.emit(False, "OCR service unavailable.")
+                return
+            self.finished.emit(True, "")
+        except Exception as exc:
+            logger.exception("Upload OCR warm-up failed")
+            self.finished.emit(False, str(exc))
 
 
 class UploadPreviewGraphicsView(QGraphicsView):
@@ -633,6 +651,9 @@ class UploadSessionDialog(MaskDialogBase):
         self._busy = False
         self._ocr_thread = None
         self._ocr_worker = None
+        self._ocr_warmup_thread = None
+        self._ocr_warmup_worker = None
+        self._ocr_warmup_started = False
         self._pending_save_after_ocr = None
         self._saving_all = False
         self._save_all_index = 0
@@ -669,6 +690,54 @@ class UploadSessionDialog(MaskDialogBase):
             fit_to_content=False,
         )
         self.surface.setMinimumSize(0, 0)
+
+    def _start_ocr_warmup(self):
+        if self._is_closing or self._ocr_warmup_started:
+            return
+        self._ocr_warmup_started = True
+
+        if ocr_runtime_mode() == OCR_MODE_SUBPROCESS:
+            logger.info("UPLOAD_OCR_WARMUP_SKIPPED mode=subprocess")
+            return
+
+        logger.info("UPLOAD_OCR_WARMUP_BEGIN")
+        self._ocr_warmup_thread = QThread()
+        self._ocr_warmup_worker = UploadOcrWarmupWorker()
+        self._ocr_warmup_worker.moveToThread(self._ocr_warmup_thread)
+        self._ocr_warmup_thread.started.connect(self._ocr_warmup_worker.run)
+        self._ocr_warmup_worker.finished.connect(
+            self._handle_ocr_warmup_finished,
+            Qt.ConnectionType.QueuedConnection,
+        )
+        self._ocr_warmup_worker.finished.connect(self._ocr_warmup_thread.quit)
+        self._ocr_warmup_worker.finished.connect(
+            self._ocr_warmup_worker.deleteLater
+        )
+        self._ocr_warmup_thread.finished.connect(
+            self._ocr_warmup_thread.deleteLater
+        )
+        self._ocr_warmup_thread.finished.connect(
+            lambda thread=self._ocr_warmup_thread: (
+                self._clear_ocr_warmup_refs(thread)
+            )
+        )
+
+        try:
+            self._ocr_warmup_thread.start(QThread.Priority.LowPriority)
+        except TypeError:
+            self._ocr_warmup_thread.start()
+
+    @Slot(bool, str)
+    def _handle_ocr_warmup_finished(self, ok, error):
+        if ok:
+            logger.info("UPLOAD_OCR_WARMUP_DONE")
+        else:
+            logger.info("UPLOAD_OCR_WARMUP_FAILED error=%s", error)
+
+    def _clear_ocr_warmup_refs(self, thread):
+        if self._ocr_warmup_thread is thread:
+            self._ocr_warmup_thread = None
+            self._ocr_warmup_worker = None
 
     def _ensure_screen_tracking(self):
         window_handle = self.windowHandle()
@@ -2578,6 +2647,7 @@ class UploadSessionDialog(MaskDialogBase):
         super().showEvent(event)
         self._ensure_screen_tracking()
         self._schedule_responsive_shell_geometry()
+        QTimer.singleShot(0, self._start_ocr_warmup)
         if self._preview_item is not None:
             QTimer.singleShot(0, self._apply_preview_zoom)
 
