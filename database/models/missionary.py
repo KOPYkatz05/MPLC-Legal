@@ -52,6 +52,10 @@ class Missionary(Base):
         String
     )
 
+    date_of_birth = Column(
+        Date
+    )
+
     tramite_usuario = Column(
         String
     )

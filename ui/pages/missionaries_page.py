@@ -115,11 +115,29 @@ MISSIONARY_COLUMNS = [
         default_visible=True,
     ),
     MissionaryColumn(
+        "date_of_birth",
+        "Date of Birth",
+        lambda missionary: _format_date(missionary.date_of_birth),
+        145,
+    ),
+    MissionaryColumn(
         "current_stage",
         "Current Stage",
         _text_attr("current_stage"),
         175,
         default_visible=True,
+    ),
+    MissionaryColumn(
+        "tramite_usuario",
+        "Tramite Usuario",
+        _text_attr("tramite_usuario"),
+        155,
+    ),
+    MissionaryColumn(
+        "tramite_contrasena",
+        "Tramite Contrasena",
+        _text_attr("tramite_contrasena"),
+        165,
     ),
     MissionaryColumn(
         "arrival_date",
@@ -190,12 +208,6 @@ MISSIONARY_COLUMNS = [
         "Notes",
         _text_attr("notes"),
         280,
-    ),
-    MissionaryColumn(
-        "folder_path",
-        "Folder Path",
-        _text_attr("folder_path"),
-        340,
     ),
 ]
 

@@ -76,6 +76,7 @@ DOCUMENTS = {
         ],
         "auto_updates": [
             "passport_number",
+            "date_of_birth",
             "nationality",
             "passport_expiration",
         ],
@@ -368,6 +369,7 @@ OCR_FIELDS = [
 MISSIONARY_DATE_FIELDS = [
     "arrival_date",
     "visa_expiration",
+    "date_of_birth",
     "passport_expiration",
     "residency_expiration",
     "prorroga_expiration",

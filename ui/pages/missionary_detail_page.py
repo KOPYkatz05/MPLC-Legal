@@ -105,6 +105,7 @@ WORKFLOW_STATUS_TONES = {
 EDITABLE_DATE_FIELDS = [
     "arrival_date",
     "visa_expiration",
+    "date_of_birth",
     "passport_expiration",
     "residency_expiration",
     "carnet_issue_date",
@@ -726,6 +727,28 @@ class MissionaryDetailPage(QWidget):
             self.passport_label,
         )
 
+        self.birthdate_picker = create_date_picker()
+        self.birthdate_picker.setDate(DATE_PLACEHOLDER)
+        self.birthdate_picker.setMaximumWidth(DATE_EDIT_MAX_WIDTH)
+        self._date_edits["date_of_birth"] = self.birthdate_picker
+
+        birthdate_source_lbl = QLabel("")
+        birthdate_source_lbl.setObjectName("MiniMutedText")
+        self._date_source_labels["date_of_birth"] = birthdate_source_lbl
+
+        birthdate_widget = QWidget()
+        birthdate_layout = QVBoxLayout()
+        birthdate_layout.setContentsMargins(0, 0, 0, 0)
+        birthdate_layout.setSpacing(2)
+        birthdate_widget.setLayout(birthdate_layout)
+        birthdate_layout.addWidget(self.birthdate_picker)
+        birthdate_layout.addWidget(birthdate_source_lbl)
+
+        form.addRow(
+            row_label(f"{field_label('date_of_birth')}:"),
+            birthdate_widget,
+        )
+
         credential_rows = [
             (
                 "tramite_usuario",
@@ -757,6 +780,8 @@ class MissionaryDetailPage(QWidget):
             )
 
         for field_key in EDITABLE_DATE_FIELDS:
+            if field_key == "date_of_birth":
+                continue
             date_picker = create_date_picker()
             date_picker.setDate(DATE_PLACEHOLDER)
             date_picker.setMaximumWidth(DATE_EDIT_MAX_WIDTH)
