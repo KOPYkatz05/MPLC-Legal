@@ -37,6 +37,93 @@ QWidget#CentralWidget {
     background-color: #F4F4F5;
 }
 
+QWidget#MissionaryDetailPage QLabel#SectionHeader {
+    font-size: 10px;
+    font-weight: 700;
+    color: #A1A1AA;
+    letter-spacing: 1.1px;
+}
+
+QWidget#MissionaryDetailPage QLabel#BodyText,
+QWidget#MissionaryDetailPage QLabel#ReadOnlyValue {
+    color: #18181B;
+    font-size: 13px;
+}
+
+QWidget#MissionaryDetailPage QLabel#ReadOnlyValue[state="empty"] {
+    color: #A1A1AA;
+    font-weight: 500;
+}
+
+QWidget#MissionaryDetailPage QLabel#SourceBadge {
+    color: #4B5563;
+    background: rgba(59, 130, 246, 0.08);
+    border: 1px solid rgba(59, 130, 246, 0.14);
+    border-radius: 999px;
+    padding: 1px 6px;
+    font-size: 9px;
+    font-weight: 600;
+    letter-spacing: 0.2px;
+    min-height: 14px;
+}
+
+QWidget#MissionaryDetailPage QLabel#SourceBadge[source_kind="auto"] {
+    color: #0F766E;
+    background: rgba(13, 148, 136, 0.08);
+    border: 1px solid rgba(13, 148, 136, 0.14);
+}
+
+QWidget#MissionaryDetailPage QLabel#SummaryBadge {
+    color: #475569;
+    background: rgba(148, 163, 184, 0.10);
+    border: 1px solid rgba(148, 163, 184, 0.18);
+    border-radius: 999px;
+    padding: 3px 8px;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.1px;
+    min-height: 16px;
+}
+
+QWidget#MissionaryDetailPage QLabel#SummaryBadge[tone="primary"] {
+    color: #0F172A;
+    background: rgba(37, 99, 235, 0.08);
+    border-color: rgba(37, 99, 235, 0.16);
+}
+
+QWidget#MissionaryDetailPage QLabel#SummaryBadge[tone="subtle"] {
+    color: #475569;
+    background: rgba(148, 163, 184, 0.10);
+    border-color: rgba(148, 163, 184, 0.18);
+}
+
+QWidget#MissionaryDetailPage QDateEdit#MissionaryDetailDatePicker,
+QWidget#MissionaryDetailPage QDateTimeEdit#MissionaryDetailDatePicker {
+    min-height: 34px;
+}
+
+QWidget#MissionaryDetailPage QDateEdit#MissionaryDetailDatePicker[state="empty"],
+QWidget#MissionaryDetailPage QDateTimeEdit#MissionaryDetailDatePicker[state="empty"] {
+    color: transparent;
+    background-color: #FCFCFD;
+}
+
+QWidget#MissionaryDetailPage QDateEdit#MissionaryDetailDatePicker[state="empty"] QLineEdit,
+QWidget#MissionaryDetailPage QDateTimeEdit#MissionaryDetailDatePicker[state="empty"] QLineEdit {
+    color: transparent;
+    selection-color: transparent;
+    selection-background-color: transparent;
+}
+
+QWidget#MissionaryDetailPage QLabel#DateEmptyOverlay {
+    color: #A1A1AA;
+    font-size: 12px;
+    font-style: italic;
+    padding-left: 8px;
+    padding-right: 8px;
+    background: transparent;
+}
+
 QScrollArea {
     border: none;
     background-color: transparent;

@@ -42,6 +42,7 @@ from ui.foundation import (
     SubtitleLabel,
     create_button,
     create_card,
+    create_info_badge,
     create_combo_box,
     create_date_picker,
     create_list_widget,
@@ -66,7 +67,7 @@ from utils.logger import logger
 from services.workflow_validator import WorkflowValidator
 
 DATE_PLACEHOLDER = QDate(1900, 1, 1)
-DATE_EDIT_MAX_WIDTH = 180
+DATE_EDIT_MAX_WIDTH = 300
 OVERVIEW_CONTENT_SPACING = 16
 WORKFLOW_LIST_MIN_HEIGHT = 220
 DOCUMENTS_LIST_MIN_HEIGHT = 340
@@ -182,6 +183,54 @@ def _parse_field_sources(field_sources):
         return {}
 
 
+class ElidedLabel(QLabel):
+    def __init__(self, text="", parent=None):
+        super().__init__(parent)
+        self._full_text = ""
+        self._placeholder = "Not set"
+        self.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        self.setWordWrap(False)
+        self.setSizePolicy(
+            QSizePolicy.Expanding,
+            QSizePolicy.Preferred,
+        )
+        self.setText(text)
+
+    def setText(self, text):
+        self._full_text = "" if text is None else str(text)
+        self.setToolTip(self._full_text)
+        self._refresh_elided_text()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._refresh_elided_text()
+
+    def _refresh_elided_text(self):
+        if not self._full_text:
+            super().setText(self._placeholder)
+            return
+
+        width = self.contentsRect().width()
+        if width <= 0:
+            width = self.sizeHint().width()
+
+        display = self.fontMetrics().elidedText(
+            self._full_text,
+            Qt.ElideRight,
+            max(0, width),
+        )
+        super().setText(display or self._full_text)
+
+
+def _refresh_widget_style(widget):
+    if widget is None:
+        return
+    style = widget.style()
+    style.unpolish(widget)
+    style.polish(widget)
+    widget.update()
+
+
 class MissionaryDetailPage(QWidget):
     def __init__(self, main_window):
         super().__init__()
@@ -208,12 +257,232 @@ class MissionaryDetailPage(QWidget):
 
         self._document_data = []
         self._date_edits = {}
+        self._date_empty_overlays = {}
         self._date_source_labels = {}
         self._credential_source_labels = {}
         self._date_empty_on_load = set()
         self._residency_timeline_labels = {}
 
         self.setup_ui()
+
+    def _build_detail_card(self, title, subtitle=None):
+        card = create_card()
+        layout = QVBoxLayout()
+        layout.setContentsMargins(20, 16, 20, 16)
+        layout.setSpacing(10)
+        card.setLayout(layout)
+
+        title_lbl = QLabel(title)
+        title_lbl.setObjectName("SectionHeader")
+        layout.addWidget(title_lbl)
+
+        if subtitle:
+            subtitle_lbl = QLabel(subtitle)
+            subtitle_lbl.setObjectName("MutedText")
+            subtitle_lbl.setWordWrap(True)
+            layout.addWidget(subtitle_lbl)
+
+        return card, layout
+
+    def _build_field_block(
+        self,
+        label_text,
+        value_widget,
+        source_widget=None,
+        reserve_source_space=False,
+    ):
+        field_widget = QWidget()
+        field_layout = QVBoxLayout()
+        field_layout.setContentsMargins(0, 0, 0, 0)
+        field_layout.setSpacing(3)
+        field_widget.setLayout(field_layout)
+
+        label = QLabel(label_text)
+        label.setObjectName("MutedText")
+        field_layout.addWidget(label)
+
+        field_layout.addWidget(value_widget)
+
+        if source_widget is not None:
+            field_layout.addWidget(source_widget)
+        elif reserve_source_space:
+            spacer = QWidget()
+            spacer.setFixedHeight(16)
+            field_layout.addWidget(spacer)
+
+        return field_widget
+
+    def _build_value_label(self, text="Not set", *, elided=False):
+        label = ElidedLabel(text) if elided else QLabel(text)
+        label.setObjectName("ReadOnlyValue")
+        label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        if not elided:
+            label.setWordWrap(True)
+        label.setProperty("state", "empty" if text == "Not set" else "filled")
+        return label
+
+    def _build_source_label(self):
+        lbl = create_info_badge("")
+        lbl.setObjectName("SourceBadge")
+        lbl.setProperty("source_kind", "document")
+        lbl.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        lbl.setVisible(False)
+        return lbl
+
+    def _build_badge_chip(self, text, object_name="SummaryBadge"):
+        badge = QLabel(text)
+        badge.setObjectName(object_name)
+        badge.setProperty("tone", "subtle")
+        badge.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        badge.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        badge.adjustSize()
+        return badge
+
+    def _build_date_picker_shell(self, picker):
+        shell = QWidget()
+        shell_layout = QGridLayout()
+        shell_layout.setContentsMargins(0, 0, 0, 0)
+        shell_layout.setHorizontalSpacing(0)
+        shell_layout.setVerticalSpacing(0)
+        shell.setLayout(shell_layout)
+        shell.setFixedHeight(34)
+        shell.setFixedWidth(DATE_EDIT_MAX_WIDTH)
+        shell.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+
+        overlay = QLabel("Not set")
+        overlay.setObjectName("DateEmptyOverlay")
+        overlay.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        overlay.setVisible(False)
+        overlay.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
+        overlay.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+
+        shell_layout.addWidget(picker, 0, 0, alignment=Qt.AlignLeft)
+        shell_layout.addWidget(overlay, 0, 0, alignment=Qt.AlignLeft)
+
+        self._date_empty_overlays[picker] = overlay
+        return shell
+
+    def _configure_detail_date_picker(self, picker):
+        picker.setObjectName("MissionaryDetailDatePicker")
+        picker.setDate(DATE_PLACEHOLDER)
+        picker.setFixedWidth(DATE_EDIT_MAX_WIDTH)
+        if hasattr(picker, "setMinimumDate"):
+            picker.setMinimumDate(DATE_PLACEHOLDER)
+        if hasattr(picker, "setSpecialValueText"):
+            picker.setSpecialValueText("Not set")
+        if hasattr(picker, "setDisplayFormat"):
+            picker.setDisplayFormat("MMM d, yyyy")
+        if hasattr(picker, "setSizePolicy"):
+            picker.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        if hasattr(picker, "dateChanged"):
+            picker.dateChanged.connect(
+                lambda *_args, p=picker: self._sync_date_picker_state(p)
+            )
+
+    def _set_fluent_date_empty_text(self, picker, is_empty):
+        buttons = [
+            child
+            for child in picker.children()
+            if child.objectName() == "pickerButton"
+            and hasattr(child, "setText")
+        ]
+        if len(buttons) < 3:
+            return False
+
+        if is_empty:
+            buttons[0].setText("Not set")
+            buttons[1].setText("")
+            buttons[2].setText("")
+        else:
+            qd = (
+                picker.getDate()
+                if hasattr(picker, "getDate")
+                else picker.date()
+            )
+            buttons[0].setText(qd.toString("MMMM"))
+            buttons[1].setText(str(qd.day()))
+            buttons[2].setText(str(qd.year()))
+
+        for button in buttons:
+            button.adjustSize()
+            _refresh_widget_style(button)
+        return True
+
+    def _sync_date_picker_state(self, picker):
+        qd = (
+            picker.getDate()
+            if hasattr(picker, "getDate")
+            else picker.date()
+        )
+        self._set_date_picker_state(picker, qd == DATE_PLACEHOLDER)
+
+    def _set_value_text(self, widget, text, empty_text="Not set"):
+        if widget is None:
+            return
+        value = empty_text if text in {None, ""} else str(text)
+        if hasattr(widget, "setText"):
+            widget.setText(value)
+        widget.setProperty("state", "empty" if value == empty_text else "filled")
+        _refresh_widget_style(widget)
+
+    def _set_source_badge(self, widget, text, kind="document"):
+        if widget is None:
+            return
+        display = str(text or "").strip()
+        widget.setProperty("source_kind", kind)
+        if display:
+            if display == AUTO_DERIVED_VISA_SOURCE_LABEL:
+                display = "Derived"
+            widget.setText(display)
+            widget.setVisible(True)
+        else:
+            widget.setText("")
+            widget.setVisible(False)
+        widget.adjustSize()
+        _refresh_widget_style(widget)
+
+    def _set_date_picker_state(self, picker, is_empty):
+        if picker is None:
+            return
+        picker.setProperty("state", "empty" if is_empty else "filled")
+        overlay = self._date_empty_overlays.get(picker)
+        handled_by_fluent = self._set_fluent_date_empty_text(
+            picker,
+            is_empty,
+        )
+        if overlay is not None:
+            if handled_by_fluent:
+                overlay.setVisible(False)
+            else:
+                overlay.setVisible(is_empty)
+        _refresh_widget_style(picker)
+
+    def _update_summary_strip(self, missionary):
+        if not missionary:
+            return
+
+        birthdate = getattr(missionary, "date_of_birth", None)
+        folder_path = getattr(missionary, "folder_path", None)
+        folder_state = "Set" if folder_path else "Not set"
+
+        summary_values = {
+            "summary_name_chip": f"Name: {getattr(missionary, 'full_name', '—') or '—'}",
+            "summary_stage_chip": f"Stage: {_stage_display_name(getattr(missionary, 'current_stage', None))}",
+            "summary_nationality_chip": f"Nationality: {getattr(missionary, 'nationality', None) or 'Not set'}",
+            "summary_passport_chip": f"Passport: {getattr(missionary, 'passport_number', None) or 'Not set'}",
+            "summary_birthdate_chip": (
+                f"Birthdate: {birthdate.strftime('%b %d, %Y')}"
+                if birthdate
+                else "Birthdate: Not set"
+            ),
+            "summary_folder_chip": f"Folder: {folder_state}",
+        }
+
+        for attr, value in summary_values.items():
+            widget = getattr(self, attr, None)
+            if widget is not None and hasattr(widget, "setText"):
+                widget.setText(value)
+                widget.adjustSize()
 
     # ==========================================
     # UI SETUP
@@ -368,7 +637,7 @@ class MissionaryDetailPage(QWidget):
 
         self._build_overview_tab()
 
-        self._build_details_tab()
+        self._build_details_tab_dashboard()
 
         self._build_notes_tab()
 
@@ -828,12 +1097,252 @@ class MissionaryDetailPage(QWidget):
 
         outer_layout.addWidget(scroll)
 
+    def _build_details_tab_dashboard(self):
+        details_outer = QWidget()
+
+        self._add_static_tab("details", "Details", details_outer)
+
+        outer_layout = QVBoxLayout()
+        outer_layout.setContentsMargins(0, 0, 0, 0)
+        details_outer.setLayout(outer_layout)
+
+        scroll = create_scroll_area(single_direction=True)
+        tune_fluent_scrollable(scroll)
+
+        details_content = QWidget()
+        details_content.setObjectName("PageSurface")
+
+        content_layout = QVBoxLayout()
+        content_layout.setContentsMargins(32, 24, 32, 24)
+        content_layout.setSpacing(14)
+        details_content.setLayout(content_layout)
+
+        summary_card, summary_layout = self._build_detail_card(
+            "At a glance",
+            "Quick scan of the most important facts.",
+        )
+        summary_layout.setSpacing(8)
+        self.summary_chip_grid = QGridLayout()
+        self.summary_chip_grid.setContentsMargins(0, 0, 0, 0)
+        self.summary_chip_grid.setHorizontalSpacing(10)
+        self.summary_chip_grid.setVerticalSpacing(8)
+        summary_layout.addLayout(self.summary_chip_grid)
+
+        self.summary_name_chip = self._build_badge_chip("Name: —")
+        self.summary_stage_chip = self._build_badge_chip("Stage: —")
+        self.summary_nationality_chip = self._build_badge_chip("Nationality: —")
+        self.summary_passport_chip = self._build_badge_chip("Passport: —")
+        self.summary_birthdate_chip = self._build_badge_chip("Birthdate: —")
+        self.summary_folder_chip = self._build_badge_chip("Folder: Not set")
+
+        summary_chips = [
+            self.summary_name_chip,
+            self.summary_stage_chip,
+            self.summary_nationality_chip,
+            self.summary_passport_chip,
+            self.summary_birthdate_chip,
+            self.summary_folder_chip,
+        ]
+        for index, chip in enumerate(summary_chips):
+            self.summary_chip_grid.addWidget(
+                chip,
+                index // 6,
+                index % 6,
+                alignment=Qt.AlignLeft,
+            )
+        self.summary_chip_grid.setColumnStretch(len(summary_chips), 1)
+
+        content_layout.addWidget(summary_card)
+
+        self.nationality_label = self._build_value_label()
+        self.passport_label = self._build_value_label()
+        self.tramite_usuario_label = self._build_value_label()
+        self.tramite_contrasena_label = self._build_value_label()
+        self.folder_label = self._build_value_label(elided=True)
+
+        self.birthdate_picker = create_date_picker()
+        self._configure_detail_date_picker(self.birthdate_picker)
+        self._date_edits["date_of_birth"] = self.birthdate_picker
+        birthdate_shell = self._build_date_picker_shell(
+            self.birthdate_picker
+        )
+        birthdate_source_lbl = self._build_source_label()
+        self._date_source_labels["date_of_birth"] = birthdate_source_lbl
+
+        identity_card, identity_layout = self._build_detail_card(
+            "Identity",
+            "Read-only identity values and the folder link.",
+        )
+        identity_grid = QGridLayout()
+        identity_grid.setContentsMargins(0, 0, 0, 0)
+        identity_grid.setHorizontalSpacing(10)
+        identity_grid.setVerticalSpacing(8)
+        identity_layout.addLayout(identity_grid)
+
+        identity_grid.addWidget(
+            self._build_field_block("Nationality", self.nationality_label),
+            0,
+            0,
+        )
+        identity_grid.addWidget(
+            self._build_field_block(
+                "Passport Number",
+                self.passport_label,
+            ),
+            0,
+            1,
+        )
+        identity_grid.addWidget(
+            self._build_field_block(
+                field_label("date_of_birth"),
+                birthdate_shell,
+                birthdate_source_lbl,
+            ),
+            1,
+            0,
+        )
+
+        folder_widget = QWidget()
+        folder_layout = QVBoxLayout()
+        folder_layout.setContentsMargins(0, 0, 0, 0)
+        folder_layout.setSpacing(6)
+        folder_widget.setLayout(folder_layout)
+        folder_layout.addWidget(self.folder_label)
+
+        folder_action_row = QWidget()
+        folder_action_layout = QHBoxLayout()
+        folder_action_layout.setContentsMargins(0, 0, 0, 0)
+        folder_action_layout.setSpacing(8)
+        folder_action_row.setLayout(folder_action_layout)
+        self.folder_open_btn = create_button(
+            "Open Folder",
+            "subtle",
+            fixed_height=28,
+        )
+        self.folder_open_btn.setEnabled(False)
+        self.folder_open_btn.clicked.connect(self._open_folder_path)
+        folder_action_layout.addWidget(self.folder_open_btn)
+        folder_action_layout.addStretch()
+        folder_layout.addWidget(folder_action_row)
+
+        identity_grid.addWidget(
+            self._build_field_block("Folder Path", folder_widget),
+            1,
+            1,
+        )
+
+        credentials_card, credentials_layout = self._build_detail_card(
+            "Credentials",
+            "Usually manual; document uploads can still populate these fields.",
+        )
+        credentials_grid = QGridLayout()
+        credentials_grid.setContentsMargins(0, 0, 0, 0)
+        credentials_grid.setHorizontalSpacing(10)
+        credentials_grid.setVerticalSpacing(8)
+        credentials_layout.addLayout(credentials_grid)
+
+        for col, (field_key, label_text, value_label) in enumerate(
+            [
+                ("tramite_usuario", "Tramite Usuario", self.tramite_usuario_label),
+                (
+                    "tramite_contrasena",
+                    "Tramite Contrasena",
+                    self.tramite_contrasena_label,
+                ),
+            ]
+        ):
+            source_lbl = self._build_source_label()
+            self._credential_source_labels[field_key] = source_lbl
+            credentials_grid.addWidget(
+                self._build_field_block(
+                    label_text,
+                    value_label,
+                    source_lbl,
+                ),
+                0,
+                col,
+            )
+
+        timeline_card, timeline_layout = self._build_detail_card(
+            "Legal timeline",
+            "Editable dates with a compact source badge when populated from a document.",
+        )
+        timeline_grid = QGridLayout()
+        timeline_grid.setContentsMargins(0, 0, 0, 0)
+        timeline_grid.setHorizontalSpacing(10)
+        timeline_grid.setVerticalSpacing(8)
+        timeline_layout.addLayout(timeline_grid)
+
+        for idx, field_key in enumerate(
+            [key for key in EDITABLE_DATE_FIELDS if key != "date_of_birth"]
+        ):
+            date_picker = create_date_picker()
+            self._configure_detail_date_picker(date_picker)
+            self._date_edits[field_key] = date_picker
+            date_shell = self._build_date_picker_shell(date_picker)
+
+            source_lbl = self._build_source_label()
+            self._date_source_labels[field_key] = source_lbl
+
+            timeline_grid.addWidget(
+                self._build_field_block(
+                field_label(field_key),
+                date_shell,
+                source_lbl,
+                reserve_source_space=True,
+            ),
+                idx // 2,
+                idx % 2,
+            )
+
+        columns = QWidget()
+        columns_layout = QHBoxLayout()
+        columns_layout.setContentsMargins(0, 0, 0, 0)
+        columns_layout.setSpacing(16)
+        columns.setLayout(columns_layout)
+
+        left_column = QWidget()
+        left_layout = QVBoxLayout()
+        left_layout.setContentsMargins(0, 0, 0, 0)
+        left_layout.setSpacing(14)
+        left_column.setLayout(left_layout)
+        left_layout.addWidget(identity_card)
+        left_layout.addStretch()
+
+        right_column = QWidget()
+        right_layout = QVBoxLayout()
+        right_layout.setContentsMargins(0, 0, 0, 0)
+        right_layout.setSpacing(14)
+        right_column.setLayout(right_layout)
+        right_layout.addWidget(timeline_card)
+        right_layout.addWidget(credentials_card)
+        right_layout.addWidget(self._build_residency_timeline_card())
+        right_layout.addStretch()
+
+        columns_layout.addWidget(left_column, 1)
+        columns_layout.addWidget(right_column, 1)
+        content_layout.addWidget(columns)
+
+        self.save_dates_btn = create_button(tr("save_dates"), "primary")
+        self.save_dates_btn.setFixedWidth(160)
+        self.save_dates_btn.clicked.connect(self._save_dates)
+
+        btn_row = QHBoxLayout()
+        btn_row.addStretch()
+        btn_row.addWidget(self.save_dates_btn)
+        content_layout.addLayout(btn_row)
+
+        content_layout.addStretch()
+
+        scroll.setWidget(details_content)
+        outer_layout.addWidget(scroll)
+
     def _build_residency_timeline_card(self):
         card = create_card()
 
         layout = QVBoxLayout()
-        layout.setContentsMargins(24, 18, 24, 18)
-        layout.setSpacing(12)
+        layout.setContentsMargins(20, 16, 20, 16)
+        layout.setSpacing(10)
         card.setLayout(layout)
 
         title = QLabel("Residency timeline")
@@ -857,20 +1366,36 @@ class MissionaryDetailPage(QWidget):
             row = QWidget()
             row_layout = QHBoxLayout()
             row_layout.setContentsMargins(0, 0, 0, 0)
-            row_layout.setSpacing(12)
+            row_layout.setSpacing(8)
             row.setLayout(row_layout)
 
             label = QLabel(label_text)
             label.setObjectName("MiniMutedText")
-            value = QLabel("Pending")
-            value.setObjectName("ReadOnlyValue")
-            value.setWordWrap(True)
+            value_wrap = QWidget()
+            value_layout = QVBoxLayout()
+            value_layout.setContentsMargins(0, 0, 0, 0)
+            value_layout.setSpacing(2)
+            value_wrap.setLayout(value_layout)
+
+            status = create_info_badge("Pending")
+            status.setObjectName("SummaryBadge")
+            status.setProperty("tone", "subtle")
+
+            target = QLabel("Target: Not set")
+            target.setObjectName("ReadOnlyValue")
+            target.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            target.setWordWrap(True)
 
             row_layout.addWidget(label)
             row_layout.addStretch()
-            row_layout.addWidget(value)
+            row_layout.addWidget(value_wrap)
+            value_layout.addWidget(status, alignment=Qt.AlignRight)
+            value_layout.addWidget(target, alignment=Qt.AlignRight)
             layout.addWidget(row)
-            self._residency_timeline_labels[key] = value
+            self._residency_timeline_labels[key] = {
+                "status": status,
+                "target": target,
+            }
 
         return card
 
@@ -1060,26 +1585,74 @@ class MissionaryDetailPage(QWidget):
         if callable(load_data):
             load_data()
 
+    def _open_folder_path(self):
+        if not hasattr(self, "current_missionary"):
+            return
+
+        folder_path = getattr(self.current_missionary, "folder_path", None)
+        if not folder_path:
+            show_message(
+                self,
+                "Open Folder",
+                "This missionary does not have a folder path yet.",
+                kind="warning",
+            )
+            return
+
+        path = Path(folder_path)
+        if not path.exists():
+            show_message(
+                self,
+                "Open Folder",
+                f"Folder not found:\n{folder_path}",
+                kind="warning",
+            )
+            return
+
+        try:
+            open_document_with_default_app(path)
+        except Exception:
+            logger.exception("Failed to open folder path")
+            show_message(
+                self,
+                "Open Folder",
+                "Could not open the folder path.",
+                kind="critical",
+            )
+
     def _update_field_sources(self, missionary):
         sources = _parse_field_sources(missionary.field_sources)
 
         for field_key, source_lbl in self._date_source_labels.items():
             info = sources.get(field_key)
             if info and info.get("label"):
-                source_lbl.setText(
-                    tr("field_from_source", label=info["label"])
+                kind = (
+                    "auto"
+                    if (
+                        info.get("label")
+                        == AUTO_DERIVED_VISA_SOURCE_LABEL
+                        or info.get("document_type") == "TAM"
+                    )
+                    else "document"
+                )
+                self._set_source_badge(
+                    source_lbl,
+                    info["label"],
+                    kind=kind,
                 )
             else:
-                source_lbl.setText("")
+                self._set_source_badge(source_lbl, "")
 
         for field_key, source_lbl in self._credential_source_labels.items():
             info = sources.get(field_key)
             if info and info.get("label"):
-                source_lbl.setText(
-                    tr("field_from_source", label=info["label"])
+                self._set_source_badge(
+                    source_lbl,
+                    info["label"],
+                    kind="document",
                 )
             else:
-                source_lbl.setText("")
+                self._set_source_badge(source_lbl, "")
 
     def _save_dates(self):
         if not hasattr(self, "current_missionary"):
@@ -1401,18 +1974,27 @@ class MissionaryDetailPage(QWidget):
         self.name_label.setText(missionary.full_name)
         stage = missionary.current_stage or "-"
         self.stage_badge.setText(f"  {stage}  ")
+        self._update_summary_strip(missionary)
 
-        self.nationality_label.setText(
-            missionary.nationality or "-"
+        self._set_value_text(
+            self.nationality_label,
+            missionary.nationality,
         )
-        self.passport_label.setText(
-            missionary.passport_number or "-"
+        self._set_value_text(
+            self.passport_label,
+            missionary.passport_number,
         )
-        self.tramite_usuario_label.setText(
-            getattr(missionary, "tramite_usuario", None) or "-"
+        self._set_value_text(
+            self.tramite_usuario_label,
+            getattr(missionary, "tramite_usuario", None),
         )
-        self.tramite_contrasena_label.setText(
-            getattr(missionary, "tramite_contrasena", None) or "-"
+        self._set_value_text(
+            self.tramite_contrasena_label,
+            getattr(missionary, "tramite_contrasena", None),
+        )
+        self._set_value_text(
+            self.folder_label,
+            missionary.folder_path,
         )
 
         self._date_empty_on_load = set()
@@ -1425,9 +2007,11 @@ class MissionaryDetailPage(QWidget):
                 date_edit.setDate(
                     QDate(value.year, value.month, value.day)
                 )
+                self._set_date_picker_state(date_edit, False)
             else:
                 date_edit.setDate(DATE_PLACEHOLDER)
                 self._date_empty_on_load.add(field_key)
+                self._set_date_picker_state(date_edit, True)
 
         arrival_date = getattr(missionary, "arrival_date", None)
         visa_source = sources.get("visa_expiration", {})
@@ -1453,14 +2037,16 @@ class MissionaryDetailPage(QWidget):
                         derived_visa.day,
                     )
                 )
+                self._set_date_picker_state(visa_edit, False)
                 self._date_empty_on_load.discard("visa_expiration")
 
         self._update_field_sources(missionary)
         self._refresh_residency_timeline(missionary.id)
 
-        self.folder_label.setText(
-            missionary.folder_path or "-"
-        )
+        folder_path = missionary.folder_path or ""
+        self.folder_label.setToolTip(folder_path)
+        if hasattr(self, "folder_open_btn"):
+            self.folder_open_btn.setEnabled(bool(folder_path))
 
         self.notes_text.setPlainText(
             missionary.notes or ""
@@ -1500,8 +2086,8 @@ class MissionaryDetailPage(QWidget):
                     row.get("sequence_number"),
                 )
             )
-            label = self._residency_timeline_labels.get(key)
-            if label is None:
+            widgets = self._residency_timeline_labels.get(key)
+            if not widgets:
                 continue
 
             target = self.format_date(
@@ -1509,13 +2095,17 @@ class MissionaryDetailPage(QWidget):
             )
             status = row.get("status") or "PENDING"
             if status == "APPROVED":
-                text = f"Approved - expires {target}"
+                status_text = "Approved"
+                target_text = f"Expires: {target}"
                 document_id = row.get("document_id")
                 if document_id:
-                    text += f" - Document #{document_id}"
+                    target_text += f" - Document #{document_id}"
             else:
-                text = f"Pending - target {target}"
-            label.setText(text)
+                status_text = "Pending"
+                target_text = f"Target: {target}"
+
+            widgets["status"].setText(status_text)
+            widgets["target"].setText(target_text)
 
     def load_workflow_stages(self, workflows=None):
         self.workflow_list.clear()

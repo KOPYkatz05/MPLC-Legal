@@ -132,7 +132,26 @@ def test_missionary_detail_page_handles_birthdate_field(monkeypatch, qapp):
         2,
         3,
     )
+    if hasattr(page._date_edits["date_of_birth"], "specialValueText"):
+        assert (
+            page._date_edits["date_of_birth"].specialValueText()
+            == "Not set"
+        )
+    arrival_picker = page._date_edits["arrival_date"]
+    assert arrival_picker.property("state") == "empty"
+    assert page._date_empty_overlays[arrival_picker].text() == "Not set"
+    fluent_buttons = [
+        child.text()
+        for child in arrival_picker.children()
+        if child.objectName() == "pickerButton"
+        and hasattr(child, "text")
+    ]
+    if fluent_buttons:
+        assert fluent_buttons == ["Not set", "", ""]
     assert "Passport" in page._date_source_labels["date_of_birth"].text()
+    assert page.folder_open_btn.isEnabled() is False
+    assert "Name:" in page.summary_name_chip.text()
+    assert "Birthdate:" in page.summary_birthdate_chip.text()
 
     captured = {}
 
