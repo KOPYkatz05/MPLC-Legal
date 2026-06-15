@@ -28,6 +28,7 @@ try:
     from qfluentwidgets import (
         BodyLabel,
         CardWidget,
+        CheckBox as FluentCheckBox,
         ComboBox as FluentComboBox,
         DatePicker as FluentDatePicker,
         EditableComboBox,
@@ -76,6 +77,7 @@ except Exception:
 
     BodyLabel = QLabel
     CardWidget = QFrame
+    FluentCheckBox = QPushButton
     EditableComboBox = QComboBox
     FluentComboBox = QComboBox
     FluentDatePicker = QDateEdit
@@ -606,6 +608,15 @@ def create_combo_box(object_name="FilterCombo", parent=None, editable=False):
         combo.setObjectName(object_name)
     _set_fixed_height(combo, 34)
     return _patch_fluent_combo_data_api(combo)
+
+
+def create_check_box(text="", object_name="CheckBox", parent=None):
+    check_box = FluentCheckBox(text, parent)
+    if object_name and not FLUENT_AVAILABLE:
+        check_box.setObjectName(object_name)
+        if hasattr(check_box, "setCheckable"):
+            check_box.setCheckable(True)
+    return _set_fixed_height(check_box, 30)
 
 
 def create_date_picker(object_name="DateInput", parent=None):

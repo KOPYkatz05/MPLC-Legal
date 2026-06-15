@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QHBoxLayout,
     QLabel,
+    QFrame,
     QListWidgetItem,
     QFormLayout,
     QStackedWidget,
@@ -24,6 +25,7 @@ from PySide6.QtCore import Qt, QSize, QDate
 from services.workflow_service import WorkflowService
 from services.document_service import DocumentService
 from services.missionary_service import MissionaryService
+from services.secretary_work_service import SecretaryWorkService
 from services.expiration_rules import add_years
 from services.residency_service import ResidencyService
 from services.document_image_export_service import (
@@ -33,6 +35,7 @@ from services.thumbnail_service import ThumbnailService
 from ui.dialogs.ocr_data_view_dialog import OcrDataViewDialog
 from ui.dialogs.stage_advance_dialog import StageAdvanceDialog
 from ui.dialogs.upload_session_dialog import UploadSessionDialog
+from ui.dialogs.office_work_dialogs import TaskDialog
 from ui.foundation import (
     BodyLabel,
     DialogFooter,
@@ -246,6 +249,8 @@ class MissionaryDetailPage(QWidget):
         self.document_service = DocumentService()
 
         self.missionary_service = MissionaryService()
+
+        self.secretary_work_service = SecretaryWorkService()
 
         self.residency_service = ResidencyService()
 
@@ -702,6 +707,10 @@ class MissionaryDetailPage(QWidget):
 
         content_layout.addWidget(
             self._build_workflow_section()
+        )
+
+        content_layout.addWidget(
+            self._build_open_tasks_section()
         )
 
         # ---- Documents section ----
@@ -1399,6 +1408,49 @@ class MissionaryDetailPage(QWidget):
 
         return card
 
+    def _build_open_tasks_section(self):
+        card = create_card()
+        layout = QVBoxLayout()
+        layout.setContentsMargins(22, 18, 22, 18)
+        layout.setSpacing(12)
+        card.setLayout(layout)
+
+        header = QHBoxLayout()
+        header.setContentsMargins(0, 0, 0, 0)
+        header.setSpacing(8)
+
+        title = QLabel("Open Tasks")
+        title.setObjectName("PanelTitle")
+        header.addWidget(title)
+        header.addStretch()
+
+        add_btn = create_button(
+            "Add Task",
+            "primary",
+            fixed_height=30,
+        )
+        add_btn.clicked.connect(self._add_missionary_task)
+        header.addWidget(add_btn)
+
+        office_btn = create_button(
+            "Open Office Work",
+            "secondary",
+            fixed_height=30,
+        )
+        office_btn.clicked.connect(self._open_office_work)
+        header.addWidget(office_btn)
+
+        layout.addLayout(header)
+
+        self.open_tasks_list = create_list_widget()
+        self.open_tasks_list.setSpacing(8)
+        self.open_tasks_list.setMinimumHeight(160)
+        tune_fluent_scrollable(self.open_tasks_list)
+        _set_scroll_step(self.open_tasks_list)
+        layout.addWidget(self.open_tasks_list)
+
+        return card
+
     def _build_notes_tab(self):
         notes_tab = QWidget()
 
@@ -1550,6 +1602,7 @@ class MissionaryDetailPage(QWidget):
 
         if dialog.saved_any():
             self._reload_missionary()
+            self._refresh_missionaries_table()
 
         return
 
@@ -1572,6 +1625,7 @@ class MissionaryDetailPage(QWidget):
 
         if dialog.saved_any():
             self._reload_missionary()
+            self._refresh_missionaries_table()
 
         return
 
@@ -1582,6 +1636,30 @@ class MissionaryDetailPage(QWidget):
 
         calendar_page = getattr(self.main_window, "calendar_page", None)
         load_data = getattr(calendar_page, "load_data", None)
+        if callable(load_data):
+            load_data()
+
+    def _refresh_missionaries_table(self):
+        main_window = getattr(self, "main_window", None)
+        if main_window is None:
+            return
+
+        missionaries_page = getattr(
+            main_window,
+            "missionaries_page",
+            None,
+        )
+
+        if missionaries_page is None:
+            stack = getattr(main_window, "stack", None)
+            widget = getattr(stack, "widget", None)
+            if callable(widget):
+                try:
+                    missionaries_page = widget(1)
+                except Exception:
+                    missionaries_page = None
+
+        load_data = getattr(missionaries_page, "load_data", None)
         if callable(load_data):
             load_data()
 
@@ -2060,6 +2138,7 @@ class MissionaryDetailPage(QWidget):
         )
 
         self.load_workflow_stages(workflows)
+        self.load_open_tasks()
         self.load_documents(documents)
         self.load_missing_documents(documents)
         self._refresh_overview_summary(workflows, documents)
@@ -2232,6 +2311,151 @@ class MissionaryDetailPage(QWidget):
                 "ocr_raw_data": doc.ocr_raw_data,
                 "ocr_confirmed_data": doc.ocr_confirmed_data,
             })
+
+    def load_open_tasks(self):
+        if not hasattr(self, "open_tasks_list"):
+            return
+
+        self.open_tasks_list.clear()
+
+        if not hasattr(self, "current_missionary"):
+            return
+
+        tasks = self.secretary_work_service.list_tasks(
+            missionary_id=self.current_missionary.id,
+        )
+
+        if not tasks:
+            empty = QListWidgetItem()
+            widget = self._build_empty_state_card(
+                "No open tasks for this missionary.",
+                "Use Add Task when there is office work to track.",
+            )
+            empty.setSizeHint(widget.sizeHint())
+            empty.setFlags(empty.flags() & ~Qt.ItemIsSelectable)
+            self.open_tasks_list.addItem(empty)
+            self.open_tasks_list.setItemWidget(empty, widget)
+            return
+
+        for task in tasks:
+            item = QListWidgetItem()
+            item.setData(Qt.UserRole, task["id"])
+            widget = self._build_open_task_widget(task)
+            item.setSizeHint(widget.sizeHint())
+            self.open_tasks_list.addItem(item)
+            self.open_tasks_list.setItemWidget(item, widget)
+
+    def _build_open_task_widget(self, task):
+        card = create_card()
+        layout = QHBoxLayout()
+        layout.setContentsMargins(12, 10, 12, 10)
+        layout.setSpacing(10)
+        card.setLayout(layout)
+
+        if task.get("is_group_task"):
+            accent = QFrame()
+            accent.setFixedWidth(4)
+            accent.setStyleSheet(
+                "QFrame { background-color: #7C3AED; border-radius: 2px; }"
+            )
+            layout.addWidget(accent)
+
+        copy = QVBoxLayout()
+        copy.setContentsMargins(0, 0, 0, 0)
+        copy.setSpacing(4)
+
+        title = QLabel(task.get("title", "Untitled task"))
+        title.setObjectName("StrongText")
+        copy.addWidget(title)
+
+        status_label = (
+            "Waiting"
+            if task.get("status") == "WAITING"
+            else "To Do"
+        )
+        meta_parts = [
+            task.get("priority", "NORMAL").title(),
+            status_label,
+        ]
+        if task.get("due_date"):
+            meta_parts.append(task["due_date"].strftime("%b %d, %Y"))
+        else:
+            meta_parts.append("No due date")
+        if task.get("waiting_reason_label"):
+            meta_parts.append(task["waiting_reason_label"])
+        if task.get("is_group_task"):
+            shared_label = f"Shared with {task.get('missionary_count', 0)} missionaries"
+            if task.get("group_scope_label"):
+                shared_label = f"{shared_label} - {task['group_scope_label']}"
+            meta_parts.append(shared_label)
+        meta = QLabel("  |  ".join(meta_parts))
+        meta.setObjectName("MutedText")
+        meta.setWordWrap(True)
+        copy.addWidget(meta)
+        layout.addLayout(copy, stretch=1)
+
+        done_btn = create_button("Done", "success", fixed_height=28)
+        done_btn.clicked.connect(
+            lambda _=None, task_id=task["id"]: self._complete_missionary_task(task_id)
+        )
+        layout.addWidget(done_btn)
+
+        edit_btn = create_button("Edit", "secondary", fixed_height=28)
+        edit_btn.clicked.connect(
+            lambda _=None, task_data=task: self._edit_missionary_task(task_data)
+        )
+        layout.addWidget(edit_btn)
+
+        return card
+
+    def _add_missionary_task(self):
+        if not hasattr(self, "current_missionary"):
+            return
+
+        dialog = TaskDialog(
+            self.secretary_work_service,
+            defaults={"missionary_id": self.current_missionary.id},
+            parent=self,
+        )
+        if dialog.exec():
+            self._refresh_task_views()
+
+    def _edit_missionary_task(self, task):
+        dialog = TaskDialog(
+            self.secretary_work_service,
+            task=task,
+            parent=self,
+        )
+        if dialog.exec():
+            self._refresh_task_views()
+
+    def _complete_missionary_task(self, task_id):
+        self.secretary_work_service.complete_task(task_id)
+        self._refresh_task_views()
+
+    def _refresh_task_views(self):
+        self.load_open_tasks()
+        office_work_page = getattr(
+            self.main_window,
+            "office_work_page",
+            None,
+        )
+        if office_work_page is not None and hasattr(office_work_page, "load_data"):
+            office_work_page.load_data()
+        calendar_page = getattr(
+            self.main_window,
+            "calendar_page",
+            None,
+        )
+        if calendar_page is not None and hasattr(calendar_page, "load_data"):
+            calendar_page.load_data()
+
+    def _open_office_work(self):
+        if hasattr(self.main_window, "set_current_key"):
+            self.main_window.set_current_key("office_work")
+            return
+        if hasattr(self.main_window, "stack"):
+            self.main_window.stack.setCurrentIndex(3)
 
     def load_missing_documents(self, documents=None):
         self.missing_documents_list.clear()
@@ -2636,11 +2860,20 @@ class MissionaryDetailPage(QWidget):
         open_btn.clicked.connect(
             lambda checked=False, doc_id=doc.id: self._open_document_file(doc_id)
         )
+        delete_btn = create_button(
+            tr("delete_document"),
+            "danger",
+            fixed_height=28,
+        )
+        delete_btn.clicked.connect(
+            lambda checked=False, doc_id=doc.id: self._delete_document(doc_id)
+        )
 
         actions.addStretch()
         actions.addWidget(view_btn)
         actions.addWidget(notes_btn)
         actions.addWidget(open_btn)
+        actions.addWidget(delete_btn)
 
         layout.addWidget(thumb)
         layout.addLayout(copy, stretch=1)

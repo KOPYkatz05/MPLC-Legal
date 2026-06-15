@@ -2,24 +2,30 @@ from datetime import date
 
 from PySide6.QtCore import QDate, Qt
 from PySide6.QtWidgets import (
-    QCheckBox,
     QDialog,
     QLabel,
+    QListWidgetItem,
     QVBoxLayout,
     QWidget,
 )
 
-from services.secretary_work_service import SecretaryWorkError
+from services.secretary_work_service import (
+    WAITING_REASON_LABELS,
+    SecretaryWorkError,
+)
 from ui.foundation import (
     DialogFooter,
     FLUENT_AVAILABLE,
     MaskDialogBase,
     PageHeader,
     create_button,
+    create_check_box,
     create_combo_box,
     create_date_picker,
     create_line_edit,
+    create_list_widget,
     create_plain_text_edit,
+    create_search_edit,
     setup_dialog_shell,
     show_message,
 )
@@ -34,6 +40,95 @@ APPOINTMENT_FIELDS = [
     ("Biometric", "biometric_appointment_date"),
     ("Pickup", "pickup_appointment_date"),
 ]
+TASK_STATUS_LABELS = {
+    "OPEN": "To Do",
+    "WAITING": "Waiting",
+    "DONE": "Done",
+    "ARCHIVED": "Archived",
+}
+
+
+class MissionaryScopePicker(QWidget):
+    def __init__(self, missionaries, parent=None):
+        super().__init__(parent)
+        self._items_by_id = {}
+
+        layout = QVBoxLayout()
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(8)
+        self.setLayout(layout)
+
+        self.search_input = create_search_edit("Search missionaries")
+        self.search_input.textChanged.connect(self._filter_items)
+        layout.addWidget(self.search_input)
+
+        self.summary_label = QLabel("No missionaries selected")
+        self.summary_label.setObjectName("MutedText")
+        layout.addWidget(self.summary_label)
+
+        self.list_widget = create_list_widget("TaskMissionaryPicker")
+        self.list_widget.setFixedHeight(150)
+        self.list_widget.itemChanged.connect(lambda _=None: self._update_summary())
+        layout.addWidget(self.list_widget)
+
+        for missionary in missionaries:
+            item = QListWidgetItem(missionary["name"])
+            item.setData(Qt.UserRole, missionary["id"])
+            item.setFlags(
+                item.flags()
+                | Qt.ItemIsUserCheckable
+                | Qt.ItemIsSelectable
+                | Qt.ItemIsEnabled
+            )
+            item.setCheckState(Qt.Unchecked)
+            self.list_widget.addItem(item)
+            self._items_by_id[missionary["id"]] = item
+
+    def selected_ids(self):
+        ids = []
+        for index in range(self.list_widget.count()):
+            item = self.list_widget.item(index)
+            if item.checkState() == Qt.Checked:
+                ids.append(item.data(Qt.UserRole))
+        return ids
+
+    def set_selected_ids(self, missionary_ids):
+        selected = set(missionary_ids or [])
+        self.list_widget.blockSignals(True)
+        try:
+            for index in range(self.list_widget.count()):
+                item = self.list_widget.item(index)
+                item.setCheckState(
+                    Qt.Checked
+                    if item.data(Qt.UserRole) in selected
+                    else Qt.Unchecked
+                )
+        finally:
+            self.list_widget.blockSignals(False)
+        self._update_summary()
+
+    def selected_names(self):
+        names = []
+        for index in range(self.list_widget.count()):
+            item = self.list_widget.item(index)
+            if item.checkState() == Qt.Checked:
+                names.append(item.text())
+        return names
+
+    def _filter_items(self, text):
+        needle = text.strip().casefold()
+        for index in range(self.list_widget.count()):
+            item = self.list_widget.item(index)
+            item.setHidden(needle not in item.text().casefold())
+
+    def _update_summary(self):
+        names = self.selected_names()
+        if not names:
+            self.summary_label.setText("No missionaries selected")
+        elif len(names) == 1:
+            self.summary_label.setText(names[0])
+        else:
+            self.summary_label.setText(f"{len(names)} missionaries selected")
 
 
 def _qdate_from_date(value):
@@ -128,10 +223,11 @@ class _OfficeWorkDialogBase(MaskDialogBase):
 
 
 class TaskDialog(_OfficeWorkDialogBase):
-    def __init__(self, service, task=None, parent=None):
-        self.task = task or {}
+    def __init__(self, service, task=None, defaults=None, parent=None):
+        is_edit = task is not None
+        self.task = task or dict(defaults or {})
         super().__init__(
-            "Edit Task" if task else "Add Task",
+            "Edit Task" if is_edit else "Add Task",
             "Capture secretary work with a due date, priority, and optional links.",
             service,
             parent,
@@ -148,15 +244,14 @@ class TaskDialog(_OfficeWorkDialogBase):
         self.description_input.setPlaceholderText("Notes or details")
         self.description_input.setPlainText(self.task.get("description", ""))
         self.description_input.setFixedHeight(86)
-        self.body_layout.addWidget(
-            self._field("Description", self.description_input)
-        )
 
         self.status_combo = create_combo_box()
         for status in TASK_STATUSES:
-            self.status_combo.addItem(status.title(), status)
+            self.status_combo.addItem(
+                TASK_STATUS_LABELS.get(status, status.title()),
+                status,
+            )
         self._set_combo_data(self.status_combo, self.task.get("status", "OPEN"))
-        self.body_layout.addWidget(self._field("Status", self.status_combo))
 
         self.priority_combo = create_combo_box()
         for priority in PRIORITIES:
@@ -169,7 +264,7 @@ class TaskDialog(_OfficeWorkDialogBase):
 
         self.due_date_input = create_date_picker()
         self.due_date_input.setDate(_qdate_from_date(self.task.get("due_date")))
-        self.no_due_date_check = QCheckBox("No due date")
+        self.no_due_date_check = create_check_box("No due date")
         self.no_due_date_check.setChecked(self.task.get("due_date") is None)
         self.no_due_date_check.toggled.connect(self.due_date_input.setDisabled)
         self.due_date_input.setDisabled(self.no_due_date_check.isChecked())
@@ -181,17 +276,42 @@ class TaskDialog(_OfficeWorkDialogBase):
         for project in self.service.project_options():
             self.project_combo.addItem(project["title"], project["id"])
         self._set_combo_data(self.project_combo, self.task.get("project_id"))
-        self.body_layout.addWidget(self._field("Project", self.project_combo))
 
-        self.missionary_combo = create_combo_box()
-        self.missionary_combo.addItem("No missionary", None)
-        for missionary in self.service.missionary_options():
-            self.missionary_combo.addItem(missionary["name"], missionary["id"])
-        self._set_combo_data(
-            self.missionary_combo,
-            self.task.get("missionary_id"),
+        self._group_options = (
+            self.service.group_options()
+            if hasattr(self.service, "group_options")
+            else []
         )
-        self.body_layout.addWidget(self._field("Missionary", self.missionary_combo))
+        self._group_members_by_id = {
+            group["id"]: group.get("missionary_ids", [])
+            for group in self._group_options
+        }
+
+        self.group_combo = create_combo_box()
+        self.group_combo.addItem("No group", None)
+        for group in self._group_options:
+            count = group.get("member_count", len(group.get("missionary_ids", [])))
+            self.group_combo.addItem(
+                f"{group['name']} ({count})",
+                group["id"],
+            )
+        self._set_combo_data(self.group_combo, self.task.get("group_id"))
+        self.group_combo.currentIndexChanged.connect(
+            lambda _=None: self._group_changed()
+        )
+
+        selected_missionary_ids = self.task.get("missionary_ids")
+        if selected_missionary_ids is None and self.task.get("missionary_id"):
+            selected_missionary_ids = [self.task.get("missionary_id")]
+        self.missionary_picker = MissionaryScopePicker(
+            self.service.missionary_options(),
+        )
+        self.missionary_picker.set_selected_ids(selected_missionary_ids or [])
+        if self.task.get("group_id") and not selected_missionary_ids:
+            self.missionary_picker.set_selected_ids(
+                self._group_members_by_id.get(self.task.get("group_id"), [])
+            )
+        self.body_layout.addWidget(self._field("Missionary Scope", self.missionary_picker))
 
         self.appointment_combo = create_combo_box()
         for label, field in APPOINTMENT_FIELDS:
@@ -200,11 +320,53 @@ class TaskDialog(_OfficeWorkDialogBase):
             self.appointment_combo,
             self.task.get("appointment_field"),
         )
-        self.body_layout.addWidget(
+
+        self.details_button = create_button(
+            "More details",
+            "subtle",
+            fixed_height=30,
+        )
+        self.details_button.clicked.connect(self._toggle_details)
+        self.body_layout.addWidget(self.details_button)
+
+        self.details_widget = QWidget()
+        self.details_widget.setObjectName("TaskDialogDetails")
+        details_layout = QVBoxLayout()
+        details_layout.setContentsMargins(0, 0, 0, 0)
+        details_layout.setSpacing(12)
+        self.details_widget.setLayout(details_layout)
+
+        details_layout.addWidget(self._field("Description", self.description_input))
+        details_layout.addWidget(self._field("Project", self.project_combo))
+        details_layout.addWidget(self._field("Group", self.group_combo))
+        details_layout.addWidget(
             self._field("Appointment Link", self.appointment_combo)
         )
+        details_layout.addWidget(self._field("Status", self.status_combo))
+
+        self.waiting_reason_combo = create_combo_box()
+        self.waiting_reason_combo.addItem("Select reason", None)
+        for reason, label in WAITING_REASON_LABELS.items():
+            self.waiting_reason_combo.addItem(label, reason)
+        self._set_combo_data(
+            self.waiting_reason_combo,
+            self.task.get("waiting_reason"),
+        )
+        self.waiting_reason_field = self._field(
+            "Waiting Reason",
+            self.waiting_reason_combo,
+        )
+        details_layout.addWidget(self.waiting_reason_field)
+
+        self.body_layout.addWidget(self.details_widget)
+        self.details_widget.setVisible(False)
+        self.status_combo.currentIndexChanged.connect(
+            lambda _=None: self._sync_waiting_reason_visibility()
+        )
+        self._sync_waiting_reason_visibility()
 
     def _payload(self):
+        missionary_ids = self.missionary_picker.selected_ids()
         return {
             "title": self.title_input.text().strip(),
             "description": self.description_input.toPlainText().strip(),
@@ -216,12 +378,28 @@ class TaskDialog(_OfficeWorkDialogBase):
                 else _date_from_picker(self.due_date_input)
             ),
             "project_id": self.project_combo.currentData(),
-            "missionary_id": self.missionary_combo.currentData(),
+            "missionary_id": missionary_ids[0] if len(missionary_ids) == 1 else None,
+            "missionary_ids": missionary_ids,
+            "group_id": self.group_combo.currentData(),
             "appointment_field": self.appointment_combo.currentData(),
+            "waiting_reason": self.waiting_reason_combo.currentData(),
         }
 
     def _save(self):
         if not self._validate_title():
+            return
+        if (
+            self.status_combo.currentData() == "WAITING"
+            and not self.waiting_reason_combo.currentData()
+        ):
+            self.details_widget.setVisible(True)
+            self.details_button.setText("Hide details")
+            show_message(
+                self,
+                "Waiting Reason Required",
+                "Choose why this task is waiting before saving.",
+                kind="warning",
+            )
             return
 
         try:
@@ -236,6 +414,23 @@ class TaskDialog(_OfficeWorkDialogBase):
             self.accept()
         except SecretaryWorkError as exc:
             show_message(self, "Office Work", str(exc), kind="warning")
+
+    def _toggle_details(self):
+        visible = not self.details_widget.isVisible()
+        self.details_widget.setVisible(visible)
+        self.details_button.setText("Hide details" if visible else "More details")
+
+    def _sync_waiting_reason_visibility(self):
+        is_waiting = self.status_combo.currentData() == "WAITING"
+        self.waiting_reason_field.setVisible(is_waiting)
+
+    def _group_changed(self):
+        group_id = self.group_combo.currentData()
+        if not group_id:
+            return
+        self.missionary_picker.set_selected_ids(
+            self._group_members_by_id.get(group_id, [])
+        )
 
 
 class ProjectDialog(_OfficeWorkDialogBase):
@@ -283,7 +478,7 @@ class ProjectDialog(_OfficeWorkDialogBase):
 
         self.due_date_input = create_date_picker()
         self.due_date_input.setDate(_qdate_from_date(self.project.get("due_date")))
-        self.no_due_date_check = QCheckBox("No due date")
+        self.no_due_date_check = create_check_box("No due date")
         self.no_due_date_check.setChecked(self.project.get("due_date") is None)
         self.no_due_date_check.toggled.connect(self.due_date_input.setDisabled)
         self.due_date_input.setDisabled(self.no_due_date_check.isChecked())

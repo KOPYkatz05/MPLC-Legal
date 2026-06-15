@@ -156,6 +156,49 @@ def test_upload_document_refreshes_calendar_when_dialog_emits(monkeypatch):
     assert calendar.load_count == 1
 
 
+def test_upload_document_refreshes_missionaries_table_after_save(monkeypatch):
+    class FakeSignal:
+        def connect(self, callback):
+            self._callback = callback
+
+    class FakeUploadDialog:
+        def __init__(self, missionary, parent=None):
+            self.missionary = missionary
+            self.parent = parent
+            self.appointment_dates_updated = FakeSignal()
+
+        def exec(self):
+            return None
+
+        def saved_any(self):
+            return True
+
+    missionaries_page = SimpleNamespace(load_count=0)
+
+    def load_data():
+        missionaries_page.load_count += 1
+
+    missionaries_page.load_data = load_data
+    page = detail_module.MissionaryDetailPage.__new__(
+        detail_module.MissionaryDetailPage
+    )
+    page.current_missionary = SimpleNamespace(id=7)
+    page.main_window = SimpleNamespace(
+        missionaries_page=missionaries_page,
+    )
+    page._reload_missionary = lambda: None
+
+    monkeypatch.setattr(
+        detail_module,
+        "UploadSessionDialog",
+        FakeUploadDialog,
+    )
+
+    detail_module.MissionaryDetailPage.upload_document(page)
+
+    assert missionaries_page.load_count == 1
+
+
 def test_supported_upload_files_from_paths_expands_folder():
     root = Path("test_upload_tmp") / str(uuid4())
     try:

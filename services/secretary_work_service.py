@@ -6,8 +6,12 @@ from database.models.secretary_work import (
     PRIORITIES,
     PROJECT_STATUSES,
     TASK_STATUSES,
+    WAITING_REASONS,
+    MissionaryGroup,
+    MissionaryGroupMember,
     SecretaryProject,
     SecretaryTask,
+    SecretaryTaskMissionary,
 )
 from utils.logger import logger
 
@@ -21,6 +25,20 @@ TASK_GROUPS = [
     ("later", "Later"),
     ("no_due_date", "No Due Date"),
 ]
+
+APPOINTMENT_FIELD_LABELS = {
+    "interpol_appointment_date": "Interpol",
+    "biometric_appointment_date": "Biometric",
+    "pickup_appointment_date": "Pickup",
+}
+WAITING_REASON_LABELS = {
+    "MISSIONARY": "Waiting on missionary",
+    "GOVERNMENT_SITE": "Waiting on government site",
+    "PAYMENT": "Waiting on payment",
+    "DOCUMENT": "Waiting on document",
+    "APPOINTMENT_DATE": "Waiting on appointment date",
+    "OTHER": "Other waiting reason",
+}
 
 
 class SecretaryWorkError(ValueError):
@@ -42,6 +60,34 @@ def _normalize_choice(value, allowed, default):
 
 def _now():
     return datetime.now()
+
+
+def _normalize_waiting_reason(status, waiting_reason):
+    if status != "WAITING":
+        return None
+
+    reason = _normalize_choice(
+        waiting_reason,
+        WAITING_REASONS,
+        "",
+    )
+    if not reason:
+        raise SecretaryWorkError("Waiting reason is required.")
+    return reason
+
+
+def _unique_ids(values):
+    ids = []
+    for value in values or []:
+        if value is None:
+            continue
+        try:
+            item_id = int(value)
+        except (TypeError, ValueError):
+            continue
+        if item_id not in ids:
+            ids.append(item_id)
+    return ids
 
 
 def task_due_group(due_date, today=None):
@@ -199,7 +245,10 @@ class SecretaryWorkService:
         due_date=None,
         project_id=None,
         missionary_id=None,
+        missionary_ids=None,
+        group_id=None,
         appointment_field=None,
+        waiting_reason=None,
     ):
         title = _clean_text(title)
         if not title:
@@ -207,17 +256,32 @@ class SecretaryWorkService:
 
         session = SessionLocal()
         try:
+            normalized_status = _normalize_choice(status, TASK_STATUSES, "OPEN")
+            linked_ids, group_label = self._resolve_task_scope(
+                session,
+                missionary_id=missionary_id,
+                missionary_ids=missionary_ids,
+                group_id=group_id,
+            )
             task = SecretaryTask(
                 title=title,
                 description=_clean_text(description) or None,
-                status=_normalize_choice(status, TASK_STATUSES, "OPEN"),
+                status=normalized_status,
                 priority=_normalize_choice(priority, PRIORITIES, "NORMAL"),
                 due_date=due_date,
                 project_id=project_id,
-                missionary_id=missionary_id,
+                missionary_id=linked_ids[0] if len(linked_ids) == 1 else None,
+                group_id=group_id,
+                group_scope_label=group_label,
                 appointment_field=_clean_text(appointment_field) or None,
+                waiting_reason=_normalize_waiting_reason(
+                    normalized_status,
+                    waiting_reason,
+                ),
             )
             session.add(task)
+            session.flush()
+            self._replace_task_missionaries(session, task.id, linked_ids)
             session.commit()
             session.refresh(task)
             return self._task_snapshot(task, session)
@@ -248,15 +312,45 @@ class SecretaryWorkService:
                     TASK_STATUSES,
                     task.status,
                 )
+            if "waiting_reason" in updates or "status" in updates:
+                task.waiting_reason = _normalize_waiting_reason(
+                    task.status,
+                    updates.get("waiting_reason", task.waiting_reason),
+                )
             if "priority" in updates:
                 task.priority = _normalize_choice(
                     updates["priority"],
                     PRIORITIES,
                     task.priority,
                 )
-            for field in ("due_date", "project_id", "missionary_id"):
+            for field in ("due_date", "project_id"):
                 if field in updates:
                     setattr(task, field, updates[field])
+            if (
+                "missionary_ids" in updates
+                or "missionary_id" in updates
+                or "group_id" in updates
+            ):
+                incoming_group_id = updates.get("group_id")
+                incoming_ids = updates.get("missionary_ids")
+                if (
+                    incoming_group_id
+                    and incoming_group_id == task.group_id
+                    and incoming_ids is not None
+                ):
+                    linked_ids = _unique_ids(incoming_ids)
+                    group_label = task.group_scope_label
+                else:
+                    linked_ids, group_label = self._resolve_task_scope(
+                        session,
+                        missionary_id=updates.get("missionary_id"),
+                        missionary_ids=incoming_ids,
+                        group_id=incoming_group_id,
+                    )
+                task.missionary_id = linked_ids[0] if len(linked_ids) == 1 else None
+                task.group_id = incoming_group_id
+                task.group_scope_label = group_label
+                self._replace_task_missionaries(session, task.id, linked_ids)
             if "appointment_field" in updates:
                 task.appointment_field = _clean_text(
                     updates["appointment_field"]
@@ -284,6 +378,23 @@ class SecretaryWorkService:
     def archive_task(self, task_id):
         return self.update_task(task_id, status="ARCHIVED")
 
+    def delete_task(self, task_id):
+        session = SessionLocal()
+        try:
+            task = session.query(SecretaryTask).filter_by(id=task_id).first()
+            if task is None:
+                raise SecretaryWorkError("Task not found.")
+            session.query(SecretaryTaskMissionary).filter_by(task_id=task_id).delete()
+            session.delete(task)
+            session.commit()
+            return True
+        except Exception:
+            session.rollback()
+            logger.exception("Failed to delete secretary task")
+            raise
+        finally:
+            session.close()
+
     def list_tasks(
         self,
         search="",
@@ -306,7 +417,16 @@ class SecretaryWorkService:
             if project_id:
                 query = query.filter(SecretaryTask.project_id == project_id)
             if missionary_id:
-                query = query.filter(SecretaryTask.missionary_id == missionary_id)
+                linked_task_ids = (
+                    session.query(SecretaryTaskMissionary.task_id)
+                    .filter(
+                        SecretaryTaskMissionary.missionary_id == missionary_id
+                    )
+                )
+                query = query.filter(
+                    (SecretaryTask.id.in_(linked_task_ids))
+                    | (SecretaryTask.missionary_id == missionary_id)
+                )
 
             tasks = query.order_by(
                 SecretaryTask.due_date.is_(None),
@@ -323,6 +443,10 @@ class SecretaryWorkService:
                     or needle in (task["description"] or "").casefold()
                     or needle in (task["project_title"] or "").casefold()
                     or needle in (task["missionary_name"] or "").casefold()
+                    or needle in " ".join(task["missionary_names"]).casefold()
+                    or needle in (task["group_scope_label"] or "").casefold()
+                    or needle in task["appointment_label"].casefold()
+                    or needle in task["waiting_reason_label"].casefold()
                 ]
             if due_range and due_range != "all":
                 snapshots = [
@@ -379,6 +503,22 @@ class SecretaryWorkService:
         finally:
             session.close()
 
+    def group_options(self):
+        session = SessionLocal()
+        try:
+            groups = session.query(MissionaryGroup).order_by(MissionaryGroup.name).all()
+            return [
+                {
+                    "id": group.id,
+                    "name": group.name,
+                    "missionary_ids": self._group_member_ids(session, group.id),
+                    "member_count": len(self._group_member_ids(session, group.id)),
+                }
+                for group in groups
+            ]
+        finally:
+            session.close()
+
     def project_options(self):
         return [
             {
@@ -410,13 +550,18 @@ class SecretaryWorkService:
 
     def _task_snapshot(self, task, session):
         project_title = ""
-        missionary_name = ""
+        missionary_ids, missionary_names = self._task_missionary_scope(task, session)
+        missionary_name = missionary_names[0] if len(missionary_names) == 1 else ""
         if task.project_id:
             project = session.query(SecretaryProject).filter_by(id=task.project_id).first()
             project_title = project.title if project else ""
-        if task.missionary_id:
-            missionary = session.query(Missionary).filter_by(id=task.missionary_id).first()
-            missionary_name = missionary.full_name if missionary else ""
+        scope_label = ""
+        if len(missionary_names) == 1:
+            scope_label = missionary_names[0]
+        elif missionary_names:
+            scope_label = f"{len(missionary_names)} missionaries"
+            if task.group_scope_label:
+                scope_label = f"{scope_label} - {task.group_scope_label}"
 
         return {
             "id": task.id,
@@ -428,13 +573,88 @@ class SecretaryWorkService:
             "due_group": task_due_group(task.due_date),
             "project_id": task.project_id,
             "project_title": project_title,
-            "missionary_id": task.missionary_id,
+            "missionary_id": missionary_ids[0] if len(missionary_ids) == 1 else None,
             "missionary_name": missionary_name,
+            "missionary_ids": missionary_ids,
+            "missionary_names": missionary_names,
+            "missionary_count": len(missionary_ids),
+            "group_id": task.group_id,
+            "group_scope_label": task.group_scope_label or "",
+            "scope_label": scope_label,
+            "is_group_task": len(missionary_ids) > 1,
             "appointment_field": task.appointment_field,
+            "appointment_label": APPOINTMENT_FIELD_LABELS.get(
+                task.appointment_field,
+                "",
+            ),
+            "waiting_reason": task.waiting_reason,
+            "waiting_reason_label": WAITING_REASON_LABELS.get(
+                task.waiting_reason,
+                "",
+            ),
             "created_at": task.created_at,
             "updated_at": task.updated_at,
             "completed_at": task.completed_at,
         }
+
+    def _resolve_task_scope(
+        self,
+        session,
+        missionary_id=None,
+        missionary_ids=None,
+        group_id=None,
+    ):
+        if group_id:
+            group = session.query(MissionaryGroup).filter_by(id=group_id).first()
+            if group is None:
+                raise SecretaryWorkError("Group not found.")
+            return self._group_member_ids(session, group_id), group.name
+
+        linked_ids = _unique_ids(missionary_ids)
+        if missionary_id is not None and not linked_ids:
+            linked_ids = _unique_ids([missionary_id])
+        return linked_ids, None
+
+    def _group_member_ids(self, session, group_id):
+        rows = (
+            session.query(MissionaryGroupMember.missionary_id)
+            .filter_by(group_id=group_id)
+            .all()
+        )
+        return [row[0] for row in rows]
+
+    def _replace_task_missionaries(self, session, task_id, missionary_ids):
+        session.query(SecretaryTaskMissionary).filter_by(task_id=task_id).delete()
+        for missionary_id in _unique_ids(missionary_ids):
+            session.add(
+                SecretaryTaskMissionary(
+                    task_id=task_id,
+                    missionary_id=missionary_id,
+                )
+            )
+
+    def _task_missionary_scope(self, task, session):
+        rows = (
+            session.query(Missionary)
+            .join(
+                SecretaryTaskMissionary,
+                SecretaryTaskMissionary.missionary_id == Missionary.id,
+            )
+            .filter(SecretaryTaskMissionary.task_id == task.id)
+            .order_by(Missionary.full_name)
+            .all()
+        )
+        if rows:
+            return (
+                [missionary.id for missionary in rows],
+                [missionary.full_name for missionary in rows],
+            )
+        if task.missionary_id:
+            missionary = session.query(Missionary).filter_by(id=task.missionary_id).first()
+            if missionary:
+                self._replace_task_missionaries(session, task.id, [missionary.id])
+                return [missionary.id], [missionary.full_name]
+        return [], []
 
     def _project_task_counts(self, project_id, session):
         tasks = session.query(SecretaryTask).filter_by(project_id=project_id).all()

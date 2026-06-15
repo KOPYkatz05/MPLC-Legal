@@ -21,6 +21,7 @@ from services.missionary_service import (
     MissionaryService,
     missionary_display_id,
 )
+from services.missionary_group_service import MissionaryGroupService
 
 from services.export_service import ExportService
 from services.settings_service import SettingsService
@@ -36,6 +37,8 @@ from ui.foundation import (
     create_list_widget,
     create_line_edit,
     create_menu,
+    create_plain_text_edit,
+    create_search_edit,
     create_table,
     divider,
     fluent_icon,
@@ -509,6 +512,144 @@ class EditMissionaryColumnsDialog(MaskDialogBase):
         self._load_items(DEFAULT_COLUMN_KEYS)
 
 
+class CreateMissionaryGroupDialog(MaskDialogBase):
+    def __init__(self, group_service, missionaries, parent=None):
+        fluent_parent = parent.window() if parent is not None else None
+        self._use_fluent_dialog = (
+            FLUENT_AVAILABLE and fluent_parent is not None
+        )
+
+        if self._use_fluent_dialog:
+            super().__init__(fluent_parent)
+        else:
+            QDialog.__init__(self, parent)
+
+        self.group_service = group_service
+        self.missionaries = list(missionaries)
+        self.saved_group = None
+
+        self.setWindowTitle("Create Group")
+        self.surface = setup_dialog_shell(
+            self,
+            surface_width=560,
+            surface_min_height=620,
+        )
+        self.setup_ui()
+
+    def _onDone(self, code):
+        if self._use_fluent_dialog:
+            super()._onDone(code)
+        else:
+            QDialog.done(self, code)
+
+    def setup_ui(self):
+        root = QVBoxLayout()
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+        self.surface.setLayout(root)
+
+        root.addWidget(
+            PageHeader(
+                "Create Group",
+                "Save a reusable missionary group for filtering and shared tasks.",
+            )
+        )
+
+        body = QWidget()
+        body.setObjectName("DialogBody")
+        body.setAttribute(Qt.WA_StyledBackground, True)
+        body_layout = QVBoxLayout()
+        body_layout.setContentsMargins(24, 20, 24, 20)
+        body_layout.setSpacing(12)
+        body.setLayout(body_layout)
+
+        self.name_input = create_line_edit("Group name")
+        body_layout.addWidget(self._field("Name", self.name_input))
+
+        self.description_input = create_plain_text_edit()
+        self.description_input.setPlaceholderText("Optional description")
+        self.description_input.setFixedHeight(76)
+        body_layout.addWidget(self._field("Description", self.description_input))
+
+        self.search_input = create_search_edit("Search missionaries")
+        self.search_input.textChanged.connect(self._filter_items)
+        body_layout.addWidget(self.search_input)
+
+        self.member_list = create_list_widget("MissionaryGroupMemberList")
+        self.member_list.setMinimumHeight(260)
+        body_layout.addWidget(self.member_list, stretch=1)
+        self._load_members()
+
+        root.addWidget(body, stretch=1)
+
+        footer = DialogFooter()
+        cancel_btn = create_button("Cancel", "secondary")
+        cancel_btn.clicked.connect(self.reject)
+        footer.add_action(cancel_btn)
+        save_btn = create_button("Save", "primary")
+        save_btn.clicked.connect(self._save)
+        footer.add_action(save_btn)
+        root.addWidget(footer)
+
+    def _field(self, label_text, control):
+        wrapper = QWidget()
+        layout = QVBoxLayout()
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(5)
+        wrapper.setLayout(layout)
+        label = QLabel(label_text)
+        label.setObjectName("OfficeWorkFieldLabel")
+        layout.addWidget(label)
+        layout.addWidget(control)
+        return wrapper
+
+    def _load_members(self):
+        self.member_list.clear()
+        for missionary in self.missionaries:
+            item = QListWidgetItem(missionary.full_name or "")
+            item.setData(Qt.UserRole, missionary.id)
+            item.setFlags(
+                item.flags()
+                | Qt.ItemIsUserCheckable
+                | Qt.ItemIsSelectable
+                | Qt.ItemIsEnabled
+            )
+            item.setCheckState(Qt.Unchecked)
+            self.member_list.addItem(item)
+
+    def _filter_items(self, text):
+        needle = text.strip().casefold()
+        for index in range(self.member_list.count()):
+            item = self.member_list.item(index)
+            item.setHidden(needle not in item.text().casefold())
+
+    def selected_missionary_ids(self):
+        ids = []
+        for index in range(self.member_list.count()):
+            item = self.member_list.item(index)
+            if item.checkState() == Qt.Checked:
+                ids.append(item.data(Qt.UserRole))
+        return ids
+
+    def _save(self):
+        name = self.name_input.text().strip()
+        if not name:
+            show_message(
+                self,
+                "Group Name Required",
+                "Enter a group name before saving.",
+                kind="warning",
+            )
+            return
+
+        self.saved_group = self.group_service.create_group(
+            name=name,
+            description=self.description_input.toPlainText().strip(),
+            missionary_ids=self.selected_missionary_ids(),
+        )
+        self.accept()
+
+
 class MissionariesPage(QWidget):
     def __init__(
         self,
@@ -528,10 +669,12 @@ class MissionariesPage(QWidget):
         self.missionary_service = (
             MissionaryService()
         )
+        self.group_service = MissionaryGroupService()
 
         self.export_service = ExportService()
 
         self._all_missionaries = []
+        self._group_members_by_id = {}
         self._hovered_cell = None
         self._applying_column_widths = False
         self._visible_column_keys = (
@@ -564,6 +707,14 @@ class MissionariesPage(QWidget):
 
         self.nationality_filter.currentIndexChanged.connect(
             self._apply_filters
+        )
+
+        self.group_filter.currentIndexChanged.connect(
+            self._apply_filters
+        )
+
+        self.create_group_button.clicked.connect(
+            self._create_group
         )
 
         self.load_data()
@@ -651,6 +802,15 @@ class MissionariesPage(QWidget):
             "All Nationalities", None
         )
 
+        self.group_filter = create_combo_box()
+
+        self.group_filter.addItem("All Groups", None)
+
+        self.create_group_button = create_button(
+            "Create Group",
+            "secondary",
+        )
+
         self.batch_button = create_button(
             "Batch Actions",
             "secondary",
@@ -671,7 +831,9 @@ class MissionariesPage(QWidget):
         filter_bar.add_filter(
             self.nationality_filter
         )
+        filter_bar.add_filter(self.group_filter)
         filter_bar.add_spacer()
+        filter_bar.add_filter(self.create_group_button)
         filter_bar.add_filter(self.batch_button)
         filter_bar.add_filter(self.result_label)
 
@@ -913,6 +1075,7 @@ class MissionariesPage(QWidget):
                 self.missionary_service
                 .get_all_missionaries()
             )
+            self._refresh_group_filter()
 
             # Update nationality filter dropdown
             existing = [
@@ -958,6 +1121,14 @@ class MissionariesPage(QWidget):
             self.nationality_filter.currentData()
         )
 
+        selected_group = (
+            self.group_filter.currentData()
+        )
+
+        group_member_ids = set(
+            self._group_members_by_id.get(selected_group, [])
+        )
+
         filtered = []
 
         for m in self._all_missionaries:
@@ -989,6 +1160,9 @@ class MissionariesPage(QWidget):
                 and (m.nationality or "")
                 != selected_nationality
             ):
+                continue
+
+            if selected_group and m.id not in group_member_ids:
                 continue
 
             filtered.append(m)
@@ -1058,6 +1232,30 @@ class MissionariesPage(QWidget):
         )
 
         return item
+
+    def _refresh_group_filter(self):
+        if not hasattr(self, "group_filter"):
+            return
+
+        current_group = self.group_filter.currentData()
+        groups = self.group_service.list_groups()
+        self._group_members_by_id = {
+            group["id"]: group.get("missionary_ids", [])
+            for group in groups
+        }
+
+        self.group_filter.blockSignals(True)
+        self.group_filter.clear()
+        self.group_filter.addItem("All Groups", None)
+        for group in groups:
+            self.group_filter.addItem(
+                f"{group['name']} ({group.get('member_count', 0)})",
+                group["id"],
+            )
+        index = self.group_filter.findData(current_group)
+        if index >= 0:
+            self.group_filter.setCurrentIndex(index)
+        self.group_filter.blockSignals(False)
 
     # ==========================================
     # COPY CELL STATE
@@ -1391,3 +1589,16 @@ class MissionariesPage(QWidget):
                     self.main_window, "dashboard_page"
                 ):
                     self.main_window.dashboard_page.load_data()
+
+    def _create_group(self):
+        dialog = CreateMissionaryGroupDialog(
+            self.group_service,
+            self._all_missionaries,
+            parent=self,
+        )
+        if dialog.exec() == QDialog.Accepted:
+            self.load_data()
+            if dialog.saved_group:
+                index = self.group_filter.findData(dialog.saved_group["id"])
+                if index >= 0:
+                    self.group_filter.setCurrentIndex(index)

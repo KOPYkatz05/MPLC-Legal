@@ -77,6 +77,11 @@ def test_missionary_detail_page_handles_birthdate_field(monkeypatch, qapp):
         lambda *_: [],
     )
     monkeypatch.setattr(
+        page.secretary_work_service,
+        "list_tasks",
+        lambda *_args, **_kwargs: [],
+    )
+    monkeypatch.setattr(
         page,
         "_refresh_residency_timeline",
         lambda *_: None,
@@ -172,6 +177,88 @@ def test_missionary_detail_page_handles_birthdate_field(monkeypatch, qapp):
 
     assert captured["missionary_id"] == 1
     assert captured["updates"]["date_of_birth"] == date(1991, 4, 5)
+
+
+def test_missionary_detail_lists_open_tasks(monkeypatch, qapp):
+    page = detail_module.MissionaryDetailPage(
+        SimpleNamespace(
+            stack=SimpleNamespace(
+                setCurrentIndex=lambda *_: None,
+            ),
+            sidebar=SimpleNamespace(setCurrentRow=lambda *_: None),
+            office_work_page=SimpleNamespace(load_data=lambda: None),
+            calendar_page=SimpleNamespace(load_data=lambda: None),
+        )
+    )
+
+    try:
+        page.current_missionary = SimpleNamespace(id=1)
+        monkeypatch.setattr(
+            page.secretary_work_service,
+            "list_tasks",
+            lambda **kwargs: [
+                {
+                    "id": 10,
+                    "title": "Call mission office",
+                    "status": "WAITING",
+                    "priority": "IMPORTANT",
+                    "due_date": date(2026, 6, 12),
+                    "waiting_reason_label": "Waiting on document",
+                }
+            ]
+            if kwargs.get("missionary_id") == 1
+            else [],
+        )
+
+        page.load_open_tasks()
+
+        assert page.open_tasks_list.count() == 1
+        widget = page.open_tasks_list.itemWidget(page.open_tasks_list.item(0))
+        assert widget is not None
+        labels = widget.findChildren(detail_module.QLabel)
+        assert any(label.text() == "Call mission office" for label in labels)
+    finally:
+        page.close()
+
+
+def test_missionary_detail_add_task_preselects_missionary(monkeypatch, qapp):
+    captured = []
+
+    class FakeTaskDialog:
+        def __init__(self, service, task=None, defaults=None, parent=None):
+            captured.append(
+                {
+                    "service": service,
+                    "task": task,
+                    "defaults": defaults,
+                    "parent": parent,
+                }
+            )
+
+        def exec(self):
+            return False
+
+    page = detail_module.MissionaryDetailPage(
+        SimpleNamespace(
+            stack=SimpleNamespace(
+                setCurrentIndex=lambda *_: None,
+            ),
+            sidebar=SimpleNamespace(setCurrentRow=lambda *_: None),
+            office_work_page=SimpleNamespace(load_data=lambda: None),
+            calendar_page=SimpleNamespace(load_data=lambda: None),
+        )
+    )
+
+    try:
+        page.current_missionary = SimpleNamespace(id=7)
+        monkeypatch.setattr(detail_module, "TaskDialog", FakeTaskDialog)
+
+        page._add_missionary_task()
+
+        assert captured[-1]["defaults"] == {"missionary_id": 7}
+        assert captured[-1]["parent"] is page
+    finally:
+        page.close()
 
 
 def test_run_migrations_adds_birthdate_column(monkeypatch):

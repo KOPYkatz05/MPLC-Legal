@@ -53,8 +53,9 @@ def _select_combo_value(combo, value):
     raise AssertionError(f"Combo value not found: {value}")
 
 
-def _build_page(monkeypatch, qapp, appointments):
+def _build_page(monkeypatch, qapp, appointments, tasks=None):
     _ = qapp
+    tasks = tasks or []
     monkeypatch.setattr(
         calendar_page.CalendarPage,
         "_collect_appointments",
@@ -64,6 +65,11 @@ def _build_page(monkeypatch, qapp, appointments):
         calendar_page.CalendarPage,
         "_collect_history_appointments",
         lambda self: list(appointments),
+    )
+    monkeypatch.setattr(
+        calendar_page.CalendarPage,
+        "_collect_tasks",
+        lambda self: list(tasks),
     )
     main_window = SimpleNamespace()
     return CalendarPage(main_window)
@@ -131,6 +137,7 @@ def test_history_filters_by_search_type_and_status(monkeypatch, qapp):
     page = _build_page(monkeypatch, qapp, appointments)
 
     try:
+        _select_combo_value(page.history_sort_combo, "asc")
         filtered = page._apply_history_filters(appointments)
         assert [item.full_name for item in filtered] == [
             "Gunner Hamblin Power",
@@ -252,6 +259,164 @@ def test_calendar_page_smoke_defaults_to_calendar_week(monkeypatch, qapp):
         assert page._calendar_mode == CALENDAR_MODE_WEEK
         assert page.tab_stack.currentIndex() == page.calendar_index
         assert page._selected_tab == TAB_CALENDAR
+    finally:
+        page.close()
+
+
+def _task(*, title="Prepare cita packet", due_date=date(2026, 6, 10)):
+    return {
+        "id": 11,
+        "title": title,
+        "description": "",
+        "status": "OPEN",
+        "priority": "NORMAL",
+        "due_date": due_date,
+        "project_id": None,
+        "project_title": "",
+        "missionary_id": None,
+        "missionary_name": "",
+        "appointment_field": None,
+    }
+
+
+def test_calendar_shows_tasks_due_on_day(monkeypatch, qapp):
+    task = _task(due_date=date(2026, 6, 10))
+    page = _build_page(monkeypatch, qapp, [], tasks=[task])
+
+    try:
+        page._anchor_date = date(2026, 6, 9)
+        page._render_calendar()
+
+        task_button = page.findChild(
+            calendar_page.QWidget,
+            "CalendarTaskChipButton",
+        )
+        assert task_button is not None
+        assert "Task -" in task_button.text()
+    finally:
+        page.close()
+
+
+def test_toolbar_add_task_uses_normal_blank_defaults(monkeypatch, qapp):
+    captured = []
+
+    class FakeTaskDialog:
+        def __init__(self, service, task=None, defaults=None, parent=None):
+            captured.append(
+                {
+                    "task": task,
+                    "defaults": defaults,
+                    "parent": parent,
+                }
+            )
+
+        def exec(self):
+            return True
+
+    monkeypatch.setattr(calendar_page, "TaskDialog", FakeTaskDialog)
+    page = _build_page(monkeypatch, qapp, [])
+
+    try:
+        assert page._add_task() is True
+        assert captured[-1]["task"] is None
+        assert captured[-1]["defaults"] is None
+    finally:
+        page.close()
+
+
+def test_calendar_task_save_refreshes_office_work(monkeypatch, qapp):
+    class FakeTaskDialog:
+        def __init__(self, service, task=None, defaults=None, parent=None):
+            pass
+
+        def exec(self):
+            return True
+
+    office_work = SimpleNamespace(load_count=0)
+
+    def load_data():
+        office_work.load_count += 1
+
+    office_work.load_data = load_data
+    monkeypatch.setattr(calendar_page, "TaskDialog", FakeTaskDialog)
+    page = _build_page(monkeypatch, qapp, [])
+    page.main_window = SimpleNamespace(office_work_page=office_work)
+
+    try:
+        assert page._add_task(default_due_date=date(2026, 6, 12)) is True
+        assert office_work.load_count == 1
+    finally:
+        page.close()
+
+
+def test_day_dialog_add_task_uses_clicked_date(monkeypatch, qapp):
+    target = date(2026, 6, 12)
+    page = _build_page(monkeypatch, qapp, [])
+    captured = []
+
+    try:
+        monkeypatch.setattr(
+            page,
+            "_add_task",
+            lambda default_due_date=None: captured.append(default_due_date) or True,
+        )
+        dialog = calendar_page.CalendarDaySummaryDialog(
+            page,
+            target,
+            [],
+            [],
+        )
+        try:
+            dialog._add_task()
+            assert captured == [target]
+        finally:
+            dialog.close()
+    finally:
+        page.close()
+
+
+def test_empty_day_dialog_shows_no_appointments(monkeypatch, qapp):
+    page = _build_page(monkeypatch, qapp, [])
+
+    try:
+        dialog = calendar_page.CalendarDaySummaryDialog(
+            page,
+            date(2026, 6, 12),
+            [],
+            [],
+        )
+        try:
+            label = dialog.findChild(
+                calendar_page.QWidget,
+                "CalendarNoAppointmentsLabel",
+            )
+            assert label is not None
+            assert label.text() == "No appointments"
+        finally:
+            dialog.close()
+    finally:
+        page.close()
+
+
+def test_appointment_chip_opens_missionary_detail(monkeypatch, qapp):
+    appointment = _appointment(days_offset=1)
+    page = _build_page(monkeypatch, qapp, [appointment])
+    opened = []
+
+    try:
+        monkeypatch.setattr(
+            page,
+            "_open_missionary",
+            lambda missionary_id: opened.append(missionary_id),
+        )
+        chip = page._make_calendar_chip(appointment)
+        button = chip.findChild(
+            calendar_page.QWidget,
+            "CalendarAppointmentChipButton",
+        )
+        button.click()
+
+        assert opened == [appointment.missionary_id]
     finally:
         page.close()
 
@@ -468,8 +633,9 @@ def _select_combo_value(combo, value):
     raise AssertionError(f"Combo value not found: {value}")
 
 
-def _build_page(monkeypatch, qapp, appointments):
+def _build_page(monkeypatch, qapp, appointments, tasks=None):
     _ = qapp
+    tasks = tasks or []
     monkeypatch.setattr(
         calendar_page.CalendarPage,
         "_collect_appointments",
@@ -479,6 +645,11 @@ def _build_page(monkeypatch, qapp, appointments):
         calendar_page.CalendarPage,
         "_collect_history_appointments",
         lambda self: list(appointments),
+    )
+    monkeypatch.setattr(
+        calendar_page.CalendarPage,
+        "_collect_tasks",
+        lambda self: list(tasks),
     )
     main_window = SimpleNamespace()
     return CalendarPage(main_window)
@@ -546,6 +717,7 @@ def test_history_filters_by_search_type_and_status(monkeypatch, qapp):
     page = _build_page(monkeypatch, qapp, appointments)
 
     try:
+        _select_combo_value(page.history_sort_combo, "asc")
         filtered = page._apply_history_filters(appointments)
         assert [item.full_name for item in filtered] == [
             "Gunner Hamblin Power",

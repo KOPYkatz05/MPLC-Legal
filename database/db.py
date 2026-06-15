@@ -25,7 +25,13 @@ def init_db():
     from database.models.document import Document
     from database.models.stage_history import StageHistory
     from database.models.appointment import Appointment
-    from database.models.secretary_work import SecretaryProject, SecretaryTask
+    from database.models.secretary_work import (
+        MissionaryGroup,
+        MissionaryGroupMember,
+        SecretaryProject,
+        SecretaryTask,
+        SecretaryTaskMissionary,
+    )
     from database.models.residency_event import ResidencyEvent
 
     Base.metadata.create_all(bind=engine)
@@ -55,6 +61,38 @@ def _run_migrations():
         "ALTER TABLE appointments ADD COLUMN closed_at DATETIME",
         "ALTER TABLE appointments ADD COLUMN status_reason VARCHAR",
         "ALTER TABLE appointments ADD COLUMN superseded_by_uid VARCHAR",
+        "ALTER TABLE secretary_tasks ADD COLUMN waiting_reason VARCHAR",
+        "ALTER TABLE secretary_tasks ADD COLUMN group_id INTEGER",
+        "ALTER TABLE secretary_tasks ADD COLUMN group_scope_label VARCHAR",
+        """
+        CREATE TABLE missionary_groups (
+            id INTEGER PRIMARY KEY,
+            name VARCHAR NOT NULL,
+            description VARCHAR,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+        """,
+        """
+        CREATE TABLE missionary_group_members (
+            group_id INTEGER NOT NULL,
+            missionary_id INTEGER NOT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (group_id, missionary_id),
+            FOREIGN KEY(group_id) REFERENCES missionary_groups(id),
+            FOREIGN KEY(missionary_id) REFERENCES missionaries(id)
+        )
+        """,
+        """
+        CREATE TABLE secretary_task_missionaries (
+            task_id INTEGER NOT NULL,
+            missionary_id INTEGER NOT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (task_id, missionary_id),
+            FOREIGN KEY(task_id) REFERENCES secretary_tasks(id),
+            FOREIGN KEY(missionary_id) REFERENCES missionaries(id)
+        )
+        """,
         """
         CREATE TABLE secretary_projects (
             id INTEGER PRIMARY KEY,
@@ -78,12 +116,16 @@ def _run_migrations():
             due_date DATE,
             project_id INTEGER,
             missionary_id INTEGER,
+            group_id INTEGER,
+            group_scope_label VARCHAR,
             appointment_field VARCHAR,
+            waiting_reason VARCHAR,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             completed_at DATETIME,
             FOREIGN KEY(project_id) REFERENCES secretary_projects(id),
-            FOREIGN KEY(missionary_id) REFERENCES missionaries(id)
+            FOREIGN KEY(missionary_id) REFERENCES missionaries(id),
+            FOREIGN KEY(group_id) REFERENCES missionary_groups(id)
         )
         """,
         "CREATE INDEX idx_secretary_projects_status ON secretary_projects(status)",
@@ -92,6 +134,9 @@ def _run_migrations():
         "CREATE INDEX idx_secretary_tasks_due_date ON secretary_tasks(due_date)",
         "CREATE INDEX idx_secretary_tasks_project_id ON secretary_tasks(project_id)",
         "CREATE INDEX idx_secretary_tasks_missionary_id ON secretary_tasks(missionary_id)",
+        "CREATE INDEX idx_secretary_tasks_group_id ON secretary_tasks(group_id)",
+        "CREATE INDEX idx_missionary_group_members_missionary_id ON missionary_group_members(missionary_id)",
+        "CREATE INDEX idx_secretary_task_missionaries_missionary_id ON secretary_task_missionaries(missionary_id)",
         """
         CREATE TABLE appointments (
             id INTEGER PRIMARY KEY,
@@ -122,6 +167,20 @@ def _run_migrations():
                 conn.commit()
             except Exception:
                 pass
+
+        try:
+            from sqlalchemy import text
+            conn.execute(
+                text(
+                    "INSERT OR IGNORE INTO secretary_task_missionaries "
+                    "(task_id, missionary_id) "
+                    "SELECT id, missionary_id FROM secretary_tasks "
+                    "WHERE missionary_id IS NOT NULL"
+                )
+            )
+            conn.commit()
+        except Exception:
+            pass
 
         try:
             from sqlalchemy import text

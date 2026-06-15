@@ -34,6 +34,7 @@ from ui.foundation import (
     create_search_edit,
     divider,
     fluent_icon,
+    show_message,
 )
 from utils.logger import logger
 
@@ -44,6 +45,19 @@ PRIORITY_COLORS = {
     "NORMAL": "#2563EB",
     "IMPORTANT": "#D97706",
     "CRITICAL": "#DC2626",
+}
+SHARED_TASK_COLOR = "#7C3AED"
+TASK_STATUS_LABELS = {
+    "OPEN": "To Do",
+    "WAITING": "Waiting",
+    "DONE": "Done",
+    "ARCHIVED": "Archived",
+}
+PROJECT_STATUS_LABELS = {
+    "ACTIVE": "Active",
+    "WAITING": "Waiting",
+    "DONE": "Done",
+    "ARCHIVED": "Archived",
 }
 
 
@@ -201,7 +215,10 @@ class OfficeWorkPage(QWidget):
         self.task_status_filter.addItem("Visible", None)
         self.task_status_filter.addItem("All", "ALL")
         for status in TASK_STATUSES:
-            self.task_status_filter.addItem(status.title(), status)
+            self.task_status_filter.addItem(
+                TASK_STATUS_LABELS.get(status, status.title()),
+                status,
+            )
         self.task_status_filter.currentIndexChanged.connect(
             lambda _=None: self.render_tasks()
         )
@@ -254,7 +271,10 @@ class OfficeWorkPage(QWidget):
         self.project_status_filter.addItem("Visible", None)
         self.project_status_filter.addItem("All", "ALL")
         for status in PROJECT_STATUSES:
-            self.project_status_filter.addItem(status.title(), status)
+            self.project_status_filter.addItem(
+                PROJECT_STATUS_LABELS.get(status, status.title()),
+                status,
+            )
         self.project_status_filter.currentIndexChanged.connect(
             lambda _=None: self.render_projects()
         )
@@ -364,7 +384,7 @@ class OfficeWorkPage(QWidget):
         row = QHBoxLayout()
         row.setSpacing(16)
         for key, label, color in [
-            ("open", "Open", "#2563EB"),
+            ("open", "To Do", "#2563EB"),
             ("overdue", "Overdue", "#DC2626"),
             ("due_today", "Due Today", "#D97706"),
             ("waiting", "Waiting", "#71717A"),
@@ -386,9 +406,14 @@ class OfficeWorkPage(QWidget):
         accent = QFrame()
         accent.setObjectName("OfficeWorkPriorityAccent")
         accent.setFixedWidth(4)
+        accent_color = (
+            SHARED_TASK_COLOR
+            if task.get("is_group_task")
+            else PRIORITY_COLORS.get(task["priority"], "#71717A")
+        )
         accent.setStyleSheet(
             "QFrame#OfficeWorkPriorityAccent {"
-            f"background-color: {PRIORITY_COLORS.get(task['priority'], '#71717A')};"
+            f"background-color: {accent_color};"
             "border-radius: 2px;"
             "}"
         )
@@ -404,11 +429,15 @@ class OfficeWorkPage(QWidget):
         meta_parts = [
             task["priority"].title(),
             _due_text(task),
-            task["status"].title(),
+            TASK_STATUS_LABELS.get(task["status"], task["status"].title()),
         ]
+        if task.get("waiting_reason_label"):
+            meta_parts.append(task["waiting_reason_label"])
         if task.get("project_title"):
             meta_parts.append(task["project_title"])
-        if task.get("missionary_name"):
+        if task.get("scope_label"):
+            meta_parts.append(task["scope_label"])
+        elif task.get("missionary_name"):
             meta_parts.append(task["missionary_name"])
         meta = QLabel("  |  ".join(meta_parts))
         meta.setObjectName("MutedText")
@@ -424,7 +453,26 @@ class OfficeWorkPage(QWidget):
         edit_btn.clicked.connect(lambda _=None, item=task: self._edit_task(item))
         layout.addWidget(edit_btn)
 
-        if task.get("missionary_id"):
+        if task["status"] != "ARCHIVED":
+            archive_btn = create_button("Archive", "subtle", fixed_height=28)
+            archive_btn.clicked.connect(
+                lambda _=None, task_id=task["id"]: self._archive_task(task_id)
+            )
+            layout.addWidget(archive_btn)
+
+        delete_btn = create_button("Delete", "danger", fixed_height=28)
+        delete_btn.clicked.connect(
+            lambda _=None, task_id=task["id"]: self._delete_task(task_id)
+        )
+        layout.addWidget(delete_btn)
+
+        if task.get("missionary_count", 0) > 1:
+            scope_btn = create_button("Missionaries", "subtle", fixed_height=28)
+            scope_btn.clicked.connect(
+                lambda _=None, item=task: self._show_linked_missionaries(item)
+            )
+            layout.addWidget(scope_btn)
+        elif task.get("missionary_id"):
             open_btn = create_button("Open Missionary", "subtle", fixed_height=28)
             open_btn.clicked.connect(
                 lambda _=None, missionary_id=task["missionary_id"]:
@@ -451,7 +499,7 @@ class OfficeWorkPage(QWidget):
         meta = QLabel(
             "  |  ".join([
                 project["priority"].title(),
-                project["status"].title(),
+                PROJECT_STATUS_LABELS.get(project["status"], project["status"].title()),
                 _format_date(project.get("due_date")),
                 project["progress"],
                 f"{project['open_tasks']} open",
@@ -468,6 +516,13 @@ class OfficeWorkPage(QWidget):
         )
         layout.addWidget(tasks_btn)
 
+        add_task_btn = create_button("Add Task", "primary", fixed_height=28)
+        add_task_btn.clicked.connect(
+            lambda _=None, project_id=project["id"]:
+            self._add_task(project_id=project_id)
+        )
+        layout.addWidget(add_task_btn)
+
         edit_btn = create_button("Edit", "secondary", fixed_height=28)
         edit_btn.clicked.connect(lambda _=None, item=project: self._edit_project(item))
         layout.addWidget(edit_btn)
@@ -479,6 +534,14 @@ class OfficeWorkPage(QWidget):
                 self._complete_project(project_id)
             )
             layout.addWidget(done_btn)
+
+        if project["status"] != "ARCHIVED":
+            archive_btn = create_button("Archive", "subtle", fixed_height=28)
+            archive_btn.clicked.connect(
+                lambda _=None, project_id=project["id"]:
+                self._archive_project(project_id)
+            )
+            layout.addWidget(archive_btn)
 
         return card
 
@@ -531,15 +594,26 @@ class OfficeWorkPage(QWidget):
         self._project_filter_id = self.task_project_filter.currentData()
         self.render_tasks()
 
-    def _add_task(self):
-        dialog = TaskDialog(self.service, parent=self)
+    def _add_task(self, project_id=None, missionary_id=None):
+        defaults = {}
+        if project_id is not None:
+            defaults["project_id"] = project_id
+        if missionary_id is not None:
+            defaults["missionary_id"] = missionary_id
+        dialog = TaskDialog(
+            self.service,
+            defaults=defaults or None,
+            parent=self,
+        )
         if dialog.exec():
             self.load_data()
+            self._refresh_calendar_page()
 
     def _edit_task(self, task):
         dialog = TaskDialog(self.service, task=task, parent=self)
         if dialog.exec():
             self.load_data()
+            self._refresh_calendar_page()
 
     def _add_project(self):
         dialog = ProjectDialog(self.service, parent=self)
@@ -554,10 +628,54 @@ class OfficeWorkPage(QWidget):
     def _complete_task(self, task_id):
         self.service.complete_task(task_id)
         self.load_data()
+        self._refresh_calendar_page()
+
+    def _archive_task(self, task_id):
+        self.service.archive_task(task_id)
+        self.load_data()
+        self._refresh_calendar_page()
+
+    def _delete_task(self, task_id):
+        response = show_message(
+            self,
+            "Delete Task",
+            "Permanently delete this task?\n\nThis cannot be undone.",
+            kind="question",
+            buttons="yes_no",
+        )
+        if response not in {1, 16384}:
+            return
+        self.service.delete_task(task_id)
+        self.load_data()
+        self._refresh_calendar_page()
+
+    def _show_linked_missionaries(self, task):
+        names = task.get("missionary_names") or []
+        if not names:
+            show_message(
+                self,
+                "Linked Missionaries",
+                "No missionaries are linked to this task.",
+            )
+            return
+        show_message(
+            self,
+            "Linked Missionaries",
+            "\n".join(names),
+        )
 
     def _complete_project(self, project_id):
         self.service.complete_project(project_id)
         self.load_data()
+
+    def _archive_project(self, project_id):
+        self.service.archive_project(project_id)
+        self.load_data()
+
+    def _refresh_calendar_page(self):
+        calendar_page = getattr(self.main_window, "calendar_page", None)
+        if calendar_page is not None and hasattr(calendar_page, "load_data"):
+            calendar_page.load_data()
 
     def _open_missionary(self, missionary_id):
         if not self.main_window:
