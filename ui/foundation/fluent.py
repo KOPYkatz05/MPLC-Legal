@@ -27,10 +27,10 @@ from PySide6.QtWidgets import (
 try:
     from qfluentwidgets import (
         BodyLabel,
+        CalendarPicker as FluentCalendarPicker,
         CardWidget,
         CheckBox as FluentCheckBox,
         ComboBox as FluentComboBox,
-        DatePicker as FluentDatePicker,
         EditableComboBox,
         FluentIcon,
         HeaderCardWidget,
@@ -77,10 +77,10 @@ except Exception:
 
     BodyLabel = QLabel
     CardWidget = QFrame
+    FluentCalendarPicker = QDateEdit
     FluentCheckBox = QPushButton
     EditableComboBox = QComboBox
     FluentComboBox = QComboBox
-    FluentDatePicker = QDateEdit
     FluentIcon = None
     InfoBadge = QLabel
     InfoLevel = _FallbackInfoLevel
@@ -383,6 +383,52 @@ def _patch_fluent_combo_data_api(combo):
     return combo
 
 
+def _patch_fluent_calendar_picker_api(picker):
+    if not FLUENT_AVAILABLE or getattr(picker, "_mission_calendar_patch", False):
+        return picker
+
+    native_set_date = picker.setDate
+    native_set_date_format = picker.setDateFormat
+
+    picker._mission_minimum_date = None
+    picker._mission_special_value_text = ""
+
+    def apply_special_value_text():
+        special_text = getattr(picker, "_mission_special_value_text", "")
+        minimum_date = getattr(picker, "_mission_minimum_date", None)
+        if (
+            special_text
+            and minimum_date is not None
+            and picker.getDate() == minimum_date
+        ):
+            picker.setText(special_text)
+
+    def set_date(date):
+        native_set_date(date)
+        apply_special_value_text()
+
+    def set_date_format(date_format):
+        native_set_date_format(date_format)
+        apply_special_value_text()
+
+    def set_minimum_date(date):
+        picker._mission_minimum_date = QDate(date)
+        apply_special_value_text()
+
+    def set_special_value_text(text):
+        picker._mission_special_value_text = text or ""
+        apply_special_value_text()
+
+    picker.setDate = set_date
+    picker.setDateFormat = set_date_format
+    picker.setDisplayFormat = set_date_format
+    picker.setMinimumDate = set_minimum_date
+    picker.setSpecialValueText = set_special_value_text
+
+    picker._mission_calendar_patch = True
+    return picker
+
+
 def setup_dialog_shell(
     dialog,
     *,
@@ -620,12 +666,15 @@ def create_check_box(text="", object_name="CheckBox", parent=None):
 
 
 def create_date_picker(object_name="DateInput", parent=None):
-    picker = FluentDatePicker(parent)
-    if object_name and not FLUENT_AVAILABLE:
+    picker = FluentCalendarPicker(parent)
+    if object_name:
         picker.setObjectName(object_name)
 
     if FLUENT_AVAILABLE:
+        _patch_fluent_calendar_picker_api(picker)
+        picker.setDisplayFormat("MMM d, yyyy")
         picker.setDate(QDate.currentDate())
+        picker.setFixedHeight(34)
     else:
         picker.setCalendarPopup(True)
         picker.setDate(QDate.currentDate())
@@ -635,6 +684,9 @@ def create_date_picker(object_name="DateInput", parent=None):
 
 
 def create_date_edit(object_name="DateInput", parent=None):
+    if FLUENT_AVAILABLE:
+        return create_date_picker(object_name, parent)
+
     picker = QDateEdit(parent)
     picker.setObjectName(object_name)
     picker.setCalendarPopup(True)

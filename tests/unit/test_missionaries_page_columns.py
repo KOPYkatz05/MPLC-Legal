@@ -1,3 +1,4 @@
+from datetime import date
 from types import SimpleNamespace
 
 from PySide6.QtCore import Qt
@@ -8,7 +9,9 @@ from ui.pages.missionaries_page import (
     DEFAULT_COLUMN_KEYS,
     GROUP_EDIT_ACTION,
     MISSIONARY_COLUMNS,
+    MIN_TABLE_COLUMN_WIDTH,
     MissionariesPage,
+    _sort_value_for_column,
 )
 
 
@@ -34,6 +37,119 @@ def test_default_visible_columns_still_focus_on_core_summary():
 
 def test_column_lookup_ignores_removed_folder_path():
     assert "folder_path" not in COLUMN_BY_KEY
+
+
+def test_date_columns_sort_by_iso_date_values():
+    missionary = SimpleNamespace(arrival_date=date(2026, 1, 5))
+
+    sort_value = _sort_value_for_column(
+        COLUMN_BY_KEY["arrival_date"],
+        missionary,
+        "05/01/2026",
+    )
+
+    assert sort_value == "2026-01-05"
+
+
+def test_column_widths_balance_to_available_space():
+    class FakeViewport:
+        def __init__(self, width):
+            self._width = width
+
+        def width(self):
+            return self._width
+
+    class FakeTable:
+        def __init__(self, width):
+            self._viewport = FakeViewport(width)
+
+        def viewport(self):
+            return self._viewport
+
+        def width(self):
+            return self._viewport.width()
+
+    page = SimpleNamespace(table=FakeTable(360))
+
+    widths = MissionariesPage._balanced_default_widths(
+        page,
+        {
+            "missionary_id": 120,
+            "full_name": 260,
+            "nationality": 120,
+        },
+    )
+
+    assert sum(widths.values()) == 360
+    assert min(widths.values()) >= MIN_TABLE_COLUMN_WIDTH
+
+
+def test_missionaries_page_sorts_date_columns_chronologically(
+    monkeypatch,
+    qapp,
+):
+    from ui.pages import missionaries_page as page_module
+
+    missionaries = [
+        SimpleNamespace(
+            id=1,
+            missionary_code="1",
+            full_name="Later Arrival",
+            preferred_name="",
+            nationality="Peru",
+            current_stage="",
+            arrival_date=date(2026, 2, 1),
+        ),
+        SimpleNamespace(
+            id=2,
+            missionary_code="2",
+            full_name="Earlier Arrival",
+            preferred_name="",
+            nationality="Peru",
+            current_stage="",
+            arrival_date=date(2026, 1, 15),
+        ),
+    ]
+
+    class FakeMissionaryService:
+        def get_all_missionaries(self):
+            return missionaries
+
+    class FakeGroupService:
+        def list_groups(self):
+            return []
+
+    class FakeSettingsService:
+        def get_missionaries_table_columns(self, default):
+            _ = default
+            return ["missionary_id", "arrival_date"]
+
+        def set_missionaries_table_columns(self, keys):
+            _ = keys
+
+        def get_missionaries_table_column_widths(self):
+            return {}
+
+        def set_missionaries_table_column_widths(self, widths):
+            _ = widths
+
+    monkeypatch.setattr(page_module, "MissionaryService", FakeMissionaryService)
+    monkeypatch.setattr(page_module, "MissionaryGroupService", FakeGroupService)
+
+    window = SimpleNamespace(
+        settings_service=FakeSettingsService(),
+        detail_page=SimpleNamespace(load_missionary=lambda missionary: None),
+        stack=SimpleNamespace(setCurrentWidget=lambda widget: None),
+    )
+    page = MissionariesPage(window)
+
+    try:
+        page.table.sortItems(2, Qt.AscendingOrder)
+
+        assert page.table.item(0, 2).text() == "15/01/2026"
+        assert page.table.item(1, 2).text() == "01/02/2026"
+    finally:
+        page.close()
 
 
 def test_missionaries_page_group_filter_shows_only_members(monkeypatch, qapp):

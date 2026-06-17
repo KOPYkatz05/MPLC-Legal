@@ -109,7 +109,34 @@ CREDENTIAL_FIELDS = {
 
 LAYOUT_APPOINTMENT_DATE_LABELS = {
     INTERPOL_CITA_DOCUMENT_TYPE: {
-        "interpol_appointment_date": ("fecha cita",),
+        "interpol_appointment_date": (
+            "fecha de cita",
+            "fecha cita",
+            "programacion de cita",
+        ),
+    },
+    "CONSTANCIA_DE_CITA_BIOMETRICO": {
+        "biometric_appointment_date": (
+            "fecha de cita",
+            "fecha cita",
+            "programacion de cita",
+        ),
+    },
+    "CITA_RECOJO": {
+        "pickup_appointment_date": (
+            "fecha de cita",
+            "fecha cita",
+            "fecha de recojo",
+            "cita recojo",
+            "programacion de cita",
+        ),
+    },
+    "APROBACION_DE_PRORROGA": {
+        "prorroga_expiration": (
+            "fecha de vencimiento de su residencia",
+            "fecha de vencimiento",
+            "vencimiento residencia",
+        ),
     },
     "TAM": {
         "arrival_date": (
@@ -215,13 +242,9 @@ class DocumentParser:
         if all(result.get(field) for field in ocr_fields):
             return result
 
-        if (
-            document_type == INTERPOL_CITA_DOCUMENT_TYPE
-            and rows
-            and any(
-                self._layout_rows_contain_label(rows, labels)
-                for labels in label_map.values()
-            )
+        if rows and any(
+            self._layout_rows_contain_label(rows, labels)
+            for labels in label_map.values()
         ):
             return result
 

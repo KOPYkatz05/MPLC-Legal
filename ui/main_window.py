@@ -23,6 +23,7 @@ from ui.pages.settings_page import SettingsPage
 from ui.pages.trash_page import TrashPage
 from utils.i18n import tr
 from utils.logger import logger
+from utils.window_diagnostics import log_top_level_windows
 
 try:
     from qfluentwidgets import FluentWindow, NavigationItemPosition
@@ -119,6 +120,7 @@ class MainWindow(FluentWindow if FLUENT_AVAILABLE else QMainWindow):
         self._content_overlay_spinner = None
         self._content_overlay_title = None
         self._content_overlay_subtitle = None
+        self._startup_alerts = []
 
         self.setWindowTitle(tr("app_title"))
         self.resize(1400, 900)
@@ -129,10 +131,14 @@ class MainWindow(FluentWindow if FLUENT_AVAILABLE else QMainWindow):
             self.retranslate_ui
         )
 
-        QTimer.singleShot(800, self._show_startup_alerts)
+        QTimer.singleShot(0, lambda: log_top_level_windows("main-window-created"))
+        QTimer.singleShot(800, self._load_startup_alerts)
 
     def setup_ui(self):
         self.dashboard_page = DashboardPage(self)
+        self.dashboard_page.startup_alerts_requested.connect(
+            self._open_startup_alerts
+        )
         self.missionaries_page = MissionariesPage(self)
         self.detail_page = MissionaryDetailPage(self)
         self.office_work_page = OfficeWorkPage(self)
@@ -420,23 +426,46 @@ class MainWindow(FluentWindow if FLUENT_AVAILABLE else QMainWindow):
         painter.end()
         return QPixmap.fromImage(result)
 
-    def _show_startup_alerts(self):
+    def _load_startup_alerts(self):
         try:
             from services.alert_service import AlertService
+
+            alert_service = AlertService()
+            alerts = alert_service.get_all_alerts(within_days=30)
+            self._startup_alerts = list(alerts or [])
+
+            if not alerts:
+                logger.info("No startup expiration alerts.")
+                self.dashboard_page.set_startup_alerts([])
+                return
+
+            logger.info(
+                "Loaded %s startup expiration alert(s)",
+                len(self._startup_alerts),
+            )
+            self.dashboard_page.set_startup_alerts(self._startup_alerts)
+            log_top_level_windows("startup-alerts-loaded", delay_ms=0)
+
+        except Exception:
+            logger.exception("Failed to load startup alerts")
+
+    def _open_startup_alerts(self):
+        if not self._startup_alerts:
+            return
+
+        try:
             from ui.dialogs.expiration_alert_dialog import (
                 ExpirationAlertDialog,
             )
 
-            alert_service = AlertService()
-            alerts = alert_service.get_all_alerts(within_days=30)
-
-            if not alerts:
-                logger.info("No expiration alerts to show.")
-                return
-
-            logger.info(f"Showing {len(alerts)} expiration alert(s)")
-            dialog = ExpirationAlertDialog(alerts, parent=self)
+            logger.info(
+                "Opening %s startup expiration alert(s) on request",
+                len(self._startup_alerts),
+            )
+            log_top_level_windows("before-open-startup-alert-dialog")
+            dialog = ExpirationAlertDialog(self._startup_alerts, parent=self)
+            log_top_level_windows("startup-alert-dialog-created")
             dialog.exec()
-
+            log_top_level_windows("after-startup-alert-dialog-closed")
         except Exception:
-            logger.exception("Failed to show startup alerts")
+            logger.exception("Failed to open startup alerts")

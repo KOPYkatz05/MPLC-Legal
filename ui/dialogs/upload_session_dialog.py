@@ -1,4 +1,5 @@
 from dataclasses import dataclass, field
+from datetime import date, datetime
 from pathlib import Path
 
 import fitz
@@ -398,7 +399,9 @@ class UploadSessionController:
         item.document_type = normalized_type
         item.workflow_stage = workflow_stage
         item.ocr_result = None
-        item.confirmed_data = {}
+        item.confirmed_data = self.missionary_defaults_for_document(
+            normalized_type
+        )
         item.ocr_reviewed = False
         item.error_text = ""
         if item.status not in {"saved", "skipped"}:
@@ -424,6 +427,46 @@ class UploadSessionController:
             self.missionary.id,
             item.document_type,
         )
+
+    def missionary_defaults_for_document(self, document_type):
+        defaults = {}
+        for field in DOCUMENTS.get(
+            document_type, {}
+        ).get("ocr_fields", []):
+            value = self._serialize_missionary_field(field)
+            if not self._blank_confirmed_value(value):
+                defaults[field] = value
+        return defaults
+
+    def _serialize_missionary_field(self, field):
+        value = getattr(self.missionary, field, None)
+        if value is None:
+            return ""
+        if isinstance(value, datetime):
+            return value.date().isoformat()
+        if isinstance(value, date):
+            return value.isoformat()
+        return str(value).strip()
+
+    @staticmethod
+    def _blank_confirmed_value(value):
+        if value is None:
+            return True
+        return str(value).strip() == ""
+
+    def merge_ocr_data_into_confirmed(self, item):
+        if item.ocr_result is None:
+            return
+
+        parsed_data = getattr(item.ocr_result, "parsed_data", None) or {}
+        if not parsed_data:
+            return
+
+        confirmed = dict(item.confirmed_data or {})
+        for field, value in parsed_data.items():
+            if self._blank_confirmed_value(confirmed.get(field)):
+                confirmed[field] = value
+        item.confirmed_data = confirmed
 
     def run_ocr(self, item, parent=None):
         ocr_fields = DOCUMENTS.get(item.document_type, {}).get(
@@ -473,7 +516,7 @@ class UploadSessionController:
             sorted((getattr(item.ocr_result, "parsed_data", None) or {}).keys()),
             [str(path) for path in getattr(item.ocr_result, "ocr_image_paths", [])],
         )
-        item.confirmed_data = dict(item.ocr_result.parsed_data or {})
+        self.merge_ocr_data_into_confirmed(item)
         item.ocr_reviewed = False
 
         self._apply_post_ocr_state(item)
@@ -568,14 +611,8 @@ class UploadSessionController:
                         ocr_fields=list(ocr_fields),
                         export_settings=item.export_settings,
                     )
-                if (
-                    not item.confirmed_data
-                    and item.ocr_result
-                    and not item.ocr_reviewed
-                ):
-                    item.confirmed_data = dict(
-                        item.ocr_result.parsed_data or {}
-                    )
+                if item.ocr_result and not item.ocr_reviewed:
+                    self.merge_ocr_data_into_confirmed(item)
                 save_result = finalize_ocr_ingestion(
                     missionary=self.missionary,
                     source_file=item.file_path,

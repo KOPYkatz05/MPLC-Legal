@@ -87,6 +87,10 @@ def main():
 
     load_stylesheet(app)
 
+    from utils.window_diagnostics import install_window_diagnostics
+
+    install_window_diagnostics(app)
+
     window = MainWindow()
 
     window.showMaximized()

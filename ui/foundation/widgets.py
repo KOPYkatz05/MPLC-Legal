@@ -40,9 +40,9 @@ class PageHeader(SimpleCardWidget):
     def __init__(self, title, subtitle="", actions=None, parent=None):
         super().__init__(parent)
         self.setObjectName("PageHeader")
-        self.title_label = QLabel(title)
+        self.title_label = QLabel(title, self)
         self.title_label.setObjectName("PageTitle")
-        self.subtitle_label = QLabel(subtitle)
+        self.subtitle_label = QLabel(subtitle, self)
         self.subtitle_label.setObjectName("PageSubtitle")
         self.subtitle_label.setVisible(bool(subtitle))
 

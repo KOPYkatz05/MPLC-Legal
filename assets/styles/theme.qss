@@ -98,7 +98,8 @@ QWidget#MissionaryDetailPage QLabel#SummaryBadge[tone="subtle"] {
 }
 
 QWidget#MissionaryDetailPage QDateEdit#MissionaryDetailDatePicker,
-QWidget#MissionaryDetailPage QDateTimeEdit#MissionaryDetailDatePicker {
+QWidget#MissionaryDetailPage QDateTimeEdit#MissionaryDetailDatePicker,
+QWidget#MissionaryDetailPage QPushButton#MissionaryDetailDatePicker {
     min-height: 34px;
 }
 
@@ -467,6 +468,25 @@ QLabel#StatSubtitle {
     font-size: 11px;
     color: #71717A;
     background: transparent;
+}
+
+QFrame#DashboardAlertBanner {
+    background-color: #FFFFFF;
+    border: 1px solid #FBBF24;
+    border-radius: 8px;
+}
+
+QFrame#DashboardAlertAccent {
+    background-color: #F59E0B;
+    border-radius: 2px;
+}
+
+QFrame#DashboardAlertAccent[tone="danger"] {
+    background-color: #DC2626;
+}
+
+QFrame#DashboardAlertAccent[tone="warning"] {
+    background-color: #D97706;
 }
 
 /* ==========================================

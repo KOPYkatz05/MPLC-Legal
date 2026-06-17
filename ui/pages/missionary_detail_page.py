@@ -385,6 +385,24 @@ class MissionaryDetailPage(QWidget):
             )
 
     def _set_fluent_date_empty_text(self, picker, is_empty):
+        if (
+            hasattr(picker, "getDate")
+            and hasattr(picker, "setText")
+            and not hasattr(picker, "calendarPopup")
+        ):
+            if is_empty:
+                picker.setText("Not set")
+            else:
+                qd = picker.getDate()
+                date_format = (
+                    picker.getDateFormat()
+                    if hasattr(picker, "getDateFormat")
+                    else "MMM d, yyyy"
+                )
+                picker.setText(qd.toString(date_format))
+            _refresh_widget_style(picker)
+            return True
+
         buttons = [
             child
             for child in picker.children()

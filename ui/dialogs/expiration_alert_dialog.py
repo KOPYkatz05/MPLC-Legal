@@ -10,28 +10,16 @@ from PySide6.QtWidgets import (
 )
 
 from ui.foundation import (
+    BodyLabel,
+    SubtitleLabel,
     create_button,
     create_card,
     create_scroll_area,
     setup_dialog_shell,
 )
 
-try:
-    from qfluentwidgets import (
-        BodyLabel,
-        MaskDialogBase,
-        SubtitleLabel,
-    )
 
-    FLUENT_DIALOG_AVAILABLE = True
-except Exception:
-    BodyLabel = QLabel
-    SubtitleLabel = QLabel
-    MaskDialogBase = QDialog
-    FLUENT_DIALOG_AVAILABLE = False
-
-
-class ExpirationAlertDialog(MaskDialogBase):
+class ExpirationAlertDialog(QDialog):
     def __init__(self, alerts, parent=None):
         super().__init__(parent)
 
@@ -43,15 +31,12 @@ class ExpirationAlertDialog(MaskDialogBase):
             self,
             surface_width=760,
             surface_min_height=520,
+            shell_object_name="ExpirationAlertDialog",
+            surface_object_name="ExpirationAlertSurface",
+            use_masked_shell=False,
         )
 
         self.setup_ui()
-
-    def _onDone(self, code):
-        if FLUENT_DIALOG_AVAILABLE:
-            super()._onDone(code)
-        else:
-            QDialog.done(self, code)
 
     def setup_ui(self):
         surface = self.surface

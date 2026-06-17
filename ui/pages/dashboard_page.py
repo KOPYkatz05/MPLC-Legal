@@ -6,7 +6,7 @@ from PySide6.QtWidgets import (
     QFrame,
 )
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor, QFont, QPalette
 
 from services.dashboard_service import (
@@ -156,10 +156,13 @@ class ListCard(SimpleCardWidget):
 # ==========================================
 
 class DashboardPage(QWidget):
+    startup_alerts_requested = Signal()
+
     def __init__(self, parent=None):
         super().__init__(parent)
 
         self.service = DashboardService()
+        self.startup_alerts = []
 
         self.setup_ui()
 
@@ -263,6 +266,8 @@ class DashboardPage(QWidget):
 
         data = self.service.get_summary()
 
+        self._build_startup_alert_banner()
+
         self._build_stat_cards(data)
 
         self._build_expiring_section(
@@ -276,6 +281,77 @@ class DashboardPage(QWidget):
         self.content_layout.addStretch()
 
         logger.info("Dashboard data loaded")
+
+    def set_startup_alerts(self, alerts):
+        self.startup_alerts = list(alerts or [])
+        self.load_data()
+
+    def _build_startup_alert_banner(self):
+        if not self.startup_alerts:
+            return
+
+        overdue_count = sum(
+            1
+            for alert in self.startup_alerts
+            if alert.get("overdue") or int(alert.get("days_remaining", 0)) < 0
+        )
+        urgent_count = sum(
+            1
+            for alert in self.startup_alerts
+            if not alert.get("overdue")
+            and 0 <= int(alert.get("days_remaining", 0)) <= 7
+        )
+        parts = []
+        if overdue_count:
+            parts.append(f"{overdue_count} overdue")
+        if urgent_count:
+            parts.append(f"{urgent_count} due within 7 days")
+        if not parts:
+            parts.append("due within 30 days")
+
+        banner = QFrame()
+        banner.setObjectName("DashboardAlertBanner")
+        banner.setAttribute(Qt.WA_StyledBackground, True)
+
+        layout = QHBoxLayout()
+        layout.setContentsMargins(18, 14, 18, 14)
+        layout.setSpacing(12)
+        banner.setLayout(layout)
+
+        accent = QFrame()
+        accent.setObjectName("DashboardAlertAccent")
+        accent.setFixedWidth(4)
+        accent.setMinimumHeight(48)
+        if overdue_count or urgent_count:
+            accent.setProperty("tone", "danger")
+        else:
+            accent.setProperty("tone", "warning")
+
+        text_stack = QVBoxLayout()
+        text_stack.setContentsMargins(0, 0, 0, 0)
+        text_stack.setSpacing(2)
+
+        title = QLabel(
+            f"{len(self.startup_alerts)} document"
+            f"{'s' if len(self.startup_alerts) != 1 else ''} need attention"
+        )
+        title.setObjectName("StrongText")
+
+        detail = QLabel(", ".join(parts))
+        detail.setObjectName("MutedText")
+        detail.setWordWrap(True)
+
+        text_stack.addWidget(title)
+        text_stack.addWidget(detail)
+
+        button = create_button("Review alerts", "primary")
+        button.clicked.connect(self.startup_alerts_requested.emit)
+
+        layout.addWidget(accent)
+        layout.addLayout(text_stack, stretch=1)
+        layout.addWidget(button)
+
+        self.content_layout.addWidget(banner)
 
     # ==========================================
     # STAT CARDS

@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from datetime import date, datetime
 
 from PySide6.QtCore import QEvent, QRectF, QTimer, Qt
 from PySide6.QtGui import QColor, QIcon, QPainter, QPen, QPixmap
@@ -232,10 +233,50 @@ REQUIRED_COLUMN_KEYS = [
 ]
 
 SORT_VALUE_ROLE = Qt.UserRole + 1
+MIN_TABLE_COLUMN_WIDTH = 64
+DATE_COLUMN_KEYS = {
+    "date_of_birth",
+    "arrival_date",
+    "visa_expiration",
+    "passport_expiration",
+    "residency_expiration",
+    "prorroga_expiration",
+    "carnet_issue_date",
+    "cancelacion_date",
+    "interpol_appointment_date",
+    "biometric_appointment_date",
+    "pickup_appointment_date",
+}
 GROUP_EDIT_ACTION = "__edit_selected_group__"
 COPY_ICON_NAMES = ("COPY", "DUPLICATE", "DOCUMENT_COPY")
 CHECK_ICON_NAMES = ("ACCEPT", "CHECKBOX", "CHECK_MARK", "COMPLETED")
 EDIT_ICON_NAMES = ("EDIT", "EDIT_SOLID", "PENCIL")
+
+
+def _date_sort_value(value):
+    if not value:
+        return ""
+
+    if isinstance(value, datetime):
+        return value.date().isoformat()
+
+    if isinstance(value, date):
+        return value.isoformat()
+
+    for fmt in ("%d/%m/%Y", "%Y-%m-%d", "%m/%d/%Y"):
+        try:
+            return datetime.strptime(str(value), fmt).date().isoformat()
+        except ValueError:
+            continue
+
+    return str(value)
+
+
+def _sort_value_for_column(column, missionary, display_text):
+    if column.key in DATE_COLUMN_KEYS:
+        return _date_sort_value(getattr(missionary, column.key, None))
+
+    return display_text or ""
 
 
 def _fallback_copy_icon():
@@ -1036,8 +1077,7 @@ class MissionariesPage(QWidget):
             for column in columns
         }
 
-        if not saved_widths:
-            widths = self._balanced_default_widths(widths)
+        widths = self._balanced_default_widths(widths)
 
         self._applying_column_widths = True
 
@@ -1045,7 +1085,10 @@ class MissionariesPage(QWidget):
             for index, column in enumerate(columns):
                 self.table.setColumnWidth(
                     index,
-                    max(72, int(widths[column.key])),
+                    max(
+                        MIN_TABLE_COLUMN_WIDTH,
+                        int(widths[column.key]),
+                    ),
                 )
 
         finally:
@@ -1060,22 +1103,46 @@ class MissionariesPage(QWidget):
         if available <= 0:
             return widths
 
-        total = sum(widths.values())
-
-        if total >= available:
-            return widths
-
         columns = list(widths)
 
         if not columns:
             return widths
 
-        extra = (available - total) // len(columns)
+        minimum_total = MIN_TABLE_COLUMN_WIDTH * len(columns)
 
-        return {
-            key: width + extra
-            for key, width in widths.items()
-        }
+        if available <= minimum_total:
+            return {
+                key: MIN_TABLE_COLUMN_WIDTH
+                for key in columns
+            }
+
+        preferred_total = sum(
+            max(MIN_TABLE_COLUMN_WIDTH, int(width))
+            for width in widths.values()
+        )
+
+        if preferred_total <= 0:
+            return widths
+
+        scale = available / preferred_total
+        balanced = {}
+        used = 0
+
+        for key in columns[:-1]:
+            width = max(
+                MIN_TABLE_COLUMN_WIDTH,
+                int(widths[key] * scale),
+            )
+            balanced[key] = width
+            used += width
+
+        last_key = columns[-1]
+        balanced[last_key] = max(
+            MIN_TABLE_COLUMN_WIDTH,
+            available - used,
+        )
+
+        return balanced
 
     def _auto_fit_column_widths(self):
         widths = {
@@ -1256,7 +1323,11 @@ class MissionariesPage(QWidget):
 
             for column_index, column in enumerate(columns):
                 text = str(column.getter(m) or "")
-                item = self._make_table_item(text, m.id)
+                item = self._make_table_item(
+                    text,
+                    m.id,
+                    _sort_value_for_column(column, m, text),
+                )
 
                 self.table.setItem(
                     row,
@@ -1266,7 +1337,7 @@ class MissionariesPage(QWidget):
 
         self.table.setSortingEnabled(True)
 
-    def _make_table_item(self, text, missionary_id):
+    def _make_table_item(self, text, missionary_id, sort_value=None):
         item = MissionaryTableItem(text or "")
 
         item.setTextAlignment(
@@ -1280,7 +1351,7 @@ class MissionariesPage(QWidget):
 
         item.setData(
             SORT_VALUE_ROLE,
-            text or "",
+            text if sort_value is None else sort_value,
         )
 
         return item
@@ -1380,6 +1451,9 @@ class MissionariesPage(QWidget):
                 QEvent.Resize,
                 QEvent.Wheel,
             }:
+                if event.type() == QEvent.Resize:
+                    self._apply_column_widths()
+
                 self._position_copy_button()
 
         return super().eventFilter(watched, event)

@@ -1,4 +1,5 @@
 import shutil
+from datetime import date
 from types import SimpleNamespace
 from pathlib import Path
 from uuid import uuid4
@@ -6,9 +7,12 @@ from uuid import uuid4
 from PySide6.QtWidgets import QWidget
 
 from ui.dialogs.upload_session_dialog import (
+    UploadSessionController,
     UploadSessionDialog,
     supported_upload_files_from_paths,
 )
+from services.upload_pipeline import UploadPipelineResult
+from ui.dialogs import upload_session_dialog
 from ui.pages import missionary_detail_page as detail_module
 from utils.constants import DOCUMENTS
 
@@ -251,3 +255,126 @@ def test_constancia_de_prorroga_is_selectable_without_ocr():
     assert config["required"] is False
     assert config["ocr_fields"] == []
     assert config["auto_updates"] == []
+
+
+def test_upload_controller_prefills_ocr_fields_from_missionary():
+    missionary = SimpleNamespace(
+        id=42,
+        full_name="Test Missionary",
+        passport_number="  X1234567  ",
+        date_of_birth=date(2001, 2, 3),
+        nationality="USA",
+        passport_expiration=date(2031, 4, 5),
+    )
+    controller = UploadSessionController(missionary)
+    controller.add_files(["passport.pdf"])
+
+    controller.set_document_type(0, "PASSPORT")
+
+    assert controller.items[0].confirmed_data == {
+        "full_name": "Test Missionary",
+        "passport_number": "X1234567",
+        "date_of_birth": "2001-02-03",
+        "nationality": "USA",
+        "passport_expiration": "2031-04-05",
+    }
+
+
+def test_upload_controller_omits_blank_missionary_defaults():
+    missionary = SimpleNamespace(
+        id=42,
+        full_name="Test Missionary",
+        tramite_usuario=" elder.user ",
+        tramite_contrasena="  ",
+    )
+    controller = UploadSessionController(missionary)
+    controller.add_files(["tramite.pdf"])
+
+    controller.set_document_type(
+        0,
+        "CONSTANCIA_DE_TRAMITE_CARNE_DE_EXTRANJERIA",
+    )
+
+    assert controller.items[0].confirmed_data == {
+        "tramite_usuario": "elder.user",
+    }
+
+
+def test_upload_ocr_fills_blank_fields_without_overwriting_existing(
+    monkeypatch,
+):
+    missionary = SimpleNamespace(
+        id=42,
+        full_name="Test Missionary",
+        passport_number="EXISTING123",
+        date_of_birth=None,
+        nationality="USA",
+        passport_expiration=None,
+    )
+    controller = UploadSessionController(missionary)
+    controller.add_files(["passport.pdf"])
+    controller.set_document_type(0, "PASSPORT")
+    item = controller.items[0]
+
+    def fake_prepare_ocr_ingestion(**kwargs):
+        return UploadPipelineResult(
+            parsed_data={
+                "passport_number": "OCR999999",
+                "date_of_birth": "2002-03-04",
+                "passport_expiration": "2032-05-06",
+            },
+            ocr_status="success",
+        )
+
+    monkeypatch.setattr(
+        upload_session_dialog,
+        "prepare_ocr_ingestion",
+        fake_prepare_ocr_ingestion,
+    )
+
+    controller.run_ocr(item)
+
+    assert item.confirmed_data == {
+        "full_name": "Test Missionary",
+        "passport_number": "EXISTING123",
+        "nationality": "USA",
+        "date_of_birth": "2002-03-04",
+        "passport_expiration": "2032-05-06",
+    }
+
+
+def test_upload_ocr_does_not_overwrite_manual_confirmed_value(
+    monkeypatch,
+):
+    missionary = SimpleNamespace(
+        id=42,
+        full_name="Test Missionary",
+        biometric_appointment_date=None,
+    )
+    controller = UploadSessionController(missionary)
+    controller.add_files(["biometric.pdf"])
+    controller.set_document_type(0, "CONSTANCIA_DE_CITA_BIOMETRICO")
+    item = controller.items[0]
+    item.confirmed_data = {
+        "biometric_appointment_date": "2026-01-02",
+    }
+
+    def fake_prepare_ocr_ingestion(**kwargs):
+        return UploadPipelineResult(
+            parsed_data={
+                "biometric_appointment_date": "2026-03-04",
+            },
+            ocr_status="success",
+        )
+
+    monkeypatch.setattr(
+        upload_session_dialog,
+        "prepare_ocr_ingestion",
+        fake_prepare_ocr_ingestion,
+    )
+
+    controller.run_ocr(item)
+
+    assert item.confirmed_data == {
+        "biometric_appointment_date": "2026-01-02",
+    }
