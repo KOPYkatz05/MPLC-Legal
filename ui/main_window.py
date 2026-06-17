@@ -294,6 +294,49 @@ class MainWindow(FluentWindow if FLUENT_AVAILABLE else QMainWindow):
     def go_to_calendar(self):
         self.set_current_key("appointments")
 
+    def open_missionary_detail(self, missionary_id):
+        try:
+            from database.db import SessionLocal
+            from database.models.missionary import Missionary
+
+            session = SessionLocal()
+            try:
+                missionary = (
+                    session.query(Missionary)
+                    .filter_by(id=missionary_id)
+                    .first()
+                )
+                if missionary is None:
+                    logger.warning(
+                        "Missionary ID %s not found",
+                        missionary_id,
+                    )
+                    return False
+
+                self.detail_page.load_missionary(missionary)
+                self.stack.setCurrentWidget(self.detail_page)
+
+                if (
+                    FLUENT_AVAILABLE
+                    and hasattr(self, "navigationInterface")
+                    and "missionaries" in self._nav_widgets
+                ):
+                    widget = self._nav_widgets["missionaries"]
+                    self.navigationInterface.setCurrentItem(
+                        widget.objectName()
+                    )
+
+                return True
+            finally:
+                session.close()
+
+        except Exception:
+            logger.exception(
+                "Failed to open missionary detail for ID %s",
+                missionary_id,
+            )
+            return False
+
     def show_content_loading_overlay(self, message="Reading document..."):
         self._ensure_content_loading_overlay()
         if self._content_overlay is None:

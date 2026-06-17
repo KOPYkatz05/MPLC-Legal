@@ -119,6 +119,12 @@ MISSIONARY_COLUMNS = [
         default_visible=True,
     ),
     MissionaryColumn(
+        "carnet_number",
+        "Carnet Number",
+        _text_attr("carnet_number"),
+        155,
+    ),
+    MissionaryColumn(
         "date_of_birth",
         "Date of Birth",
         lambda missionary: _format_date(missionary.date_of_birth),
@@ -1673,34 +1679,13 @@ class MissionariesPage(QWidget):
 
     def _open_missionary_by_id(self, missionary_id):
         try:
-            selected = next(
-                (
-                    m for m in self._all_missionaries
-                    if m.id == missionary_id
-                ),
+            opener = getattr(
+                self.main_window,
+                "open_missionary_detail",
                 None,
             )
-
-            if not selected:
-                logger.warning(
-                    f"Missionary ID {missionary_id} "
-                    f"not found"
-                )
-
-                return
-
-            logger.info(
-                f"Opening detail page for missionary: "
-                f"{selected.full_name}"
-            )
-
-            self.main_window.detail_page.load_missionary(
-                selected
-            )
-
-            self.main_window.stack.setCurrentWidget(
-                self.main_window.detail_page
-            )
+            if callable(opener):
+                opener(missionary_id)
 
         except Exception:
             logger.exception(

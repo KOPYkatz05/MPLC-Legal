@@ -19,6 +19,7 @@ def test_missionary_table_includes_detail_page_fields():
     keys = {column.key for column in MISSIONARY_COLUMNS}
 
     assert "date_of_birth" in keys
+    assert "carnet_number" in keys
     assert "tramite_usuario" in keys
     assert "tramite_contrasena" in keys
     assert "folder_path" not in keys
@@ -27,6 +28,7 @@ def test_missionary_table_includes_detail_page_fields():
 def test_default_visible_columns_still_focus_on_core_summary():
     assert "folder_path" not in DEFAULT_COLUMN_KEYS
     assert "date_of_birth" not in DEFAULT_COLUMN_KEYS
+    assert "carnet_number" not in DEFAULT_COLUMN_KEYS
     assert "tramite_usuario" not in DEFAULT_COLUMN_KEYS
     assert "tramite_contrasena" not in DEFAULT_COLUMN_KEYS
     assert "missionary_id" in DEFAULT_COLUMN_KEYS

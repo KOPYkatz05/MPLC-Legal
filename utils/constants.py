@@ -197,6 +197,7 @@ DOCUMENTS = {
         ],
         "auto_updates": [
             "carnet_issue_date",
+            "carnet_number",
         ],
     },
 

@@ -161,6 +161,7 @@ class ExportService:
                 ("Full Name", lambda m: m.full_name or "", 30),
                 ("Nationality", lambda m: m.nationality or "", 16),
                 ("Passport Number", lambda m: m.passport_number or "", 18),
+                ("Carnet Number", lambda m: getattr(m, "carnet_number", "") or "", 18),
                 ("Current Stage", lambda m: m.current_stage or "", 22),
                 (
                     "Arrival Date",

@@ -74,6 +74,17 @@ def set_entry_based_expiration(
     return True
 
 
+def should_track_expiration_field(missionary, field):
+    if field == "visa_expiration" and getattr(
+        missionary,
+        "residency_expiration",
+        None,
+    ):
+        return False
+
+    return True
+
+
 def apply_prorroga_completion_expiration(missionary):
     logger.info(
         "Skipping residency expiration update for missionary %s: "

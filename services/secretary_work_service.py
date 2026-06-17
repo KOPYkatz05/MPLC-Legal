@@ -243,6 +243,7 @@ class SecretaryWorkService:
         status="OPEN",
         priority="NORMAL",
         due_date=None,
+        work_date=None,
         project_id=None,
         missionary_id=None,
         missionary_ids=None,
@@ -269,6 +270,7 @@ class SecretaryWorkService:
                 status=normalized_status,
                 priority=_normalize_choice(priority, PRIORITIES, "NORMAL"),
                 due_date=due_date,
+                work_date=work_date,
                 project_id=project_id,
                 missionary_id=linked_ids[0] if len(linked_ids) == 1 else None,
                 group_id=group_id,
@@ -323,7 +325,7 @@ class SecretaryWorkService:
                     PRIORITIES,
                     task.priority,
                 )
-            for field in ("due_date", "project_id"):
+            for field in ("due_date", "work_date", "project_id"):
                 if field in updates:
                     setattr(task, field, updates[field])
             if (
@@ -463,6 +465,21 @@ class SecretaryWorkService:
             grouped.setdefault(task["due_group"], []).append(task)
         return grouped
 
+    def list_calendar_tasks(self):
+        tasks = [
+            task
+            for task in self.list_tasks(include_done=True)
+            if task["status"] != "ARCHIVED" and task.get("work_date") is not None
+        ]
+        return sorted(
+            tasks,
+            key=lambda task: (
+                task["work_date"],
+                task["status"] == "DONE",
+                task["title"].casefold(),
+            ),
+        )
+
     def summary(self):
         session = SessionLocal()
         try:
@@ -570,6 +587,7 @@ class SecretaryWorkService:
             "status": task.status,
             "priority": task.priority,
             "due_date": task.due_date,
+            "work_date": task.work_date,
             "due_group": task_due_group(task.due_date),
             "project_id": task.project_id,
             "project_title": project_title,

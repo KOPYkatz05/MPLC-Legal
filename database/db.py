@@ -55,6 +55,7 @@ def _run_migrations():
         "ALTER TABLE missionaries ADD COLUMN field_sources TEXT",
         "ALTER TABLE missionaries ADD COLUMN tramite_usuario TEXT",
         "ALTER TABLE missionaries ADD COLUMN tramite_contrasena TEXT",
+        "ALTER TABLE missionaries ADD COLUMN carnet_number TEXT",
         "ALTER TABLE documents ADD COLUMN ocr_raw_data TEXT",
         "ALTER TABLE documents ADD COLUMN ocr_confirmed_data TEXT",
         "ALTER TABLE appointments ADD COLUMN appointment_uid VARCHAR",
@@ -64,6 +65,7 @@ def _run_migrations():
         "ALTER TABLE secretary_tasks ADD COLUMN waiting_reason VARCHAR",
         "ALTER TABLE secretary_tasks ADD COLUMN group_id INTEGER",
         "ALTER TABLE secretary_tasks ADD COLUMN group_scope_label VARCHAR",
+        "ALTER TABLE secretary_tasks ADD COLUMN work_date DATE",
         """
         CREATE TABLE missionary_groups (
             id INTEGER PRIMARY KEY,
@@ -114,6 +116,7 @@ def _run_migrations():
             status VARCHAR NOT NULL DEFAULT 'OPEN',
             priority VARCHAR NOT NULL DEFAULT 'NORMAL',
             due_date DATE,
+            work_date DATE,
             project_id INTEGER,
             missionary_id INTEGER,
             group_id INTEGER,
@@ -176,6 +179,19 @@ def _run_migrations():
                     "(task_id, missionary_id) "
                     "SELECT id, missionary_id FROM secretary_tasks "
                     "WHERE missionary_id IS NOT NULL"
+                )
+            )
+            conn.commit()
+        except Exception:
+            pass
+
+        try:
+            from sqlalchemy import text
+            conn.execute(
+                text(
+                    "UPDATE secretary_tasks "
+                    "SET work_date = due_date "
+                    "WHERE work_date IS NULL AND due_date IS NOT NULL"
                 )
             )
             conn.commit()

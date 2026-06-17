@@ -48,6 +48,7 @@ from ui.foundation import (
     create_info_badge,
     create_combo_box,
     create_date_picker,
+    create_line_edit,
     create_list_widget,
     create_menu,
     create_plain_text_edit,
@@ -262,6 +263,7 @@ class MissionaryDetailPage(QWidget):
 
         self._document_data = []
         self._date_edits = {}
+        self._text_edits = {}
         self._date_empty_overlays = {}
         self._date_source_labels = {}
         self._credential_source_labels = {}
@@ -493,6 +495,7 @@ class MissionaryDetailPage(QWidget):
             "summary_stage_chip": f"Stage: {_stage_display_name(getattr(missionary, 'current_stage', None))}",
             "summary_nationality_chip": f"Nationality: {getattr(missionary, 'nationality', None) or 'Not set'}",
             "summary_passport_chip": f"Passport: {getattr(missionary, 'passport_number', None) or 'Not set'}",
+            "summary_carnet_chip": f"Carnet: {getattr(missionary, 'carnet_number', None) or 'Not set'}",
             "summary_birthdate_chip": (
                 f"Birthdate: {birthdate.strftime('%b %d, %Y')}"
                 if birthdate
@@ -1009,6 +1012,8 @@ class MissionaryDetailPage(QWidget):
 
         self.nationality_label = make_field()
         self.passport_label = make_field()
+        self.carnet_number_input = create_line_edit("Carnet Number")
+        self._text_edits["carnet_number"] = self.carnet_number_input
         self.tramite_usuario_label = make_field()
         self.tramite_contrasena_label = make_field()
         self.folder_label = make_field()
@@ -1021,6 +1026,10 @@ class MissionaryDetailPage(QWidget):
         form.addRow(
             row_label("Passport Number:"),
             self.passport_label,
+        )
+        form.addRow(
+            row_label("Carnet Number:"),
+            self.carnet_number_input,
         )
 
         self.birthdate_picker = create_date_picker()
@@ -1159,6 +1168,7 @@ class MissionaryDetailPage(QWidget):
         self.summary_stage_chip = self._build_badge_chip("Stage: —")
         self.summary_nationality_chip = self._build_badge_chip("Nationality: —")
         self.summary_passport_chip = self._build_badge_chip("Passport: —")
+        self.summary_carnet_chip = self._build_badge_chip("Carnet: —")
         self.summary_birthdate_chip = self._build_badge_chip("Birthdate: —")
         self.summary_folder_chip = self._build_badge_chip("Folder: Not set")
 
@@ -1167,6 +1177,7 @@ class MissionaryDetailPage(QWidget):
             self.summary_stage_chip,
             self.summary_nationality_chip,
             self.summary_passport_chip,
+            self.summary_carnet_chip,
             self.summary_birthdate_chip,
             self.summary_folder_chip,
         ]
@@ -1183,6 +1194,8 @@ class MissionaryDetailPage(QWidget):
 
         self.nationality_label = self._build_value_label()
         self.passport_label = self._build_value_label()
+        self.carnet_number_input = create_line_edit("Carnet Number")
+        self._text_edits["carnet_number"] = self.carnet_number_input
         self.tramite_usuario_label = self._build_value_label()
         self.tramite_contrasena_label = self._build_value_label()
         self.folder_label = self._build_value_label(elided=True)
@@ -1221,11 +1234,19 @@ class MissionaryDetailPage(QWidget):
         )
         identity_grid.addWidget(
             self._build_field_block(
+                "Carnet Number",
+                self.carnet_number_input,
+            ),
+            1,
+            0,
+        )
+        identity_grid.addWidget(
+            self._build_field_block(
                 field_label("date_of_birth"),
                 birthdate_shell,
                 birthdate_source_lbl,
             ),
-            1,
+            2,
             0,
         )
 
@@ -1254,7 +1275,7 @@ class MissionaryDetailPage(QWidget):
 
         identity_grid.addWidget(
             self._build_field_block("Folder Path", folder_widget),
-            1,
+            2,
             1,
         )
 
@@ -1792,6 +1813,14 @@ class MissionaryDetailPage(QWidget):
                 qd.year(), qd.month(), qd.day()
             )
 
+        for field_key, text_edit in self._text_edits.items():
+            value = text_edit.text().strip()
+            current_value = (
+                getattr(self.current_missionary, field_key, None) or ""
+            ).strip()
+            if value != current_value:
+                updates[field_key] = value
+
         arrival_date = updates.get("arrival_date", current_arrival)
         visa_date = updates.get("visa_expiration", current_visa)
 
@@ -2080,6 +2109,10 @@ class MissionaryDetailPage(QWidget):
             self.passport_label,
             missionary.passport_number,
         )
+        if hasattr(self, "carnet_number_input"):
+            self.carnet_number_input.setText(
+                getattr(missionary, "carnet_number", None) or ""
+            )
         self._set_value_text(
             self.tramite_usuario_label,
             getattr(missionary, "tramite_usuario", None),

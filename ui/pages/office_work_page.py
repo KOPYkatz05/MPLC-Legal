@@ -681,18 +681,13 @@ class OfficeWorkPage(QWidget):
         if not self.main_window:
             return
 
-        try:
-            session = SessionLocal()
-            try:
-                missionary = session.query(Missionary).filter_by(id=missionary_id).first()
-                if missionary:
-                    self.main_window.detail_page.load_missionary(missionary)
-                    self.main_window.stack.setCurrentIndex(2)
-                    self.main_window.sidebar.setCurrentRow(1)
-            finally:
-                session.close()
-        except Exception:
-            logger.exception("Failed to open missionary from Office Work")
+        opener = getattr(
+            self.main_window,
+            "open_missionary_detail",
+            None,
+        )
+        if callable(opener):
+            opener(missionary_id)
 
     def _set_combo_data(self, combo, value):
         index = combo.findData(value)

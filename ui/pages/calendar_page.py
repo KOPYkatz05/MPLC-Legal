@@ -2,8 +2,8 @@ from dataclasses import dataclass
 from datetime import date, timedelta
 from itertools import groupby
 
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QColor, QPalette
+from PySide6.QtCore import QMimeData, Qt
+from PySide6.QtGui import QColor, QDrag, QPalette, QPixmap
 from PySide6.QtWidgets import (
     QButtonGroup,
     QFrame,
@@ -18,9 +18,8 @@ from PySide6.QtWidgets import (
 )
 
 try:
-    from qfluentwidgets import SegmentedWidget, TransparentToolButton
+    from qfluentwidgets import TransparentToolButton
 except Exception:
-    SegmentedWidget = None
     TransparentToolButton = None
 
 from database.db import SessionLocal
@@ -95,6 +94,7 @@ SUMMARY_COLORS = {
 
 CALENDAR_MODE_WEEK = "week"
 CALENDAR_MODE_MONTH = "month"
+TASK_DRAG_MIME = "application/x-mission-task-id"
 TAB_CALENDAR = "calendar"
 TAB_HISTORY = "history"
 WEEKDAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
@@ -153,7 +153,7 @@ class CalendarDaySummaryDialog(MaskDialogBase):
         )
         header_layout.addWidget(title)
 
-        subtitle = BodyLabel("Appointments and tasks due on this day.")
+        subtitle = BodyLabel("Appointments and tasks planned for this day.")
         subtitle.setObjectName("MutedText")
         header_layout.addWidget(subtitle)
         layout.addWidget(header)
@@ -201,7 +201,7 @@ class CalendarDaySummaryDialog(MaskDialogBase):
                     )
                 )
         else:
-            empty = QLabel("No tasks due.")
+            empty = QLabel("No tasks planned.")
             empty.setObjectName("MutedText")
             body_layout.addWidget(empty)
 
@@ -217,7 +217,7 @@ class CalendarDaySummaryDialog(MaskDialogBase):
         layout.addWidget(footer)
 
     def _add_task(self):
-        if self.calendar_page._add_task(default_due_date=self.summary_date):
+        if self.calendar_page._add_task(default_work_date=self.summary_date):
             self.accept()
 
 
@@ -284,11 +284,7 @@ def month_grid_dates(year, month):
 
 
 def visible_range_for_mode(mode, anchor_date):
-    if mode == CALENDAR_MODE_MONTH:
-        return month_grid_dates(anchor_date.year, anchor_date.month)
-
-    start = week_start_for(anchor_date)
-    return [start + timedelta(days=offset) for offset in range(7)]
+    return month_grid_dates(anchor_date.year, anchor_date.month)
 
 
 def add_months(value, months):
@@ -319,6 +315,7 @@ SUMMARY_COLORS = {
 
 CALENDAR_MODE_WEEK = "week"
 CALENDAR_MODE_MONTH = "month"
+TASK_DRAG_MIME = "application/x-mission-task-id"
 TAB_CALENDAR = "calendar"
 TAB_HISTORY = "history"
 WEEKDAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
@@ -363,11 +360,7 @@ def month_grid_dates(year, month):
 
 
 def visible_range_for_mode(mode, anchor_date):
-    if mode == CALENDAR_MODE_MONTH:
-        return month_grid_dates(anchor_date.year, anchor_date.month)
-
-    start = week_start_for(anchor_date)
-    return [start + timedelta(days=offset) for offset in range(7)]
+    return month_grid_dates(anchor_date.year, anchor_date.month)
 
 
 def add_months(value, months):
@@ -385,7 +378,7 @@ class CalendarPage(QWidget):
         self._appointments = []
         self._history_appointments = []
         self._tasks = []
-        self._calendar_mode = CALENDAR_MODE_WEEK
+        self._calendar_mode = CALENDAR_MODE_MONTH
         self._anchor_date = date.today()
         self._calendar_detail_date = None
         self._show_overdue_detail = False
@@ -612,11 +605,7 @@ class CalendarPage(QWidget):
         )
 
     def _collect_tasks(self):
-        return [
-            task
-            for task in SecretaryWorkService().list_tasks()
-            if task.get("due_date") is not None
-        ]
+        return SecretaryWorkService().list_calendar_tasks()
 
     def _appointment_items_from_snapshots(self, snapshots, newest_first=False):
         today = date.today()
@@ -702,7 +691,7 @@ class CalendarPage(QWidget):
         visible_tasks = [
             task
             for task in self._tasks
-            if task.get("due_date") in visible_set
+            if task.get("work_date") in visible_set
         ]
 
         calendar_stack = QWidget()
@@ -777,7 +766,11 @@ class CalendarPage(QWidget):
 
     def _build_summary_cards(self):
         today = date.today()
-        week_dates = set(visible_range_for_mode(CALENDAR_MODE_WEEK, today))
+        week_start = week_start_for(today)
+        week_dates = {
+            week_start + timedelta(days=offset)
+            for offset in range(7)
+        }
         counts = {
             "overdue": 0,
             "today": 0,
@@ -823,10 +816,6 @@ class CalendarPage(QWidget):
         layout.setContentsMargins(16, 12, 16, 12)
         layout.setSpacing(8)
         toolbar.setLayout(layout)
-
-        self._add_mode_control(layout)
-
-        layout.addSpacing(8)
 
         previous_btn = self._make_nav_arrow_button("LEFT_ARROW", "Previous")
         previous_btn.clicked.connect(self._go_previous_range)
@@ -894,44 +883,6 @@ class CalendarPage(QWidget):
         button.setToolTip(tooltip)
         return button
 
-    def _add_mode_control(self, layout):
-        if FLUENT_AVAILABLE and SegmentedWidget is not None:
-            self.mode_control = SegmentedWidget(self)
-            self.mode_control.setObjectName("CalendarModeSegment")
-            self.mode_control.addItem(CALENDAR_MODE_WEEK, "Week")
-            self.mode_control.addItem(CALENDAR_MODE_MONTH, "Month")
-            self.mode_control.currentItemChanged.connect(
-                self._set_calendar_mode
-            )
-            self.mode_control.setCurrentItem(self._calendar_mode)
-            layout.addWidget(self.mode_control)
-            return
-
-        self.mode_control = None
-        self.week_mode_btn = QPushButton("Week")
-        self.week_mode_btn.setObjectName("CalendarModeButton")
-        self.week_mode_btn.setCheckable(True)
-        self.week_mode_btn.setChecked(
-            self._calendar_mode == CALENDAR_MODE_WEEK
-        )
-        self.week_mode_btn.clicked.connect(
-            lambda checked=False:
-            self._set_calendar_mode(CALENDAR_MODE_WEEK)
-        )
-        layout.addWidget(self.week_mode_btn)
-
-        self.month_mode_btn = QPushButton("Month")
-        self.month_mode_btn.setObjectName("CalendarModeButton")
-        self.month_mode_btn.setCheckable(True)
-        self.month_mode_btn.setChecked(
-            self._calendar_mode == CALENDAR_MODE_MONTH
-        )
-        self.month_mode_btn.clicked.connect(
-            lambda checked=False:
-            self._set_calendar_mode(CALENDAR_MODE_MONTH)
-        )
-        layout.addWidget(self.month_mode_btn)
-
     def _apply_calendar_filters(self, appointments):
         query = getattr(self, "_calendar_search_text", "").strip().casefold()
         type_filter = getattr(self, "_calendar_type_filter", "All Types")
@@ -995,6 +946,15 @@ class CalendarPage(QWidget):
             lambda event, filter_date=day:
             self._show_calendar_day_details(filter_date)
         )
+        cell.setAcceptDrops(True)
+        cell.dragEnterEvent = (
+            lambda event:
+            self._task_drag_enter_event(event)
+        )
+        cell.dropEvent = (
+            lambda event, target_day=day:
+            self._task_drop_event(event, target_day)
+        )
 
         layout = QVBoxLayout()
         layout.setContentsMargins(10, 10, 10, 10)
@@ -1020,7 +980,7 @@ class CalendarPage(QWidget):
         header.addStretch()
         layout.addLayout(header)
 
-        max_visible = 4 if mode == CALENDAR_MODE_WEEK else 3
+        max_visible = 3
         visible_count = 0
         for appointment in appointments[:max_visible]:
             layout.addWidget(self._make_calendar_chip(appointment))
@@ -1080,11 +1040,81 @@ class CalendarPage(QWidget):
         layout.addWidget(button, stretch=1)
         return chip
 
+    def _enable_task_drag(self, widget, task_id, preview_widget=None):
+        if task_id is None:
+            return
+
+        preview_widget = preview_widget or widget
+        original_press = widget.mousePressEvent
+        original_move = widget.mouseMoveEvent
+
+        def mouse_press(event):
+            if event.button() == Qt.LeftButton:
+                widget._task_drag_start_pos = event.position().toPoint()
+            original_press(event)
+
+        def mouse_move(event):
+            start_pos = getattr(widget, "_task_drag_start_pos", None)
+            if (
+                start_pos is not None
+                and event.buttons() & Qt.LeftButton
+                and (event.position().toPoint() - start_pos).manhattanLength()
+                >= 8
+            ):
+                mime = QMimeData()
+                mime.setData(TASK_DRAG_MIME, str(task_id).encode("utf-8"))
+                drag = QDrag(widget)
+                drag.setMimeData(mime)
+                pixmap = QPixmap(preview_widget.size())
+                pixmap.fill(Qt.transparent)
+                preview_widget.render(pixmap)
+                drag.setPixmap(pixmap)
+                drag.setHotSpot(
+                    widget.mapTo(
+                        preview_widget,
+                        event.position().toPoint(),
+                    )
+                )
+                drag.exec(Qt.MoveAction)
+                return
+            original_move(event)
+
+        widget.mousePressEvent = mouse_press
+        widget.mouseMoveEvent = mouse_move
+
+    def _task_drag_enter_event(self, event):
+        if event.mimeData().hasFormat(TASK_DRAG_MIME):
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def _task_drop_event(self, event, target_day):
+        if not event.mimeData().hasFormat(TASK_DRAG_MIME):
+            event.ignore()
+            return
+
+        try:
+            task_id = int(bytes(event.mimeData().data(TASK_DRAG_MIME)).decode("utf-8"))
+            SecretaryWorkService().update_task(task_id, work_date=target_day)
+            event.acceptProposedAction()
+            self.load_data()
+            self._refresh_office_work_page()
+        except Exception:
+            logger.exception("Failed to move calendar task")
+            event.ignore()
+            show_message(
+                self,
+                "Calendar Task",
+                "Could not move that task.",
+                kind="warning",
+            )
+
     def _make_task_chip(self, task):
         title = task.get("title", "")
         text = self._task_chip_text(task)
         chip = QFrame()
         chip.setObjectName("CalendarTaskChip")
+        chip.setProperty("done", task.get("status") == "DONE")
         chip.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 
         layout = QHBoxLayout()
@@ -1106,7 +1136,9 @@ class CalendarPage(QWidget):
         button.setObjectName("CalendarTaskChipButton")
         button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         scope = task.get("scope_label") or task.get("missionary_name") or ""
-        tooltip = f"Task due: {title}"
+        tooltip = f"Task: {title}"
+        if task.get("due_date"):
+            tooltip = f"{tooltip} - due {task['due_date'].strftime('%b %d, %Y')}"
         if scope:
             tooltip = f"{tooltip} - {scope}"
         button.setToolTip(tooltip)
@@ -1114,7 +1146,20 @@ class CalendarPage(QWidget):
             lambda checked=False, task_data=task:
             self._edit_task(task_data)
         )
+        self._enable_task_drag(chip, task.get("id"), chip)
+        self._enable_task_drag(button, task.get("id"), chip)
         layout.addWidget(button, stretch=1)
+
+        if task.get("status") != "DONE":
+            done_btn = create_button("Done", "success", fixed_height=28)
+            done_btn.setObjectName("CalendarTaskDoneButton")
+            done_btn.setMinimumWidth(72)
+            done_btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+            done_btn.clicked.connect(
+                lambda checked=False, task_id=task.get("id"):
+                self._complete_task(task_id)
+            )
+            layout.addWidget(done_btn)
         return chip
 
     def _calendar_chip_text(self, appointment, compact=False):
@@ -1150,13 +1195,14 @@ class CalendarPage(QWidget):
     def _tasks_by_date(self, tasks):
         grouped = {}
         for task in tasks:
-            due_date = task.get("due_date")
-            if due_date is not None:
-                grouped.setdefault(due_date, []).append(task)
+            work_date = task.get("work_date")
+            if work_date is not None:
+                grouped.setdefault(work_date, []).append(task)
 
         for items in grouped.values():
             items.sort(
                 key=lambda item: (
+                    item.get("status") == "DONE",
                     item.get("priority", ""),
                     item.get("title", "").casefold(),
                 )
@@ -1171,15 +1217,7 @@ class CalendarPage(QWidget):
         start = visible_dates[0]
         end = visible_dates[-1]
 
-        if self._calendar_mode == CALENDAR_MODE_MONTH:
-            return self._anchor_date.strftime("%B %Y")
-
-        if start.month == end.month:
-            return f"{start.strftime('%B')} {start.day}-{end.day}, {end.year}"
-        return (
-            f"{start.strftime('%b')} {start.day} - "
-            f"{end.strftime('%b')} {end.day}, {end.year}"
-        )
+        return self._anchor_date.strftime("%B %Y")
 
     def _set_calendar_mode(self, mode):
         if mode == self._calendar_mode:
@@ -1193,19 +1231,13 @@ class CalendarPage(QWidget):
     def _go_previous_range(self):
         self._calendar_detail_date = None
         self._show_overdue_detail = False
-        if self._calendar_mode == CALENDAR_MODE_MONTH:
-            self._anchor_date = add_months(self._anchor_date, -1)
-        else:
-            self._anchor_date = self._anchor_date - timedelta(days=7)
+        self._anchor_date = add_months(self._anchor_date, -1)
         self._render_calendar()
 
     def _go_next_range(self):
         self._calendar_detail_date = None
         self._show_overdue_detail = False
-        if self._calendar_mode == CALENDAR_MODE_MONTH:
-            self._anchor_date = add_months(self._anchor_date, 1)
-        else:
-            self._anchor_date = self._anchor_date + timedelta(days=7)
+        self._anchor_date = add_months(self._anchor_date, 1)
         self._render_calendar()
 
     def _go_today(self):
@@ -1705,6 +1737,7 @@ class CalendarPage(QWidget):
         row.setObjectName(
             "CalendarTaskRowAlt" if alternate else "CalendarTaskRow"
         )
+        row.setProperty("done", task.get("status") == "DONE")
 
         layout = QHBoxLayout()
         layout.setContentsMargins(18, 11, 18, 11)
@@ -1754,6 +1787,9 @@ class CalendarPage(QWidget):
         if task.get("project_title"):
             context.append(task["project_title"])
         meta_text = " - ".join(context) if context else "No linked record"
+        if task.get("due_date"):
+            due_text = task["due_date"].strftime("Due %b %d, %Y")
+            meta_text = f"{meta_text} - {due_text}" if meta_text else due_text
         meta = QLabel(meta_text)
         meta.setObjectName("MiniMutedText")
         text_stack.addWidget(meta)
@@ -1773,14 +1809,24 @@ class CalendarPage(QWidget):
             lambda _=None, task_data=task:
             self._edit_task(task_data)
         )
+        if task.get("status") != "DONE":
+            done_btn = create_button("Done", "success", fixed_height=28)
+            done_btn.setObjectName("CalendarTaskDoneButton")
+            done_btn.clicked.connect(
+                lambda _=None, task_id=task["id"]:
+                self._complete_task(task_id)
+            )
+            layout.addWidget(done_btn)
         layout.addWidget(edit_btn)
 
         return row
 
-    def _add_task(self, default_due_date=None):
+    def _add_task(self, default_due_date=None, default_work_date=None):
+        if default_work_date is None:
+            default_work_date = default_due_date
         defaults = (
-            {"due_date": default_due_date}
-            if default_due_date is not None
+            {"work_date": default_work_date}
+            if default_work_date is not None
             else None
         )
         dialog = TaskDialog(
@@ -1805,6 +1851,22 @@ class CalendarPage(QWidget):
             self._refresh_office_work_page()
             return True
         return False
+
+    def _complete_task(self, task_id):
+        if task_id is None:
+            return
+        try:
+            SecretaryWorkService().complete_task(task_id)
+            self.load_data()
+            self._refresh_office_work_page()
+        except Exception:
+            logger.exception("Failed to complete calendar task")
+            show_message(
+                self,
+                "Calendar Task",
+                "Could not mark that task done.",
+                kind="warning",
+            )
 
     def _refresh_office_work_page(self):
         try:

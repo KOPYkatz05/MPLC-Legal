@@ -147,19 +147,22 @@ def test_carnet_upload_creates_initial_residency_event(residency_db):
         missionary_id,
         "CARNE_DE_EXTRANJERIA",
         document_id,
-        {},
+        {"carnet_number": "CE123456"},
     )
 
     events = _events(missionary_id)
     assert "residency_expiration" in updated
+    assert "carnet_number" in updated
     assert len(events) == 1
     assert events[0].event_type == "INITIAL_RESIDENCY"
     assert events[0].sequence_number == 0
-    assert _missionary(missionary_id).residency_expiration == date(
+    missionary = _missionary(missionary_id)
+    assert missionary.residency_expiration == date(
         2027,
         1,
         5,
     )
+    assert missionary.carnet_number == "CE123456"
 
 
 def test_prorroga_upload_derives_expiration_from_arrival_not_ocr(

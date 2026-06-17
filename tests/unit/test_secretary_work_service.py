@@ -49,20 +49,29 @@ def _create_missionary(name):
 
 
 def test_create_update_complete_and_archive_task(secretary_service):
-    task = secretary_service.create_task("Call office", priority="IMPORTANT")
+    task = secretary_service.create_task(
+        "Call office",
+        priority="IMPORTANT",
+        work_date=date(2026, 6, 8),
+        due_date=date(2026, 6, 12),
+    )
 
     assert task["title"] == "Call office"
     assert task["status"] == "OPEN"
     assert task["priority"] == "IMPORTANT"
+    assert task["work_date"] == date(2026, 6, 8)
+    assert task["due_date"] == date(2026, 6, 12)
 
     updated = secretary_service.update_task(
         task["id"],
         title="Call mission office",
         status="WAITING",
         waiting_reason="MISSIONARY",
+        work_date=date(2026, 6, 9),
     )
     assert updated["title"] == "Call mission office"
     assert updated["status"] == "WAITING"
+    assert updated["work_date"] == date(2026, 6, 9)
 
     done = secretary_service.complete_task(task["id"])
     assert done["status"] == "DONE"
@@ -131,6 +140,20 @@ def test_list_tasks_hides_done_and_archived_by_default(secretary_service):
         task["title"]
         for task in secretary_service.list_tasks(include_done=True)
     } == {"Visible", "Done", "Archived"}
+
+
+def test_calendar_tasks_include_done_with_work_date_but_skip_archived(secretary_service):
+    visible = secretary_service.create_task("Visible", work_date=date(2026, 6, 10))
+    done = secretary_service.create_task("Done", work_date=date(2026, 6, 11))
+    no_work_date = secretary_service.create_task("No work date")
+    archived = secretary_service.create_task("Archived", work_date=date(2026, 6, 12))
+    secretary_service.complete_task(done["id"])
+    secretary_service.archive_task(archived["id"])
+
+    assert [task["title"] for task in secretary_service.list_calendar_tasks()] == [
+        visible["title"],
+        done["title"],
+    ]
 
 
 def test_delete_task_permanently_removes_record(secretary_service):
@@ -351,8 +374,8 @@ def test_secretary_task_waiting_reason_migration(monkeypatch):
         conn.execute(
             text(
                 "INSERT INTO secretary_tasks "
-                "(id, title, status, priority, missionary_id) "
-                "VALUES (10, 'Existing Task', 'OPEN', 'NORMAL', 5)"
+                "(id, title, status, priority, due_date, missionary_id) "
+                "VALUES (10, 'Existing Task', 'OPEN', 'NORMAL', '2026-06-10', 5)"
             )
         )
 
@@ -385,10 +408,18 @@ def test_secretary_task_waiting_reason_migration(monkeypatch):
     assert "waiting_reason" in columns
     assert "group_id" in columns
     assert "group_scope_label" in columns
+    assert "work_date" in columns
     assert "missionary_groups" in group_tables
     assert "missionary_group_members" in group_tables
     assert "secretary_task_missionaries" in group_tables
     assert backfilled_links == [(10, 5)]
+
+    with engine.connect() as conn:
+        backfilled_work_date = conn.execute(
+            text("SELECT work_date FROM secretary_tasks WHERE id = 10")
+        ).scalar()
+
+    assert backfilled_work_date == "2026-06-10"
 
 
 def test_project_progress_counts_tasks(secretary_service):

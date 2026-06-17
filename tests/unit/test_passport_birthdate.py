@@ -124,6 +124,7 @@ def test_missionary_detail_page_handles_birthdate_field(monkeypatch, qapp):
         pickup_appointment_date=None,
         tramite_usuario=None,
         tramite_contrasena=None,
+        carnet_number=None,
     )
 
     page.load_missionary(missionary)
@@ -173,10 +174,12 @@ def test_missionary_detail_page_handles_birthdate_field(monkeypatch, qapp):
     monkeypatch.setattr(page, "_reload_missionary", lambda: None)
 
     page._date_edits["date_of_birth"].setDate(QDate(1991, 4, 5))
+    page.carnet_number_input.setText("CE123456")
     page._save_dates()
 
     assert captured["missionary_id"] == 1
     assert captured["updates"]["date_of_birth"] == date(1991, 4, 5)
+    assert captured["updates"]["carnet_number"] == "CE123456"
 
 
 def test_missionary_detail_lists_open_tasks(monkeypatch, qapp):
@@ -289,3 +292,4 @@ def test_run_migrations_adds_birthdate_column(monkeypatch):
         }
 
     assert "date_of_birth" in columns
+    assert "carnet_number" in columns

@@ -4,6 +4,8 @@ from database.db import SessionLocal
 
 from database.models.missionary import Missionary
 
+from services.expiration_rules import should_track_expiration_field
+
 from utils.logger import logger
 
 
@@ -40,6 +42,11 @@ class AlertService:
                 for field, label in (
                     self.EXPIRATION_FIELDS
                 ):
+                    if not should_track_expiration_field(
+                        m, field
+                    ):
+                        continue
+
                     exp_date = getattr(
                         m, field, None
                     )
@@ -99,6 +106,11 @@ class AlertService:
                 for field, label in (
                     self.EXPIRATION_FIELDS
                 ):
+                    if not should_track_expiration_field(
+                        m, field
+                    ):
+                        continue
+
                     exp_date = getattr(
                         m, field, None
                     )

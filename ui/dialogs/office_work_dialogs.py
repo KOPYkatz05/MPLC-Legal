@@ -262,6 +262,15 @@ class TaskDialog(_OfficeWorkDialogBase):
         )
         self.body_layout.addWidget(self._field("Priority", self.priority_combo))
 
+        self.work_date_input = create_date_picker()
+        self.work_date_input.setDate(_qdate_from_date(self.task.get("work_date")))
+        self.no_work_date_check = create_check_box("No work date")
+        self.no_work_date_check.setChecked(self.task.get("work_date") is None)
+        self.no_work_date_check.toggled.connect(self.work_date_input.setDisabled)
+        self.work_date_input.setDisabled(self.no_work_date_check.isChecked())
+        self.body_layout.addWidget(self._field("Work Date", self.work_date_input))
+        self.body_layout.addWidget(self.no_work_date_check)
+
         self.due_date_input = create_date_picker()
         self.due_date_input.setDate(_qdate_from_date(self.task.get("due_date")))
         self.no_due_date_check = create_check_box("No due date")
@@ -372,6 +381,11 @@ class TaskDialog(_OfficeWorkDialogBase):
             "description": self.description_input.toPlainText().strip(),
             "status": self.status_combo.currentData(),
             "priority": self.priority_combo.currentData(),
+            "work_date": (
+                None
+                if self.no_work_date_check.isChecked()
+                else _date_from_picker(self.work_date_input)
+            ),
             "due_date": (
                 None
                 if self.no_due_date_check.isChecked()

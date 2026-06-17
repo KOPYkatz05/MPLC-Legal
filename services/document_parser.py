@@ -35,7 +35,7 @@ LABEL_FIELD_MAP = {
             "tramite_usuario",
         ),
         (
-            ["contraseña", "contrasena", "contraseÃ±a", "password"],
+            ["contraseña", "contrasena", "password"],
             "tramite_contrasena",
         ),
     ],

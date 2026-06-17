@@ -176,6 +176,10 @@ class SecretaryTask(Base):
         Date,
     )
 
+    work_date = Column(
+        Date,
+    )
+
     project_id = Column(
         Integer,
         ForeignKey("secretary_projects.id"),

@@ -12,6 +12,7 @@ from PySide6.QtGui import QColor, QFont, QPalette
 from services.dashboard_service import (
     DashboardService,
 )
+from services.appointment_service import AppointmentService
 from ui.foundation import (
     PageHeader,
     SectionTitle as SectionHeader,
@@ -19,6 +20,7 @@ from ui.foundation import (
     create_button,
     create_scroll_area,
     divider,
+    show_message,
 )
 from ui.foundation.fluent import SimpleCardWidget
 
@@ -77,8 +79,11 @@ class ColumnHeaderRow(QFrame):
 # ==========================================
 
 class TableRow(QFrame):
+    clicked = Signal(object)
+
     def __init__(self, alternate=False, parent=None):
         super().__init__(parent)
+        self.item_data = None
 
         self.setObjectName(
             "TableRowAlt" if alternate else "TableRow"
@@ -91,6 +96,24 @@ class TableRow(QFrame):
         self.layout_.setSpacing(16)
 
         self.setLayout(self.layout_)
+
+    def set_click_data(self, item_data):
+        self.item_data = item_data
+        self.setCursor(Qt.PointingHandCursor)
+
+    def add_button(self, text, callback, variant="subtle"):
+        button = create_button(text, variant, fixed_height=28)
+        button.clicked.connect(callback)
+        self.layout_.addWidget(button)
+        return button
+
+    def mousePressEvent(self, event):
+        if self.item_data is not None and event.button() == Qt.LeftButton:
+            self.clicked.emit(self.item_data)
+            event.accept()
+            return
+
+        super().mousePressEvent(event)
 
     def add_cell(
         self,
@@ -161,6 +184,7 @@ class DashboardPage(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
 
+        self.main_window = parent
         self.service = DashboardService()
         self.startup_alerts = []
 
@@ -268,6 +292,10 @@ class DashboardPage(QWidget):
 
         self._build_startup_alert_banner()
 
+        self._build_attention_section(
+            data.get("attention_items", [])
+        )
+
         self._build_stat_cards(data)
 
         self._build_expiring_section(
@@ -353,6 +381,171 @@ class DashboardPage(QWidget):
 
         self.content_layout.addWidget(banner)
 
+    def _build_attention_section(self, attention_items):
+        self.content_layout.addWidget(
+            SectionHeader("Needs Attention")
+        )
+
+        card = ListCard()
+        card.setObjectName("NeedsAttentionCard")
+
+        if not attention_items:
+            card.add_empty("No urgent items need attention.")
+            self.content_layout.addWidget(card)
+            return
+
+        for i, item in enumerate(attention_items[:12]):
+            row = TableRow(alternate=(i % 2 == 1))
+            row.setObjectName("NeedsAttentionRow")
+            row.set_click_data(item)
+            row.clicked.connect(self._open_attention_item)
+            row.setProperty("severity", item.get("severity", "info"))
+
+            row.add_cell(
+                item.get("title", "Needs attention"),
+                stretch=3,
+                bold=True,
+            )
+            row.add_cell(
+                item.get("detail", ""),
+                stretch=5,
+                word_wrap=True,
+                color="#52525B",
+            )
+            row.add_cell(
+                self._attention_type_label(item.get("type")),
+                stretch=2,
+                color=self._attention_color(item.get("severity")),
+            )
+            if item.get("type") == "appointment_due":
+                row.add_button(
+                    "Complete",
+                    lambda checked=False, payload=item:
+                    self._complete_attention_appointment(payload),
+                    variant="success",
+                )
+                row.add_button(
+                    "Missed",
+                    lambda checked=False, payload=item:
+                    self._miss_attention_appointment(payload),
+                    variant="danger",
+                )
+            row.add_button(
+                self._attention_action_label(item),
+                lambda checked=False, payload=item:
+                self._open_attention_item(payload),
+                variant="secondary",
+            )
+            card.add_widget(row)
+
+        self.content_layout.addWidget(card)
+
+    @staticmethod
+    def _attention_type_label(item_type):
+        labels = {
+            "document_expiration": "Document",
+            "missing_document": "Missing Doc",
+            "appointment_due": "Appointment",
+            "secretary_task": "Task",
+        }
+        return labels.get(item_type, "Item")
+
+    @staticmethod
+    def _attention_color(severity):
+        return {
+            "critical": "#DC2626",
+            "warning": "#D97706",
+            "info": "#2563EB",
+        }.get(severity, "#71717A")
+
+    @staticmethod
+    def _attention_action_label(item):
+        target = item.get("target")
+        if target == "office_work":
+            return "Office Work"
+        if target == "appointments":
+            return "Appointments"
+        return "Open"
+
+    def _open_attention_item(self, item):
+        if not item:
+            return
+
+        missionary_id = item.get("missionary_id")
+        if missionary_id and self.main_window is not None:
+            opener = getattr(
+                self.main_window,
+                "open_missionary_detail",
+                None,
+            )
+            if callable(opener):
+                opener(missionary_id)
+                return
+
+        target = item.get("target")
+        if target == "office_work" and self.main_window is not None:
+            self.main_window.set_current_key("office_work")
+        elif target == "appointments" and self.main_window is not None:
+            self.main_window.go_to_calendar()
+
+    def _complete_attention_appointment(self, item):
+        appointment_id = item.get("appointment_id")
+        if not appointment_id:
+            return
+
+        try:
+            AppointmentService().complete_appointment(appointment_id)
+            self._refresh_after_appointment_action()
+        except Exception:
+            logger.exception("Failed to complete appointment from dashboard")
+            show_message(
+                self,
+                "Appointment Error",
+                "Could not mark the appointment complete.",
+                kind="critical",
+            )
+
+    def _miss_attention_appointment(self, item):
+        appointment_id = item.get("appointment_id")
+        if not appointment_id:
+            return
+
+        confirm = show_message(
+            self,
+            "Mark Appointment Missed?",
+            (
+                "This will mark the appointment as missed, remove it from "
+                "Needs Attention, and create the follow-up task."
+            ),
+            kind="question",
+            buttons="yes_no",
+        )
+        if confirm not in {1, 16384}:
+            return
+
+        try:
+            AppointmentService().miss_appointment(appointment_id)
+            self._refresh_after_appointment_action()
+        except Exception:
+            logger.exception("Failed to mark appointment missed from dashboard")
+            show_message(
+                self,
+                "Appointment Error",
+                "Could not mark the appointment missed.",
+                kind="critical",
+            )
+
+    def _refresh_after_appointment_action(self):
+        self.load_data()
+
+        if self.main_window is None:
+            return
+
+        for attr in ("calendar_page", "office_work_page"):
+            page = getattr(self.main_window, attr, None)
+            if page is not None and hasattr(page, "load_data"):
+                page.load_data()
+
     # ==========================================
     # STAT CARDS
     # ==========================================
@@ -413,6 +606,7 @@ class DashboardPage(QWidget):
                 ("Document", 3),
                 ("Expiry Date", 2),
                 ("Days Remaining", 2),
+                ("", 1),
             ])
         )
 
@@ -442,6 +636,12 @@ class DashboardPage(QWidget):
                     urgency = f"{days} days"
 
                 row = TableRow(alternate=(i % 2 == 1))
+                row.set_click_data(item)
+                row.clicked.connect(
+                    lambda payload: self._open_missionary(
+                        payload.get("missionary_id")
+                    )
+                )
 
                 row.add_cell(
                     item["name"],
@@ -466,6 +666,12 @@ class DashboardPage(QWidget):
                     color=day_color,
                 )
 
+                row.add_button(
+                    "Open",
+                    lambda checked=False, missionary_id=item.get("missionary_id"):
+                    self._open_missionary(missionary_id),
+                )
+
                 card.add_widget(row)
 
         self.content_layout.addWidget(card)
@@ -485,6 +691,7 @@ class DashboardPage(QWidget):
             ColumnHeaderRow([
                 ("Missionary", 2),
                 ("Missing Documents", 5),
+                ("", 1),
             ])
         )
 
@@ -497,6 +704,12 @@ class DashboardPage(QWidget):
         else:
             for i, item in enumerate(missing_docs):
                 row = TableRow(alternate=(i % 2 == 1))
+                row.set_click_data(item)
+                row.clicked.connect(
+                    lambda payload: self._open_missionary(
+                        payload.get("missionary_id")
+                    )
+                )
 
                 row.add_cell(
                     item["name"],
@@ -522,9 +735,27 @@ class DashboardPage(QWidget):
                     color="#71717A",
                 )
 
+                row.add_button(
+                    "Open",
+                    lambda checked=False, missionary_id=item.get("missionary_id"):
+                    self._open_missionary(missionary_id),
+                )
+
                 card.add_widget(row)
 
         self.content_layout.addWidget(card)
+
+    def _open_missionary(self, missionary_id):
+        if missionary_id is None or self.main_window is None:
+            return
+
+        opener = getattr(
+            self.main_window,
+            "open_missionary_detail",
+            None,
+        )
+        if callable(opener):
+            opener(missionary_id)
 
     # ==========================================
     # AUTO-REFRESH ON SHOW
