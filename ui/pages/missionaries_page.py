@@ -232,8 +232,10 @@ REQUIRED_COLUMN_KEYS = [
 ]
 
 SORT_VALUE_ROLE = Qt.UserRole + 1
+GROUP_EDIT_ACTION = "__edit_selected_group__"
 COPY_ICON_NAMES = ("COPY", "DUPLICATE", "DOCUMENT_COPY")
 CHECK_ICON_NAMES = ("ACCEPT", "CHECKBOX", "CHECK_MARK", "COMPLETED")
+EDIT_ICON_NAMES = ("EDIT", "EDIT_SOLID", "PENCIL")
 
 
 def _fallback_copy_icon():
@@ -266,6 +268,26 @@ def _fallback_check_icon():
     painter.setPen(pen)
     painter.drawLine(4, 9, 8, 13)
     painter.drawLine(8, 13, 15, 5)
+    painter.end()
+
+    return QIcon(pixmap)
+
+
+def _fallback_edit_icon():
+    pixmap = QPixmap(18, 18)
+    pixmap.fill(Qt.transparent)
+
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.Antialiasing)
+
+    pen = QPen(QColor("#52525B"), 1.8)
+    pen.setCapStyle(Qt.RoundCap)
+    pen.setJoinStyle(Qt.RoundJoin)
+    painter.setPen(pen)
+    painter.drawLine(5, 13, 13, 5)
+    painter.drawLine(12, 4, 14, 6)
+    painter.drawLine(4, 14, 6, 14)
+    painter.drawLine(4, 14, 5, 12)
     painter.end()
 
     return QIcon(pixmap)
@@ -513,7 +535,7 @@ class EditMissionaryColumnsDialog(MaskDialogBase):
 
 
 class CreateMissionaryGroupDialog(MaskDialogBase):
-    def __init__(self, group_service, missionaries, parent=None):
+    def __init__(self, group_service, missionaries, parent=None, group=None):
         fluent_parent = parent.window() if parent is not None else None
         self._use_fluent_dialog = (
             FLUENT_AVAILABLE and fluent_parent is not None
@@ -526,9 +548,11 @@ class CreateMissionaryGroupDialog(MaskDialogBase):
 
         self.group_service = group_service
         self.missionaries = list(missionaries)
+        self.group = group or {}
         self.saved_group = None
+        self._is_editing = bool(self.group)
 
-        self.setWindowTitle("Create Group")
+        self.setWindowTitle("Edit Group" if self._is_editing else "Create Group")
         self.surface = setup_dialog_shell(
             self,
             surface_width=560,
@@ -542,6 +566,12 @@ class CreateMissionaryGroupDialog(MaskDialogBase):
         else:
             QDialog.done(self, code)
 
+    def done(self, code):
+        if self._use_fluent_dialog:
+            super().done(code)
+        else:
+            QDialog.done(self, code)
+
     def setup_ui(self):
         root = QVBoxLayout()
         root.setContentsMargins(0, 0, 0, 0)
@@ -550,8 +580,12 @@ class CreateMissionaryGroupDialog(MaskDialogBase):
 
         root.addWidget(
             PageHeader(
-                "Create Group",
-                "Save a reusable missionary group for filtering and shared tasks.",
+                "Edit Group" if self._is_editing else "Create Group",
+                (
+                    "Update who belongs to this reusable missionary group."
+                    if self._is_editing
+                    else "Save a reusable missionary group for filtering and shared tasks."
+                ),
             )
         )
 
@@ -564,11 +598,13 @@ class CreateMissionaryGroupDialog(MaskDialogBase):
         body.setLayout(body_layout)
 
         self.name_input = create_line_edit("Group name")
+        self.name_input.setText(self.group.get("name", ""))
         body_layout.addWidget(self._field("Name", self.name_input))
 
         self.description_input = create_plain_text_edit()
         self.description_input.setPlaceholderText("Optional description")
         self.description_input.setFixedHeight(76)
+        self.description_input.setPlainText(self.group.get("description", ""))
         body_layout.addWidget(self._field("Description", self.description_input))
 
         self.search_input = create_search_edit("Search missionaries")
@@ -605,6 +641,7 @@ class CreateMissionaryGroupDialog(MaskDialogBase):
 
     def _load_members(self):
         self.member_list.clear()
+        selected_ids = set(self.group.get("missionary_ids", []))
         for missionary in self.missionaries:
             item = QListWidgetItem(missionary.full_name or "")
             item.setData(Qt.UserRole, missionary.id)
@@ -614,7 +651,9 @@ class CreateMissionaryGroupDialog(MaskDialogBase):
                 | Qt.ItemIsSelectable
                 | Qt.ItemIsEnabled
             )
-            item.setCheckState(Qt.Unchecked)
+            item.setCheckState(
+                Qt.Checked if missionary.id in selected_ids else Qt.Unchecked
+            )
             self.member_list.addItem(item)
 
     def _filter_items(self, text):
@@ -642,11 +681,18 @@ class CreateMissionaryGroupDialog(MaskDialogBase):
             )
             return
 
-        self.saved_group = self.group_service.create_group(
-            name=name,
-            description=self.description_input.toPlainText().strip(),
-            missionary_ids=self.selected_missionary_ids(),
-        )
+        payload = {
+            "name": name,
+            "description": self.description_input.toPlainText().strip(),
+            "missionary_ids": self.selected_missionary_ids(),
+        }
+        if self._is_editing:
+            self.saved_group = self.group_service.update_group(
+                self.group["id"],
+                **payload,
+            )
+        else:
+            self.saved_group = self.group_service.create_group(**payload)
         self.accept()
 
 
@@ -674,7 +720,9 @@ class MissionariesPage(QWidget):
         self.export_service = ExportService()
 
         self._all_missionaries = []
+        self._groups_by_id = {}
         self._group_members_by_id = {}
+        self._last_group_filter_data = None
         self._hovered_cell = None
         self._applying_column_widths = False
         self._visible_column_keys = (
@@ -710,7 +758,7 @@ class MissionariesPage(QWidget):
         )
 
         self.group_filter.currentIndexChanged.connect(
-            self._apply_filters
+            self._group_filter_changed
         )
 
         self.create_group_button.clicked.connect(
@@ -805,6 +853,10 @@ class MissionariesPage(QWidget):
         self.group_filter = create_combo_box()
 
         self.group_filter.addItem("All Groups", None)
+        self._edit_group_icon = _qicon_from_fluent(
+            EDIT_ICON_NAMES,
+            _fallback_edit_icon(),
+        )
 
         self.create_group_button = create_button(
             "Create Group",
@@ -1238,7 +1290,13 @@ class MissionariesPage(QWidget):
             return
 
         current_group = self.group_filter.currentData()
+        if current_group == GROUP_EDIT_ACTION:
+            current_group = self._last_group_filter_data
         groups = self.group_service.list_groups()
+        self._groups_by_id = {
+            group["id"]: group
+            for group in groups
+        }
         self._group_members_by_id = {
             group["id"]: group.get("missionary_ids", [])
             for group in groups
@@ -1252,10 +1310,50 @@ class MissionariesPage(QWidget):
                 f"{group['name']} ({group.get('member_count', 0)})",
                 group["id"],
             )
+        self._add_group_edit_action()
         index = self.group_filter.findData(current_group)
         if index >= 0:
             self.group_filter.setCurrentIndex(index)
+        self._last_group_filter_data = self.group_filter.currentData()
         self.group_filter.blockSignals(False)
+
+    def _add_group_edit_action(self):
+        if FLUENT_AVAILABLE:
+            self.group_filter.addItem(
+                "Edit selected group members",
+                GROUP_EDIT_ACTION,
+                icon=self._edit_group_icon,
+            )
+        else:
+            self.group_filter.addItem(
+                self._edit_group_icon,
+                "Edit selected group members",
+                GROUP_EDIT_ACTION,
+            )
+
+    def _group_filter_changed(self, *_args):
+        current_group = self.group_filter.currentData()
+        if current_group == GROUP_EDIT_ACTION:
+            group_id = self._last_group_filter_data
+            self._set_combo_data(self.group_filter, group_id)
+            if group_id is None:
+                show_message(
+                    self,
+                    "Select Group",
+                    "Choose a group before editing its members.",
+                    kind="warning",
+                )
+                return
+            QTimer.singleShot(0, lambda: self._edit_group_by_id(group_id))
+            return
+
+        self._last_group_filter_data = current_group
+        self._apply_filters()
+
+    def _set_combo_data(self, combo, value):
+        index = combo.findData(value)
+        if index >= 0:
+            combo.setCurrentIndex(index)
 
     # ==========================================
     # COPY CELL STATE
@@ -1595,6 +1693,27 @@ class MissionariesPage(QWidget):
             self.group_service,
             self._all_missionaries,
             parent=self,
+        )
+        if dialog.exec() == QDialog.Accepted:
+            self.load_data()
+            if dialog.saved_group:
+                index = self.group_filter.findData(dialog.saved_group["id"])
+                if index >= 0:
+                    self.group_filter.setCurrentIndex(index)
+
+    def _edit_selected_group(self):
+        self._edit_group_by_id(self.group_filter.currentData())
+
+    def _edit_group_by_id(self, group_id):
+        group = self._groups_by_id.get(group_id)
+        if not group:
+            return
+
+        dialog = CreateMissionaryGroupDialog(
+            self.group_service,
+            self._all_missionaries,
+            parent=self,
+            group=group,
         )
         if dialog.exec() == QDialog.Accepted:
             self.load_data()
