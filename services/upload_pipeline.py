@@ -135,7 +135,7 @@ def ocr_runtime_mode():
         return OCR_MODE_IN_PROCESS
     if os.environ.get("MISSION_LEGAL_OCR_IN_PROCESS") == "1":
         return OCR_MODE_IN_PROCESS
-    return OCR_MODE_IN_PROCESS
+    return OCR_MODE_SUBPROCESS
 
 
 def export_for_ocr(

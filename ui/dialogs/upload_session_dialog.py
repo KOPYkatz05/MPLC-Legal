@@ -141,6 +141,7 @@ class UploadQueueItem:
     notes: str = ""
     updated_fields: list = field(default_factory=list)
     saved_document_id: int | None = None
+    prefilled_data: dict = field(default_factory=dict)
 
     @property
     def file_name(self):
@@ -350,6 +351,14 @@ class UploadSessionController:
         if self.selected_index < 0 and self.items:
             self.selected_index = 0
 
+        if added:
+            logger.info(
+                "UPLOAD_FILES_ADDED count=%s files=%s total=%s",
+                len(added),
+                [item.file_name for item in added],
+                len(self.items),
+            )
+
         return added
 
     def remove_item(self, index):
@@ -399,13 +408,22 @@ class UploadSessionController:
         item.document_type = normalized_type
         item.workflow_stage = workflow_stage
         item.ocr_result = None
-        item.confirmed_data = self.missionary_defaults_for_document(
+        item.prefilled_data = self.missionary_defaults_for_document(
             normalized_type
         )
+        item.confirmed_data = dict(item.prefilled_data)
         item.ocr_reviewed = False
         item.error_text = ""
         if item.status not in {"saved", "skipped"}:
             item.status = "pending"
+        logger.info(
+            "UPLOAD_DOCUMENT_TYPE_SET index=%s file=%s type=%s stage=%s prefilled_fields=%s",
+            index,
+            item.file_name,
+            item.document_type,
+            item.workflow_stage,
+            sorted(item.prefilled_data.keys()),
+        )
 
     @staticmethod
     def derive_stage(document_type):
@@ -460,13 +478,51 @@ class UploadSessionController:
 
         parsed_data = getattr(item.ocr_result, "parsed_data", None) or {}
         if not parsed_data:
+            logger.info(
+                "UPLOAD_OCR_MERGE_SKIPPED file=%s type=%s parsed_fields=[]",
+                item.file_name,
+                item.document_type,
+            )
             return
 
         confirmed = dict(item.confirmed_data or {})
+        filled_blank = []
+        replaced_prefill = []
+        preserved = []
         for field, value in parsed_data.items():
-            if self._blank_confirmed_value(confirmed.get(field)):
+            confirmed_value = confirmed.get(field)
+            if self._blank_confirmed_value(confirmed_value):
                 confirmed[field] = value
+                filled_blank.append(field)
+            elif self._ocr_should_replace_prefill(
+                item,
+                field,
+                confirmed_value,
+            ):
+                confirmed[field] = value
+                replaced_prefill.append(field)
+            else:
+                preserved.append(field)
         item.confirmed_data = confirmed
+        logger.info(
+            "UPLOAD_OCR_MERGE_DONE file=%s type=%s parsed_fields=%s filled_blank=%s replaced_prefill=%s preserved=%s",
+            item.file_name,
+            item.document_type,
+            sorted(parsed_data.keys()),
+            sorted(filled_blank),
+            sorted(replaced_prefill),
+            sorted(preserved),
+        )
+
+    def _ocr_should_replace_prefill(self, item, field, confirmed_value):
+        if item.document_type != "PASSPORT":
+            return False
+
+        prefilled_value = (item.prefilled_data or {}).get(field)
+        if self._blank_confirmed_value(prefilled_value):
+            return False
+
+        return str(confirmed_value).strip() == str(prefilled_value).strip()
 
     def run_ocr(self, item, parent=None):
         ocr_fields = DOCUMENTS.get(item.document_type, {}).get(
@@ -478,6 +534,12 @@ class UploadSessionController:
             item.document_type,
             list(ocr_fields),
             item.status,
+        )
+        logger.info(
+            "UPLOAD_OCR_RUNTIME file=%s type=%s mode=%s",
+            item.file_name,
+            item.document_type,
+            ocr_runtime_mode(),
         )
         if not ocr_fields:
             item.ocr_result = None

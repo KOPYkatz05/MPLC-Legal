@@ -300,7 +300,7 @@ def test_upload_controller_omits_blank_missionary_defaults():
     }
 
 
-def test_upload_ocr_fills_blank_fields_without_overwriting_existing(
+def test_passport_ocr_replaces_prefilled_values_with_mrz_data(
     monkeypatch,
 ):
     missionary = SimpleNamespace(
@@ -319,6 +319,7 @@ def test_upload_ocr_fills_blank_fields_without_overwriting_existing(
     def fake_prepare_ocr_ingestion(**kwargs):
         return UploadPipelineResult(
             parsed_data={
+                "full_name": "OCR PASSPORT NAME",
                 "passport_number": "OCR999999",
                 "date_of_birth": "2002-03-04",
                 "passport_expiration": "2032-05-06",
@@ -335,12 +336,79 @@ def test_upload_ocr_fills_blank_fields_without_overwriting_existing(
     controller.run_ocr(item)
 
     assert item.confirmed_data == {
-        "full_name": "Test Missionary",
-        "passport_number": "EXISTING123",
+        "full_name": "OCR PASSPORT NAME",
+        "passport_number": "OCR999999",
         "nationality": "USA",
         "date_of_birth": "2002-03-04",
         "passport_expiration": "2032-05-06",
     }
+
+
+def test_non_passport_ocr_fills_blank_without_overwriting_existing(
+    monkeypatch,
+):
+    missionary = SimpleNamespace(
+        id=42,
+        full_name="Test Missionary",
+        pickup_appointment_date=date(2026, 1, 2),
+    )
+    controller = UploadSessionController(missionary)
+    controller.add_files(["recojo.pdf"])
+    controller.set_document_type(0, "CITA_RECOJO")
+    item = controller.items[0]
+
+    def fake_prepare_ocr_ingestion(**kwargs):
+        return UploadPipelineResult(
+            parsed_data={
+                "pickup_appointment_date": "2026-03-04",
+            },
+            ocr_status="success",
+        )
+
+    monkeypatch.setattr(
+        upload_session_dialog,
+        "prepare_ocr_ingestion",
+        fake_prepare_ocr_ingestion,
+    )
+
+    controller.run_ocr(item)
+
+    assert item.confirmed_data == {
+        "pickup_appointment_date": "2026-01-02",
+    }
+
+
+def test_passport_ocr_does_not_overwrite_manual_confirmed_value(
+    monkeypatch,
+):
+    missionary = SimpleNamespace(
+        id=42,
+        full_name="Test Missionary",
+        passport_number="EXISTING123",
+    )
+    controller = UploadSessionController(missionary)
+    controller.add_files(["passport.pdf"])
+    controller.set_document_type(0, "PASSPORT")
+    item = controller.items[0]
+    item.confirmed_data["passport_number"] = "MANUAL123"
+
+    def fake_prepare_ocr_ingestion(**kwargs):
+        return UploadPipelineResult(
+            parsed_data={
+                "passport_number": "OCR999999",
+            },
+            ocr_status="success",
+        )
+
+    monkeypatch.setattr(
+        upload_session_dialog,
+        "prepare_ocr_ingestion",
+        fake_prepare_ocr_ingestion,
+    )
+
+    controller.run_ocr(item)
+
+    assert item.confirmed_data["passport_number"] == "MANUAL123"
 
 
 def test_upload_ocr_does_not_overwrite_manual_confirmed_value(

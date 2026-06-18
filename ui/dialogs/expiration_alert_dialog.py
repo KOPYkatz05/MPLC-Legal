@@ -1,5 +1,4 @@
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QDialog,
     QFrame,
@@ -11,6 +10,8 @@ from PySide6.QtWidgets import (
 
 from ui.foundation import (
     BodyLabel,
+    FLUENT_AVAILABLE,
+    MaskDialogBase,
     SubtitleLabel,
     create_button,
     create_card,
@@ -19,9 +20,14 @@ from ui.foundation import (
 )
 
 
-class ExpirationAlertDialog(QDialog):
+class ExpirationAlertDialog(MaskDialogBase):
     def __init__(self, alerts, parent=None):
-        super().__init__(parent)
+        fluent_parent = parent.window() if parent is not None else None
+        self._use_fluent_dialog = FLUENT_AVAILABLE and fluent_parent is not None
+        if self._use_fluent_dialog:
+            super().__init__(fluent_parent)
+        else:
+            QDialog.__init__(self, parent)
 
         self.alerts = list(alerts or [])
 
@@ -33,10 +39,16 @@ class ExpirationAlertDialog(QDialog):
             surface_min_height=520,
             shell_object_name="ExpirationAlertDialog",
             surface_object_name="ExpirationAlertSurface",
-            use_masked_shell=False,
+            use_masked_shell=True,
         )
 
         self.setup_ui()
+
+    def _onDone(self, code):
+        if self._use_fluent_dialog:
+            super()._onDone(code)
+        else:
+            QDialog.done(self, code)
 
     def setup_ui(self):
         surface = self.surface
