@@ -10,6 +10,36 @@ MISSIONARIES_TABLE_COLUMNS_KEY = "missionaries_table_columns"
 MISSIONARIES_TABLE_COLUMN_WIDTHS_KEY = (
     "missionaries_table_column_widths"
 )
+DIGEST_PASSWORD_SERVICE = "MissionLegalDailyDigest"
+DIGEST_PASSWORD_USERNAME = "smtp_password"
+DIGEST_DEFAULT_TIME = "10:00"
+DIGEST_DEFAULT_DETAIL_LEVEL = "balanced"
+
+
+def _bool_value(value, default=False):
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return default
+    if isinstance(value, str):
+        return value.lower() in {"1", "true", "yes", "on"}
+    return bool(value)
+
+
+def _int_value(value, default=0):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _keyring():
+    try:
+        import keyring
+
+        return keyring
+    except Exception:
+        return None
 
 
 class SettingsService:
@@ -116,3 +146,134 @@ class SettingsService:
         self._settings.remove(
             MISSIONARIES_TABLE_COLUMN_WIDTHS_KEY
         )
+
+    def get_daily_digest_settings(self):
+        return {
+            "email_enabled": _bool_value(
+                self._settings.value("daily_digest/email_enabled", False)
+            ),
+            "recipient_email": str(
+                self._settings.value("daily_digest/recipient_email", "") or ""
+            ),
+            "digest_time": str(
+                self._settings.value(
+                    "daily_digest/digest_time",
+                    DIGEST_DEFAULT_TIME,
+                )
+                or DIGEST_DEFAULT_TIME
+            ),
+            "include_overdue": _bool_value(
+                self._settings.value("daily_digest/include_overdue", True),
+                True,
+            ),
+            "detail_level": str(
+                self._settings.value(
+                    "daily_digest/detail_level",
+                    DIGEST_DEFAULT_DETAIL_LEVEL,
+                )
+                or DIGEST_DEFAULT_DETAIL_LEVEL
+            ),
+            "smtp_host": str(
+                self._settings.value("daily_digest/smtp_host", "") or ""
+            ),
+            "smtp_port": _int_value(
+                self._settings.value("daily_digest/smtp_port", 587),
+                587,
+            ),
+            "smtp_tls": str(
+                self._settings.value("daily_digest/smtp_tls", "starttls")
+                or "starttls"
+            ),
+            "sender_email": str(
+                self._settings.value("daily_digest/sender_email", "") or ""
+            ),
+            "smtp_username": str(
+                self._settings.value("daily_digest/smtp_username", "") or ""
+            ),
+            "last_sent_date": str(
+                self._settings.value("daily_digest/last_sent_date", "") or ""
+            ),
+        }
+
+    def set_daily_digest_settings(self, values):
+        self._settings.setValue(
+            "daily_digest/email_enabled",
+            bool(values.get("email_enabled", False)),
+        )
+        self._settings.setValue(
+            "daily_digest/recipient_email",
+            values.get("recipient_email", ""),
+        )
+        self._settings.setValue(
+            "daily_digest/digest_time",
+            values.get("digest_time", DIGEST_DEFAULT_TIME),
+        )
+        self._settings.setValue(
+            "daily_digest/include_overdue",
+            bool(values.get("include_overdue", True)),
+        )
+        self._settings.setValue(
+            "daily_digest/detail_level",
+            values.get("detail_level", DIGEST_DEFAULT_DETAIL_LEVEL),
+        )
+        self._settings.setValue(
+            "daily_digest/smtp_host",
+            values.get("smtp_host", ""),
+        )
+        self._settings.setValue(
+            "daily_digest/smtp_port",
+            _int_value(values.get("smtp_port"), 587),
+        )
+        self._settings.setValue(
+            "daily_digest/smtp_tls",
+            values.get("smtp_tls", "starttls"),
+        )
+        self._settings.setValue(
+            "daily_digest/sender_email",
+            values.get("sender_email", ""),
+        )
+        self._settings.setValue(
+            "daily_digest/smtp_username",
+            values.get("smtp_username", ""),
+        )
+
+    def get_daily_digest_password(self):
+        keyring = _keyring()
+        if keyring is None:
+            return ""
+        try:
+            return (
+                keyring.get_password(
+                    DIGEST_PASSWORD_SERVICE,
+                    DIGEST_PASSWORD_USERNAME,
+                )
+                or ""
+            )
+        except Exception:
+            return ""
+
+    def set_daily_digest_password(self, password):
+        keyring = _keyring()
+        if keyring is None:
+            return False
+        try:
+            if password:
+                keyring.set_password(
+                    DIGEST_PASSWORD_SERVICE,
+                    DIGEST_PASSWORD_USERNAME,
+                    password,
+                )
+            else:
+                try:
+                    keyring.delete_password(
+                        DIGEST_PASSWORD_SERVICE,
+                        DIGEST_PASSWORD_USERNAME,
+                    )
+                except Exception:
+                    pass
+            return True
+        except Exception:
+            return False
+
+    def set_daily_digest_last_sent_date(self, value):
+        self._settings.setValue("daily_digest/last_sent_date", value or "")

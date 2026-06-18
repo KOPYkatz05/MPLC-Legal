@@ -1,4 +1,5 @@
 from PySide6.QtWidgets import (
+    QApplication,
     QWidget,
     QVBoxLayout,
     QHBoxLayout,
@@ -13,6 +14,8 @@ from services.dashboard_service import (
     DashboardService,
 )
 from services.appointment_service import AppointmentService
+from services.daily_digest_service import DailyDigestService
+from services.settings_service import SettingsService
 from ui.foundation import (
     PageHeader,
     SectionTitle as SectionHeader,
@@ -186,6 +189,7 @@ class DashboardPage(QWidget):
 
         self.main_window = parent
         self.service = DashboardService()
+        self.digest_service = DailyDigestService()
         self.startup_alerts = []
 
         self.setup_ui()
@@ -292,6 +296,8 @@ class DashboardPage(QWidget):
 
         self._build_startup_alert_banner()
 
+        self._build_daily_digest_section()
+
         self._build_attention_section(
             data.get("attention_items", [])
         )
@@ -380,6 +386,64 @@ class DashboardPage(QWidget):
         layout.addWidget(button)
 
         self.content_layout.addWidget(banner)
+
+    def _build_daily_digest_section(self):
+        settings_service = (
+            self.main_window.settings_service
+            if self.main_window is not None
+            and hasattr(self.main_window, "settings_service")
+            else SettingsService()
+        )
+        settings = settings_service.get_daily_digest_settings()
+        digest = self.digest_service.build_digest(
+            include_overdue=settings.get("include_overdue", True),
+            detail_level=settings.get("detail_level", "balanced"),
+            language=settings_service.get_language(),
+        )
+
+        self.content_layout.addWidget(
+            SectionHeader(digest.get("title", "Today's Digest"))
+        )
+
+        card = SimpleCardWidget()
+        card.setObjectName("DailyDigestCard")
+        layout = QVBoxLayout()
+        layout.setContentsMargins(18, 16, 18, 16)
+        layout.setSpacing(12)
+        card.setLayout(layout)
+
+        body = QLabel(digest.get("text", ""))
+        body.setObjectName("DailyDigestText")
+        body.setWordWrap(True)
+        body.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        layout.addWidget(body)
+
+        actions = QHBoxLayout()
+        actions.setContentsMargins(0, 0, 0, 0)
+        actions.setSpacing(8)
+        actions.addStretch()
+
+        refresh = create_button("Refresh", "secondary")
+        refresh.clicked.connect(self.load_data)
+        actions.addWidget(refresh)
+
+        copy = create_button("Copy", "primary")
+        copy.clicked.connect(
+            lambda checked=False, text=digest.get("text", ""):
+            self._copy_daily_digest(text)
+        )
+        actions.addWidget(copy)
+        layout.addLayout(actions)
+
+        self.content_layout.addWidget(card)
+
+    def _copy_daily_digest(self, text):
+        QApplication.clipboard().setText(text or "")
+        show_message(
+            self,
+            "Daily Digest",
+            "Digest copied to clipboard.",
+        )
 
     def _build_attention_section(self, attention_items):
         self.content_layout.addWidget(

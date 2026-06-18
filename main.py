@@ -19,6 +19,11 @@ def load_stylesheet(app):
 
 
 def main():
+    project_root = Path(__file__).resolve().parent
+    import os
+
+    os.chdir(project_root)
+
     parser = argparse.ArgumentParser(
         description=(
             "Mission Legal App"
@@ -50,6 +55,11 @@ def main():
             "without deleting them."
         ),
     )
+    parser.add_argument(
+        "--send-daily-digest",
+        action="store_true",
+        help="Send the configured daily digest email and exit.",
+    )
 
     args = parser.parse_args()
 
@@ -66,6 +76,24 @@ def main():
             f"folder(s)."
         )
 
+        return
+
+    if args.send_daily_digest:
+        from database.models.missionary import Missionary  # noqa: F401
+        from database.models.workflow import WorkflowStage  # noqa: F401
+        from database.models.document import Document  # noqa: F401
+        from database.models.stage_history import StageHistory  # noqa: F401
+        from database.models.appointment import Appointment  # noqa: F401
+        from database.models.secretary_work import SecretaryTask  # noqa: F401
+        from database.db import init_db
+        from services.email_digest_service import EmailDigestService
+
+        init_db()
+        result = EmailDigestService().send_daily_digest()
+        if result.get("sent"):
+            print("Daily digest email sent.")
+            return
+        print(f"Daily digest email not sent: {result.get('reason')}")
         return
 
     from PySide6.QtWidgets import QApplication

@@ -212,6 +212,66 @@ def test_dashboard_renders_attention_section(monkeypatch, qapp):
         page.close()
 
 
+def test_dashboard_renders_daily_digest_section(monkeypatch, qapp):
+    _ = qapp
+
+    class FakeDashboardService:
+        def get_summary(self):
+            return {
+                "total": 0,
+                "stage_counts": {
+                    "INTERPOL": 0,
+                    "CARNET DE EXTRANJERIA": 0,
+                    "PRORROGA": 0,
+                    "CANCELACION": 0,
+                },
+                "expiring": [],
+                "missing_docs": [],
+                "attention_items": [],
+            }
+
+    class FakeDigestService:
+        def build_digest(self, **kwargs):
+            return {
+                "title": "Today's Digest",
+                "text": "Today's Digest\n\nDue today:\n- 1 office task due today",
+            }
+
+    class FakeSettingsService:
+        def get_daily_digest_settings(self):
+            return {
+                "include_overdue": True,
+                "detail_level": "balanced",
+            }
+
+        def get_language(self):
+            return "en"
+
+    monkeypatch.setattr(
+        dashboard_page,
+        "DashboardService",
+        FakeDashboardService,
+    )
+    monkeypatch.setattr(
+        dashboard_page,
+        "DailyDigestService",
+        FakeDigestService,
+    )
+    monkeypatch.setattr(
+        dashboard_page,
+        "SettingsService",
+        FakeSettingsService,
+    )
+
+    page = DashboardPage()
+
+    try:
+        card = page.findChild(dashboard_page.QFrame, "DailyDigestCard")
+        assert card is not None
+    finally:
+        page.close()
+
+
 def test_dashboard_attention_action_routes_to_missionary_detail(qapp):
     _ = qapp
     page = DashboardPage.__new__(DashboardPage)

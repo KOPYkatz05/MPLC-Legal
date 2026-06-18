@@ -18,11 +18,16 @@ idna==3.17
 ImageIO==2.37.3
 imgaug==0.4.0
 kiwisolver==1.5.0
+jaraco.classes==3.4.0
+jaraco.context==6.1.2
+jaraco.functools==4.5.0
+keyring==25.7.0
 lazy-loader==0.5
 lmdb==2.2.0
 lxml==6.1.1
 matplotlib==3.10.9
 networkx==3.6.1
+more-itertools==11.1.0
 numpy==1.26.4
 opencv-contrib-python==4.11.0.86
 opencv-python==4.11.0.86
@@ -38,6 +43,7 @@ pyparsing==3.3.2
 PySide6==6.11.1
 PySide6_Addons==6.11.1
 PySide6_Essentials==6.11.1
+pywin32-ctypes==0.2.3
 python-dateutil==2.9.0.post0
 python-docx==1.2.0
 python-dotenv==1.2.2
