@@ -3,6 +3,7 @@ import json
 import subprocess
 import sys
 import tempfile
+import time
 
 from datetime import date
 
@@ -10,8 +11,7 @@ from pathlib import Path
 
 import fitz
 
-from PySide6.QtGui import QAction, QImage, QPainter
-from PySide6.QtPrintSupport import QPrintDialog, QPrinter
+from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
     QGridLayout,
     QWidget,
@@ -25,7 +25,7 @@ from PySide6.QtWidgets import (
     QSizePolicy,
 )
 
-from PySide6.QtCore import Qt, QSize, QDate, QRectF
+from PySide6.QtCore import Qt, QSize, QDate
 
 from services.workflow_service import WorkflowService
 from services.document_service import DocumentService
@@ -2042,18 +2042,11 @@ class MissionaryDetailPage(QWidget):
             )
             return
 
-        temp_path = None
-
         try:
-            with tempfile.NamedTemporaryFile(
-                suffix=".pdf",
-                prefix="interpol_packet_",
-                delete=False,
-            ) as temp_file:
-                temp_path = temp_file.name
+            temp_path = self._create_interpol_packet_temp_path()
 
             self._build_interpol_packet_pdf(packet_docs, temp_path)
-            self._open_packet_print_dialog(temp_path)
+            self._open_packet_in_acrobat_print_viewer(temp_path)
 
         except Exception:
             logger.exception("Failed to print Interpol packet")
@@ -2063,15 +2056,6 @@ class MissionaryDetailPage(QWidget):
                 "The Interpol packet could not be prepared for printing.",
                 kind="critical",
             )
-
-        finally:
-            if temp_path:
-                try:
-                    Path(temp_path).unlink(missing_ok=True)
-                except Exception:
-                    logger.warning(
-                        "Could not delete temporary Interpol packet"
-                    )
 
     def _collect_interpol_packet_docs(self):
         documents = self.document_service.get_documents(
@@ -2136,6 +2120,48 @@ class MissionaryDetailPage(QWidget):
 
         return getattr(candidate, "id", 0) > getattr(existing, "id", 0)
 
+    def _create_interpol_packet_temp_path(self):
+        packet_dir = (
+            Path(tempfile.gettempdir())
+            / "MissionLegalApp"
+            / "print_packets"
+        )
+        packet_dir.mkdir(parents=True, exist_ok=True)
+        self._cleanup_old_packet_files(packet_dir)
+
+        missionary_name = getattr(
+            self.current_missionary,
+            "full_name",
+            "missionary",
+        )
+        safe_name = "".join(
+            char if char.isalnum() else "_"
+            for char in missionary_name
+        ).strip("_")
+        safe_name = safe_name or "missionary"
+
+        timestamp = time.strftime("%Y%m%d_%H%M%S")
+        return str(
+            packet_dir
+            / f"interpol_packet_{safe_name}_{timestamp}.pdf"
+        )
+
+    def _cleanup_old_packet_files(self, packet_dir):
+        cutoff = time.time() - (24 * 60 * 60)
+
+        try:
+            for file_path in packet_dir.glob("interpol_packet_*.pdf"):
+                try:
+                    if file_path.stat().st_mtime < cutoff:
+                        file_path.unlink()
+                except Exception:
+                    logger.warning(
+                        "Could not clean up old packet file: %s",
+                        file_path,
+                    )
+        except Exception:
+            logger.warning("Could not scan packet temp directory")
+
     def _build_interpol_packet_pdf(self, packet_docs, output_path):
         packet = fitz.open()
 
@@ -2162,82 +2188,116 @@ class MissionaryDetailPage(QWidget):
             if packet.page_count == 0:
                 raise ValueError("Interpol packet has no printable pages")
 
+            self._add_acrobat_print_open_action(packet)
             packet.save(output_path)
 
         finally:
             packet.close()
 
-    def _open_packet_print_dialog(self, packet_path):
-        printer = QPrinter(QPrinter.HighResolution)
-        dialog = QPrintDialog(printer, self)
-        dialog.setWindowTitle("Print Interpol Packet")
-
-        if not dialog.exec():
-            return
-
-        document = fitz.open(packet_path)
-        painter = QPainter()
-
-        try:
-            if not painter.begin(printer):
-                raise RuntimeError("Could not start printer")
-
-            try:
-                for page_index in range(document.page_count):
-                    if page_index > 0 and not printer.newPage():
-                        raise RuntimeError("Could not create printer page")
-
-                    self._paint_pdf_page_to_printer(
-                        painter,
-                        printer,
-                        document[page_index],
-                    )
-            finally:
-                painter.end()
-
-        finally:
-            document.close()
-
-    def _paint_pdf_page_to_printer(self, painter, printer, page):
-        page_rect = printer.pageRect(QPrinter.DevicePixel)
-        if page_rect.width() <= 0 or page_rect.height() <= 0:
-            return
-
-        page_bounds = page.rect
-        scale = 300 / 72
-        pix = page.get_pixmap(
-            matrix=fitz.Matrix(scale, scale),
-            alpha=False,
+    def _add_acrobat_print_open_action(self, packet):
+        js = (
+            "this.print({"
+            "bUI: true, "
+            "bSilent: false, "
+            "bShrinkToFit: true"
+            "});"
         )
-        image = QImage(
-            pix.samples,
-            pix.width,
-            pix.height,
-            pix.stride,
-            QImage.Format_RGB888,
-        ).copy()
-
-        target_width = page_rect.width()
-        target_height = target_width * (
-            page_bounds.height / page_bounds.width
+        js_hex = js.encode("utf-16-be").hex()
+        js_xref = packet.get_new_xref()
+        packet.update_object(
+            js_xref,
+            f"<< /S /JavaScript /JS <FEFF{js_hex}> >>",
+        )
+        packet.xref_set_key(
+            packet.pdf_catalog(),
+            "OpenAction",
+            f"{js_xref} 0 R",
         )
 
-        if target_height > page_rect.height():
-            target_height = page_rect.height()
-            target_width = target_height * (
-                page_bounds.width / page_bounds.height
+    def _open_packet_in_acrobat_print_viewer(self, packet_path):
+        acrobat_path = self._find_acrobat_executable()
+
+        if acrobat_path is None:
+            show_message(
+                self,
+                "Adobe Acrobat Not Found",
+                (
+                    "Adobe Acrobat could not be found on this computer. "
+                    "Install Acrobat or set the correct Acrobat path before "
+                    "printing the Interpol packet."
+                ),
+                kind="warning",
             )
+            return
 
-        target_x = page_rect.x() + (page_rect.width() - target_width) / 2
-        target_y = page_rect.y() + (page_rect.height() - target_height) / 2
-        target = QRectF(
-            target_x,
-            target_y,
-            target_width,
-            target_height,
+        logger.info(
+            "Opening Interpol packet in Acrobat print UI: %s",
+            packet_path,
+        )
+        subprocess.Popen(
+            [
+                str(acrobat_path),
+                "/n",
+                str(packet_path),
+            ],
+            cwd=str(Path(packet_path).parent),
         )
 
-        painter.drawImage(target, image)
+    def _find_acrobat_executable(self):
+        candidates = [
+            Path(
+                r"C:\Program Files\Adobe\Acrobat DC\Acrobat\Acrobat.exe"
+            ),
+            Path(
+                r"C:\Program Files (x86)\Adobe\Acrobat DC\Acrobat\x86\Acrobat\Acrobat.exe"
+            ),
+            Path(os.environ.get("ProgramFiles", ""))
+            / "Adobe"
+            / "Acrobat DC"
+            / "Acrobat"
+            / "Acrobat.exe",
+            Path(os.environ.get("ProgramFiles", ""))
+            / "Adobe"
+            / "Acrobat"
+            / "Acrobat.exe",
+            Path(os.environ.get("ProgramFiles(x86)", ""))
+            / "Adobe"
+            / "Acrobat DC"
+            / "Acrobat"
+            / "Acrobat.exe",
+            Path(os.environ.get("ProgramFiles(x86)", ""))
+            / "Adobe"
+            / "Acrobat Reader DC"
+            / "Reader"
+            / "AcroRd32.exe",
+            Path(os.environ.get("ProgramFiles", ""))
+            / "Adobe"
+            / "Acrobat Reader DC"
+            / "Reader"
+            / "AcroRd32.exe",
+        ]
+
+        for candidate in candidates:
+            if candidate and candidate.exists():
+                return candidate
+
+        search_roots = [
+            Path(os.environ.get("ProgramFiles", "")) / "Adobe",
+            Path(os.environ.get("ProgramFiles(x86)", "")) / "Adobe",
+        ]
+
+        for root in search_roots:
+            if not root.exists():
+                continue
+            for executable_name in ("Acrobat.exe", "AcroRd32.exe"):
+                try:
+                    match = next(root.rglob(executable_name), None)
+                except Exception:
+                    match = None
+                if match and match.exists():
+                    return match
+
+        return None
 
     def _find_doc_data(self, doc_id):
         return next(
