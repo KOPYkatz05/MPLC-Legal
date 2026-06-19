@@ -288,6 +288,8 @@ class MainWindow(FluentWindow if FLUENT_AVAILABLE else QMainWindow):
             self.set_nav_title(nav_key, tr(translation_key))
         if hasattr(self.settings_page, "retranslate_ui"):
             self.settings_page.retranslate_ui()
+        if hasattr(self.missionaries_page, "retranslate_ui"):
+            self.missionaries_page.retranslate_ui()
         if hasattr(self.detail_page, "retranslate_ui"):
             self.detail_page.retranslate_ui()
 

@@ -3,6 +3,13 @@ from utils.i18n import tr
 from utils.logger import logger
 
 
+class ExportColumn:
+    def __init__(self, label, getter, default_width=120):
+        self.label = label
+        self.getter = getter
+        self.default_width = default_width
+
+
 class ExportService:
 
     def _headers(self):
@@ -221,4 +228,77 @@ class ExportService:
                 ),
                 ("Notes", lambda m: m.notes or "", 40),
             ]
+        ]
+
+    def full_export_columns(self):
+        return [
+            ExportColumn("Missionary ID", missionary_display_id, 120),
+            ExportColumn("Full Name", lambda m: m.full_name or "", 260),
+            ExportColumn("Preferred Name", lambda m: m.preferred_name or "", 170),
+            ExportColumn("Nationality", lambda m: m.nationality or "", 120),
+            ExportColumn("Passport Number", lambda m: m.passport_number or "", 155),
+            ExportColumn("Carnet Number", lambda m: m.carnet_number or "", 155),
+            ExportColumn(
+                "Date of Birth",
+                lambda m: self._fmt_date(m.date_of_birth),
+                145,
+            ),
+            ExportColumn("Current Stage", lambda m: m.current_stage or "", 175),
+            ExportColumn("Tramite Usuario", lambda m: m.tramite_usuario or "", 155),
+            ExportColumn(
+                "Tramite Contrasena",
+                lambda m: m.tramite_contrasena or "",
+                165,
+            ),
+            ExportColumn(
+                "Arrival Date",
+                lambda m: self._fmt_date(m.arrival_date),
+                145,
+            ),
+            ExportColumn(
+                "Visa Expiration",
+                lambda m: self._fmt_date(m.visa_expiration),
+                155,
+            ),
+            ExportColumn(
+                "Passport Expiration",
+                lambda m: self._fmt_date(m.passport_expiration),
+                170,
+            ),
+            ExportColumn(
+                "Residency Expiration",
+                lambda m: self._fmt_date(m.residency_expiration),
+                175,
+            ),
+            ExportColumn(
+                "Prorroga Expiration",
+                lambda m: self._fmt_date(m.prorroga_expiration),
+                170,
+            ),
+            ExportColumn(
+                "Carnet Issue Date",
+                lambda m: self._fmt_date(m.carnet_issue_date),
+                165,
+            ),
+            ExportColumn(
+                "Cancelacion Date",
+                lambda m: self._fmt_date(m.cancelacion_date),
+                165,
+            ),
+            ExportColumn(
+                "Interpol Appointment Date",
+                lambda m: self._fmt_date(m.interpol_appointment_date),
+                205,
+            ),
+            ExportColumn(
+                "Biometric Appointment Date",
+                lambda m: self._fmt_date(m.biometric_appointment_date),
+                210,
+            ),
+            ExportColumn(
+                "Pickup Appointment Date",
+                lambda m: self._fmt_date(m.pickup_appointment_date),
+                205,
+            ),
+            ExportColumn("Notes", lambda m: m.notes or "", 280),
         ]

@@ -75,31 +75,6 @@ class OneDriveService:
             )
 
             # =====================================
-            # System folders
-            # =====================================
-
-            system_folders = [
-                "RAW_SCANS",
-                "OCR_PROCESSED",
-            ]
-
-            for folder_name in system_folders:
-                folder_path = (
-                    missionary_folder
-                    / folder_name
-                )
-
-                folder_path.mkdir(
-                    exist_ok=True
-                )
-
-                logger.info(
-                    f"Created system "
-                    f"folder: "
-                    f"{folder_path}"
-                )
-
-            # =====================================
             # Workflow folders
             # =====================================
 

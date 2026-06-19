@@ -85,6 +85,21 @@ TRANSLATIONS = {
         "export_interpol_appt": "Interpol Appointment",
         "export_biometric_appt": "Biometric Appointment",
         "export_pickup_appt": "Pickup Appointment",
+        "export_menu": "Export",
+        "export_columns": "Export Columns",
+        "export_full": "Full Export",
+        "export_select_group_title": "Select Group",
+        "export_select_group_message": "Choose a group before running a full export.",
+        "export_full_dialog_title": "Full Export",
+        "export_complete_title": "Export Complete",
+        "export_failed_title": "Export Failed",
+        "export_failed_message": "Failed to export. Check logs for details.",
+        "export_full_complete_message": (
+            "Exported {count} missionaries to:\n{path}"
+        ),
+        "export_full_missing_folders": (
+            "These missionaries did not have a document folder to copy:"
+        ),
         "passport_number": "Passport Number",
         "full_name": "Full Name",
         "date_of_birth": "Date of Birth",
@@ -187,6 +202,21 @@ TRANSLATIONS = {
         "export_interpol_appt": "Cita Interpol",
         "export_biometric_appt": "Cita biométrica",
         "export_pickup_appt": "Cita recojo",
+        "export_menu": "Exportar",
+        "export_columns": "Exportar columnas",
+        "export_full": "Exportaci\u00f3n completa",
+        "export_select_group_title": "Seleccionar grupo",
+        "export_select_group_message": "Elija un grupo antes de hacer una exportaci\u00f3n completa.",
+        "export_full_dialog_title": "Exportaci\u00f3n completa",
+        "export_complete_title": "Exportaci\u00f3n completada",
+        "export_failed_title": "Error de exportaci\u00f3n",
+        "export_failed_message": "No se pudo exportar. Revise los registros para m\u00e1s detalles.",
+        "export_full_complete_message": (
+            "Se exportaron {count} misioneros a:\n{path}"
+        ),
+        "export_full_missing_folders": (
+            "Estos misioneros no ten\u00edan una carpeta de documentos para copiar:"
+        ),
         "passport_number": "Número de pasaporte",
         "full_name": "Nombre completo",
         "date_of_birth": "Fecha de nacimiento",

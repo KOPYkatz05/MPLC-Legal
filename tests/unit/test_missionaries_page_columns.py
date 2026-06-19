@@ -254,6 +254,192 @@ def test_missionaries_page_group_filter_shows_only_members(monkeypatch, qapp):
         page.close()
 
 
+def test_column_export_uses_current_filtered_view(monkeypatch, qapp, tmp_path):
+    _ = qapp
+    from ui.pages import missionaries_page as page_module
+
+    missionaries = [
+        SimpleNamespace(
+            id=1,
+            missionary_code="1",
+            full_name="Group Member",
+            preferred_name="",
+            nationality="Peru",
+            passport_number="A1",
+            current_stage="INTERPOL",
+            tramite_usuario="",
+            tramite_contrasena="",
+            arrival_date=None,
+            visa_expiration=None,
+            passport_expiration=None,
+            residency_expiration=None,
+            prorroga_expiration=None,
+            carnet_issue_date=None,
+            cancelacion_date=None,
+            interpol_appointment_date=None,
+            biometric_appointment_date=None,
+            pickup_appointment_date=None,
+            date_of_birth=None,
+            notes="",
+        ),
+        SimpleNamespace(
+            id=2,
+            missionary_code="2",
+            full_name="Outside Group",
+            preferred_name="",
+            nationality="Chile",
+            passport_number="B2",
+            current_stage="INTERPOL",
+            tramite_usuario="",
+            tramite_contrasena="",
+            arrival_date=None,
+            visa_expiration=None,
+            passport_expiration=None,
+            residency_expiration=None,
+            prorroga_expiration=None,
+            carnet_issue_date=None,
+            cancelacion_date=None,
+            interpol_appointment_date=None,
+            biometric_appointment_date=None,
+            pickup_appointment_date=None,
+            date_of_birth=None,
+            notes="",
+        ),
+    ]
+
+    class FakeMissionaryService:
+        def get_all_missionaries(self):
+            return missionaries
+
+    class FakeGroupService:
+        def list_groups(self):
+            return [
+                {
+                    "id": 33,
+                    "name": "Llegadas",
+                    "missionary_ids": [1],
+                    "member_count": 1,
+                }
+            ]
+
+    class FakeSettingsService:
+        def get_missionaries_table_columns(self, default):
+            return default
+
+        def set_missionaries_table_columns(self, keys):
+            _ = keys
+
+        def get_missionaries_table_column_widths(self):
+            return {}
+
+        def set_missionaries_table_column_widths(self, widths):
+            _ = widths
+
+    exported = {}
+
+    class FakeExportService:
+        def export_missionaries_to_excel(self, exported_missionaries, path, columns=None):
+            exported["names"] = [
+                missionary.full_name
+                for missionary in exported_missionaries
+            ]
+            exported["path"] = path
+            exported["columns"] = columns
+            return True
+
+    monkeypatch.setattr(page_module, "MissionaryService", FakeMissionaryService)
+    monkeypatch.setattr(page_module, "MissionaryGroupService", FakeGroupService)
+    monkeypatch.setattr(page_module, "ExportService", FakeExportService)
+    monkeypatch.setattr(
+        page_module.QFileDialog,
+        "getSaveFileName",
+        lambda *args, **kwargs: (str(tmp_path / "export.xlsx"), ""),
+    )
+    monkeypatch.setattr(
+        page_module,
+        "show_message",
+        lambda *args, **kwargs: None,
+    )
+
+    window = SimpleNamespace(
+        settings_service=FakeSettingsService(),
+        detail_page=SimpleNamespace(load_missionary=lambda missionary: None),
+        stack=SimpleNamespace(setCurrentWidget=lambda widget: None),
+    )
+    page = MissionariesPage(window)
+
+    try:
+        page.group_filter.setCurrentIndex(page.group_filter.findData(33))
+        page._export_excel()
+
+        assert exported["names"] == ["Group Member"]
+    finally:
+        page.close()
+
+
+def test_export_menu_uses_actions_compatible_with_fluent_menu(monkeypatch, qapp):
+    _ = qapp
+    from ui.pages import missionaries_page as page_module
+
+    class FakeMissionaryService:
+        def get_all_missionaries(self):
+            return []
+
+    class FakeGroupService:
+        def list_groups(self):
+            return []
+
+    class FakeSettingsService:
+        def get_missionaries_table_columns(self, default):
+            return default
+
+        def set_missionaries_table_columns(self, keys):
+            _ = keys
+
+        def get_missionaries_table_column_widths(self):
+            return {}
+
+        def set_missionaries_table_column_widths(self, widths):
+            _ = widths
+
+    shown_menus = []
+
+    class FakeMenu:
+        def __init__(self):
+            self.actions = []
+
+        def addAction(self, action):
+            assert hasattr(action, "icon")
+            assert hasattr(action, "text")
+            self.actions.append(action)
+
+        def exec(self, pos):
+            _ = pos
+            shown_menus.append(self)
+
+    monkeypatch.setattr(page_module, "MissionaryService", FakeMissionaryService)
+    monkeypatch.setattr(page_module, "MissionaryGroupService", FakeGroupService)
+    monkeypatch.setattr(page_module, "create_menu", lambda *args: FakeMenu())
+
+    window = SimpleNamespace(
+        settings_service=FakeSettingsService(),
+        detail_page=SimpleNamespace(load_missionary=lambda missionary: None),
+        stack=SimpleNamespace(setCurrentWidget=lambda widget: None),
+    )
+    page = MissionariesPage(window)
+
+    try:
+        page._show_export_menu()
+
+        assert shown_menus
+        assert [action.text() for action in shown_menus[0].actions] == [
+            "Export Columns",
+            "Full Export",
+        ]
+    finally:
+        page.close()
+
+
 def test_edit_group_dialog_updates_existing_members(qapp):
     _ = qapp
     missionaries = [

@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 
 from PySide6.QtCore import QEvent, QRectF, QTimer, Qt
-from PySide6.QtGui import QColor, QIcon, QPainter, QPen, QPixmap
+from PySide6.QtGui import QAction, QColor, QIcon, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
     QAbstractItemView,
@@ -25,6 +25,10 @@ from services.missionary_service import (
 from services.missionary_group_service import MissionaryGroupService
 
 from services.export_service import ExportService
+from services.group_package_export_service import (
+    GroupPackageExportError,
+    GroupPackageExportService,
+)
 from services.settings_service import SettingsService
 from ui.foundation import (
     FilterBar,
@@ -53,6 +57,7 @@ from ui.dialogs.add_missionary_dialog import (
 
 from utils.constants import WORKFLOW_STAGES
 
+from utils.i18n import tr
 from utils.logger import logger
 
 
@@ -765,8 +770,12 @@ class MissionariesPage(QWidget):
         self.group_service = MissionaryGroupService()
 
         self.export_service = ExportService()
+        self.group_package_export_service = GroupPackageExportService(
+            self.export_service
+        )
 
         self._all_missionaries = []
+        self._filtered_missionaries = []
         self._groups_by_id = {}
         self._group_members_by_id = {}
         self._last_group_filter_data = None
@@ -829,12 +838,12 @@ class MissionariesPage(QWidget):
         )
 
         self.export_button = create_button(
-            "Export to Excel",
+            tr("export_menu"),
             "secondary",
         )
 
         self.export_button.clicked.connect(
-            self._export_excel
+            self._show_export_menu
         )
 
         self.edit_columns_button = create_button(
@@ -1293,6 +1302,7 @@ class MissionariesPage(QWidget):
             filtered.append(m)
 
         self._populate_table(filtered)
+        self._filtered_missionaries = list(filtered)
 
         total = len(self._all_missionaries)
 
@@ -1602,11 +1612,13 @@ class MissionariesPage(QWidget):
         self._apply_filters()
 
     def _export_excel(self):
-        if not self._all_missionaries:
+        missionaries = list(self._filtered_missionaries)
+
+        if not missionaries:
             show_message(
                 self,
                 "No Data",
-                "No missionaries to export.",
+                "No missionaries in the current view to export.",
             )
             return
 
@@ -1621,7 +1633,7 @@ class MissionariesPage(QWidget):
             return
 
         ok = self.export_service.export_missionaries_to_excel(
-            self._all_missionaries,
+            missionaries,
             file_path,
             columns=self._visible_columns(),
         )
@@ -1631,7 +1643,7 @@ class MissionariesPage(QWidget):
                 self,
                 "Export Complete",
                 f"Exported "
-                f"{len(self._all_missionaries)} "
+                f"{len(missionaries)} "
                 f"missionaries to:\n{file_path}",
             )
 
@@ -1643,6 +1655,106 @@ class MissionariesPage(QWidget):
                 "Check logs for details.",
                 kind="critical",
             )
+
+    def _show_export_menu(self):
+        menu = create_menu("", self)
+        export_columns_action = QAction(
+            tr("export_columns"),
+            self,
+        )
+        full_export_action = QAction(
+            tr("export_full"),
+            self,
+        )
+        export_columns_action.triggered.connect(self._export_excel)
+        full_export_action.triggered.connect(self._export_full_group)
+
+        menu.addAction(export_columns_action)
+        menu.addAction(full_export_action)
+        self._export_menu = menu
+
+        menu.exec(
+            self.export_button.mapToGlobal(
+                self.export_button.rect().bottomLeft()
+            )
+        )
+
+    def _export_full_group(self):
+        group_id = self.group_filter.currentData()
+
+        if not group_id:
+            show_message(
+                self,
+                tr("export_select_group_title"),
+                tr("export_select_group_message"),
+                kind="warning",
+            )
+            return
+
+        group = self._groups_by_id.get(group_id, {})
+        group_name = group.get("name") or "missionary_group"
+        default_name = f"{self._safe_export_filename(group_name)} - Full Export.zip"
+
+        file_path, _ = QFileDialog.getSaveFileName(
+            self,
+            tr("export_full_dialog_title"),
+            default_name,
+            "Zip Files (*.zip)",
+        )
+
+        if not file_path:
+            return
+
+        if not file_path.lower().endswith(".zip"):
+            file_path = f"{file_path}.zip"
+
+        try:
+            result = self.group_package_export_service.export_group_package(
+                group_id,
+                file_path,
+            )
+        except GroupPackageExportError as exc:
+            show_message(
+                self,
+                tr("export_failed_title"),
+                str(exc),
+                kind="critical",
+            )
+            return
+        except Exception:
+            logger.exception("Failed to export full missionary group package")
+            show_message(
+                self,
+                tr("export_failed_title"),
+                tr("export_failed_message"),
+                kind="critical",
+            )
+            return
+
+        message = tr(
+            "export_full_complete_message",
+            count=result.missionary_count,
+            path=file_path,
+        )
+        if result.skipped_folders:
+            message = (
+                f"{message}\n\n"
+                f"{tr('export_full_missing_folders')}\n"
+                + "\n".join(result.skipped_folders)
+            )
+
+        show_message(
+            self,
+            tr("export_complete_title"),
+            message,
+        )
+
+    @staticmethod
+    def _safe_export_filename(value):
+        blocked = '<>:"/\\|?*'
+        safe = "".join("-" if char in blocked else char for char in value)
+        safe = " ".join(safe.split())
+        return safe.strip(" .") or "missionary_group"
 
     def open_missionary_detail(self, row, column):
         _ = column
@@ -1780,3 +1892,6 @@ class MissionariesPage(QWidget):
                 index = self.group_filter.findData(dialog.saved_group["id"])
                 if index >= 0:
                     self.group_filter.setCurrentIndex(index)
+
+    def retranslate_ui(self):
+        self.export_button.setText(tr("export_menu"))
