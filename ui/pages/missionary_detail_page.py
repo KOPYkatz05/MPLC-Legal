@@ -2,11 +2,16 @@ import os
 import json
 import subprocess
 import sys
+import tempfile
 
 from datetime import date
 
 from pathlib import Path
 
+import fitz
+
+from PySide6.QtGui import QAction, QImage, QPainter
+from PySide6.QtPrintSupport import QPrintDialog, QPrinter
 from PySide6.QtWidgets import (
     QGridLayout,
     QWidget,
@@ -20,7 +25,7 @@ from PySide6.QtWidgets import (
     QSizePolicy,
 )
 
-from PySide6.QtCore import Qt, QSize, QDate
+from PySide6.QtCore import Qt, QSize, QDate, QRectF
 
 from services.workflow_service import WorkflowService
 from services.document_service import DocumentService
@@ -64,6 +69,7 @@ from utils.constants import (
     DOCUMENTS,
     WORKFLOW_STATUSES,
     WORKFLOW_STAGES,
+    is_usa_missionary,
     required_documents_for_missionary,
 )
 from utils.i18n import tr, field_label
@@ -83,6 +89,19 @@ DOCUMENT_CARD_MIN_HEIGHT = 104
 MISSING_CARD_MIN_HEIGHT = 84
 MISSIONARY_DETAIL_SCROLL_STEP = 16
 AUTO_DERIVED_VISA_SOURCE_LABEL = "Auto-derived from arrival date"
+INTERPOL_PACKET_DOCUMENT_TYPES = [
+    "TAM",
+    "PASSPORT",
+    "PAGO_INTERPOL",
+    "CONSTANCIA_DE_CITA_INTERPOL",
+]
+USA_INTERPOL_PACKET_DOCUMENT_TYPES = [
+    "TAM",
+    "PASSPORT",
+    "FBI",
+    "PAGO_INTERPOL",
+    "CONSTANCIA_DE_CITA_INTERPOL",
+]
 
 STAGE_DISPLAY_NAMES = {
     "INTERPOL": "Interpol",
@@ -575,6 +594,27 @@ class MissionaryDetailPage(QWidget):
             self._advance_stage
         )
 
+        self.actions_button = create_button(
+            "Actions",
+            "secondary",
+        )
+
+        self.actions_menu = create_menu(
+            "",
+            self.actions_button,
+        )
+        self.print_interpol_packet_action = QAction(
+            "Print Interpol Packet",
+            self.actions_menu,
+        )
+        self.actions_menu.addAction(
+            self.print_interpol_packet_action
+        )
+        self.print_interpol_packet_action.triggered.connect(
+            self._print_interpol_packet
+        )
+        self.actions_button.setMenu(self.actions_menu)
+
         self.delete_button = create_button(
             "Delete Missionary",
             "danger",
@@ -585,6 +625,8 @@ class MissionaryDetailPage(QWidget):
         )
 
         header_layout.addWidget(self.advance_button)
+
+        header_layout.addWidget(self.actions_button)
 
         header_layout.addWidget(self.delete_button)
 
@@ -1950,6 +1992,252 @@ class MissionaryDetailPage(QWidget):
 
         elif action == open_action:
             self._open_document_file(doc_id)
+
+    def _show_actions_menu(self, checked=False):
+        menu = create_menu("", self)
+        print_interpol_action = menu.addAction(
+            "Print Interpol Packet"
+        )
+
+        action = menu.exec(
+            self.actions_button.mapToGlobal(
+                self.actions_button.rect().bottomLeft()
+            )
+        )
+
+        if action == print_interpol_action:
+            self._print_interpol_packet()
+
+    def _print_interpol_packet(self, checked=False):
+        if not hasattr(self, "current_missionary"):
+            return
+
+        packet_docs, missing_labels = self._collect_interpol_packet_docs()
+
+        if missing_labels:
+            missing_text = "\n".join(
+                f"- {label}" for label in missing_labels
+            )
+            response = show_message(
+                self,
+                "Missing Packet Documents",
+                (
+                    "Some Interpol packet documents are missing:\n\n"
+                    f"{missing_text}\n\n"
+                    "Do you want to continue and print the available documents?"
+                ),
+                kind="warning",
+                buttons="yes_no",
+            )
+
+            if response not in {1, 16384}:
+                return
+
+        if not packet_docs:
+            show_message(
+                self,
+                "No Documents to Print",
+                "No Interpol packet documents are available to print.",
+                kind="warning",
+            )
+            return
+
+        temp_path = None
+
+        try:
+            with tempfile.NamedTemporaryFile(
+                suffix=".pdf",
+                prefix="interpol_packet_",
+                delete=False,
+            ) as temp_file:
+                temp_path = temp_file.name
+
+            self._build_interpol_packet_pdf(packet_docs, temp_path)
+            self._open_packet_print_dialog(temp_path)
+
+        except Exception:
+            logger.exception("Failed to print Interpol packet")
+            show_message(
+                self,
+                "Print Failed",
+                "The Interpol packet could not be prepared for printing.",
+                kind="critical",
+            )
+
+        finally:
+            if temp_path:
+                try:
+                    Path(temp_path).unlink(missing_ok=True)
+                except Exception:
+                    logger.warning(
+                        "Could not delete temporary Interpol packet"
+                    )
+
+    def _collect_interpol_packet_docs(self):
+        documents = self.document_service.get_documents(
+            self.current_missionary.id
+        )
+        packet_document_types = self._interpol_packet_document_types()
+        docs_by_type = {}
+
+        for doc in documents:
+            if getattr(doc, "status", "ACTIVE") != "ACTIVE":
+                continue
+
+            doc_type = getattr(doc, "document_type", None)
+            if doc_type not in packet_document_types:
+                continue
+
+            existing = docs_by_type.get(doc_type)
+            if existing is None or self._doc_is_newer(doc, existing):
+                docs_by_type[doc_type] = doc
+
+        packet_docs = []
+        missing_labels = []
+
+        for doc_type in packet_document_types:
+            label = DOCUMENTS.get(doc_type, {}).get(
+                "label",
+                doc_type,
+            )
+            doc = docs_by_type.get(doc_type)
+            file_path = Path(getattr(doc, "file_path", "")) if doc else None
+
+            if doc is None or not file_path or not file_path.exists():
+                missing_labels.append(label)
+                continue
+
+            packet_docs.append(
+                {
+                    "label": label,
+                    "file_path": str(file_path),
+                }
+            )
+
+        return packet_docs, missing_labels
+
+    def _interpol_packet_document_types(self):
+        if is_usa_missionary(self.current_missionary):
+            return USA_INTERPOL_PACKET_DOCUMENT_TYPES
+
+        return INTERPOL_PACKET_DOCUMENT_TYPES
+
+    def _doc_is_newer(self, candidate, existing):
+        candidate_uploaded = getattr(candidate, "uploaded_at", None)
+        existing_uploaded = getattr(existing, "uploaded_at", None)
+
+        if candidate_uploaded and existing_uploaded:
+            if candidate_uploaded != existing_uploaded:
+                return candidate_uploaded > existing_uploaded
+        elif candidate_uploaded and not existing_uploaded:
+            return True
+        elif existing_uploaded and not candidate_uploaded:
+            return False
+
+        return getattr(candidate, "id", 0) > getattr(existing, "id", 0)
+
+    def _build_interpol_packet_pdf(self, packet_docs, output_path):
+        packet = fitz.open()
+
+        try:
+            for doc in packet_docs:
+                source_path = doc["file_path"]
+                source = fitz.open(source_path)
+
+                try:
+                    if source.is_pdf:
+                        packet.insert_pdf(source)
+                    else:
+                        image_pdf = fitz.open(
+                            "pdf",
+                            source.convert_to_pdf(),
+                        )
+                        try:
+                            packet.insert_pdf(image_pdf)
+                        finally:
+                            image_pdf.close()
+                finally:
+                    source.close()
+
+            if packet.page_count == 0:
+                raise ValueError("Interpol packet has no printable pages")
+
+            packet.save(output_path)
+
+        finally:
+            packet.close()
+
+    def _open_packet_print_dialog(self, packet_path):
+        printer = QPrinter(QPrinter.HighResolution)
+        dialog = QPrintDialog(printer, self)
+        dialog.setWindowTitle("Print Interpol Packet")
+
+        if not dialog.exec():
+            return
+
+        document = fitz.open(packet_path)
+        painter = QPainter()
+
+        try:
+            if not painter.begin(printer):
+                raise RuntimeError("Could not start printer")
+
+            try:
+                for page_index in range(document.page_count):
+                    if page_index > 0 and not printer.newPage():
+                        raise RuntimeError("Could not create printer page")
+
+                    self._paint_pdf_page_to_printer(
+                        painter,
+                        printer,
+                        document[page_index],
+                    )
+            finally:
+                painter.end()
+
+        finally:
+            document.close()
+
+    def _paint_pdf_page_to_printer(self, painter, printer, page):
+        page_rect = printer.pageRect(QPrinter.DevicePixel)
+        if page_rect.width() <= 0 or page_rect.height() <= 0:
+            return
+
+        page_bounds = page.rect
+        scale = 300 / 72
+        pix = page.get_pixmap(
+            matrix=fitz.Matrix(scale, scale),
+            alpha=False,
+        )
+        image = QImage(
+            pix.samples,
+            pix.width,
+            pix.height,
+            pix.stride,
+            QImage.Format_RGB888,
+        ).copy()
+
+        target_width = page_rect.width()
+        target_height = target_width * (
+            page_bounds.height / page_bounds.width
+        )
+
+        if target_height > page_rect.height():
+            target_height = page_rect.height()
+            target_width = target_height * (
+                page_bounds.width / page_bounds.height
+            )
+
+        target_x = page_rect.x() + (page_rect.width() - target_width) / 2
+        target_y = page_rect.y() + (page_rect.height() - target_height) / 2
+        target = QRectF(
+            target_x,
+            target_y,
+            target_width,
+            target_height,
+        )
+
+        painter.drawImage(target, image)
 
     def _find_doc_data(self, doc_id):
         return next(
