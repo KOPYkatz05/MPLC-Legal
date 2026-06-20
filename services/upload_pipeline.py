@@ -767,6 +767,7 @@ def finalize_ocr_ingestion(
     workflow_stage,
     pipeline_result=None,
     confirmed_data=None,
+    notes=None,
     document_service=None,
 ):
     confirmed_data = confirmed_data or {}
@@ -785,6 +786,7 @@ def finalize_ocr_ingestion(
         workflow_stage=workflow_stage,
         ocr_raw_data=pipeline_result.to_audit_payload(),
         ocr_confirmed_data=confirmed_data or None,
+        notes=notes,
         document_service=document_service,
     )
 
@@ -1025,6 +1027,7 @@ def save_document_with_ocr(
     workflow_stage,
     ocr_raw_data=None,
     ocr_confirmed_data=None,
+    notes=None,
     document_service=None,
 ):
     document_service = document_service or DocumentService()
@@ -1035,6 +1038,7 @@ def save_document_with_ocr(
         workflow_stage=workflow_stage,
         ocr_raw_data=ocr_raw_data,
         ocr_confirmed_data=ocr_confirmed_data,
+        notes=notes,
     )
     return doc
 

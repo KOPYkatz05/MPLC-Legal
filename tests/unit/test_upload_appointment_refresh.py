@@ -5,7 +5,13 @@ from pathlib import Path
 from uuid import uuid4
 
 from PySide6.QtWidgets import QWidget
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
 
+from database.db import Base
+from database.models.document import Document
+from services import document_service as document_service_module
+from services.document_service import DocumentService
 from ui.dialogs.upload_session_dialog import (
     UploadSessionController,
     UploadSessionDialog,
@@ -496,3 +502,98 @@ def test_upload_ocr_does_not_overwrite_manual_confirmed_value(
     assert item.confirmed_data == {
         "biometric_appointment_date": "2026-01-02",
     }
+
+
+def test_upload_save_never_runs_ocr(monkeypatch):
+    missionary = SimpleNamespace(
+        id=42,
+        full_name="Test Missionary",
+        folder_path="unused",
+    )
+    controller = UploadSessionController(missionary)
+    controller.add_files(["passport.pdf"])
+    controller.set_document_type(0, "PASSPORT")
+    item = controller.items[0]
+    item.ocr_result = None
+    item.notes = "Reviewed OCR fields."
+    item.confirmed_data = {
+        "passport_number": "MANUAL123",
+    }
+
+    def fail_if_ocr_runs(*args, **kwargs):
+        raise AssertionError("Saving must not run OCR")
+
+    captured = {}
+
+    def fake_finalize_ocr_ingestion(**kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(
+            document=SimpleNamespace(id=123),
+            updated_fields=[],
+        )
+
+    monkeypatch.setattr(controller, "run_ocr", fail_if_ocr_runs)
+    monkeypatch.setattr(
+        upload_session_dialog,
+        "finalize_ocr_ingestion",
+        fake_finalize_ocr_ingestion,
+    )
+
+    result = controller.save_item(item, run_ocr=True)
+
+    assert result.succeeded
+    assert captured["confirmed_data"] == {
+        "passport_number": "MANUAL123",
+    }
+    assert captured["notes"] == "Reviewed OCR fields."
+    assert captured["pipeline_result"].ocr_status == "skipped"
+
+
+def test_document_upload_persists_notes(monkeypatch):
+    engine = create_engine("sqlite:///:memory:")
+    testing_session = sessionmaker(
+        bind=engine,
+        autoflush=False,
+        autocommit=False,
+    )
+    Base.metadata.create_all(bind=engine)
+    monkeypatch.setattr(
+        document_service_module,
+        "SessionLocal",
+        testing_session,
+    )
+
+    service = DocumentService()
+    monkeypatch.setattr(
+        service.workflow_validator,
+        "validate_workflows",
+        lambda *_args, **_kwargs: None,
+    )
+
+    root = Path("test_upload_tmp") / str(uuid4())
+    try:
+        root.mkdir(parents=True)
+        source = root / "source.pdf"
+        source.write_text("pdf")
+        missionary = SimpleNamespace(
+            id=42,
+            full_name="Test Missionary",
+            folder_path=str(root / "missionary"),
+        )
+
+        document = service.upload_document(
+            missionary=missionary,
+            source_file=source,
+            document_type="PAGO_INTERPOL",
+            workflow_stage="INTERPOL",
+            notes="Reviewed and complete.",
+        )
+
+        session = testing_session()
+        try:
+            saved = session.query(Document).filter_by(id=document.id).one()
+            assert saved.notes == "Reviewed and complete."
+        finally:
+            session.close()
+    finally:
+        shutil.rmtree(root, ignore_errors=True)

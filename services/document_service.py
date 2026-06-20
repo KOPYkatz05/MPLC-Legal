@@ -30,6 +30,7 @@ class DocumentService:
         workflow_stage,
         ocr_raw_data=None,
         ocr_confirmed_data=None,
+        notes=None,
     ):
         if not document_type:
             raise ValueError("document_type is required")
@@ -85,6 +86,7 @@ class DocumentService:
                 status="ACTIVE",
                 file_name=new_file_name,
                 file_path=str(destination_path),
+                notes=notes or None,
                 ocr_raw_data=raw_json,
                 ocr_confirmed_data=confirmed_json,
             )

@@ -615,7 +615,7 @@ class UploadSessionController:
             item.status = "pending"
             item.error_text = ""
 
-    def save_item(self, item, parent=None, run_ocr=True):
+    def save_item(self, item, parent=None, run_ocr=False):
         try:
             if item.duplicate_action == "skip":
                 item.status = "skipped"
@@ -663,8 +663,6 @@ class UploadSessionController:
 
             document = None
             if item.has_ocr_fields:
-                if item.ocr_result is None and run_ocr:
-                    self.run_ocr(item, parent=parent)
                 if item.ocr_result is None:
                     ocr_fields = DOCUMENTS.get(
                         item.document_type, {}
@@ -675,8 +673,6 @@ class UploadSessionController:
                         ocr_fields=list(ocr_fields),
                         export_settings=item.export_settings,
                     )
-                if item.ocr_result and not item.ocr_reviewed:
-                    self.merge_ocr_data_into_confirmed(item)
                 save_result = finalize_ocr_ingestion(
                     missionary=self.missionary,
                     source_file=item.file_path,
@@ -684,6 +680,7 @@ class UploadSessionController:
                     workflow_stage=workflow_stage,
                     pipeline_result=item.ocr_result,
                     confirmed_data=item.confirmed_data,
+                    notes=item.notes,
                     document_service=self.document_service,
                 )
                 item.updated_fields = list(
@@ -696,6 +693,7 @@ class UploadSessionController:
                     source_file=item.file_path,
                     document_type=document_type,
                     workflow_stage=workflow_stage,
+                    notes=item.notes,
                 )
                 item.updated_fields = []
 
@@ -2490,14 +2488,6 @@ class UploadSessionDialog(MaskDialogBase):
             item.status,
         )
         self.persist_current_item_state()
-        if item.has_ocr_fields and self._auto_ocr_enabled():
-            if item.ocr_result is None:
-                self._run_ocr_async(
-                    self.controller.selected_index,
-                    reason="save_current",
-                    after="current",
-                )
-                return
         self._save_current_after_ocr()
 
     def _save_current_after_ocr(self):
@@ -2550,19 +2540,7 @@ class UploadSessionDialog(MaskDialogBase):
             self._set_queue_row(index)
             self.load_detail()
 
-            if item.has_ocr_fields and self._auto_ocr_enabled():
-                if item.ocr_result is None:
-                    self._run_ocr_async(index, reason="save_all", after="all")
-                    return
-                if (
-                    not item.confirmed_data
-                    and item.ocr_result is not None
-                    and not item.ocr_reviewed
-                ):
-                    item.confirmed_data = dict(
-                        item.ocr_result.parsed_data or {}
-                    )
-            else:
+            if not item.has_ocr_fields:
                 item.confirmed_data = {}
 
             self._set_busy(
