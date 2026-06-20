@@ -318,6 +318,17 @@ WORKFLOW_REQUIREMENTS = {
 }
 
 
+FBI_REQUIRED_NATIONALITIES = {
+    "CAN",
+    "USA",
+}
+
+
+def requires_fbi_document(missionary):
+    nationality = (getattr(missionary, "nationality", None) or "").strip()
+    return nationality in FBI_REQUIRED_NATIONALITIES
+
+
 def is_usa_missionary(missionary):
     return (getattr(missionary, "nationality", None) or "").strip() == "USA"
 
@@ -326,13 +337,13 @@ def visible_document_keys_for_missionary(missionary):
     return [
         document_key
         for document_key in DOCUMENTS
-        if document_key != "FBI" or is_usa_missionary(missionary)
+        if document_key != "FBI" or requires_fbi_document(missionary)
     ]
 
 
 def required_documents_for_missionary(stage, missionary):
     required = list(WORKFLOW_REQUIREMENTS.get(stage, []))
-    if stage == "INTERPOL" and is_usa_missionary(missionary):
+    if stage == "INTERPOL" and requires_fbi_document(missionary):
         required.append("FBI")
     return list(dict.fromkeys(required))
 

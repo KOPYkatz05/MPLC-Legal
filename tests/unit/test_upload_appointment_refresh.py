@@ -148,6 +148,7 @@ def test_upload_document_refreshes_calendar_when_dialog_emits(monkeypatch):
     )
     page.current_missionary = SimpleNamespace(id=7)
     page.main_window = SimpleNamespace(calendar_page=calendar)
+    page._reload_missionary = lambda: None
 
     monkeypatch.setattr(
         detail_module,
@@ -158,6 +159,55 @@ def test_upload_document_refreshes_calendar_when_dialog_emits(monkeypatch):
     detail_module.MissionaryDetailPage.upload_document(page)
 
     assert calendar.load_count == 1
+
+
+def test_upload_document_reloads_detail_when_appointment_date_emits(monkeypatch):
+    class FakeSignal:
+        def __init__(self):
+            self._callback = None
+
+        def connect(self, callback):
+            self._callback = callback
+
+        def emit(self, missionary_id, fields):
+            self._callback(missionary_id, fields)
+
+    class FakeUploadDialog:
+        def __init__(self, missionary, parent=None):
+            self.missionary = missionary
+            self.parent = parent
+            self.appointment_dates_updated = FakeSignal()
+
+        def exec(self):
+            self.appointment_dates_updated.emit(
+                self.missionary.id,
+                ["interpol_appointment_date"],
+            )
+
+        def saved_any(self):
+            return False
+
+    page = detail_module.MissionaryDetailPage.__new__(
+        detail_module.MissionaryDetailPage
+    )
+    page.current_missionary = SimpleNamespace(id=7)
+    page.main_window = SimpleNamespace(calendar_page=None)
+    page.reload_count = 0
+
+    def reload_missionary():
+        page.reload_count += 1
+
+    page._reload_missionary = reload_missionary
+
+    monkeypatch.setattr(
+        detail_module,
+        "UploadSessionDialog",
+        FakeUploadDialog,
+    )
+
+    detail_module.MissionaryDetailPage.upload_document(page)
+
+    assert page.reload_count == 1
 
 
 def test_upload_document_refreshes_missionaries_table_after_save(monkeypatch):

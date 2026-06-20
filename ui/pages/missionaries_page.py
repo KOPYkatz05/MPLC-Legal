@@ -1852,12 +1852,29 @@ class MissionariesPage(QWidget):
 
             if dialog.exec() == QDialog.Accepted:
                 self.load_data()
+                self._refresh_open_detail_if_selected(ids)
 
                 # Also refresh dashboard
                 if hasattr(
                     self.main_window, "dashboard_page"
                 ):
                     self.main_window.dashboard_page.load_data()
+                for page_name in ("calendar_page", "reports_page"):
+                    page = getattr(self.main_window, page_name, None)
+                    load_data = getattr(page, "load_data", None)
+                    if callable(load_data):
+                        load_data()
+
+    def _refresh_open_detail_if_selected(self, missionary_ids):
+        detail_page = getattr(self.main_window, "detail_page", None)
+        current = getattr(detail_page, "current_missionary", None)
+        current_id = getattr(current, "id", None)
+        if current_id not in set(missionary_ids or []):
+            return
+
+        reload_detail = getattr(detail_page, "_reload_missionary", None)
+        if callable(reload_detail):
+            reload_detail()
 
     def _create_group(self):
         dialog = CreateMissionaryGroupDialog(

@@ -69,7 +69,7 @@ from utils.constants import (
     DOCUMENTS,
     WORKFLOW_STATUSES,
     WORKFLOW_STAGES,
-    is_usa_missionary,
+    requires_fbi_document,
     required_documents_for_missionary,
 )
 from utils.i18n import tr, field_label
@@ -95,7 +95,7 @@ INTERPOL_PACKET_DOCUMENT_TYPES = [
     "PAGO_INTERPOL",
     "CONSTANCIA_DE_CITA_INTERPOL",
 ]
-USA_INTERPOL_PACKET_DOCUMENT_TYPES = [
+FBI_INTERPOL_PACKET_DOCUMENT_TYPES = [
     "TAM",
     "PASSPORT",
     "FBI",
@@ -1655,14 +1655,7 @@ class MissionaryDetailPage(QWidget):
 
         if dialog.exec() == StageAdvanceDialog.Accepted:
             self._reload_missionary()
-
-            # Refresh missionaries list too
-            missionaries_page = (
-                self.main_window.stack.widget(1)
-            )
-
-            if missionaries_page:
-                missionaries_page.load_data()
+            self._refresh_stage_related_pages()
 
     # ==========================================
     # UPLOAD DOCUMENT — full OCR pipeline
@@ -1711,9 +1704,16 @@ class MissionaryDetailPage(QWidget):
         return
 
     def _refresh_calendar_after_appointment_upload(self, missionary_id, fields):
-        _ = missionary_id
         if not fields:
             return
+
+        current_id = getattr(
+            getattr(self, "current_missionary", None),
+            "id",
+            None,
+        )
+        if current_id == missionary_id:
+            self._reload_missionary()
 
         calendar_page = getattr(self.main_window, "calendar_page", None)
         load_data = getattr(calendar_page, "load_data", None)
@@ -1743,6 +1743,23 @@ class MissionaryDetailPage(QWidget):
         load_data = getattr(missionaries_page, "load_data", None)
         if callable(load_data):
             load_data()
+
+    def _refresh_stage_related_pages(self):
+        main_window = getattr(self, "main_window", None)
+        if main_window is None:
+            return
+
+        self._refresh_missionaries_table()
+
+        for page_name in (
+            "dashboard_page",
+            "calendar_page",
+            "reports_page",
+        ):
+            page = getattr(main_window, page_name, None)
+            load_data = getattr(page, "load_data", None)
+            if callable(load_data):
+                load_data()
 
     def _open_folder_path(self):
         if not hasattr(self, "current_missionary"):
@@ -2101,8 +2118,8 @@ class MissionaryDetailPage(QWidget):
         return packet_docs, missing_labels
 
     def _interpol_packet_document_types(self):
-        if is_usa_missionary(self.current_missionary):
-            return USA_INTERPOL_PACKET_DOCUMENT_TYPES
+        if requires_fbi_document(self.current_missionary):
+            return FBI_INTERPOL_PACKET_DOCUMENT_TYPES
 
         return INTERPOL_PACKET_DOCUMENT_TYPES
 
@@ -3408,6 +3425,7 @@ class MissionaryDetailPage(QWidget):
 
         if hasattr(self, "current_missionary"):
             self._reload_missionary()
+            self._refresh_stage_related_pages()
 
     # ==========================================
     # TIMELINE

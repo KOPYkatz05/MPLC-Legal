@@ -62,7 +62,7 @@ from utils.constants import (
     DOCUMENTS,
     MISSIONARY_DATE_FIELDS,
     WORKFLOW_STAGES,
-    is_usa_missionary,
+    requires_fbi_document,
     visible_document_keys_for_missionary,
 )
 from utils.i18n import field_label, tr
@@ -382,7 +382,7 @@ class UploadSessionController:
     def set_document_type(self, index, document_type):
         if index < 0 or index >= len(self.items):
             return
-        if document_type == "FBI" and not is_usa_missionary(self.missionary):
+        if document_type == "FBI" and not requires_fbi_document(self.missionary):
             document_type = "OTHER"
         item = self.items[index]
         if document_type is None:
@@ -632,8 +632,10 @@ class UploadSessionController:
             document_type = item.document_type
             if document_type not in DOCUMENTS:
                 raise ValueError("document_type is required")
-            if document_type == "FBI" and not is_usa_missionary(self.missionary):
-                raise ValueError("FBI documents are only available for USA missionaries")
+            if document_type == "FBI" and not requires_fbi_document(self.missionary):
+                raise ValueError(
+                    "FBI documents are only available for USA or Canada missionaries"
+                )
 
             workflow_stage = item.workflow_stage or self.derive_stage(
                 document_type
