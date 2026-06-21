@@ -3,7 +3,7 @@ from pathlib import Path
 import fitz
 from shiboken6 import isValid as shiboken_is_valid
 
-from PySide6.QtCore import QEvent, QPoint, QSize, Qt, QTimer, Signal
+from PySide6.QtCore import QEvent, QPoint, Qt, QTimer, Signal
 from PySide6.QtWidgets import (
     QApplication,
     QFrame,
@@ -169,8 +169,13 @@ class DocumentViewerDialog(MaskDialogBase):
             surface_object_name="UploadWorkspaceSurface",
             use_masked_shell=True,
             fit_to_content=False,
+            surface_min_width=900,
+            surface_min_height=640,
+            responsive_margins=(96, 48),
+            responsive_width_ratio=0.82,
+            responsive_height_ratio=0.84,
+            responsive_fill_parent=True,
         )
-        self.surface.setMinimumSize(0, 0)
 
         self.setup_ui()
         self._ensure_screen_tracking()
@@ -280,45 +285,9 @@ class DocumentViewerDialog(MaskDialogBase):
         if not _widget_alive(surface):
             return
 
-        self._ensure_screen_tracking()
-        screen = self._responsive_screen()
-        if screen is None:
-            return
-
-        available = screen.availableGeometry()
-        parent_container = self._parent_container()
-        container_size = (
-            parent_container.size()
-            if _widget_alive(parent_container)
-            else QSize(available.width(), available.height())
-        )
-        horizontal_margin = 96
-        vertical_margin = 48
-        container_width = min(available.width(), container_size.width())
-        container_height = min(available.height(), container_size.height())
-        max_width = max(1, container_width - horizontal_margin)
-        max_height = max(1, container_height - vertical_margin)
-
-        preferred_width = max(900, int(container_width * 0.82))
-        preferred_height = max(640, int(container_height * 0.84))
-        target_width = min(preferred_width, max_width)
-        target_height = min(preferred_height, max_height)
-
-        if _widget_alive(parent_container):
-            self.setMaximumSize(16777215, 16777215)
-            self.resize(container_size)
-        else:
-            self.setMaximumSize(
-                target_width + horizontal_margin,
-                target_height + vertical_margin,
-            )
-            self.resize(
-                target_width + horizontal_margin,
-                target_height + vertical_margin,
-            )
-
-        self.setMinimumSize(0, 0)
-        surface.setFixedSize(target_width, target_height)
+        sizer = getattr(surface, "_dialog_surface_sizer", None)
+        if sizer is not None:
+            sizer.apply()
 
     def _clear_screen_tracking(self):
         parent_window = getattr(self, "_tracked_parent_window", None)

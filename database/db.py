@@ -66,11 +66,18 @@ def _run_migrations():
         "ALTER TABLE secretary_tasks ADD COLUMN group_id INTEGER",
         "ALTER TABLE secretary_tasks ADD COLUMN group_scope_label VARCHAR",
         "ALTER TABLE secretary_tasks ADD COLUMN work_date DATE",
+        "ALTER TABLE secretary_tasks ADD COLUMN automation_key VARCHAR",
+        "ALTER TABLE secretary_tasks ADD COLUMN automation_source VARCHAR",
+        "ALTER TABLE secretary_tasks ADD COLUMN automation_status_reason VARCHAR",
+        "ALTER TABLE missionary_groups ADD COLUMN group_type VARCHAR",
+        "ALTER TABLE missionary_groups ADD COLUMN automation_key VARCHAR",
         """
         CREATE TABLE missionary_groups (
             id INTEGER PRIMARY KEY,
             name VARCHAR NOT NULL,
             description VARCHAR,
+            group_type VARCHAR,
+            automation_key VARCHAR,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
         )
@@ -122,6 +129,9 @@ def _run_migrations():
             group_id INTEGER,
             group_scope_label VARCHAR,
             appointment_field VARCHAR,
+            automation_key VARCHAR,
+            automation_source VARCHAR,
+            automation_status_reason VARCHAR,
             waiting_reason VARCHAR,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -138,6 +148,7 @@ def _run_migrations():
         "CREATE INDEX idx_secretary_tasks_project_id ON secretary_tasks(project_id)",
         "CREATE INDEX idx_secretary_tasks_missionary_id ON secretary_tasks(missionary_id)",
         "CREATE INDEX idx_secretary_tasks_group_id ON secretary_tasks(group_id)",
+        "CREATE UNIQUE INDEX idx_secretary_tasks_automation_key ON secretary_tasks(automation_key)",
         "CREATE INDEX idx_missionary_group_members_missionary_id ON missionary_group_members(missionary_id)",
         "CREATE INDEX idx_secretary_task_missionaries_missionary_id ON secretary_task_missionaries(missionary_id)",
         """

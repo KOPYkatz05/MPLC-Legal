@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, timedelta
 
 from database.db import SessionLocal
 
@@ -30,6 +30,7 @@ EXPIRY_FIELDS = [
 EXPIRY_WINDOW_DAYS = 60
 ATTENTION_WINDOW_DAYS = 7
 VISIBLE_TASK_STATUSES = ("OPEN", "WAITING")
+AUTOMATION_SOURCE = "process_automation"
 
 
 def _severity_for_days(days_left):
@@ -214,6 +215,7 @@ class DashboardService:
                 self._task_attention_items(session, today)
             )
             attention_items.sort(key=_attention_sort_key)
+            recommended_tasks = self._recommended_tasks(session, today)
 
             return {
                 "total": total,
@@ -221,6 +223,7 @@ class DashboardService:
                 "expiring": expiring,
                 "missing_docs": missing_docs,
                 "attention_items": attention_items,
+                "recommended_tasks": recommended_tasks,
             }
 
         except Exception:
@@ -236,6 +239,7 @@ class DashboardService:
                 "expiring": [],
                 "missing_docs": [],
                 "attention_items": [],
+                "recommended_tasks": [],
             }
 
         finally:
@@ -301,6 +305,38 @@ class DashboardService:
             })
         return items
 
+    def _recommended_tasks(self, session, today):
+        week_end = today + timedelta(days=6 - today.weekday())
+        tasks = (
+            session.query(SecretaryTask)
+            .filter(
+                SecretaryTask.status.in_(VISIBLE_TASK_STATUSES),
+                SecretaryTask.automation_source == AUTOMATION_SOURCE,
+            )
+            .all()
+        )
+
+        items = []
+        for task in tasks:
+            target_date = task.work_date or task.due_date
+            if target_date is None:
+                continue
+            if target_date > week_end:
+                continue
+
+            days = (target_date - today).days
+            items.append({
+                "id": task.id,
+                "title": task.title,
+                "detail": task.description or self._task_detail(task, days),
+                "missionary_id": task.missionary_id,
+                "severity": _severity_for_days(days),
+                "days": days,
+                "timing": self._timing_label(days),
+            })
+
+        return sorted(items, key=_attention_sort_key)
+
     @staticmethod
     def _document_expiration_detail(name, exp_date, days_left):
         if days_left < 0:
@@ -327,3 +363,11 @@ class DashboardService:
             timing = "due today"
         priority = (task.priority or "NORMAL").title()
         return f"{priority} task {timing}."
+
+    @staticmethod
+    def _timing_label(days):
+        if days < 0:
+            return f"{abs(days)} day(s) overdue"
+        if days == 0:
+            return "Today"
+        return f"In {days} day(s)"

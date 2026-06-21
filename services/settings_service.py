@@ -1,4 +1,5 @@
 import json
+from datetime import date, datetime, timedelta
 
 from PySide6.QtCore import QSettings
 
@@ -14,6 +15,8 @@ DIGEST_PASSWORD_SERVICE = "MissionLegalDailyDigest"
 DIGEST_PASSWORD_USERNAME = "smtp_password"
 DIGEST_DEFAULT_TIME = "10:00"
 DIGEST_DEFAULT_DETAIL_LEVEL = "balanced"
+TRANSFER_DATE_KEY = "transfer_management/next_transfer_wednesday"
+TRANSFER_CYCLE_DAYS = 42
 
 
 def _bool_value(value, default=False):
@@ -31,6 +34,37 @@ def _int_value(value, default=0):
         return int(value)
     except (TypeError, ValueError):
         return default
+
+
+def _parse_iso_date(value):
+    if isinstance(value, date):
+        return value
+    if not value:
+        return None
+    try:
+        return datetime.strptime(str(value), "%Y-%m-%d").date()
+    except (TypeError, ValueError):
+        return None
+
+
+def is_wednesday(value):
+    parsed = _parse_iso_date(value)
+    return parsed is not None and parsed.weekday() == 2
+
+
+def transfer_dates_from_anchor(anchor, *, today=None, count=8):
+    anchor = _parse_iso_date(anchor)
+    if anchor is None:
+        return []
+
+    today = today or date.today()
+    while anchor < today:
+        anchor = anchor + timedelta(days=TRANSFER_CYCLE_DAYS)
+
+    return [
+        anchor + timedelta(days=TRANSFER_CYCLE_DAYS * offset)
+        for offset in range(count)
+    ]
 
 
 def _keyring():
@@ -69,6 +103,28 @@ class SettingsService:
         if not path:
             return None
         return str(set_storage_root(path))
+
+    def get_next_transfer_wednesday(self):
+        return _parse_iso_date(
+            self._settings.value(TRANSFER_DATE_KEY, "")
+        )
+
+    def set_next_transfer_wednesday(self, value):
+        parsed = _parse_iso_date(value)
+        if parsed is None:
+            self._settings.remove(TRANSFER_DATE_KEY)
+            return None
+        if not is_wednesday(parsed):
+            raise ValueError("Transfer date must be a Wednesday.")
+        self._settings.setValue(TRANSFER_DATE_KEY, parsed.isoformat())
+        return parsed
+
+    def get_upcoming_transfer_wednesdays(self, *, today=None, count=8):
+        return transfer_dates_from_anchor(
+            self.get_next_transfer_wednesday(),
+            today=today,
+            count=count,
+        )
 
     def get_missionaries_table_columns(self, default_columns):
         saved = self._settings.value(

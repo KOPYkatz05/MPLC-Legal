@@ -191,6 +191,7 @@ class DashboardPage(QWidget):
         self.service = DashboardService()
         self.digest_service = DailyDigestService()
         self.startup_alerts = []
+        self._automation_running = False
 
         self.setup_ui()
 
@@ -217,9 +218,23 @@ class DashboardPage(QWidget):
 
         header_bar.setLayout(header_layout)
 
-        title = QLabel("Dashboard")
+        title = QLabel("Mission Control")
 
         title.setObjectName("PageTitle")
+
+        self.dashboard_subtitle = QLabel("Loading today's work...")
+
+        self.dashboard_subtitle.setObjectName("PageSubtitle")
+
+        title_stack = QVBoxLayout()
+
+        title_stack.setContentsMargins(0, 0, 0, 0)
+
+        title_stack.setSpacing(3)
+
+        title_stack.addWidget(title)
+
+        title_stack.addWidget(self.dashboard_subtitle)
 
         self.refresh_btn = create_button(
             "Refresh",
@@ -232,7 +247,7 @@ class DashboardPage(QWidget):
             self.load_data
         )
 
-        header_layout.addWidget(title)
+        header_layout.addLayout(title_stack)
 
         header_layout.addStretch()
 
@@ -285,6 +300,8 @@ class DashboardPage(QWidget):
         self.load_data()
 
     def load_data(self):
+        self._run_process_automation()
+
         # Clear existing content
         while self.content_layout.count():
             item = self.content_layout.takeAt(0)
@@ -302,6 +319,10 @@ class DashboardPage(QWidget):
             data.get("attention_items", [])
         )
 
+        self._build_recommended_section(
+            data.get("recommended_tasks", [])
+        )
+
         self._build_stat_cards(data)
 
         self._build_expiring_section(
@@ -315,6 +336,23 @@ class DashboardPage(QWidget):
         self.content_layout.addStretch()
 
         logger.info("Dashboard data loaded")
+
+    def _run_process_automation(self):
+        if self.main_window is None or self._automation_running:
+            return
+        self._automation_running = True
+        try:
+            from services.process_automation_service import (
+                ProcessAutomationService,
+            )
+
+            ProcessAutomationService(
+                settings_service=self.main_window.settings_service
+            ).run()
+        except Exception:
+            logger.exception("Process automation failed during dashboard load")
+        finally:
+            self._automation_running = False
 
     def set_startup_alerts(self, alerts):
         self.startup_alerts = list(alerts or [])
@@ -401,22 +439,21 @@ class DashboardPage(QWidget):
             language=settings_service.get_language(),
         )
 
+        self._set_dashboard_subtitle_from_digest(digest)
+
         self.content_layout.addWidget(
-            SectionHeader(digest.get("title", "Today's Digest"))
+            SectionHeader("Today's Missions")
         )
 
         card = SimpleCardWidget()
         card.setObjectName("DailyDigestCard")
         layout = QVBoxLayout()
         layout.setContentsMargins(18, 16, 18, 16)
-        layout.setSpacing(12)
+        layout.setSpacing(16)
         card.setLayout(layout)
 
-        body = QLabel(digest.get("text", ""))
-        body.setObjectName("DailyDigestText")
-        body.setWordWrap(True)
-        body.setTextInteractionFlags(Qt.TextSelectableByMouse)
-        layout.addWidget(body)
+        self._add_digest_summary(layout, digest)
+        self._add_digest_details(layout, digest)
 
         actions = QHBoxLayout()
         actions.setContentsMargins(0, 0, 0, 0)
@@ -427,7 +464,7 @@ class DashboardPage(QWidget):
         refresh.clicked.connect(self.load_data)
         actions.addWidget(refresh)
 
-        copy = create_button("Copy", "primary")
+        copy = create_button("Copy Summary", "primary")
         copy.clicked.connect(
             lambda checked=False, text=digest.get("text", ""):
             self._copy_daily_digest(text)
@@ -436,6 +473,318 @@ class DashboardPage(QWidget):
         layout.addLayout(actions)
 
         self.content_layout.addWidget(card)
+
+    def _set_dashboard_subtitle_from_digest(self, digest):
+        if not hasattr(self, "dashboard_subtitle"):
+            return
+
+        summary = digest.get("summary") or {}
+        total = summary.get("total", 0)
+        self.dashboard_subtitle.setText(self._digest_total_text(total))
+
+    @staticmethod
+    def _digest_total_text(total):
+        try:
+            total = int(total or 0)
+        except (TypeError, ValueError):
+            total = 0
+
+        if total == 0:
+            return "No actions need attention today."
+        if total == 1:
+            return "1 action needs attention today."
+        return f"{total} actions need attention today."
+
+    @staticmethod
+    def _flatten_digest_items(digest):
+        items = []
+        for group in digest.get("detail_groups") or []:
+            for item in group.get("items", []) or []:
+                items.append(item)
+        return items
+
+    def _add_digest_summary(self, layout, digest):
+        summary = digest.get("summary") or {}
+        row = QHBoxLayout()
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(10)
+
+        for key, label, color in [
+            ("critical", "Critical", "#DC2626"),
+            ("overdue", "Overdue", "#D97706"),
+            ("due_today", "Due Today", "#2563EB"),
+            ("total", "Total Open", "#71717A"),
+        ]:
+            row.addWidget(
+                self._make_digest_metric_tile(summary.get(key, 0), label, color)
+            )
+
+        layout.addLayout(row)
+
+    def _add_digest_details(self, layout, digest):
+        groups = digest.get("detail_groups") or []
+
+        self._build_digest_start_here(layout, digest)
+
+        if not self._flatten_digest_items(digest):
+            return
+
+        intro = QLabel("Mission Queue")
+        intro.setObjectName("SectionHeader")
+        layout.addWidget(intro)
+
+        for group in groups:
+            if group.get("items"):
+                self._build_digest_mission_group(layout, group)
+
+    def _build_digest_start_here(self, layout, digest):
+        items = self._flatten_digest_items(digest)
+
+        panel = QFrame()
+        panel.setObjectName("DigestStartHerePanel")
+        panel.setAttribute(Qt.WA_StyledBackground, True)
+        panel.setStyleSheet(
+            "QFrame#DigestStartHerePanel {"
+            "background: #F8FAFC;"
+            "border: 1px solid #CCFBF1;"
+            "border-radius: 8px;"
+            "}"
+        )
+
+        panel_layout = QHBoxLayout()
+        panel_layout.setContentsMargins(16, 14, 16, 14)
+        panel_layout.setSpacing(14)
+        panel.setLayout(panel_layout)
+
+        accent = QFrame()
+        accent.setFixedWidth(4)
+        accent.setMinimumHeight(58)
+        accent.setStyleSheet("background: #0F766E; border-radius: 2px;")
+
+        text_stack = QVBoxLayout()
+        text_stack.setContentsMargins(0, 0, 0, 0)
+        text_stack.setSpacing(5)
+
+        label = QLabel("Start Here")
+        label.setObjectName("SectionHeader")
+        text_stack.addWidget(label)
+
+        if not items:
+            title = QLabel("All clear for today's due work.")
+            title.setObjectName("StrongText")
+            detail = QLabel("Refresh later or copy the summary for your records.")
+            detail.setObjectName("MutedText")
+            detail.setWordWrap(True)
+            text_stack.addWidget(title)
+            text_stack.addWidget(detail)
+            panel_layout.addWidget(accent)
+            panel_layout.addLayout(text_stack, stretch=1)
+            layout.addWidget(panel)
+            return
+
+        first_item = min(
+            items,
+            key=lambda item: (
+                item.get("severity_rank", 99),
+                item.get("days", 9999),
+                item.get("action", ""),
+            ),
+        )
+
+        title = QLabel(first_item.get("action", "Review due work"))
+        title.setObjectName("PanelTitle")
+        title.setWordWrap(True)
+
+        detail_parts = [first_item.get("who", "Office")]
+        count = first_item.get("missionary_count") or 0
+        if count > 1:
+            detail_parts.append(f"{count} missionaries affected")
+        if first_item.get("timing"):
+            detail_parts.append(first_item["timing"])
+
+        detail = QLabel("  |  ".join(part for part in detail_parts if part))
+        detail.setObjectName("MutedText")
+        detail.setWordWrap(True)
+
+        chip = self._make_digest_chip(
+            first_item.get("timing", "Open"),
+            self._attention_color(first_item.get("severity")),
+        )
+
+        review_btn = create_button("Review", "primary", fixed_height=30)
+        review_btn.clicked.connect(
+            lambda checked=False, payload=first_item:
+            self._open_digest_item(payload)
+        )
+
+        text_stack.addWidget(title)
+        text_stack.addWidget(detail)
+
+        panel_layout.addWidget(accent)
+        panel_layout.addLayout(text_stack, stretch=1)
+        panel_layout.addWidget(chip)
+        panel_layout.addWidget(review_btn)
+
+        layout.addWidget(panel)
+
+    def _build_digest_mission_group(self, layout, group):
+        card = QFrame()
+        card.setObjectName("DigestMissionCard")
+        card.setAttribute(Qt.WA_StyledBackground, True)
+        card.setStyleSheet(
+            "QFrame#DigestMissionCard {"
+            "background: #FFFFFF;"
+            "border: 1px solid #E5E7EB;"
+            "border-radius: 8px;"
+            "}"
+        )
+
+        card_layout = QVBoxLayout()
+        card_layout.setContentsMargins(14, 12, 14, 12)
+        card_layout.setSpacing(10)
+        card.setLayout(card_layout)
+
+        header = QHBoxLayout()
+        header.setContentsMargins(0, 0, 0, 0)
+        header.setSpacing(10)
+
+        title = QLabel(f"{group.get('title', 'Work')} Mission")
+        title.setObjectName("StrongText")
+        count = self._make_digest_chip(
+            f"{group.get('count', 0)} open",
+            "#71717A",
+        )
+
+        header.addWidget(title)
+        header.addStretch()
+        header.addWidget(count)
+        card_layout.addLayout(header)
+
+        for item in group.get("items", [])[:12]:
+            row = QFrame()
+            row.setObjectName("DigestMissionRow")
+            row.setStyleSheet(
+                "QFrame#DigestMissionRow {"
+                "background: #FAFAFA;"
+                "border: 1px solid #F4F4F5;"
+                "border-radius: 6px;"
+                "}"
+            )
+            row_layout = QHBoxLayout()
+            row_layout.setContentsMargins(10, 8, 10, 8)
+            row_layout.setSpacing(10)
+            row.setLayout(row_layout)
+
+            text_stack = QVBoxLayout()
+            text_stack.setContentsMargins(0, 0, 0, 0)
+            text_stack.setSpacing(2)
+
+            who = QLabel(item.get("who", "Office"))
+            who.setObjectName("StrongText")
+            who.setWordWrap(True)
+
+            action_text = item.get("action", "Task")
+            item_count = item.get("missionary_count") or 0
+            if item_count > 1:
+                action_text = f"{action_text} ({item_count} missionaries)"
+
+            action = QLabel(action_text)
+            action.setObjectName("RowText")
+            action.setWordWrap(True)
+
+            text_stack.addWidget(who)
+            text_stack.addWidget(action)
+
+            timing = self._make_digest_chip(
+                item.get("timing", "Open"),
+                self._attention_color(item.get("severity")),
+            )
+
+            open_btn = create_button("Open", "subtle", fixed_height=28)
+            open_btn.clicked.connect(
+                lambda checked=False, payload=item:
+                self._open_digest_item(payload)
+            )
+
+            row_layout.addLayout(text_stack, stretch=1)
+            row_layout.addWidget(timing)
+            row_layout.addWidget(open_btn)
+
+            card_layout.addWidget(row)
+
+        if group.get("count", 0) > 12:
+            more = QLabel(
+                f"+ {group['count'] - 12} more in {group.get('title', 'Work')}"
+            )
+            more.setObjectName("MutedText")
+            card_layout.addWidget(more)
+
+        layout.addWidget(card)
+
+    @staticmethod
+    def _make_digest_metric_tile(value, label, color):
+        tile = QFrame()
+        tile.setObjectName("DigestSummaryTile")
+        tile.setAttribute(Qt.WA_StyledBackground, True)
+        tile.setStyleSheet(
+            "QFrame#DigestSummaryTile {"
+            "border: 1px solid #E5E7EB;"
+            "border-radius: 8px;"
+            "background: #FFFFFF;"
+            "}"
+        )
+        tile_layout = QVBoxLayout()
+        tile_layout.setContentsMargins(12, 10, 12, 10)
+        tile_layout.setSpacing(2)
+        tile.setLayout(tile_layout)
+
+        value_label = QLabel(str(value))
+        value_label.setObjectName("PanelTitle")
+        value_label.setStyleSheet(f"color: {color};")
+
+        caption = QLabel(label)
+        caption.setObjectName("MutedText")
+
+        tile_layout.addWidget(value_label)
+        tile_layout.addWidget(caption)
+
+        return tile
+
+    @staticmethod
+    def _make_digest_chip(text, color):
+        chip = QLabel(str(text or "Open"))
+        chip.setObjectName("DigestChip")
+        chip.setAlignment(Qt.AlignCenter)
+        chip.setStyleSheet(
+            "QLabel#DigestChip {"
+            f"color: {color};"
+            f"border: 1px solid {color};"
+            "border-radius: 8px;"
+            "padding: 3px 8px;"
+            "background: #FFFFFF;"
+            "font-size: 11px;"
+            "font-weight: 600;"
+            "}"
+        )
+        return chip
+
+    def _open_digest_item(self, item):
+        if not item:
+            return
+        if item.get("missionary_id") and self.main_window is not None:
+            opener = getattr(self.main_window, "open_missionary_detail", None)
+            if callable(opener):
+                opener(item.get("missionary_id"))
+                return
+        if self.main_window is None:
+            return
+        office_page = getattr(self.main_window, "office_work_page", None)
+        if office_page is not None and hasattr(office_page, "focus_task_context"):
+            office_page.focus_task_context(
+                task_id=item.get("task_id"),
+                title=item.get("action", ""),
+            )
+        self.main_window.set_current_key("office_work")
 
     def _copy_daily_digest(self, text):
         QApplication.clipboard().setText(text or "")
@@ -497,6 +846,58 @@ class DashboardPage(QWidget):
             row.add_button(
                 self._attention_action_label(item),
                 lambda checked=False, payload=item:
+                self._open_attention_item(payload),
+                variant="secondary",
+            )
+            card.add_widget(row)
+
+        self.content_layout.addWidget(card)
+
+    def _build_recommended_section(self, tasks):
+        self.content_layout.addWidget(
+            SectionHeader("Recommended This Week")
+        )
+
+        card = ListCard()
+        card.setObjectName("RecommendedThisWeekCard")
+
+        if not tasks:
+            card.add_empty("No recommended process work this week.")
+            self.content_layout.addWidget(card)
+            return
+
+        for i, task in enumerate(tasks[:10]):
+            row = TableRow(alternate=(i % 2 == 1))
+            row.setObjectName("RecommendedThisWeekRow")
+            row.set_click_data({
+                "target": (
+                    "missionary"
+                    if task.get("missionary_id")
+                    else "office_work"
+                ),
+                "missionary_id": task.get("missionary_id"),
+            })
+            row.clicked.connect(self._open_attention_item)
+
+            row.add_cell(
+                task.get("title", "Recommended task"),
+                stretch=4,
+                bold=True,
+            )
+            row.add_cell(
+                task.get("detail", ""),
+                stretch=5,
+                word_wrap=True,
+                color="#52525B",
+            )
+            row.add_cell(
+                task.get("timing", ""),
+                stretch=2,
+                color=self._attention_color(task.get("severity")),
+            )
+            row.add_button(
+                self._attention_action_label(row.item_data),
+                lambda checked=False, payload=row.item_data:
                 self._open_attention_item(payload),
                 variant="secondary",
             )

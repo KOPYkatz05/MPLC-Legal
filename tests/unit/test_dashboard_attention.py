@@ -86,6 +86,33 @@ def test_dashboard_attention_includes_expiring_missing_tasks_and_appointments(
     assert appointment_item["appointment_id"]
 
 
+def test_dashboard_includes_recommended_automatic_tasks(dashboard_env):
+    today = date.today()
+    session = dashboard_env()
+    try:
+        session.add(
+            SecretaryTask(
+                title="Prorroga submission window is open",
+                description="Recommended process work.",
+                status="OPEN",
+                priority="IMPORTANT",
+                work_date=today,
+                due_date=today,
+                automation_key="prorroga:1:60:2026-09-01",
+                automation_source="process_automation",
+            )
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    recommended = DashboardService().get_summary()["recommended_tasks"]
+
+    assert [task["title"] for task in recommended] == [
+        "Prorroga submission window is open"
+    ]
+
+
 def test_dashboard_attention_sorts_overdue_before_due_today(dashboard_env):
     today = date.today()
     session = dashboard_env()
@@ -193,6 +220,7 @@ def test_dashboard_renders_attention_section(monkeypatch, qapp):
                         "days": 0,
                     }
                 ],
+                "recommended_tasks": [],
             }
 
     monkeypatch.setattr(
@@ -228,6 +256,7 @@ def test_dashboard_renders_daily_digest_section(monkeypatch, qapp):
                 "expiring": [],
                 "missing_docs": [],
                 "attention_items": [],
+                "recommended_tasks": [],
             }
 
     class FakeDigestService:

@@ -1,4 +1,4 @@
-from PySide6.QtCore import QDate, QEvent, QObject, QRectF, Qt, QTimer
+from PySide6.QtCore import QDate, QEvent, QObject, QRectF, QSize, Qt, QTimer
 from PySide6.QtGui import QColor, QPainterPath, QPalette, QRegion
 from PySide6.QtWidgets import (
     QApplication,
@@ -133,6 +133,7 @@ APP_DIALOG_MASK_COLOR = QColor(0, 0, 0, 76)
 APP_DIALOG_SHADOW = (60, (0, 10), QColor(0, 0, 0, 50))
 APP_DIALOG_SURFACE_SHADOW = (32, 0, 16, QColor(0, 0, 0, 42))
 MESSAGE_BOX_OBJECT_NAME = "AppMessageBox"
+DEFAULT_DIALOG_RESPONSIVE_MARGINS = (48, 48)
 
 
 def _set_fixed_height(widget, fixed_height):
@@ -204,24 +205,119 @@ def _clip_surface_to_rounded_rect(widget, radius=APP_DIALOG_SURFACE_RADIUS):
     mask_filter.apply()
 
 
+def _widget_is_alive(widget):
+    if widget is None:
+        return False
+    try:
+        widget.objectName()
+    except RuntimeError:
+        return False
+    return True
+
+
+def _screen_for_widget(widget):
+    if not _widget_is_alive(widget):
+        return None
+
+    try:
+        rect = widget.rect()
+        if rect.isValid() and not rect.isEmpty():
+            screen = QApplication.screenAt(widget.mapToGlobal(rect.center()))
+            if screen is not None:
+                return screen
+
+        window_handle = widget.windowHandle()
+        if window_handle is not None:
+            return window_handle.screen()
+    except RuntimeError:
+        return None
+
+    return None
+
+
+def _dialog_available_size(dialog, margins=DEFAULT_DIALOG_RESPONSIVE_MARGINS):
+    app = QApplication.instance()
+    screen = _screen_for_widget(dialog.parentWidget())
+    if screen is None:
+        screen = _screen_for_widget(dialog.window())
+    if screen is None and app is not None:
+        screen = app.primaryScreen()
+
+    if screen is not None:
+        available = screen.availableGeometry().size()
+    else:
+        available = QSize(1280, 800)
+
+    parent = dialog.parentWidget()
+    if _widget_is_alive(parent):
+        parent_size = parent.size()
+        if parent_size.isValid() and not parent_size.isEmpty():
+            available = QSize(
+                min(available.width(), parent_size.width()),
+                min(available.height(), parent_size.height()),
+            )
+
+    horizontal_margin, vertical_margin = margins
+    return QSize(
+        max(1, available.width() - horizontal_margin),
+        max(1, available.height() - vertical_margin),
+    ), available
+
+
 class _DialogSurfaceSizer(QObject):
-    def __init__(self, dialog, surface, fixed_width=None, adjust_dialog=True):
+    def __init__(
+        self,
+        dialog,
+        surface,
+        fixed_width=None,
+        adjust_dialog=True,
+        responsive_margins=DEFAULT_DIALOG_RESPONSIVE_MARGINS,
+        width_ratio=None,
+        height_ratio=None,
+        fill_parent=False,
+    ):
         super().__init__(surface)
         self.dialog = dialog
         self.surface = surface
         self.fixed_width = fixed_width
         self.adjust_dialog = adjust_dialog
+        self.responsive_margins = responsive_margins
+        self.width_ratio = width_ratio
+        self.height_ratio = height_ratio
+        self.fill_parent = fill_parent
+        self._tracked_parent_window = None
         self._pending = False
 
     def eventFilter(self, watched, event):
         surface = getattr(self, "surface", None)
-        if surface is not None and watched is surface and event.type() in {
+        watched_dialog = getattr(self, "dialog", None)
+        tracked_parent = getattr(self, "_tracked_parent_window", None)
+        if watched in {surface, watched_dialog, tracked_parent} and event.type() in {
             QEvent.LayoutRequest,
+            QEvent.Move,
             QEvent.Resize,
             QEvent.Show,
         }:
+            self._track_parent_window()
             self.schedule()
         return super().eventFilter(watched, event)
+
+    def _track_parent_window(self):
+        dialog = getattr(self, "dialog", None)
+        if not _widget_is_alive(dialog):
+            return
+
+        parent = dialog.parentWidget()
+        parent_window = parent.window() if _widget_is_alive(parent) else None
+        if parent_window is self._tracked_parent_window:
+            return
+
+        if _widget_is_alive(self._tracked_parent_window):
+            self._tracked_parent_window.removeEventFilter(self)
+
+        self._tracked_parent_window = parent_window
+        if _widget_is_alive(parent_window):
+            parent_window.installEventFilter(self)
 
     def schedule(self):
         if self._pending:
@@ -240,14 +336,42 @@ class _DialogSurfaceSizer(QObject):
         if not hint.isValid():
             return
 
-        width = self.fixed_width or hint.width()
-        width = max(width, surface.minimumWidth())
-        height = max(hint.height(), surface.minimumHeight())
+        max_size, container_size = _dialog_available_size(
+            dialog,
+            self.responsive_margins,
+        )
+        minimum_width = surface.minimumWidth()
+        minimum_height = surface.minimumHeight()
+
+        if self.width_ratio is not None:
+            width = max(minimum_width, int(container_size.width() * self.width_ratio))
+        else:
+            width = self.fixed_width or hint.width()
+            if width <= max_size.width():
+                width = max(width, minimum_width)
+
+        if self.height_ratio is not None:
+            height = max(
+                minimum_height,
+                int(container_size.height() * self.height_ratio),
+            )
+        else:
+            height = hint.height()
+            if height <= max_size.height():
+                height = max(height, minimum_height)
+
+        width = min(max(width, 1), max_size.width())
+        height = min(max(height, 1), max_size.height())
 
         if width > 0:
             surface.setFixedWidth(width)
         if height > 0:
             surface.setFixedHeight(height)
+
+        parent = dialog.parentWidget()
+        if self.fill_parent and _widget_is_alive(parent):
+            dialog.resize(parent.size())
+            return
 
         if self.adjust_dialog:
             dialog.adjustSize()
@@ -258,6 +382,10 @@ def _fit_dialog_surface_to_content(
     surface,
     fixed_width=None,
     adjust_dialog=True,
+    responsive_margins=DEFAULT_DIALOG_RESPONSIVE_MARGINS,
+    width_ratio=None,
+    height_ratio=None,
+    fill_parent=False,
 ):
     if dialog is None or surface is None:
         return
@@ -268,11 +396,21 @@ def _fit_dialog_surface_to_content(
             surface,
             fixed_width,
             adjust_dialog,
+            responsive_margins,
+            width_ratio,
+            height_ratio,
+            fill_parent,
         )
         surface._dialog_surface_sizer = sizer
         surface.installEventFilter(sizer)
+        dialog.installEventFilter(sizer)
     sizer.fixed_width = fixed_width
     sizer.adjust_dialog = adjust_dialog
+    sizer.responsive_margins = responsive_margins
+    sizer.width_ratio = width_ratio
+    sizer.height_ratio = height_ratio
+    sizer.fill_parent = fill_parent
+    sizer._track_parent_window()
     sizer.schedule()
 
 
@@ -443,6 +581,11 @@ def setup_dialog_shell(
     mask_color=None,
     transparent_masked_shell=None,
     shadow=None,
+    responsive=True,
+    responsive_margins=DEFAULT_DIALOG_RESPONSIVE_MARGINS,
+    responsive_width_ratio=None,
+    responsive_height_ratio=None,
+    responsive_fill_parent=None,
 ):
     _ = transparent_masked_shell
     has_fluent_shell = hasattr(dialog, "_hBoxLayout") and hasattr(dialog, "widget")
@@ -491,12 +634,19 @@ def setup_dialog_shell(
     if surface_min_height is not None:
         surface.setMinimumHeight(surface_min_height)
 
-    if fit_to_content:
+    if responsive_fill_parent is None:
+        responsive_fill_parent = using_fluent_shell and not fit_to_content
+
+    if fit_to_content or responsive:
         _fit_dialog_surface_to_content(
             dialog,
             surface,
-            surface_width,
+            surface_width if fit_to_content else None,
             adjust_dialog=not using_fluent_shell,
+            responsive_margins=responsive_margins,
+            width_ratio=responsive_width_ratio,
+            height_ratio=responsive_height_ratio,
+            fill_parent=responsive_fill_parent,
         )
     _clip_surface_to_rounded_rect(surface)
     refresh_widget_style(dialog)

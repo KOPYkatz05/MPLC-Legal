@@ -1,10 +1,10 @@
-from collections import Counter
+from collections import Counter, defaultdict
 from datetime import date
 
 from database.db import SessionLocal
 from database.models.appointment import APPOINTMENT_STATUS_SCHEDULED, Appointment
 from database.models.missionary import Missionary
-from database.models.secretary_work import SecretaryTask
+from database.models.secretary_work import SecretaryTask, SecretaryTaskMissionary
 from utils.logger import logger
 
 
@@ -64,6 +64,15 @@ TEXT = {
 }
 
 
+GROUP_LABELS = {
+    "prorroga": "Prorrogas",
+    "gvm": "Travel Connect/GVM",
+    "appointment": "Appointments",
+    "office": "Office Work",
+    "other": "Other Tasks",
+}
+
+
 class DailyDigestService:
     def build_digest(
         self,
@@ -93,6 +102,7 @@ class DailyDigestService:
                 "language": language,
                 "title": TEXT[language]["title"],
                 "subject": TEXT[language]["subject"],
+                "summary": self._summary_counts(tasks, appointments, today),
                 "due_today": self._summaries(
                     tasks,
                     appointments,
@@ -106,11 +116,18 @@ class DailyDigestService:
                     else []
                 ),
                 "top_items": top_items,
+                "detail_groups": self._detail_groups(
+                    session,
+                    tasks,
+                    appointments,
+                    today,
+                ),
             }
             digest["is_empty"] = not (
                 digest["due_today"]
                 or digest["overdue"]
                 or digest["top_items"]
+                or digest["detail_groups"]
             )
             digest["text"] = self.render_text(digest)
             return digest
@@ -129,6 +146,16 @@ class DailyDigestService:
             lines.append(text["empty"])
             return "\n".join(lines).strip()
 
+        summary = digest.get("summary") or {}
+        lines.append(
+            "Summary: "
+            f"{summary.get('critical', 0)} critical, "
+            f"{summary.get('overdue', 0)} overdue, "
+            f"{summary.get('due_today', 0)} due today, "
+            f"{summary.get('total', 0)} total due items"
+        )
+        lines.append("")
+
         if digest.get("due_today"):
             lines.append(f"{text['due_today']}:")
             lines.extend(f"- {item}" for item in digest["due_today"])
@@ -142,6 +169,19 @@ class DailyDigestService:
         if digest.get("top_items"):
             lines.append(f"{text['top_items']}:")
             lines.extend(f"- {item['text']}" for item in digest["top_items"])
+            lines.append("")
+
+        if digest.get("detail_groups"):
+            lines.append("Who needs what:")
+            for group in digest["detail_groups"]:
+                lines.append(f"{group['title']} ({group['count']}):")
+                for item in group["items"]:
+                    lines.append(
+                        "- "
+                        f"{item['who']}: {item['action']} "
+                        f"({item['timing']})"
+                    )
+                lines.append("")
 
         return "\n".join(lines).strip()
 
@@ -154,6 +194,13 @@ class DailyDigestService:
             "due_today": [],
             "overdue": [],
             "top_items": [],
+            "summary": {
+                "critical": 0,
+                "overdue": 0,
+                "due_today": 0,
+                "total": 0,
+            },
+            "detail_groups": [],
             "is_empty": True,
         }
         digest["text"] = self.render_text(digest)
@@ -216,6 +263,90 @@ class DailyDigestService:
         return lines
 
     @staticmethod
+    def _summary_counts(tasks, appointments, today):
+        task_count = len(tasks)
+        appointment_count = len(appointments)
+        critical = sum(
+            1
+            for task in tasks
+            if (task.priority or "").upper() == "CRITICAL"
+        )
+        critical += sum(
+            1
+            for appointment, _missionary in appointments
+            if appointment.scheduled_date < today
+        )
+        overdue = sum(
+            1
+            for task in tasks
+            if task.due_date is not None and task.due_date < today
+        )
+        overdue += sum(
+            1
+            for appointment, _missionary in appointments
+            if appointment.scheduled_date < today
+        )
+        due_today = sum(
+            1
+            for task in tasks
+            if task.due_date == today
+        )
+        due_today += sum(
+            1
+            for appointment, _missionary in appointments
+            if appointment.scheduled_date == today
+        )
+        return {
+            "critical": critical,
+            "overdue": overdue,
+            "due_today": due_today,
+            "total": task_count + appointment_count,
+        }
+
+    def _detail_groups(self, session, tasks, appointments, today):
+        grouped = defaultdict(list)
+
+        for task in tasks:
+            grouped[self._task_group_key(task)].append(
+                self._task_detail_item(session, task, today)
+            )
+
+        for appointment, missionary in appointments:
+            grouped["appointment"].append(
+                self._appointment_detail_item(
+                    appointment,
+                    missionary,
+                    today,
+                )
+            )
+
+        groups = []
+        for group_key, items in grouped.items():
+            sorted_items = sorted(
+                items,
+                key=lambda item: (
+                    item["severity_rank"],
+                    item["days"],
+                    item["who"],
+                    item["action"],
+                ),
+            )
+            groups.append({
+                "key": group_key,
+                "title": GROUP_LABELS.get(group_key, GROUP_LABELS["other"]),
+                "count": len(sorted_items),
+                "items": sorted_items,
+            })
+
+        return sorted(
+            groups,
+            key=lambda group: (
+                min(item["severity_rank"] for item in group["items"]),
+                group["title"],
+            ),
+        )
+
+    @staticmethod
     def _task_category(task, language):
         text = TEXT[language]
         title = (task.title or "").casefold()
@@ -225,6 +356,110 @@ class DailyDigestService:
         if task.missionary_id or task.group_id:
             return text["tasks"]
         return text["office_tasks"]
+
+    @staticmethod
+    def _task_group_key(task):
+        title = (task.title or "").casefold()
+        automation_key = (task.automation_key or "").casefold()
+        appointment_field = (task.appointment_field or "").casefold()
+        if "prorroga" in title or "prorroga" in automation_key:
+            return "prorroga"
+        if "gvm" in title or "travel connect" in title or automation_key.startswith("gvm:"):
+            return "gvm"
+        if appointment_field:
+            return "appointment"
+        if task.missionary_id or task.group_id:
+            return "other"
+        return "office"
+
+    def _task_detail_item(self, session, task, today):
+        days = (task.due_date - today).days if task.due_date else 9999
+        who = self._task_who(task)
+        priority = (task.priority or "NORMAL").upper()
+        missionary_count = self._task_missionary_count(session, task)
+        return {
+            "kind": "task",
+            "task_id": task.id,
+            "group_id": task.group_id,
+            "missionary_id": task.missionary_id,
+            "missionary_count": missionary_count,
+            "who": who,
+            "action": task.title or "Task",
+            "detail": task.description or "",
+            "priority": priority,
+            "due_date": task.due_date,
+            "days": days,
+            "timing": self._timing_label(days),
+            "severity": self._severity(priority, days),
+            "severity_rank": self._severity_rank(priority, days),
+        }
+
+    @staticmethod
+    def _task_missionary_count(session, task):
+        if task.id is None:
+            return 0
+        return (
+            session.query(SecretaryTaskMissionary)
+            .filter_by(task_id=task.id)
+            .count()
+        )
+
+    @staticmethod
+    def _task_who(task):
+        names = []
+        missionary = getattr(task, "missionary", None)
+        if missionary is not None and missionary.full_name:
+            names.append(missionary.full_name)
+        if names:
+            return ", ".join(names)
+        if task.missionary_id:
+            return f"Missionary #{task.missionary_id}"
+        if task.group_id:
+            return task.group_scope_label or "Missionary group"
+        return "Office"
+
+    @staticmethod
+    def _appointment_detail_item(appointment, missionary, today):
+        days = (appointment.scheduled_date - today).days
+        label = appointment.appointment_type or "Appointment"
+        return {
+            "kind": "appointment",
+            "who": missionary.full_name or "Missionary",
+            "action": f"{label} appointment",
+            "detail": "",
+            "priority": "CRITICAL" if days < 0 else "IMPORTANT",
+            "due_date": appointment.scheduled_date,
+            "days": days,
+            "timing": DailyDigestService._timing_label(days),
+            "severity": "critical" if days < 0 else "warning",
+            "severity_rank": 0 if days < 0 else 1,
+        }
+
+    @staticmethod
+    def _severity(priority, days):
+        if priority == "CRITICAL" or days < 0:
+            return "critical"
+        if days == 0 or priority == "IMPORTANT":
+            return "warning"
+        return "info"
+
+    @staticmethod
+    def _severity_rank(priority, days):
+        if priority == "CRITICAL" or days < 0:
+            return 0
+        if days == 0 or priority == "IMPORTANT":
+            return 1
+        return 2
+
+    @staticmethod
+    def _timing_label(days):
+        if days < 0:
+            return f"{abs(days)} day(s) overdue"
+        if days == 0:
+            return "Today"
+        if days == 9999:
+            return "No due date"
+        return f"In {days} day(s)"
 
     def _top_items(self, tasks, appointments, limit, today, language):
         if limit <= 0:

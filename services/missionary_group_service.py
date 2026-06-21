@@ -24,7 +24,14 @@ def _unique_ids(values):
 
 
 class MissionaryGroupService:
-    def create_group(self, name, description="", missionary_ids=None):
+    def create_group(
+        self,
+        name,
+        description="",
+        missionary_ids=None,
+        group_type=None,
+        automation_key=None,
+    ):
         name = _clean_text(name)
         if not name:
             raise SecretaryWorkError("Group name is required.")
@@ -34,6 +41,8 @@ class MissionaryGroupService:
             group = MissionaryGroup(
                 name=name,
                 description=_clean_text(description) or None,
+                group_type=_clean_text(group_type) or None,
+                automation_key=_clean_text(automation_key) or None,
             )
             session.add(group)
             session.flush()
@@ -151,6 +160,8 @@ class MissionaryGroupService:
             "id": group.id,
             "name": group.name,
             "description": group.description or "",
+            "group_type": group.group_type or "",
+            "automation_key": group.automation_key or "",
             "missionary_ids": [missionary.id for missionary in members],
             "missionary_names": [missionary.full_name for missionary in members],
             "member_count": len(members),

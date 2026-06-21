@@ -1394,7 +1394,7 @@ class MissionariesPage(QWidget):
         self.group_filter.addItem("All Groups", None)
         for group in groups:
             self.group_filter.addItem(
-                f"{group['name']} ({group.get('member_count', 0)})",
+                self._group_filter_label(group),
                 group["id"],
             )
         self._add_group_edit_action()
@@ -1417,6 +1417,13 @@ class MissionariesPage(QWidget):
                 "Edit selected group members",
                 GROUP_EDIT_ACTION,
             )
+
+    @staticmethod
+    def _group_filter_label(group):
+        label = f"{group['name']} ({group.get('member_count', 0)})"
+        if group.get("group_type") == "TEMPORARY_AUTOMATION":
+            return f"{label}  [Temporary]"
+        return label
 
     def _group_filter_changed(self, *_args):
         current_group = self.group_filter.currentData()
@@ -1895,6 +1902,20 @@ class MissionariesPage(QWidget):
     def _edit_group_by_id(self, group_id):
         group = self._groups_by_id.get(group_id)
         if not group:
+            return
+
+        if group.get("group_type") == "TEMPORARY_AUTOMATION":
+            names = group.get("missionary_names") or []
+            detail = (
+                "This temporary group was created by an automatic task and "
+                "will be removed when that task is completed.\n\n"
+            )
+            detail += "\n".join(names) if names else "No missionaries linked."
+            show_message(
+                self,
+                "Temporary Group",
+                detail,
+            )
             return
 
         dialog = CreateMissionaryGroupDialog(

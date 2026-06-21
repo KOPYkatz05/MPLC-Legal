@@ -6,7 +6,11 @@ from sqlalchemy.orm import sessionmaker
 from database.db import Base
 from database.models.appointment import Appointment
 from database.models.missionary import Missionary
-from database.models.secretary_work import SecretaryTask
+from database.models.secretary_work import (
+    MissionaryGroup,
+    SecretaryTask,
+    SecretaryTaskMissionary,
+)
 from services import daily_digest_service as digest_module
 from services.daily_digest_service import DailyDigestService
 
@@ -104,6 +108,95 @@ def test_digest_orders_critical_items_before_important(monkeypatch):
     digest = DailyDigestService().build_digest(today=today)
 
     assert digest["top_items"][0]["text"].endswith("Critical item")
+
+
+def test_digest_has_summary_and_grouped_who_needs_what(monkeypatch):
+    today = date(2026, 6, 18)
+    session = _session(monkeypatch)
+    try:
+        missionary = _missionary(session, "Elder Smith")
+        session.add(
+            SecretaryTask(
+                title="Critical Prorroga follow-up needed",
+                status="OPEN",
+                priority="CRITICAL",
+                due_date=today,
+                missionary_id=missionary.id,
+                automation_key="prorroga:1:30:2026-07-18",
+                automation_source="process_automation",
+            )
+        )
+        session.add(
+            SecretaryTask(
+                title="Update Travel Connect/GVM with Carne",
+                status="OPEN",
+                priority="IMPORTANT",
+                due_date=today - timedelta(days=1),
+                missionary_id=missionary.id,
+                automation_key="gvm:carne:1",
+                automation_source="process_automation",
+            )
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    digest = DailyDigestService().build_digest(today=today)
+
+    assert digest["summary"]["critical"] == 1
+    assert digest["summary"]["overdue"] == 1
+    assert digest["summary"]["due_today"] == 1
+    assert digest["summary"]["total"] == 2
+    groups = {
+        group["key"]: group
+        for group in digest["detail_groups"]
+    }
+    assert set(groups) == {"gvm", "prorroga"}
+    assert groups["gvm"]["items"][0]["who"] == "Elder Smith"
+    assert "Who needs what" in digest["text"]
+    assert "Elder Smith: Update Travel Connect/GVM with Carne" in digest["text"]
+
+
+def test_digest_includes_task_identity_and_grouped_missionary_count(monkeypatch):
+    today = date(2026, 6, 18)
+    session = _session(monkeypatch)
+    try:
+        first = _missionary(session, "Elder One")
+        second = _missionary(session, "Sister Two")
+        group = MissionaryGroup(
+            name="Temporary - Critical Prorroga follow-up needed",
+            group_type="TEMPORARY_AUTOMATION",
+            automation_key="prorroga:group:30:2026-06-18",
+        )
+        session.add(group)
+        session.flush()
+        task = SecretaryTask(
+            title="Critical Prorroga follow-up needed",
+            status="OPEN",
+            priority="CRITICAL",
+            due_date=today,
+            group_id=group.id,
+            group_scope_label="Temporary - Critical Prorroga follow-up needed",
+            automation_key="prorroga:group:30:2026-06-18",
+            automation_source="process_automation",
+        )
+        session.add(task)
+        session.flush()
+        session.add_all([
+            SecretaryTaskMissionary(task_id=task.id, missionary_id=first.id),
+            SecretaryTaskMissionary(task_id=task.id, missionary_id=second.id),
+        ])
+        session.commit()
+        task_id = task.id
+    finally:
+        session.close()
+
+    digest = DailyDigestService().build_digest(today=today)
+
+    item = digest["detail_groups"][0]["items"][0]
+    assert item["task_id"] == task_id
+    assert item["missionary_count"] == 2
+    assert item["who"] == "Temporary - Critical Prorroga follow-up needed"
 
 
 def test_digest_uses_spanish_subject_and_text(monkeypatch):

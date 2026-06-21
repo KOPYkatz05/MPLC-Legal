@@ -39,6 +39,7 @@ WAITING_REASON_LABELS = {
     "APPOINTMENT_DATE": "Waiting on appointment date",
     "OTHER": "Other waiting reason",
 }
+TEMPORARY_GROUP_TYPE = "TEMPORARY_AUTOMATION"
 
 
 class SecretaryWorkError(ValueError):
@@ -249,6 +250,8 @@ class SecretaryWorkService:
         missionary_ids=None,
         group_id=None,
         appointment_field=None,
+        automation_key=None,
+        automation_source=None,
         waiting_reason=None,
     ):
         title = _clean_text(title)
@@ -276,6 +279,8 @@ class SecretaryWorkService:
                 group_id=group_id,
                 group_scope_label=group_label,
                 appointment_field=_clean_text(appointment_field) or None,
+                automation_key=_clean_text(automation_key) or None,
+                automation_source=_clean_text(automation_source) or None,
                 waiting_reason=_normalize_waiting_reason(
                     normalized_status,
                     waiting_reason,
@@ -357,6 +362,18 @@ class SecretaryWorkService:
                 task.appointment_field = _clean_text(
                     updates["appointment_field"]
                 ) or None
+            if "automation_key" in updates:
+                task.automation_key = _clean_text(
+                    updates["automation_key"]
+                ) or None
+            if "automation_source" in updates:
+                task.automation_source = _clean_text(
+                    updates["automation_source"]
+                ) or None
+            if "automation_status_reason" in updates:
+                task.automation_status_reason = _clean_text(
+                    updates["automation_status_reason"]
+                ) or None
 
             task.updated_at = _now()
             if task.status in {"DONE", "ARCHIVED"} and task.completed_at is None:
@@ -375,12 +392,17 @@ class SecretaryWorkService:
             session.close()
 
     def complete_task(self, task_id):
-        return self.update_task(task_id, status="DONE")
+        snapshot = self.update_task(task_id, status="DONE")
+        self._cleanup_completed_temporary_group(task_id)
+        return self._snapshot_for_task_id(task_id)
 
     def archive_task(self, task_id):
-        return self.update_task(task_id, status="ARCHIVED")
+        snapshot = self.update_task(task_id, status="ARCHIVED")
+        self._cleanup_completed_temporary_group(task_id)
+        return self._snapshot_for_task_id(task_id)
 
     def delete_task(self, task_id):
+        self._cleanup_completed_temporary_group(task_id)
         session = SessionLocal()
         try:
             task = session.query(SecretaryTask).filter_by(id=task_id).first()
@@ -394,6 +416,223 @@ class SecretaryWorkService:
             session.rollback()
             logger.exception("Failed to delete secretary task")
             raise
+        finally:
+            session.close()
+
+    def archive_obsolete_automatic_tasks(
+        self,
+        *,
+        active_keys,
+        source,
+        prefixes,
+        reason,
+    ):
+        active_keys = set(active_keys or [])
+        prefixes = tuple(prefixes or ())
+        session = SessionLocal()
+        archived = 0
+        try:
+            tasks = (
+                session.query(SecretaryTask)
+                .filter(
+                    SecretaryTask.automation_source == source,
+                    SecretaryTask.status.in_(VISIBLE_TASK_STATUSES),
+                )
+                .all()
+            )
+            for task in tasks:
+                key = task.automation_key or ""
+                if key in active_keys:
+                    continue
+                if prefixes and not key.startswith(prefixes):
+                    continue
+                task.status = "ARCHIVED"
+                task.completed_at = task.completed_at or _now()
+                task.automation_status_reason = reason
+                self._cleanup_temporary_group_in_session(session, task)
+                archived += 1
+            session.commit()
+            return archived
+        except Exception:
+            session.rollback()
+            logger.exception("Failed to archive obsolete automatic tasks")
+            raise
+        finally:
+            session.close()
+
+    def create_or_update_automatic_task(
+        self,
+        *,
+        automation_key,
+        automation_source,
+        title,
+        description="",
+        priority="NORMAL",
+        due_date=None,
+        work_date=None,
+        missionary_id=None,
+        missionary_ids=None,
+        group_id=None,
+        appointment_field=None,
+        waiting_reason=None,
+    ):
+        automation_key = _clean_text(automation_key)
+        if not automation_key:
+            raise SecretaryWorkError("Automation key is required.")
+
+        session = SessionLocal()
+        try:
+            task = (
+                session.query(SecretaryTask)
+                .filter_by(automation_key=automation_key)
+                .first()
+            )
+            existing_task_id = task.id if task is not None else None
+            existing_status = task.status if task is not None else None
+        finally:
+            session.close()
+
+        if existing_task_id is None:
+            group_id = self._ensure_temporary_group_for_automatic_task(
+                automation_key=automation_key,
+                automation_source=automation_source,
+                title=title,
+                missionary_ids=missionary_ids,
+                explicit_group_id=group_id,
+            )
+            snapshot = self.create_task(
+                title,
+                description=description,
+                priority=priority,
+                due_date=due_date,
+                work_date=work_date,
+                missionary_id=missionary_id,
+                missionary_ids=missionary_ids,
+                group_id=group_id,
+                appointment_field=appointment_field,
+                automation_key=automation_key,
+                automation_source=automation_source,
+                waiting_reason=waiting_reason,
+            )
+            snapshot["automation_result"] = "created"
+            return snapshot
+
+        if existing_status in {"DONE", "ARCHIVED"}:
+            snapshot = self._snapshot_for_task_id(existing_task_id)
+            snapshot["automation_result"] = "skipped"
+            return snapshot
+
+        group_id = self._ensure_temporary_group_for_automatic_task(
+            automation_key=automation_key,
+            automation_source=automation_source,
+            title=title,
+            missionary_ids=missionary_ids,
+            explicit_group_id=group_id,
+        )
+
+        snapshot = self.update_task(
+            existing_task_id,
+            title=title,
+            description=description,
+            priority=priority,
+            due_date=due_date,
+            work_date=work_date,
+            missionary_id=missionary_id,
+            missionary_ids=missionary_ids,
+            group_id=group_id,
+            appointment_field=appointment_field,
+            automation_source=automation_source,
+            waiting_reason=waiting_reason,
+        )
+        snapshot["automation_result"] = "updated"
+        return snapshot
+
+    def _ensure_temporary_group_for_automatic_task(
+        self,
+        *,
+        automation_key,
+        automation_source,
+        title,
+        missionary_ids=None,
+        explicit_group_id=None,
+    ):
+        if explicit_group_id:
+            return explicit_group_id
+        linked_ids = _unique_ids(missionary_ids)
+        if len(linked_ids) <= 1:
+            return None
+
+        group_name = f"Temporary - {title}"
+        session = SessionLocal()
+        try:
+            group = (
+                session.query(MissionaryGroup)
+                .filter_by(
+                    automation_key=automation_key,
+                    group_type=TEMPORARY_GROUP_TYPE,
+                )
+                .first()
+            )
+            if group is None:
+                group = MissionaryGroup(
+                    name=group_name,
+                    description=(
+                        "Temporary group created for an automatic process task. "
+                        "It will be removed when the task is completed."
+                    ),
+                    group_type=TEMPORARY_GROUP_TYPE,
+                    automation_key=automation_key,
+                )
+                session.add(group)
+                session.flush()
+            else:
+                group.name = group_name
+                group.description = (
+                    "Temporary group created for an automatic process task. "
+                    "It will be removed when the task is completed."
+                )
+            self._replace_group_members(session, group.id, linked_ids)
+            session.commit()
+            return group.id
+        except Exception:
+            session.rollback()
+            logger.exception("Failed to create temporary automation group")
+            raise
+        finally:
+            session.close()
+
+    def _cleanup_completed_temporary_group(self, task_id):
+        session = SessionLocal()
+        try:
+            task = session.query(SecretaryTask).filter_by(id=task_id).first()
+            if task is None or task.group_id is None:
+                return
+
+            group = (
+                session.query(MissionaryGroup)
+                .filter_by(id=task.group_id)
+                .first()
+            )
+            if group is None or group.group_type != TEMPORARY_GROUP_TYPE:
+                return
+
+            other_visible_tasks = (
+                session.query(SecretaryTask)
+                .filter(
+                    SecretaryTask.id != task.id,
+                    SecretaryTask.group_id == group.id,
+                    SecretaryTask.status.in_(VISIBLE_TASK_STATUSES),
+                )
+                .count()
+            )
+            if other_visible_tasks:
+                return
+
+            self._cleanup_temporary_group_in_session(session, task, group)
+            session.commit()
+        except Exception:
+            session.rollback()
+            logger.exception("Failed to clean up temporary automation group")
         finally:
             session.close()
 
@@ -527,7 +766,7 @@ class SecretaryWorkService:
             return [
                 {
                     "id": group.id,
-                    "name": group.name,
+                    "name": self._group_display_name(group),
                     "missionary_ids": self._group_member_ids(session, group.id),
                     "member_count": len(self._group_member_ids(session, group.id)),
                 }
@@ -598,9 +837,13 @@ class SecretaryWorkService:
             "missionary_count": len(missionary_ids),
             "group_id": task.group_id,
             "group_scope_label": task.group_scope_label or "",
+            "group_type": self._task_group_type(task, session),
             "scope_label": scope_label,
             "is_group_task": len(missionary_ids) > 1,
             "appointment_field": task.appointment_field,
+            "automation_key": task.automation_key,
+            "automation_source": task.automation_source,
+            "automation_status_reason": task.automation_status_reason or "",
             "appointment_label": APPOINTMENT_FIELD_LABELS.get(
                 task.appointment_field,
                 "",
@@ -641,6 +884,20 @@ class SecretaryWorkService:
         )
         return [row[0] for row in rows]
 
+    @staticmethod
+    def _group_display_name(group):
+        name = group.name or ""
+        if group.group_type == TEMPORARY_GROUP_TYPE:
+            return f"{name} [Temporary]"
+        return name
+
+    @staticmethod
+    def _task_group_type(task, session):
+        if not task.group_id:
+            return ""
+        group = session.query(MissionaryGroup).filter_by(id=task.group_id).first()
+        return group.group_type if group else ""
+
     def _replace_task_missionaries(self, session, task_id, missionary_ids):
         session.query(SecretaryTaskMissionary).filter_by(task_id=task_id).delete()
         for missionary_id in _unique_ids(missionary_ids):
@@ -650,6 +907,29 @@ class SecretaryWorkService:
                     missionary_id=missionary_id,
                 )
             )
+
+    def _replace_group_members(self, session, group_id, missionary_ids):
+        session.query(MissionaryGroupMember).filter_by(group_id=group_id).delete()
+        for missionary_id in _unique_ids(missionary_ids):
+            session.add(
+                MissionaryGroupMember(
+                    group_id=group_id,
+                    missionary_id=missionary_id,
+                )
+            )
+
+    def _cleanup_temporary_group_in_session(self, session, task, group=None):
+        if task.group_id is None:
+            return
+        group = group or session.query(MissionaryGroup).filter_by(
+            id=task.group_id
+        ).first()
+        if group is None or group.group_type != TEMPORARY_GROUP_TYPE:
+            return
+        task.group_scope_label = task.group_scope_label or group.name
+        task.group_id = None
+        session.query(MissionaryGroupMember).filter_by(group_id=group.id).delete()
+        session.delete(group)
 
     def _task_missionary_scope(self, task, session):
         rows = (
@@ -683,3 +963,13 @@ class SecretaryWorkService:
             "open": open_count,
             "total": len([task for task in tasks if task.status != "ARCHIVED"]),
         }
+
+    def _snapshot_for_task_id(self, task_id):
+        session = SessionLocal()
+        try:
+            task = session.query(SecretaryTask).filter_by(id=task_id).first()
+            if task is None:
+                raise SecretaryWorkError("Task not found.")
+            return self._task_snapshot(task, session)
+        finally:
+            session.close()

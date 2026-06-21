@@ -294,9 +294,24 @@ class OfficeWorkPage(QWidget):
         self.project_filter_bar.add_filter(add_project_btn)
 
     def load_data(self):
+        self._run_process_automation()
         self._refresh_task_filter_options()
         self.render_tasks()
         self.render_projects()
+
+    def _run_process_automation(self):
+        if not self.main_window:
+            return
+        try:
+            from services.process_automation_service import (
+                ProcessAutomationService,
+            )
+
+            ProcessAutomationService(
+                settings_service=self.main_window.settings_service
+            ).run()
+        except Exception:
+            logger.exception("Process automation failed during office work load")
 
     def _refresh_task_filter_options(self):
         current_project = self._project_filter_id
@@ -592,6 +607,15 @@ class OfficeWorkPage(QWidget):
 
     def _project_filter_changed(self):
         self._project_filter_id = self.task_project_filter.currentData()
+        self.render_tasks()
+
+    def focus_task_context(self, task_id=None, title=""):
+        _ = task_id
+        self._select_tab("tasks")
+        if hasattr(self, "task_status_filter"):
+            self._set_combo_data(self.task_status_filter, None)
+        if hasattr(self, "task_search"):
+            self.task_search.setText(title or "")
         self.render_tasks()
 
     def _add_task(self, project_id=None, missionary_id=None):

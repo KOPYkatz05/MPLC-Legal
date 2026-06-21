@@ -9,10 +9,10 @@ from PySide6.QtWidgets import (
 )
 
 from ui.foundation import (
-    BodyLabel,
+    DialogFooter,
     FLUENT_AVAILABLE,
     MaskDialogBase,
-    SubtitleLabel,
+    PageHeader,
     create_button,
     create_card,
     create_scroll_area,
@@ -37,8 +37,6 @@ class ExpirationAlertDialog(MaskDialogBase):
             self,
             surface_width=760,
             surface_min_height=520,
-            shell_object_name="ExpirationAlertDialog",
-            surface_object_name="ExpirationAlertSurface",
             use_masked_shell=True,
         )
 
@@ -63,34 +61,6 @@ class ExpirationAlertDialog(MaskDialogBase):
         layout.addWidget(self._build_footer())
 
     def _build_header(self):
-        header = create_card(object_name="PageHeader")
-        header.setAttribute(Qt.WA_StyledBackground, True)
-
-        header_layout = QHBoxLayout()
-        header_layout.setContentsMargins(28, 24, 28, 18)
-        header_layout.setSpacing(12)
-        header.setLayout(header_layout)
-
-        icon = QLabel("\u26A0")
-        icon.setObjectName("WarningIcon")
-
-        title_stack = QVBoxLayout()
-        title_stack.setContentsMargins(0, 0, 0, 0)
-        title_stack.setSpacing(4)
-
-        title = SubtitleLabel("Document Expiration Alerts")
-        title.setObjectName("PageTitle")
-
-        subtitle = BodyLabel(
-            "Review the most urgent expirations first. "
-            "Each row shows the deadline, document type, and days remaining."
-        )
-        subtitle.setObjectName("PageSubtitle")
-        subtitle.setWordWrap(True)
-
-        title_stack.addWidget(title)
-        title_stack.addWidget(subtitle)
-
         count_badge = QLabel(
             f"{len(self.alerts)} alert"
             f"{'s' if len(self.alerts) != 1 else ''}"
@@ -98,12 +68,12 @@ class ExpirationAlertDialog(MaskDialogBase):
         count_badge.setObjectName("WarningBadge")
         count_badge.setAlignment(Qt.AlignCenter)
 
-        header_layout.addWidget(icon)
-        header_layout.addLayout(title_stack)
-        header_layout.addStretch()
-        header_layout.addWidget(count_badge)
-
-        return header
+        return PageHeader(
+            "Document Expiration Alerts",
+            "Review the most urgent expirations first. "
+            "Each row shows the deadline, document type, and days remaining.",
+            actions=[count_badge],
+        )
 
     def _build_body(self):
         body = QWidget()
@@ -239,13 +209,7 @@ class ExpirationAlertDialog(MaskDialogBase):
         return empty_card
 
     def _build_footer(self):
-        footer = create_card(object_name="PageHeader")
-        footer.setAttribute(Qt.WA_StyledBackground, True)
-
-        footer_layout = QHBoxLayout()
-        footer_layout.setContentsMargins(28, 12, 28, 16)
-        footer_layout.setSpacing(12)
-        footer.setLayout(footer_layout)
+        footer = DialogFooter()
 
         note = QLabel(
             "These alerts cover visa, residency, and pr\u00F3rroga expirations."
@@ -256,9 +220,8 @@ class ExpirationAlertDialog(MaskDialogBase):
         dismiss_btn = create_button("Dismiss", "primary")
         dismiss_btn.clicked.connect(self.accept)
 
-        footer_layout.addWidget(note)
-        footer_layout.addStretch()
-        footer_layout.addWidget(dismiss_btn)
+        footer.layout().insertWidget(0, note, stretch=1)
+        footer.add_action(dismiss_btn)
 
         return footer
 

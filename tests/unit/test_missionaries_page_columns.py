@@ -41,6 +41,16 @@ def test_column_lookup_ignores_removed_folder_path():
     assert "folder_path" not in COLUMN_BY_KEY
 
 
+def test_temporary_group_filter_label_is_marked():
+    label = MissionariesPage._group_filter_label({
+        "name": "Temporary - Prorroga batch",
+        "member_count": 3,
+        "group_type": "TEMPORARY_AUTOMATION",
+    })
+
+    assert label == "Temporary - Prorroga batch (3)  [Temporary]"
+
+
 def test_date_columns_sort_by_iso_date_values():
     missionary = SimpleNamespace(arrival_date=date(2026, 1, 5))
 

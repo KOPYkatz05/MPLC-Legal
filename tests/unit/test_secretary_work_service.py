@@ -389,6 +389,10 @@ def test_secretary_task_waiting_reason_migration(monkeypatch):
             row[1]
             for row in conn.execute(text("PRAGMA table_info(secretary_tasks)"))
         }
+        group_columns = {
+            row[1]
+            for row in conn.execute(text("PRAGMA table_info(missionary_groups)"))
+        }
         group_tables = {
             row[0]
             for row in conn.execute(
@@ -409,6 +413,11 @@ def test_secretary_task_waiting_reason_migration(monkeypatch):
     assert "group_id" in columns
     assert "group_scope_label" in columns
     assert "work_date" in columns
+    assert "automation_key" in columns
+    assert "automation_source" in columns
+    assert "automation_status_reason" in columns
+    assert "group_type" in group_columns
+    assert "automation_key" in group_columns
     assert "missionary_groups" in group_tables
     assert "missionary_group_members" in group_tables
     assert "secretary_task_missionaries" in group_tables

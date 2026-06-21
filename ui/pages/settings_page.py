@@ -1,6 +1,8 @@
 from PySide6.QtWidgets import (
     QFormLayout,
+    QDateEdit,
     QLineEdit,
+    QTabWidget,
     QTimeEdit,
     QWidget,
     QVBoxLayout,
@@ -18,7 +20,8 @@ from ui.foundation import (
     divider,
     show_message,
 )
-from PySide6.QtCore import QTime
+from PySide6.QtCore import QDate, QTime
+from datetime import date, timedelta
 from services.email_digest_service import EmailDigestService
 from services.scheduler_service import SchedulerService
 from services.settings_service import SettingsService
@@ -52,9 +55,14 @@ class SettingsPage(QWidget):
 
         outer.addWidget(divider())
 
+        self.tabs = QTabWidget()
+        self.tabs.setObjectName("SettingsTabs")
+
+        general_tab = QWidget()
         content = QVBoxLayout()
         content.setContentsMargins(32, 24, 32, 24)
         content.setSpacing(16)
+        general_tab.setLayout(content)
 
         self.lang_label = QLabel(tr("settings_language"))
         content.addWidget(self.lang_label)
@@ -262,7 +270,78 @@ class SettingsPage(QWidget):
         content.addWidget(self.save_btn)
 
         content.addStretch()
-        outer.addLayout(content)
+        self.tabs.addTab(general_tab, "General")
+        self.tabs.addTab(
+            self._build_transfer_tab(),
+            "Transfer Management",
+        )
+        outer.addWidget(self.tabs, stretch=1)
+
+    def _build_transfer_tab(self):
+        tab = QWidget()
+        layout = QVBoxLayout()
+        layout.setContentsMargins(32, 24, 32, 24)
+        layout.setSpacing(16)
+        tab.setLayout(layout)
+
+        title = QLabel("Transfer Management")
+        title.setObjectName("SectionHeader")
+        layout.addWidget(title)
+
+        hint = QLabel(
+            "Transfers run on a six-week Wednesday cycle. Set the next "
+            "transfer Wednesday here so the app can create generic FBI, "
+            "flight-planning, and arrival-week reminders."
+        )
+        hint.setWordWrap(True)
+        hint.setObjectName("MutedText")
+        layout.addWidget(hint)
+
+        self.transfer_enabled_check = create_check_box(
+            "Enable transfer-cycle reminders",
+            "TransferRemindersEnabled",
+        )
+        layout.addWidget(self.transfer_enabled_check)
+
+        form = QFormLayout()
+        form.setSpacing(10)
+        form.setContentsMargins(0, 0, 0, 0)
+
+        self.transfer_date_input = QDateEdit()
+        self.transfer_date_input.setObjectName("NextTransferDateInput")
+        self.transfer_date_input.setCalendarPopup(True)
+        self.transfer_date_input.setDisplayFormat("yyyy-MM-dd")
+        self.transfer_date_input.setFixedHeight(34)
+        form.addRow("Next transfer Wednesday", self.transfer_date_input)
+        layout.addLayout(form)
+
+        self.transfer_warning_label = QLabel("")
+        self.transfer_warning_label.setObjectName("MutedText")
+        self.transfer_warning_label.setWordWrap(True)
+        layout.addWidget(self.transfer_warning_label)
+
+        self.transfer_preview_label = QLabel("")
+        self.transfer_preview_label.setObjectName("MutedText")
+        self.transfer_preview_label.setWordWrap(True)
+        layout.addWidget(self.transfer_preview_label)
+
+        actions = QHBoxLayout()
+        actions.setSpacing(8)
+        self.save_transfer_btn = create_button("Save Transfer Settings", "primary")
+        self.save_transfer_btn.clicked.connect(self._save_transfer_settings)
+        actions.addWidget(self.save_transfer_btn)
+        actions.addStretch()
+        layout.addLayout(actions)
+        layout.addStretch()
+
+        self.transfer_enabled_check.toggled.connect(
+            self._transfer_enabled_changed
+        )
+        self.transfer_date_input.dateChanged.connect(
+            self._refresh_transfer_preview
+        )
+        self._load_transfer_settings()
+        return tab
 
     def _save(self):
         lang = self.lang_combo.currentData()
@@ -271,6 +350,8 @@ class SettingsPage(QWidget):
             self.storage_input.text().strip()
         )
         self._save_daily_digest_settings()
+        if not self._save_transfer_settings(show_saved=False):
+            return
         if self.main_window:
             self.main_window.retranslate_ui()
         show_message(
@@ -320,6 +401,96 @@ class SettingsPage(QWidget):
             self.smtp_password_input.setPlaceholderText(
                 tr("settings_digest_password_saved")
             )
+
+    def _load_transfer_settings(self):
+        saved = self.settings_service.get_next_transfer_wednesday()
+        self.transfer_enabled_check.setChecked(saved is not None)
+        selected = saved or self._next_wednesday(date.today())
+        self.transfer_date_input.setDate(
+            QDate(selected.year, selected.month, selected.day)
+        )
+        self._transfer_enabled_changed(saved is not None)
+        self._refresh_transfer_preview()
+
+    def _save_transfer_settings(self, show_saved=True):
+        if not hasattr(self, "transfer_enabled_check"):
+            return True
+        if not self.transfer_enabled_check.isChecked():
+            self.settings_service.set_next_transfer_wednesday(None)
+            self._refresh_transfer_preview()
+            if show_saved:
+                show_message(
+                    self,
+                    "Transfer Management",
+                    "Transfer-cycle reminders are disabled.",
+                )
+            return True
+
+        selected = self._qdate_to_date(self.transfer_date_input.date())
+        try:
+            self.settings_service.set_next_transfer_wednesday(selected)
+        except ValueError:
+            show_message(
+                self,
+                "Transfer Management",
+                "Please choose a Wednesday for the transfer cycle.",
+                kind="warning",
+            )
+            return False
+        self._refresh_transfer_preview()
+        if show_saved:
+            show_message(
+                self,
+                "Transfer Management",
+                "Transfer settings saved.",
+            )
+        return True
+
+    def _transfer_enabled_changed(self, enabled):
+        self.transfer_date_input.setEnabled(enabled)
+        self._refresh_transfer_preview()
+
+    def _refresh_transfer_preview(self):
+        if not hasattr(self, "transfer_preview_label"):
+            return
+        if not self.transfer_enabled_check.isChecked():
+            self.transfer_warning_label.setText(
+                "Transfer reminders are off. No transfer-cycle tasks will be "
+                "generated until this is enabled and saved."
+            )
+            self.transfer_preview_label.setText("")
+            return
+
+        selected = self._qdate_to_date(self.transfer_date_input.date())
+        if selected.weekday() != 2:
+            self.transfer_warning_label.setText(
+                "The selected date is not a Wednesday. Choose a Wednesday "
+                "before saving."
+            )
+            self.transfer_preview_label.setText("")
+            return
+
+        self.transfer_warning_label.setText(
+            "The app will calculate future transfers every six weeks from "
+            "this Wednesday."
+        )
+        previews = [
+            selected + timedelta(days=42 * offset)
+            for offset in range(6)
+        ]
+        self.transfer_preview_label.setText(
+            "Upcoming transfer Wednesdays:\n"
+            + "\n".join(item.strftime("%b %d, %Y") for item in previews)
+        )
+
+    @staticmethod
+    def _next_wednesday(today):
+        days = (2 - today.weekday()) % 7
+        return today + timedelta(days=days)
+
+    @staticmethod
+    def _qdate_to_date(value):
+        return date(value.year(), value.month(), value.day())
 
     def _send_test_digest(self):
         self._save_daily_digest_settings()

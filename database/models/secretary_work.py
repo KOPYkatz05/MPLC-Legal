@@ -4,6 +4,7 @@ from sqlalchemy import DateTime
 from sqlalchemy import ForeignKey
 from sqlalchemy import Integer
 from sqlalchemy import String
+from sqlalchemy.orm import relationship
 
 from sqlalchemy.sql import func
 
@@ -86,6 +87,14 @@ class MissionaryGroup(Base):
     )
 
     description = Column(
+        String,
+    )
+
+    group_type = Column(
+        String,
+    )
+
+    automation_key = Column(
         String,
     )
 
@@ -190,6 +199,11 @@ class SecretaryTask(Base):
         ForeignKey("missionaries.id"),
     )
 
+    missionary = relationship(
+        "Missionary",
+        foreign_keys=[missionary_id],
+    )
+
     group_id = Column(
         Integer,
         ForeignKey("missionary_groups.id"),
@@ -200,6 +214,18 @@ class SecretaryTask(Base):
     )
 
     appointment_field = Column(
+        String,
+    )
+
+    automation_key = Column(
+        String,
+    )
+
+    automation_source = Column(
+        String,
+    )
+
+    automation_status_reason = Column(
         String,
     )
 
