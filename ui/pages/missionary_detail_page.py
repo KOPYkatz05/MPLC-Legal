@@ -72,7 +72,8 @@ from utils.constants import (
     requires_fbi_document,
     required_documents_for_missionary,
 )
-from utils.i18n import tr, field_label
+from utils.i18n import field_label
+from utils.language_helper import ui_text as tr
 from utils.logger import logger
 from services.workflow_validator import WorkflowValidator
 
@@ -103,19 +104,42 @@ FBI_INTERPOL_PACKET_DOCUMENT_TYPES = [
     "CONSTANCIA_DE_CITA_INTERPOL",
 ]
 
-STAGE_DISPLAY_NAMES = {
-    "INTERPOL": "Interpol",
-    "CARNET DE EXTRANJERIA": "Carnet de Extranjeria",
-    "PRORROGA": "Prorroga",
-    "CANCELACION": "Cancelacion",
+STAGE_TRANSLATION_KEYS = {
+    "INTERPOL": "missionary_detail_stage_interpol",
+    "CARNET DE EXTRANJERIA": "missionary_detail_stage_carnet_de_extranjeria",
+    "PRORROGA": "missionary_detail_stage_prorroga",
+    "CANCELACION": "missionary_detail_stage_cancelacion",
 }
 
-WORKFLOW_STATUS_LABELS = {
-    "NOT STARTED": "Not started",
-    "IN PROGRESS": "In progress",
-    "WAITING": "Ready to advance",
-    "COMPLETED": "Completed",
-    "BLOCKED": "Blocked",
+WORKFLOW_STATUS_TRANSLATION_KEYS = {
+    "NOT STARTED": "missionary_detail_status_not_started",
+    "IN PROGRESS": "missionary_detail_status_in_progress",
+    "WAITING": "missionary_detail_status_waiting",
+    "COMPLETED": "missionary_detail_status_completed",
+    "BLOCKED": "missionary_detail_status_blocked",
+}
+
+DOCUMENT_TRANSLATION_KEYS = {
+    "PHOTO": "missionary_detail_doc_photo",
+    "PASSPORT": "missionary_detail_doc_passport",
+    "FBI": "missionary_detail_doc_fbi",
+    "TAM": "missionary_detail_doc_tam",
+    "PAGO_INTERPOL": "missionary_detail_doc_pago_interpol",
+    "CONSTANCIA_DE_CITA_INTERPOL": "missionary_detail_doc_constancia_de_cita_interpol",
+    "FICHA_DE_CANJE_INTERNACIONAL": "missionary_detail_doc_ficha_de_canje_internacional",
+    "PAGO_CARNE_DE_EXTRANJERIA": "missionary_detail_doc_pago_carne_de_extranjeria",
+    "CONSTANCIA_DE_CITA_BIOMETRICO": "missionary_detail_doc_constancia_de_cita_biometrico",
+    "CONSTANCIA_DE_TRAMITE_CARNE_DE_EXTRANJERIA": "missionary_detail_doc_constancia_de_tramite_carne_de_extranjeria",
+    "CITA_RECOJO": "missionary_detail_doc_cita_recojo",
+    "CARNE_DE_EXTRANJERIA": "missionary_detail_doc_carne_de_extranjeria",
+    "PAGO_PRORROGA": "missionary_detail_doc_pago_prorroga",
+    "CARTA_MINJUS": "missionary_detail_doc_carta_minjus",
+    "DECLARACION_JURADA": "missionary_detail_doc_declaracion_jurada",
+    "CONSTANCIA_DE_PRORROGA": "missionary_detail_doc_constancia_de_prorroga",
+    "APROBACION_DE_PRORROGA": "missionary_detail_doc_aprobacion_de_prorroga",
+    "PAGO_CANCELACION_DE_RESIDENCIA": "missionary_detail_doc_pago_cancelacion_de_residencia",
+    "CONSTANCIA_CANCELACION": "missionary_detail_doc_constancia_cancelacion",
+    "OTHER": "missionary_detail_doc_other",
 }
 
 WORKFLOW_STATUS_TONES = {
@@ -175,11 +199,29 @@ def _set_scroll_step(widget, step=MISSIONARY_DETAIL_SCROLL_STEP):
 
 
 def _stage_display_name(stage):
-    return STAGE_DISPLAY_NAMES.get(stage, stage or "Not assigned")
+    if not stage:
+        return tr("missionary_detail_not_assigned")
+    return tr(STAGE_TRANSLATION_KEYS.get(stage, stage))
 
 
 def _workflow_status_label(status):
-    return WORKFLOW_STATUS_LABELS.get(status, status.title() if status else "Unknown")
+    if not status:
+        return tr("missionary_detail_unknown")
+    return tr(
+        WORKFLOW_STATUS_TRANSLATION_KEYS.get(
+            status,
+            status.title(),
+        )
+    )
+
+
+def _document_label(document_type):
+    if not document_type:
+        return tr("missionary_detail_unknown")
+    key = DOCUMENT_TRANSLATION_KEYS.get(document_type)
+    if key:
+        return tr(key)
+    return DOCUMENTS.get(document_type, {}).get("label", document_type)
 
 
 def _workflow_status_tone(status):
@@ -210,7 +252,7 @@ class ElidedLabel(QLabel):
     def __init__(self, text="", parent=None):
         super().__init__(parent)
         self._full_text = ""
-        self._placeholder = "Not set"
+        self._placeholder = tr("missionary_detail_not_set")
         self.setTextInteractionFlags(Qt.TextSelectableByMouse)
         self.setWordWrap(False)
         self.setSizePolicy(
@@ -288,10 +330,17 @@ class MissionaryDetailPage(QWidget):
         self._credential_source_labels = {}
         self._date_empty_on_load = set()
         self._residency_timeline_labels = {}
+        self._translated_labels = []
 
         self.setup_ui()
 
-    def _build_detail_card(self, title, subtitle=None):
+    def _build_detail_card(
+        self,
+        title,
+        subtitle=None,
+        title_key=None,
+        subtitle_key=None,
+    ):
         card = create_card()
         layout = QVBoxLayout()
         layout.setContentsMargins(20, 16, 20, 16)
@@ -301,12 +350,16 @@ class MissionaryDetailPage(QWidget):
         title_lbl = QLabel(title)
         title_lbl.setObjectName("SectionHeader")
         layout.addWidget(title_lbl)
+        if title_key:
+            self._translated_labels.append((title_lbl, title_key))
 
         if subtitle:
             subtitle_lbl = QLabel(subtitle)
             subtitle_lbl.setObjectName("MutedText")
             subtitle_lbl.setWordWrap(True)
             layout.addWidget(subtitle_lbl)
+            if subtitle_key:
+                self._translated_labels.append((subtitle_lbl, subtitle_key))
 
         return card, layout
 
@@ -338,13 +391,17 @@ class MissionaryDetailPage(QWidget):
 
         return field_widget
 
-    def _build_value_label(self, text="Not set", *, elided=False):
+    def _build_value_label(self, text=None, *, elided=False):
+        text = tr("missionary_detail_not_set") if text is None else text
         label = ElidedLabel(text) if elided else QLabel(text)
         label.setObjectName("ReadOnlyValue")
         label.setTextInteractionFlags(Qt.TextSelectableByMouse)
         if not elided:
             label.setWordWrap(True)
-        label.setProperty("state", "empty" if text == "Not set" else "filled")
+        label.setProperty(
+            "state",
+            "empty" if text == tr("missionary_detail_not_set") else "filled",
+        )
         return label
 
     def _build_source_label(self):
@@ -375,7 +432,7 @@ class MissionaryDetailPage(QWidget):
         shell.setFixedWidth(DATE_EDIT_MAX_WIDTH)
         shell.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
 
-        overlay = QLabel("Not set")
+        overlay = QLabel(tr("missionary_detail_not_set"))
         overlay.setObjectName("DateEmptyOverlay")
         overlay.setAttribute(Qt.WA_TransparentForMouseEvents, True)
         overlay.setVisible(False)
@@ -395,7 +452,7 @@ class MissionaryDetailPage(QWidget):
         if hasattr(picker, "setMinimumDate"):
             picker.setMinimumDate(DATE_PLACEHOLDER)
         if hasattr(picker, "setSpecialValueText"):
-            picker.setSpecialValueText("Not set")
+            picker.setSpecialValueText(tr("missionary_detail_not_set"))
         if hasattr(picker, "setDisplayFormat"):
             picker.setDisplayFormat("MMM d, yyyy")
         if hasattr(picker, "setSizePolicy"):
@@ -412,7 +469,7 @@ class MissionaryDetailPage(QWidget):
             and not hasattr(picker, "calendarPopup")
         ):
             if is_empty:
-                picker.setText("Not set")
+                picker.setText(tr("missionary_detail_not_set"))
             else:
                 qd = picker.getDate()
                 date_format = (
@@ -434,7 +491,7 @@ class MissionaryDetailPage(QWidget):
             return False
 
         if is_empty:
-            buttons[0].setText("Not set")
+            buttons[0].setText(tr("missionary_detail_not_set"))
             buttons[1].setText("")
             buttons[2].setText("")
         else:
@@ -460,9 +517,10 @@ class MissionaryDetailPage(QWidget):
         )
         self._set_date_picker_state(picker, qd == DATE_PLACEHOLDER)
 
-    def _set_value_text(self, widget, text, empty_text="Not set"):
+    def _set_value_text(self, widget, text, empty_text=None):
         if widget is None:
             return
+        empty_text = empty_text or tr("missionary_detail_not_set")
         value = empty_text if text in {None, ""} else str(text)
         if hasattr(widget, "setText"):
             widget.setText(value)
@@ -476,7 +534,7 @@ class MissionaryDetailPage(QWidget):
         widget.setProperty("source_kind", kind)
         if display:
             if display == AUTO_DERIVED_VISA_SOURCE_LABEL:
-                display = "Derived"
+                display = tr("missionary_detail_derived")
             widget.setText(display)
             widget.setVisible(True)
         else:
@@ -507,20 +565,48 @@ class MissionaryDetailPage(QWidget):
 
         birthdate = getattr(missionary, "date_of_birth", None)
         folder_path = getattr(missionary, "folder_path", None)
-        folder_state = "Set" if folder_path else "Not set"
+        folder_state = (
+            tr("missionary_detail_set")
+            if folder_path
+            else tr("missionary_detail_not_set")
+        )
+        empty = tr("missionary_detail_not_set")
 
         summary_values = {
-            "summary_name_chip": f"Name: {getattr(missionary, 'full_name', '—') or '—'}",
-            "summary_stage_chip": f"Stage: {_stage_display_name(getattr(missionary, 'current_stage', None))}",
-            "summary_nationality_chip": f"Nationality: {getattr(missionary, 'nationality', None) or 'Not set'}",
-            "summary_passport_chip": f"Passport: {getattr(missionary, 'passport_number', None) or 'Not set'}",
-            "summary_carnet_chip": f"Carnet: {getattr(missionary, 'carnet_number', None) or 'Not set'}",
-            "summary_birthdate_chip": (
-                f"Birthdate: {birthdate.strftime('%b %d, %Y')}"
-                if birthdate
-                else "Birthdate: Not set"
+            "summary_name_chip": tr(
+                "missionary_detail_name_chip",
+                value=getattr(missionary, "full_name", "—") or "—",
             ),
-            "summary_folder_chip": f"Folder: {folder_state}",
+            "summary_stage_chip": tr(
+                "missionary_detail_stage_chip",
+                value=_stage_display_name(
+                    getattr(missionary, "current_stage", None)
+                ),
+            ),
+            "summary_nationality_chip": tr(
+                "missionary_detail_nationality_chip",
+                value=getattr(missionary, "nationality", None) or empty,
+            ),
+            "summary_passport_chip": tr(
+                "missionary_detail_passport_chip",
+                value=getattr(missionary, "passport_number", None) or empty,
+            ),
+            "summary_carnet_chip": tr(
+                "missionary_detail_carnet_chip",
+                value=getattr(missionary, "carnet_number", None) or empty,
+            ),
+            "summary_birthdate_chip": (
+                tr(
+                    "missionary_detail_birthdate_chip",
+                    value=birthdate.strftime("%b %d, %Y"),
+                )
+                if birthdate
+                else tr("missionary_detail_birthdate_chip", value=empty)
+            ),
+            "summary_folder_chip": tr(
+                "missionary_detail_folder_chip",
+                value=folder_state,
+            ),
         }
 
         for attr, value in summary_values.items():
@@ -582,7 +668,7 @@ class MissionaryDetailPage(QWidget):
         header_layout.addStretch()
 
         self.advance_button = create_button(
-            "→ Advance Stage",
+            tr("missionary_detail_advance_stage"),
             "success",
         )
 
@@ -595,7 +681,7 @@ class MissionaryDetailPage(QWidget):
         )
 
         self.actions_button = create_button(
-            "Actions",
+            tr("missionary_detail_actions"),
             "secondary",
         )
 
@@ -604,7 +690,7 @@ class MissionaryDetailPage(QWidget):
             self.actions_button,
         )
         self.print_interpol_packet_action = QAction(
-            "Print Interpol Packet",
+            tr("missionary_detail_print_interpol_packet"),
             self.actions_menu,
         )
         self.actions_menu.addAction(
@@ -616,7 +702,7 @@ class MissionaryDetailPage(QWidget):
         self.actions_button.setMenu(self.actions_menu)
 
         self.delete_button = create_button(
-            "Delete Missionary",
+            tr("missionary_detail_delete_missionary"),
             "danger",
         )
 
@@ -661,19 +747,18 @@ class MissionaryDetailPage(QWidget):
         banner_icon.setObjectName("SuccessIcon")
 
         self.banner_text = QLabel(
-            "All required documents uploaded — "
-            "ready to advance to the next stage."
+            tr("missionary_detail_advance_ready_generic")
         )
 
         self.banner_text.setObjectName("SuccessBannerText")
 
-        banner_now_btn = create_button(
-            "Advance Now",
+        self.banner_now_btn = create_button(
+            tr("missionary_detail_advance_now"),
             "success",
             fixed_height=30,
         )
 
-        banner_now_btn.clicked.connect(
+        self.banner_now_btn.clicked.connect(
             self._advance_stage
         )
 
@@ -683,7 +768,7 @@ class MissionaryDetailPage(QWidget):
 
         banner_layout.addStretch()
 
-        banner_layout.addWidget(banner_now_btn)
+        banner_layout.addWidget(self.banner_now_btn)
 
         main_layout.addWidget(self.advance_banner)
 
@@ -738,7 +823,11 @@ class MissionaryDetailPage(QWidget):
     def _build_overview_tab(self):
         overview_tab = QWidget()
 
-        self._add_static_tab("overview", "Overview", overview_tab)
+        self._add_static_tab(
+            "overview",
+            tr("missionary_detail_tab_overview"),
+            overview_tab,
+        )
 
         tab_layout = QVBoxLayout()
 
@@ -777,19 +866,20 @@ class MissionaryDetailPage(QWidget):
         )
 
         # ---- Documents section ----
-        content_layout.addWidget(
-            SectionTitle("Documents")
+        self.documents_section_title = SectionTitle(
+            tr("missionary_detail_documents")
         )
+        content_layout.addWidget(self.documents_section_title)
 
-        docs_helper = QLabel(
-            "Start here if you need to add files. Upload one document, or batch upload several files."
+        self.docs_helper = QLabel(
+            tr("missionary_detail_documents_hint")
         )
-        docs_helper.setObjectName("MutedText")
-        docs_helper.setWordWrap(True)
-        content_layout.addWidget(docs_helper)
+        self.docs_helper.setObjectName("MutedText")
+        self.docs_helper.setWordWrap(True)
+        content_layout.addWidget(self.docs_helper)
 
         self.upload_button = create_button(
-            "Upload Document",
+            tr("missionary_detail_upload_document"),
             "primary",
             fixed_height=30,
         )
@@ -841,16 +931,17 @@ class MissionaryDetailPage(QWidget):
         )
 
         # ---- Missing documents section ----
-        content_layout.addWidget(
-            SectionTitle("Missing Documents")
+        self.missing_documents_section_title = SectionTitle(
+            tr("missionary_detail_missing_documents")
         )
+        content_layout.addWidget(self.missing_documents_section_title)
 
-        missing_helper = QLabel(
-            "These are the files still needed to move the missionary forward. The top item is the highest priority."
+        self.missing_helper = QLabel(
+            tr("missionary_detail_missing_documents_hint")
         )
-        missing_helper.setObjectName("MutedText")
-        missing_helper.setWordWrap(True)
-        content_layout.addWidget(missing_helper)
+        self.missing_helper.setObjectName("MutedText")
+        self.missing_helper.setWordWrap(True)
+        content_layout.addWidget(self.missing_helper)
 
         self.missing_documents_list = create_list_widget()
         self.missing_documents_list.setSpacing(8)
@@ -886,15 +977,19 @@ class MissionaryDetailPage(QWidget):
         title_stack.setContentsMargins(0, 0, 0, 0)
         title_stack.setSpacing(3)
 
-        title = QLabel("Overview at a glance")
-        title.setObjectName("PanelTitle")
+        self.summary_title_label = QLabel(
+            tr("missionary_detail_overview_title")
+        )
+        self.summary_title_label.setObjectName("PanelTitle")
 
-        title_stack.addWidget(title)
+        title_stack.addWidget(self.summary_title_label)
 
         header_row.addLayout(title_stack)
         header_row.addStretch()
 
-        self.summary_stage_chip = QLabel("No missionary loaded")
+        self.summary_stage_chip = QLabel(
+            tr("missionary_detail_no_missionary_loaded")
+        )
         self.summary_stage_chip.setObjectName("StageBadge")
         header_row.addWidget(self.summary_stage_chip)
 
@@ -907,26 +1002,26 @@ class MissionaryDetailPage(QWidget):
 
         self.summary_current_stage_card = StatCard(
             "—",
-            "Current stage",
-            subtitle="Where this missionary is right now",
+            tr("missionary_detail_current_stage"),
+            subtitle=tr("missionary_detail_current_stage_subtitle"),
             color="#2563EB",
         )
         self.summary_complete_card = StatCard(
             "0",
-            "Required docs complete",
-            subtitle="For the current stage",
+            tr("missionary_detail_required_docs_complete"),
+            subtitle=tr("missionary_detail_current_stage_docs_subtitle"),
             color="#059669",
         )
         self.summary_missing_card = StatCard(
             "0",
-            "Required docs missing",
-            subtitle="Needs attention before advancing",
+            tr("missionary_detail_required_docs_missing"),
+            subtitle=tr("missionary_detail_required_docs_missing_subtitle"),
             color="#DC2626",
         )
         self.summary_upload_card = StatCard(
             "—",
-            "Last upload",
-            subtitle="Most recent file added",
+            tr("missionary_detail_last_upload"),
+            subtitle=tr("missionary_detail_last_upload_subtitle"),
             color="#7C3AED",
         )
 
@@ -943,11 +1038,13 @@ class MissionaryDetailPage(QWidget):
         action_layout.setSpacing(8)
         action_card.setLayout(action_layout)
 
-        action_title = QLabel("Recommended next step")
-        action_title.setObjectName("SectionHeader")
+        self.summary_action_title = QLabel(
+            tr("missionary_detail_recommended_next_step")
+        )
+        self.summary_action_title.setObjectName("SectionHeader")
 
         self.summary_next_action_label = QLabel(
-            "Select a missionary to see the next step."
+            tr("missionary_detail_select_missionary_next_step")
         )
         self.summary_next_action_label.setWordWrap(True)
 
@@ -956,12 +1053,12 @@ class MissionaryDetailPage(QWidget):
         self.summary_activity_label.setWordWrap(True)
 
         self.summary_tip_label = QLabel(
-            "Tip: start with the missing documents in the current stage. If you are unsure, upload one file at a time and review the status after each upload."
+            tr("missionary_detail_overview_default_tip")
         )
         self.summary_tip_label.setObjectName("MutedText")
         self.summary_tip_label.setWordWrap(True)
 
-        action_layout.addWidget(action_title)
+        action_layout.addWidget(self.summary_action_title)
         action_layout.addWidget(self.summary_next_action_label)
         action_layout.addWidget(self.summary_activity_label)
         action_layout.addWidget(self.summary_tip_label)
@@ -978,14 +1075,17 @@ class MissionaryDetailPage(QWidget):
         layout.setSpacing(12)
         card.setLayout(layout)
 
-        layout.addWidget(SectionTitle("Workflow stages"))
-
-        helper = QLabel(
-            "The current stage is highlighted. Use the update button if a stage status needs to change."
+        self.workflow_section_title = SectionTitle(
+            tr("missionary_detail_workflow_stages")
         )
-        helper.setObjectName("MutedText")
-        helper.setWordWrap(True)
-        layout.addWidget(helper)
+        layout.addWidget(self.workflow_section_title)
+
+        self.workflow_helper = QLabel(
+            tr("missionary_detail_workflow_hint")
+        )
+        self.workflow_helper.setObjectName("MutedText")
+        self.workflow_helper.setWordWrap(True)
+        layout.addWidget(self.workflow_helper)
 
         self.workflow_list = create_list_widget()
         self.workflow_list.setContextMenuPolicy(Qt.CustomContextMenu)
@@ -1178,7 +1278,11 @@ class MissionaryDetailPage(QWidget):
     def _build_details_tab_dashboard(self):
         details_outer = QWidget()
 
-        self._add_static_tab("details", "Details", details_outer)
+        self._add_static_tab(
+            "details",
+            tr("missionary_detail_tab_details"),
+            details_outer,
+        )
 
         outer_layout = QVBoxLayout()
         outer_layout.setContentsMargins(0, 0, 0, 0)
@@ -1196,8 +1300,10 @@ class MissionaryDetailPage(QWidget):
         details_content.setLayout(content_layout)
 
         summary_card, summary_layout = self._build_detail_card(
-            "At a glance",
-            "Quick scan of the most important facts.",
+            tr("missionary_detail_at_a_glance"),
+            tr("missionary_detail_at_a_glance_subtitle"),
+            title_key="missionary_detail_at_a_glance",
+            subtitle_key="missionary_detail_at_a_glance_subtitle",
         )
         summary_layout.setSpacing(8)
         self.summary_chip_grid = QGridLayout()
@@ -1206,13 +1312,30 @@ class MissionaryDetailPage(QWidget):
         self.summary_chip_grid.setVerticalSpacing(8)
         summary_layout.addLayout(self.summary_chip_grid)
 
-        self.summary_name_chip = self._build_badge_chip("Name: —")
-        self.summary_stage_chip = self._build_badge_chip("Stage: —")
-        self.summary_nationality_chip = self._build_badge_chip("Nationality: —")
-        self.summary_passport_chip = self._build_badge_chip("Passport: —")
-        self.summary_carnet_chip = self._build_badge_chip("Carnet: —")
-        self.summary_birthdate_chip = self._build_badge_chip("Birthdate: —")
-        self.summary_folder_chip = self._build_badge_chip("Folder: Not set")
+        self.summary_name_chip = self._build_badge_chip(
+            tr("missionary_detail_name_chip", value="—")
+        )
+        self.summary_stage_chip = self._build_badge_chip(
+            tr("missionary_detail_stage_chip", value="—")
+        )
+        self.summary_nationality_chip = self._build_badge_chip(
+            tr("missionary_detail_nationality_chip", value="—")
+        )
+        self.summary_passport_chip = self._build_badge_chip(
+            tr("missionary_detail_passport_chip", value="—")
+        )
+        self.summary_carnet_chip = self._build_badge_chip(
+            tr("missionary_detail_carnet_chip", value="—")
+        )
+        self.summary_birthdate_chip = self._build_badge_chip(
+            tr("missionary_detail_birthdate_chip", value="—")
+        )
+        self.summary_folder_chip = self._build_badge_chip(
+            tr(
+                "missionary_detail_folder_chip",
+                value=tr("missionary_detail_not_set"),
+            )
+        )
 
         summary_chips = [
             self.summary_name_chip,
@@ -1236,7 +1359,7 @@ class MissionaryDetailPage(QWidget):
 
         self.nationality_label = self._build_value_label()
         self.passport_label = self._build_value_label()
-        self.carnet_number_input = create_line_edit("Carnet Number")
+        self.carnet_number_input = create_line_edit(field_label("carnet_number"))
         self._text_edits["carnet_number"] = self.carnet_number_input
         self.tramite_usuario_label = self._build_value_label()
         self.tramite_contrasena_label = self._build_value_label()
@@ -1252,8 +1375,10 @@ class MissionaryDetailPage(QWidget):
         self._date_source_labels["date_of_birth"] = birthdate_source_lbl
 
         identity_card, identity_layout = self._build_detail_card(
-            "Identity",
-            "Read-only identity values and the folder link.",
+            tr("missionary_detail_identity"),
+            tr("missionary_detail_identity_subtitle"),
+            title_key="missionary_detail_identity",
+            subtitle_key="missionary_detail_identity_subtitle",
         )
         identity_grid = QGridLayout()
         identity_grid.setContentsMargins(0, 0, 0, 0)
@@ -1262,13 +1387,16 @@ class MissionaryDetailPage(QWidget):
         identity_layout.addLayout(identity_grid)
 
         identity_grid.addWidget(
-            self._build_field_block("Nationality", self.nationality_label),
+            self._build_field_block(
+                field_label("nationality"),
+                self.nationality_label,
+            ),
             0,
             0,
         )
         identity_grid.addWidget(
             self._build_field_block(
-                "Passport Number",
+                field_label("passport_number"),
                 self.passport_label,
             ),
             0,
@@ -1276,7 +1404,7 @@ class MissionaryDetailPage(QWidget):
         )
         identity_grid.addWidget(
             self._build_field_block(
-                "Carnet Number",
+                field_label("carnet_number"),
                 self.carnet_number_input,
             ),
             1,
@@ -1305,7 +1433,7 @@ class MissionaryDetailPage(QWidget):
         folder_action_layout.setSpacing(8)
         folder_action_row.setLayout(folder_action_layout)
         self.folder_open_btn = create_button(
-            "Open Folder",
+            tr("missionary_detail_open_folder"),
             "subtle",
             fixed_height=28,
         )
@@ -1316,14 +1444,19 @@ class MissionaryDetailPage(QWidget):
         folder_layout.addWidget(folder_action_row)
 
         identity_grid.addWidget(
-            self._build_field_block("Folder Path", folder_widget),
+            self._build_field_block(
+                tr("missionary_detail_folder_path"),
+                folder_widget,
+            ),
             2,
             1,
         )
 
         credentials_card, credentials_layout = self._build_detail_card(
-            "Credentials",
-            "Usually manual; document uploads can still populate these fields.",
+            tr("missionary_detail_credentials"),
+            tr("missionary_detail_credentials_subtitle"),
+            title_key="missionary_detail_credentials",
+            subtitle_key="missionary_detail_credentials_subtitle",
         )
         credentials_grid = QGridLayout()
         credentials_grid.setContentsMargins(0, 0, 0, 0)
@@ -1333,10 +1466,10 @@ class MissionaryDetailPage(QWidget):
 
         for col, (field_key, label_text, value_label) in enumerate(
             [
-                ("tramite_usuario", "Tramite Usuario", self.tramite_usuario_label),
+                ("tramite_usuario", field_label("tramite_usuario"), self.tramite_usuario_label),
                 (
                     "tramite_contrasena",
-                    "Tramite Contrasena",
+                    field_label("tramite_contrasena"),
                     self.tramite_contrasena_label,
                 ),
             ]
@@ -1354,8 +1487,10 @@ class MissionaryDetailPage(QWidget):
             )
 
         timeline_card, timeline_layout = self._build_detail_card(
-            "Legal timeline",
-            "Editable dates with a compact source badge when populated from a document.",
+            tr("missionary_detail_legal_timeline"),
+            tr("missionary_detail_legal_timeline_subtitle"),
+            title_key="missionary_detail_legal_timeline",
+            subtitle_key="missionary_detail_legal_timeline_subtitle",
         )
         timeline_grid = QGridLayout()
         timeline_grid.setContentsMargins(0, 0, 0, 0)
@@ -1435,23 +1570,24 @@ class MissionaryDetailPage(QWidget):
         layout.setSpacing(10)
         card.setLayout(layout)
 
-        title = QLabel("Residency timeline")
-        title.setObjectName("SectionHeader")
-        layout.addWidget(title)
-
-        hint = QLabel(
-            "Current residency expiration is derived from the original "
-            "arrival date and approved prorrogas."
+        self.residency_timeline_title = QLabel(
+            tr("missionary_detail_residency_timeline")
         )
-        hint.setObjectName("MutedText")
-        hint.setWordWrap(True)
-        layout.addWidget(hint)
+        self.residency_timeline_title.setObjectName("SectionHeader")
+        layout.addWidget(self.residency_timeline_title)
+
+        self.residency_timeline_hint = QLabel(
+            tr("missionary_detail_residency_timeline_hint")
+        )
+        self.residency_timeline_hint.setObjectName("MutedText")
+        self.residency_timeline_hint.setWordWrap(True)
+        layout.addWidget(self.residency_timeline_hint)
 
         self._residency_timeline_labels = {}
-        for key, label_text in [
-            ("initial", "Initial residency"),
-            ("prorroga_1", "Prorroga 1"),
-            ("prorroga_2", "Prorroga 2"),
+        for key, label_key in [
+            ("initial", "missionary_detail_initial_residency"),
+            ("prorroga_1", "missionary_detail_prorroga_1"),
+            ("prorroga_2", "missionary_detail_prorroga_2"),
         ]:
             row = QWidget()
             row_layout = QHBoxLayout()
@@ -1459,7 +1595,7 @@ class MissionaryDetailPage(QWidget):
             row_layout.setSpacing(8)
             row.setLayout(row_layout)
 
-            label = QLabel(label_text)
+            label = QLabel(tr(label_key))
             label.setObjectName("MiniMutedText")
             value_wrap = QWidget()
             value_layout = QVBoxLayout()
@@ -1467,11 +1603,11 @@ class MissionaryDetailPage(QWidget):
             value_layout.setSpacing(2)
             value_wrap.setLayout(value_layout)
 
-            status = create_info_badge("Pending")
+            status = create_info_badge(tr("missionary_detail_pending"))
             status.setObjectName("SummaryBadge")
             status.setProperty("tone", "subtle")
 
-            target = QLabel("Target: Not set")
+            target = QLabel(tr("missionary_detail_target_not_set"))
             target.setObjectName("ReadOnlyValue")
             target.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
             target.setWordWrap(True)
@@ -1483,6 +1619,8 @@ class MissionaryDetailPage(QWidget):
             value_layout.addWidget(target, alignment=Qt.AlignRight)
             layout.addWidget(row)
             self._residency_timeline_labels[key] = {
+                "label": label,
+                "label_key": label_key,
                 "status": status,
                 "target": target,
             }
@@ -1500,24 +1638,26 @@ class MissionaryDetailPage(QWidget):
         header.setContentsMargins(0, 0, 0, 0)
         header.setSpacing(8)
 
-        title = QLabel("Open Tasks")
-        title.setObjectName("PanelTitle")
-        header.addWidget(title)
+        self.open_tasks_title = QLabel(tr("missionary_detail_open_tasks"))
+        self.open_tasks_title.setObjectName("PanelTitle")
+        header.addWidget(self.open_tasks_title)
         header.addStretch()
 
         add_btn = create_button(
-            "Add Task",
+            tr("missionary_detail_add_task"),
             "primary",
             fixed_height=30,
         )
+        self.add_task_btn = add_btn
         add_btn.clicked.connect(self._add_missionary_task)
         header.addWidget(add_btn)
 
         office_btn = create_button(
-            "Open Office Work",
+            tr("missionary_detail_open_office_work"),
             "secondary",
             fixed_height=30,
         )
+        self.office_work_btn = office_btn
         office_btn.clicked.connect(self._open_office_work)
         header.addWidget(office_btn)
 
@@ -1535,7 +1675,11 @@ class MissionaryDetailPage(QWidget):
     def _build_notes_tab(self):
         notes_tab = QWidget()
 
-        self._add_static_tab("notes", "Notes", notes_tab)
+        self._add_static_tab(
+            "notes",
+            tr("missionary_detail_tab_notes"),
+            notes_tab,
+        )
 
         notes_layout = QVBoxLayout()
 
@@ -1549,22 +1693,20 @@ class MissionaryDetailPage(QWidget):
 
         notes_tab.setObjectName("PageSurface")
 
-        hint = QLabel(
-            "Use this space to record status "
-            "updates, reminders, or any notes "
-            "about this missionary's legal process."
+        self.notes_hint = QLabel(
+            tr("missionary_detail_notes_hint")
         )
 
-        hint.setObjectName("MutedText")
+        self.notes_hint.setObjectName("MutedText")
 
-        hint.setWordWrap(True)
+        self.notes_hint.setWordWrap(True)
 
-        notes_layout.addWidget(hint)
+        notes_layout.addWidget(self.notes_hint)
 
         self.notes_text = create_text_edit()
 
         self.notes_text.setPlaceholderText(
-            "Enter notes here..."
+            tr("missionary_detail_notes_placeholder")
         )
 
         self.notes_text.setObjectName("NotesEditor")
@@ -1573,16 +1715,19 @@ class MissionaryDetailPage(QWidget):
             self.notes_text, stretch=1
         )
 
-        save_notes_btn = create_button("Save Notes", "primary")
+        self.save_notes_btn = create_button(
+            tr("missionary_detail_save_notes"),
+            "primary",
+        )
 
-        save_notes_btn.setFixedWidth(140)
+        self.save_notes_btn.setFixedWidth(140)
 
-        save_notes_btn.clicked.connect(
+        self.save_notes_btn.clicked.connect(
             self._save_notes
         )
 
         notes_layout.addWidget(
-            save_notes_btn,
+            self.save_notes_btn,
             alignment=Qt.AlignRight,
         )
 
@@ -1621,17 +1766,16 @@ class MissionaryDetailPage(QWidget):
                 next_stage = None
 
             if next_stage:
-                msg = (
-                    f"All required documents for "
-                    f"{stage} are uploaded — "
-                    f"ready to advance to "
-                    f"{next_stage}."
+                msg = tr(
+                    "missionary_detail_advance_ready_next",
+                    stage=_stage_display_name(stage),
+                    next_stage=_stage_display_name(next_stage),
                 )
 
             else:
-                msg = (
-                    f"All required documents for "
-                    f"{stage} are uploaded."
+                msg = tr(
+                    "missionary_detail_advance_ready_stage",
+                    stage=_stage_display_name(stage),
                 )
 
             self.banner_text.setText(msg)
@@ -1769,8 +1913,8 @@ class MissionaryDetailPage(QWidget):
         if not folder_path:
             show_message(
                 self,
-                "Open Folder",
-                "This missionary does not have a folder path yet.",
+                tr("missionary_detail_open_folder"),
+                tr("missionary_detail_open_folder_missing"),
                 kind="warning",
             )
             return
@@ -1779,8 +1923,11 @@ class MissionaryDetailPage(QWidget):
         if not path.exists():
             show_message(
                 self,
-                "Open Folder",
-                f"Folder not found:\n{folder_path}",
+                tr("missionary_detail_open_folder"),
+                tr(
+                    "missionary_detail_folder_not_found",
+                    folder_path=folder_path,
+                ),
                 kind="warning",
             )
             return
@@ -1791,8 +1938,8 @@ class MissionaryDetailPage(QWidget):
             logger.exception("Failed to open folder path")
             show_message(
                 self,
-                "Open Folder",
-                "Could not open the folder path.",
+                tr("missionary_detail_open_folder"),
+                tr("missionary_detail_open_folder_failed"),
                 kind="critical",
             )
 
@@ -1960,8 +2107,135 @@ class MissionaryDetailPage(QWidget):
             )
 
     def retranslate_ui(self):
+        self._set_pivot_text("overview", tr("missionary_detail_tab_overview"))
+        self._set_pivot_text("details", tr("missionary_detail_tab_details"))
+        self._set_pivot_text("notes", tr("missionary_detail_tab_notes"))
+        self._set_pivot_text("timeline", tr("missionary_detail_tab_timeline"))
+
+        if hasattr(self, "advance_button"):
+            self.advance_button.setText(tr("missionary_detail_advance_stage"))
+        if hasattr(self, "actions_button"):
+            self.actions_button.setText(tr("missionary_detail_actions"))
+        if hasattr(self, "print_interpol_packet_action"):
+            self.print_interpol_packet_action.setText(
+                tr("missionary_detail_print_interpol_packet")
+            )
+        if hasattr(self, "delete_button"):
+            self.delete_button.setText(tr("missionary_detail_delete_missionary"))
+        if hasattr(self, "banner_now_btn"):
+            self.banner_now_btn.setText(tr("missionary_detail_advance_now"))
+        if hasattr(self, "docs_helper"):
+            self.docs_helper.setText(tr("missionary_detail_documents_hint"))
+        if hasattr(self, "upload_button"):
+            self.upload_button.setText(tr("missionary_detail_upload_document"))
+        if hasattr(self, "missing_helper"):
+            self.missing_helper.setText(
+                tr("missionary_detail_missing_documents_hint")
+            )
+        self._set_section_title(
+            getattr(self, "documents_section_title", None),
+            tr("missionary_detail_documents"),
+        )
+        self._set_section_title(
+            getattr(self, "missing_documents_section_title", None),
+            tr("missionary_detail_missing_documents"),
+        )
+        self._set_section_title(
+            getattr(self, "workflow_section_title", None),
+            tr("missionary_detail_workflow_stages"),
+        )
+        if hasattr(self, "summary_title_label"):
+            self.summary_title_label.setText(
+                tr("missionary_detail_overview_title")
+            )
+        for label, key in getattr(self, "_translated_labels", []):
+            label.setText(tr(key))
+        if hasattr(self, "summary_current_stage_card"):
+            self.summary_current_stage_card.setTitle(
+                tr("missionary_detail_current_stage")
+            )
+            self.summary_current_stage_card.setSubtitle(
+                tr("missionary_detail_current_stage_subtitle")
+            )
+        if hasattr(self, "summary_complete_card"):
+            self.summary_complete_card.setTitle(
+                tr("missionary_detail_required_docs_complete")
+            )
+            self.summary_complete_card.setSubtitle(
+                tr("missionary_detail_current_stage_docs_subtitle")
+            )
+        if hasattr(self, "summary_missing_card"):
+            self.summary_missing_card.setTitle(
+                tr("missionary_detail_required_docs_missing")
+            )
+            self.summary_missing_card.setSubtitle(
+                tr("missionary_detail_required_docs_missing_subtitle")
+            )
+        if hasattr(self, "summary_upload_card"):
+            self.summary_upload_card.setTitle(tr("missionary_detail_last_upload"))
+            self.summary_upload_card.setSubtitle(
+                tr("missionary_detail_last_upload_subtitle")
+            )
+        if hasattr(self, "summary_action_title"):
+            self.summary_action_title.setText(
+                tr("missionary_detail_recommended_next_step")
+            )
+        if hasattr(self, "workflow_helper"):
+            self.workflow_helper.setText(tr("missionary_detail_workflow_hint"))
+        if hasattr(self, "folder_open_btn"):
+            self.folder_open_btn.setText(tr("missionary_detail_open_folder"))
+        if hasattr(self, "residency_timeline_title"):
+            self.residency_timeline_title.setText(
+                tr("missionary_detail_residency_timeline")
+            )
+        if hasattr(self, "residency_timeline_hint"):
+            self.residency_timeline_hint.setText(
+                tr("missionary_detail_residency_timeline_hint")
+            )
+        for widgets in getattr(self, "_residency_timeline_labels", {}).values():
+            label = widgets.get("label")
+            label_key = widgets.get("label_key")
+            if label is not None and label_key:
+                label.setText(tr(label_key))
+        if hasattr(self, "open_tasks_title"):
+            self.open_tasks_title.setText(tr("missionary_detail_open_tasks"))
+        if hasattr(self, "add_task_btn"):
+            self.add_task_btn.setText(tr("missionary_detail_add_task"))
+        if hasattr(self, "office_work_btn"):
+            self.office_work_btn.setText(
+                tr("missionary_detail_open_office_work")
+            )
+        if hasattr(self, "notes_hint"):
+            self.notes_hint.setText(tr("missionary_detail_notes_hint"))
+        if hasattr(self, "notes_text"):
+            self.notes_text.setPlaceholderText(
+                tr("missionary_detail_notes_placeholder")
+            )
+        if hasattr(self, "save_notes_btn"):
+            self.save_notes_btn.setText(tr("missionary_detail_save_notes"))
         if hasattr(self, "save_dates_btn"):
             self.save_dates_btn.setText(tr("save_dates"))
+        if hasattr(self, "current_missionary"):
+            self.load_missionary(self.current_missionary)
+
+    def _set_pivot_text(self, route_key, text):
+        if self.tabs is None:
+            return
+        for method_name in ("setItemText", "setText"):
+            method = getattr(self.tabs, method_name, None)
+            if callable(method):
+                try:
+                    method(route_key, text)
+                    return
+                except TypeError:
+                    continue
+
+    def _set_section_title(self, section, text):
+        if section is None:
+            return
+        labels = section.findChildren(QLabel)
+        if labels:
+            labels[0].setText(text)
 
     def _show_doc_context_menu(self, pos):
         item = self.documents_list.itemAt(pos)
@@ -1976,10 +2250,10 @@ class MissionaryDetailPage(QWidget):
 
         menu = create_menu("", self)
 
-        view_action = menu.addAction("View Document")
+        view_action = menu.addAction(tr("missionary_detail_view_document"))
 
         notes_action = menu.addAction(
-            "View / Edit Notes"
+            tr("missionary_detail_view_edit_notes")
         )
 
         ocr_action = menu.addAction(
@@ -1990,7 +2264,7 @@ class MissionaryDetailPage(QWidget):
             tr("delete_document")
         )
 
-        open_action = menu.addAction("Open Externally")
+        open_action = menu.addAction(tr("missionary_detail_open_externally"))
 
         action = menu.exec(
             self.documents_list.mapToGlobal(pos)
@@ -2014,7 +2288,7 @@ class MissionaryDetailPage(QWidget):
     def _show_actions_menu(self, checked=False):
         menu = create_menu("", self)
         print_interpol_action = menu.addAction(
-            "Print Interpol Packet"
+            tr("missionary_detail_print_interpol_packet")
         )
 
         action = menu.exec(
@@ -2038,11 +2312,10 @@ class MissionaryDetailPage(QWidget):
             )
             response = show_message(
                 self,
-                "Missing Packet Documents",
-                (
-                    "Some Interpol packet documents are missing:\n\n"
-                    f"{missing_text}\n\n"
-                    "Do you want to continue and print the available documents?"
+                tr("missionary_detail_missing_packet_title"),
+                tr(
+                    "missionary_detail_missing_packet_message",
+                    missing=missing_text,
                 ),
                 kind="warning",
                 buttons="yes_no",
@@ -2054,8 +2327,8 @@ class MissionaryDetailPage(QWidget):
         if not packet_docs:
             show_message(
                 self,
-                "No Documents to Print",
-                "No Interpol packet documents are available to print.",
+                tr("missionary_detail_no_documents_to_print_title"),
+                tr("missionary_detail_no_documents_to_print"),
                 kind="warning",
             )
             return
@@ -2070,8 +2343,8 @@ class MissionaryDetailPage(QWidget):
             logger.exception("Failed to print Interpol packet")
             show_message(
                 self,
-                "Print Failed",
-                "The Interpol packet could not be prepared for printing.",
+                tr("missionary_detail_print_failed_title"),
+                tr("missionary_detail_print_failed"),
                 kind="critical",
             )
 
@@ -2098,10 +2371,7 @@ class MissionaryDetailPage(QWidget):
         missing_labels = []
 
         for doc_type in packet_document_types:
-            label = DOCUMENTS.get(doc_type, {}).get(
-                "label",
-                doc_type,
-            )
+            label = _document_label(doc_type)
             doc = docs_by_type.get(doc_type)
             file_path = Path(getattr(doc, "file_path", "")) if doc else None
 
@@ -2238,12 +2508,8 @@ class MissionaryDetailPage(QWidget):
         if acrobat_path is None:
             show_message(
                 self,
-                "Adobe Acrobat Not Found",
-                (
-                    "Adobe Acrobat could not be found on this computer. "
-                    "Install Acrobat or set the correct Acrobat path before "
-                    "printing the Interpol packet."
-                ),
+                tr("missionary_detail_acrobat_not_found_title"),
+                tr("missionary_detail_acrobat_not_found"),
                 kind="warning",
             )
             return
@@ -2364,8 +2630,11 @@ class MissionaryDetailPage(QWidget):
             if not Path(file_path).exists():
                 show_message(
                     self,
-                    "File Not Found",
-                    f"Cannot open file:\n{file_path}",
+                    tr("missionary_detail_file_not_found_title"),
+                    tr(
+                        "missionary_detail_cannot_open_file",
+                        file_path=file_path,
+                    ),
                     kind="warning",
                 )
 
@@ -2390,8 +2659,8 @@ class MissionaryDetailPage(QWidget):
             ).exists():
                 show_message(
                     self,
-                    "File Not Found",
-                    "Cannot open document file.",
+                    tr("missionary_detail_file_not_found_title"),
+                    tr("missionary_detail_cannot_open_document"),
                     kind="warning",
                 )
 
@@ -2464,7 +2733,9 @@ class MissionaryDetailPage(QWidget):
 
         self.name_label.setText(missionary.full_name)
         stage = missionary.current_stage or "-"
-        self.stage_badge.setText(f"  {stage}  ")
+        self.stage_badge.setText(
+            f"  {_stage_display_name(stage) if stage != '-' else stage}  "
+        )
         self._update_summary_strip(missionary)
 
         self._set_value_text(
@@ -2591,14 +2862,26 @@ class MissionaryDetailPage(QWidget):
             )
             status = row.get("status") or "PENDING"
             if status == "APPROVED":
-                status_text = "Approved"
-                target_text = f"Expires: {target}"
+                status_text = tr("missionary_detail_approved")
+                target_text = tr(
+                    "missionary_detail_expires",
+                    target=target,
+                )
                 document_id = row.get("document_id")
                 if document_id:
-                    target_text += f" - Document #{document_id}"
+                    target_text += (
+                        " - "
+                        + tr(
+                            "missionary_detail_document_number",
+                            document_id=document_id,
+                        )
+                    )
             else:
-                status_text = "Pending"
-                target_text = f"Target: {target}"
+                status_text = tr("missionary_detail_pending")
+                target_text = tr(
+                    "missionary_detail_target",
+                    target=target,
+                )
 
             widgets["status"].setText(status_text)
             widgets["target"].setText(target_text)
@@ -2641,7 +2924,7 @@ class MissionaryDetailPage(QWidget):
 
         if self.workflow_list.count() == 0:
             empty = QListWidgetItem(
-                "No workflow stages available."
+                tr("missionary_detail_no_workflow_stages")
             )
             empty.setFlags(
                 empty.flags() & ~Qt.ItemIsSelectable
@@ -2684,8 +2967,8 @@ class MissionaryDetailPage(QWidget):
         if not documents:
             empty = QListWidgetItem()
             widget = self._build_empty_state_card(
-                "No documents uploaded yet.",
-                "Use Upload Document to add the first file, or Batch Upload if you already have several files ready.",
+                tr("missionary_detail_no_documents"),
+                tr("missionary_detail_no_documents_hint"),
             )
             empty.setSizeHint(widget.sizeHint())
             empty.setFlags(empty.flags() & ~Qt.ItemIsSelectable)
@@ -2694,10 +2977,7 @@ class MissionaryDetailPage(QWidget):
             return
 
         for doc in documents:
-            doc_config = DOCUMENTS.get(doc.document_type, {})
-            label = doc_config.get(
-                "label", doc.document_type
-            )
+            label = _document_label(doc.document_type)
 
             item = QListWidgetItem()
             item.setData(Qt.UserRole, doc.id)
@@ -2745,8 +3025,8 @@ class MissionaryDetailPage(QWidget):
         if not tasks:
             empty = QListWidgetItem()
             widget = self._build_empty_state_card(
-                "No open tasks for this missionary.",
-                "Use Add Task when there is office work to track.",
+                tr("missionary_detail_no_open_tasks"),
+                tr("missionary_detail_no_open_tasks_hint"),
             )
             empty.setSizeHint(widget.sizeHint())
             empty.setFlags(empty.flags() & ~Qt.ItemIsSelectable)
@@ -2781,14 +3061,16 @@ class MissionaryDetailPage(QWidget):
         copy.setContentsMargins(0, 0, 0, 0)
         copy.setSpacing(4)
 
-        title = QLabel(task.get("title", "Untitled task"))
+        title = QLabel(
+            task.get("title", tr("missionary_detail_untitled_task"))
+        )
         title.setObjectName("StrongText")
         copy.addWidget(title)
 
         status_label = (
-            "Waiting"
+            tr("missionary_detail_task_waiting")
             if task.get("status") == "WAITING"
-            else "To Do"
+            else tr("missionary_detail_task_to_do")
         )
         meta_parts = [
             task.get("priority", "NORMAL").title(),
@@ -2797,11 +3079,14 @@ class MissionaryDetailPage(QWidget):
         if task.get("due_date"):
             meta_parts.append(task["due_date"].strftime("%b %d, %Y"))
         else:
-            meta_parts.append("No due date")
+            meta_parts.append(tr("missionary_detail_no_due_date"))
         if task.get("waiting_reason_label"):
             meta_parts.append(task["waiting_reason_label"])
         if task.get("is_group_task"):
-            shared_label = f"Shared with {task.get('missionary_count', 0)} missionaries"
+            shared_label = tr(
+                "missionary_detail_shared_with",
+                count=task.get("missionary_count", 0),
+            )
             if task.get("group_scope_label"):
                 shared_label = f"{shared_label} - {task['group_scope_label']}"
             meta_parts.append(shared_label)
@@ -2811,13 +3096,21 @@ class MissionaryDetailPage(QWidget):
         copy.addWidget(meta)
         layout.addLayout(copy, stretch=1)
 
-        done_btn = create_button("Done", "success", fixed_height=28)
+        done_btn = create_button(
+            tr("missionary_detail_done"),
+            "success",
+            fixed_height=28,
+        )
         done_btn.clicked.connect(
             lambda _=None, task_id=task["id"]: self._complete_missionary_task(task_id)
         )
         layout.addWidget(done_btn)
 
-        edit_btn = create_button("Edit", "secondary", fixed_height=28)
+        edit_btn = create_button(
+            tr("missionary_detail_edit"),
+            "secondary",
+            fixed_height=28,
+        )
         edit_btn.clicked.connect(
             lambda _=None, task_data=task: self._edit_missionary_task(task_data)
         )
@@ -2942,8 +3235,8 @@ class MissionaryDetailPage(QWidget):
         if not missing_groups:
             empty = QListWidgetItem()
             widget = self._build_empty_state_card(
-                "All required documents are uploaded.",
-                "This missionary is clear to move forward once any final review is done.",
+                tr("missionary_detail_all_required_uploaded"),
+                tr("missionary_detail_all_required_uploaded_hint"),
                 tone="success",
             )
             empty.setSizeHint(widget.sizeHint())
@@ -3026,52 +3319,52 @@ class MissionaryDetailPage(QWidget):
         self.summary_upload_card.setValue(
             latest_upload.strftime("%b %d, %Y")
             if latest_upload
-            else "No uploads yet"
+            else tr("missionary_detail_no_uploads_yet")
         )
 
         latest_activity = self._find_latest_activity()
 
         if missing_current:
-            next_doc = DOCUMENTS.get(
-                missing_current[0], {}
-            ).get("label", missing_current[0])
-            next_text = (
-                f"Next step: upload {next_doc}."
+            next_doc = _document_label(missing_current[0])
+            next_text = tr(
+                "missionary_detail_next_upload",
+                document=next_doc,
             )
         elif stage and stage in WORKFLOW_STAGES:
             next_index = WORKFLOW_STAGES.index(stage) + 1
             if next_index < len(WORKFLOW_STAGES):
-                next_text = (
-                    f"Next step: review the {stage_display} requirements, then advance to {_stage_display_name(WORKFLOW_STAGES[next_index])}."
+                next_text = tr(
+                    "missionary_detail_next_review_advance",
+                    stage=stage_display,
+                    next_stage=_stage_display_name(
+                        WORKFLOW_STAGES[next_index]
+                    ),
                 )
             else:
-                next_text = (
-                    "Next step: all stages are complete. Review the notes and finalize the record."
-                )
+                next_text = tr("missionary_detail_next_complete")
         else:
-            next_text = (
-                "Next step: assign a workflow stage and start uploading the required documents."
-            )
+            next_text = tr("missionary_detail_next_assign_stage")
 
         self.summary_next_action_label.setText(next_text)
         self.summary_activity_label.setText(
-            "Last update: "
-            + (_format_datetime(latest_activity) or "No activity yet")
-            + (
-                f" | Last upload: {_format_datetime(latest_upload)}"
-                if latest_upload
-                else " | Last upload: No uploads yet"
+            tr(
+                "missionary_detail_last_update",
+                activity=(
+                    _format_datetime(latest_activity)
+                    or tr("missionary_detail_no_activity_yet")
+                ),
+                upload=(
+                    _format_datetime(latest_upload)
+                    if latest_upload
+                    else tr("missionary_detail_no_uploads_yet")
+                ),
             )
         )
 
         if missing_current:
-            tip = (
-                "Tip: start with the missing documents shown below. If you are unsure, upload one file at a time and review the status after each upload."
-            )
+            tip = tr("missionary_detail_tip_missing")
         else:
-            tip = (
-                "Tip: everything required for the current stage is uploaded. Use Advance Stage when you are ready."
-            )
+            tip = tr("missionary_detail_tip_ready")
         self.summary_tip_label.setText(tip)
 
     def _find_latest_activity(self):
@@ -3163,7 +3456,7 @@ class MissionaryDetailPage(QWidget):
         copy.addWidget(hint)
 
         action_button = create_button(
-            "Update status",
+            tr("missionary_detail_update_status"),
             "subtle",
             fixed_height=28,
         )
@@ -3189,18 +3482,19 @@ class MissionaryDetailPage(QWidget):
                 current_stage,
             )
         if workflow.status == "WAITING":
-            return "Everything required for this stage is uploaded. You can advance now."
+            return tr("missionary_detail_workflow_waiting_hint")
         if workflow.status == "COMPLETED":
-            return "This stage has already been completed."
+            return tr("missionary_detail_workflow_completed_hint")
         if workflow.status == "BLOCKED":
-            return "This stage still needs attention before it can move forward."
+            return tr("missionary_detail_workflow_blocked_hint")
         if is_current and missing:
-            return (
-                f"{len(missing)} required document(s) are still missing for this stage."
+            return tr(
+                "missionary_detail_workflow_missing_hint",
+                count=len(missing),
             )
         if is_current:
-            return "This is the active stage."
-        return "Use this row if you need to update the stage status."
+            return tr("missionary_detail_workflow_active_hint")
+        return tr("missionary_detail_workflow_update_hint")
 
     def _build_document_item_widget(self, doc, label, pixmap=None):
         card = create_card()
@@ -3234,7 +3528,7 @@ class MissionaryDetailPage(QWidget):
 
         title = QLabel(label)
 
-        status = QLabel("Uploaded")
+        status = QLabel(tr("missionary_detail_uploaded_status"))
 
         title_row.addWidget(title)
         title_row.addWidget(status)
@@ -3246,13 +3540,21 @@ class MissionaryDetailPage(QWidget):
         meta_text = []
         uploaded_at = getattr(doc, "uploaded_at", None)
         if uploaded_at:
-            meta_text.append(f"Uploaded {uploaded_at.strftime('%b %d, %Y')}")
+            meta_text.append(
+                tr(
+                    "missionary_detail_uploaded_date",
+                    date=uploaded_at.strftime("%b %d, %Y"),
+                )
+            )
         if doc.workflow_stage:
             meta_text.append(
-                f"Stage: {_stage_display_name(doc.workflow_stage)}"
+                tr(
+                    "missionary_detail_document_stage",
+                    stage=_stage_display_name(doc.workflow_stage),
+                )
             )
         if not meta_text:
-            meta_text.append("Added to the missionary record")
+            meta_text.append(tr("missionary_detail_added_to_record"))
 
         meta = QLabel("  \u2022  ".join(meta_text))
         meta.setWordWrap(True)
@@ -3265,15 +3567,27 @@ class MissionaryDetailPage(QWidget):
         actions.setContentsMargins(0, 0, 0, 0)
         actions.setSpacing(8)
 
-        view_btn = create_button("View", "primary", fixed_height=28)
+        view_btn = create_button(
+            tr("missionary_detail_view"),
+            "primary",
+            fixed_height=28,
+        )
         view_btn.clicked.connect(
             lambda checked=False, doc_id=doc.id: self._open_document_viewer(doc_id)
         )
-        notes_btn = create_button("Notes", "secondary", fixed_height=28)
+        notes_btn = create_button(
+            tr("missionary_detail_notes"),
+            "secondary",
+            fixed_height=28,
+        )
         notes_btn.clicked.connect(
             lambda checked=False, doc_id=doc.id: self._open_document_notes(doc_id)
         )
-        open_btn = create_button("Open", "subtle", fixed_height=28)
+        open_btn = create_button(
+            tr("missionary_detail_open"),
+            "subtle",
+            fixed_height=28,
+        )
         open_btn.clicked.connect(
             lambda checked=False, doc_id=doc.id: self._open_document_file(doc_id)
         )
@@ -3311,19 +3625,22 @@ class MissionaryDetailPage(QWidget):
         header.setSpacing(6)
 
         title_text = (
-            "Always required"
+            tr("missionary_detail_always_required")
             if stage_name == "Always required"
-            else f"Required for {_stage_display_name(stage_name)}"
+            else tr(
+                "missionary_detail_required_for_stage",
+                stage=_stage_display_name(stage_name),
+            )
         )
         title = QLabel(title_text)
         title.setObjectName("MissingStageTitle")
 
         if stage_name == "Always required":
-            badge_text = "Highest priority"
+            badge_text = tr("missionary_detail_highest_priority")
         elif is_current:
-            badge_text = "Current priority"
+            badge_text = tr("missionary_detail_current_priority")
         else:
-            badge_text = "Upcoming"
+            badge_text = tr("missionary_detail_upcoming")
 
         badge = QLabel(badge_text)
         badge.setObjectName("WarningBadge")
@@ -3342,9 +3659,7 @@ class MissionaryDetailPage(QWidget):
         layout.addWidget(summary)
 
         for doc_key in missing_docs:
-            doc_label = DOCUMENTS.get(doc_key, {}).get(
-                "label", doc_key
-            )
+            doc_label = _document_label(doc_key)
             row = QHBoxLayout()
             row.setContentsMargins(0, 0, 0, 0)
             row.setSpacing(8)
@@ -3374,18 +3689,27 @@ class MissionaryDetailPage(QWidget):
 
     def _missing_stage_summary(self, stage_name, count):
         if stage_name == "Always required":
-            return f"{count} general document(s) are still needed for the case."
-        return f"{count} document(s) are still needed before this stage can move forward."
+            return tr(
+                "missionary_detail_missing_general_summary",
+                count=count,
+            )
+        return tr(
+            "missionary_detail_missing_stage_summary",
+            count=count,
+        )
 
     def _missing_doc_reason(self, doc_key, stage_name):
         config = DOCUMENTS.get(doc_key, {})
         ocr_fields = config.get("ocr_fields", [])
         if stage_name == "Always required":
-            base = "Needed for identity checks and the full case record."
+            base = tr("missionary_detail_missing_identity_reason")
         else:
-            base = f"Required before {_stage_display_name(stage_name)} can be completed."
+            base = tr(
+                "missionary_detail_missing_stage_reason",
+                stage=_stage_display_name(stage_name),
+            )
         if ocr_fields:
-            return base + " It also helps fill in the missionary record automatically."
+            return base + tr("missionary_detail_missing_ocr_suffix")
         return base
 
     def _show_workflow_context_menu(self, pos):
@@ -3398,7 +3722,7 @@ class MissionaryDetailPage(QWidget):
             return
 
         menu = create_menu("", self)
-        update_action = menu.addAction("Update status")
+        update_action = menu.addAction(tr("missionary_detail_update_status"))
         action = menu.exec(self.workflow_list.mapToGlobal(pos))
 
         if action == update_action:
@@ -3435,7 +3759,11 @@ class MissionaryDetailPage(QWidget):
     def _build_timeline_tab(self):
         timeline_tab = QWidget()
 
-        self._add_static_tab("timeline", "Timeline", timeline_tab)
+        self._add_static_tab(
+            "timeline",
+            tr("missionary_detail_tab_timeline"),
+            timeline_tab,
+        )
 
         timeline_layout = QVBoxLayout()
 
@@ -3491,7 +3819,7 @@ class MissionaryDetailPage(QWidget):
 
                 if not history:
                     empty = QListWidgetItem(
-                        "No stage transitions recorded."
+                        tr("missionary_detail_no_stage_transitions")
                     )
 
                     self.timeline_list.addItem(empty)
@@ -3508,12 +3836,14 @@ class MissionaryDetailPage(QWidget):
                     )
 
                     from_str = (
-                        h.from_stage or "Started"
+                        _stage_display_name(h.from_stage)
+                        if h.from_stage
+                        else tr("missionary_detail_started")
                     )
 
                     text = (
                         f"{date_str}\n"
-                        f"{from_str} \u2192 {h.to_stage}"
+                        f"{from_str} \u2192 {_stage_display_name(h.to_stage)}"
                     )
 
                     item = QListWidgetItem(text)
@@ -3551,8 +3881,8 @@ class MissionaryDetailPage(QWidget):
 
             show_message(
                 self,
-                "Saved",
-                "Notes saved successfully.",
+                tr("missionary_detail_saved_title"),
+                tr("missionary_detail_notes_saved"),
             )
 
         except Exception:
@@ -3562,8 +3892,8 @@ class MissionaryDetailPage(QWidget):
 
             show_message(
                 self,
-                "Error",
-                "Failed to save notes.",
+                tr("missionary_detail_error_title"),
+                tr("missionary_detail_notes_save_failed"),
                 kind="critical",
             )
 
@@ -3577,11 +3907,8 @@ class MissionaryDetailPage(QWidget):
 
         response = show_message(
             self,
-            "Confirm Delete",
-            "Are you sure you want to delete "
-            "this missionary?\n\n"
-            "The missionary will be moved to "
-            "TRASH.",
+            tr("missionary_detail_confirm_delete_title"),
+            tr("missionary_detail_confirm_delete"),
             kind="question",
             buttons="yes_no",
         )
@@ -3639,7 +3966,7 @@ class WorkflowStatusDialog(MaskDialogBase):
     def __init__(self, parent=None):
         super().__init__(parent)
 
-        self.setWindowTitle("Change Status")
+        self.setWindowTitle(tr("missionary_detail_change_status_title"))
         self.surface = setup_dialog_shell(
             self,
             surface_width=420,
@@ -3650,12 +3977,13 @@ class WorkflowStatusDialog(MaskDialogBase):
         layout.setSpacing(12)
         self.surface.setLayout(layout)
 
-        title = SubtitleLabel("Change workflow status")
+        title = SubtitleLabel(
+            tr("missionary_detail_change_workflow_status")
+        )
         layout.addWidget(title)
 
         helper = BodyLabel(
-            "Choose the status that best describes what is happening "
-            "with this workflow stage."
+            tr("missionary_detail_change_workflow_status_hint")
         )
         helper.setWordWrap(True)
         layout.addWidget(helper)
@@ -3668,10 +3996,16 @@ class WorkflowStatusDialog(MaskDialogBase):
             )
         layout.addWidget(self.status_combo)
 
-        cancel_btn = create_button("Cancel", "secondary")
+        cancel_btn = create_button(
+            tr("missionary_detail_cancel"),
+            "secondary",
+        )
         cancel_btn.clicked.connect(self.reject)
 
-        save_btn = create_button("Update Status", "primary")
+        save_btn = create_button(
+            tr("missionary_detail_update_status"),
+            "primary",
+        )
         save_btn.clicked.connect(self.accept)
 
         footer = DialogFooter()
@@ -3693,7 +4027,10 @@ class DocumentNotesDialog(MaskDialogBase):
         self.doc_service = doc_service
 
         self.setWindowTitle(
-            f"Notes — {doc_data['label']}"
+            tr(
+                "missionary_detail_notes_window_title",
+                document=doc_data["label"],
+            )
         )
 
         self.surface = setup_dialog_shell(
@@ -3711,12 +4048,20 @@ class DocumentNotesDialog(MaskDialogBase):
 
         self.surface.setLayout(layout)
 
-        title = SubtitleLabel(f"Notes for {doc_data['label']}")
+        title = SubtitleLabel(
+            tr(
+                "missionary_detail_notes_for_document",
+                document=doc_data["label"],
+            )
+        )
 
         layout.addWidget(title)
 
         file_label = BodyLabel(
-            f"File: {doc_data['file_name']}"
+            tr(
+                "missionary_detail_file_label",
+                file_name=doc_data["file_name"],
+            )
         )
 
         file_label.setObjectName("MutedText")
@@ -3730,18 +4075,24 @@ class DocumentNotesDialog(MaskDialogBase):
         )
 
         self.text_edit.setPlaceholderText(
-            "Enter notes for this document..."
+            tr("missionary_detail_document_notes_placeholder")
         )
 
         self.text_edit.setObjectName("DocumentNotesEditor")
 
         layout.addWidget(self.text_edit, stretch=1)
 
-        cancel_btn = create_button("Cancel", "secondary")
+        cancel_btn = create_button(
+            tr("missionary_detail_cancel"),
+            "secondary",
+        )
 
         cancel_btn.clicked.connect(self.reject)
 
-        save_btn = create_button("Save Notes", "primary")
+        save_btn = create_button(
+            tr("missionary_detail_save_document_notes"),
+            "primary",
+        )
 
         save_btn.clicked.connect(self._save)
 
