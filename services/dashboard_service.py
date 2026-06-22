@@ -295,6 +295,7 @@ class DashboardService:
                 "severity": _severity_for_days(days),
                 "title": task.title,
                 "detail": self._task_detail(task, days),
+                "task_id": task.id,
                 "missionary_id": task.missionary_id,
                 "target": (
                     "missionary"

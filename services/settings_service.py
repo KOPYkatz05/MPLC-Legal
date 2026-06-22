@@ -16,6 +16,17 @@ DIGEST_PASSWORD_USERNAME = "smtp_password"
 DIGEST_DEFAULT_TIME = "10:00"
 DIGEST_DEFAULT_DETAIL_LEVEL = "balanced"
 TRANSFER_DATE_KEY = "transfer_management/next_transfer_wednesday"
+NOTIFICATION_DEFAULTS = {
+    "startup_popup_enabled": True,
+    "dashboard_expiration_days": 60,
+    "critical_expiration_days": 7,
+    "include_overdue_tasks": True,
+    "include_due_today_tasks": True,
+    "include_appointments": True,
+    "include_expiring_documents": True,
+    "include_missing_documents": True,
+    "include_transfer_reminders": True,
+}
 TRANSFER_CYCLE_DAYS = 42
 
 
@@ -114,8 +125,6 @@ class SettingsService:
         if parsed is None:
             self._settings.remove(TRANSFER_DATE_KEY)
             return None
-        if not is_wednesday(parsed):
-            raise ValueError("Transfer date must be a Wednesday.")
         self._settings.setValue(TRANSFER_DATE_KEY, parsed.isoformat())
         return parsed
 
@@ -292,6 +301,106 @@ class SettingsService:
             "daily_digest/smtp_username",
             values.get("smtp_username", ""),
         )
+
+    def get_notification_settings(self):
+        return {
+            "startup_popup_enabled": _bool_value(
+                self._settings.value(
+                    "notifications/startup_popup_enabled",
+                    NOTIFICATION_DEFAULTS["startup_popup_enabled"],
+                ),
+                NOTIFICATION_DEFAULTS["startup_popup_enabled"],
+            ),
+            "dashboard_expiration_days": _int_value(
+                self._settings.value(
+                    "notifications/dashboard_expiration_days",
+                    NOTIFICATION_DEFAULTS["dashboard_expiration_days"],
+                ),
+                NOTIFICATION_DEFAULTS["dashboard_expiration_days"],
+            ),
+            "critical_expiration_days": _int_value(
+                self._settings.value(
+                    "notifications/critical_expiration_days",
+                    NOTIFICATION_DEFAULTS["critical_expiration_days"],
+                ),
+                NOTIFICATION_DEFAULTS["critical_expiration_days"],
+            ),
+            "include_overdue_tasks": _bool_value(
+                self._settings.value(
+                    "notifications/include_overdue_tasks",
+                    NOTIFICATION_DEFAULTS["include_overdue_tasks"],
+                ),
+                NOTIFICATION_DEFAULTS["include_overdue_tasks"],
+            ),
+            "include_due_today_tasks": _bool_value(
+                self._settings.value(
+                    "notifications/include_due_today_tasks",
+                    NOTIFICATION_DEFAULTS["include_due_today_tasks"],
+                ),
+                NOTIFICATION_DEFAULTS["include_due_today_tasks"],
+            ),
+            "include_appointments": _bool_value(
+                self._settings.value(
+                    "notifications/include_appointments",
+                    NOTIFICATION_DEFAULTS["include_appointments"],
+                ),
+                NOTIFICATION_DEFAULTS["include_appointments"],
+            ),
+            "include_expiring_documents": _bool_value(
+                self._settings.value(
+                    "notifications/include_expiring_documents",
+                    NOTIFICATION_DEFAULTS["include_expiring_documents"],
+                ),
+                NOTIFICATION_DEFAULTS["include_expiring_documents"],
+            ),
+            "include_missing_documents": _bool_value(
+                self._settings.value(
+                    "notifications/include_missing_documents",
+                    NOTIFICATION_DEFAULTS["include_missing_documents"],
+                ),
+                NOTIFICATION_DEFAULTS["include_missing_documents"],
+            ),
+            "include_transfer_reminders": _bool_value(
+                self._settings.value(
+                    "notifications/include_transfer_reminders",
+                    NOTIFICATION_DEFAULTS["include_transfer_reminders"],
+                ),
+                NOTIFICATION_DEFAULTS["include_transfer_reminders"],
+            ),
+        }
+
+    def set_notification_settings(self, values):
+        defaults = NOTIFICATION_DEFAULTS
+        self._settings.setValue(
+            "notifications/startup_popup_enabled",
+            bool(values.get("startup_popup_enabled", defaults["startup_popup_enabled"])),
+        )
+        self._settings.setValue(
+            "notifications/dashboard_expiration_days",
+            _int_value(
+                values.get("dashboard_expiration_days"),
+                defaults["dashboard_expiration_days"],
+            ),
+        )
+        self._settings.setValue(
+            "notifications/critical_expiration_days",
+            _int_value(
+                values.get("critical_expiration_days"),
+                defaults["critical_expiration_days"],
+            ),
+        )
+        for key in (
+            "include_overdue_tasks",
+            "include_due_today_tasks",
+            "include_appointments",
+            "include_expiring_documents",
+            "include_missing_documents",
+            "include_transfer_reminders",
+        ):
+            self._settings.setValue(
+                f"notifications/{key}",
+                bool(values.get(key, defaults[key])),
+            )
 
     def get_daily_digest_password(self):
         keyring = _keyring()

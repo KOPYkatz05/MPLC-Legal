@@ -11,6 +11,7 @@ from ui.pages.missionaries_page import (
     MISSIONARY_COLUMNS,
     MIN_TABLE_COLUMN_WIDTH,
     MissionariesPage,
+    _last_name_first,
     _sort_value_for_column,
 )
 
@@ -22,6 +23,7 @@ def test_missionary_table_includes_detail_page_fields():
     assert "carnet_number" in keys
     assert "tramite_usuario" in keys
     assert "tramite_contrasena" in keys
+    assert "last_name_first" in keys
     assert "folder_path" not in keys
 
 
@@ -31,6 +33,7 @@ def test_default_visible_columns_still_focus_on_core_summary():
     assert "carnet_number" not in DEFAULT_COLUMN_KEYS
     assert "tramite_usuario" not in DEFAULT_COLUMN_KEYS
     assert "tramite_contrasena" not in DEFAULT_COLUMN_KEYS
+    assert "last_name_first" not in DEFAULT_COLUMN_KEYS
     assert "missionary_id" in DEFAULT_COLUMN_KEYS
     assert "full_name" in DEFAULT_COLUMN_KEYS
     assert "nationality" in DEFAULT_COLUMN_KEYS
@@ -39,6 +42,46 @@ def test_default_visible_columns_still_focus_on_core_summary():
 
 def test_column_lookup_ignores_removed_folder_path():
     assert "folder_path" not in COLUMN_BY_KEY
+
+
+def test_last_name_first_formats_common_name_lengths():
+    assert _last_name_first("") == ""
+    assert _last_name_first("Madonna") == "Madonna"
+    assert _last_name_first("James Smith") == "Smith, James"
+    assert (
+        _last_name_first("James William VanOrden")
+        == "VanOrden, James William"
+    )
+    assert (
+        _last_name_first("Maria Fernanda Lopez Garcia")
+        == "Lopez Garcia, Maria Fernanda"
+    )
+    assert (
+        _last_name_first("  Maria   Fernanda   Lopez   Garcia  ")
+        == "Lopez Garcia, Maria Fernanda"
+    )
+
+
+def test_last_name_first_column_prefers_preferred_name_override():
+    column = COLUMN_BY_KEY["last_name_first"]
+
+    missionary = SimpleNamespace(
+        full_name="Maria Fernanda Lopez Garcia",
+        preferred_name="Garcia Lopez, Maria Fernanda",
+    )
+
+    assert column.getter(missionary) == "Garcia Lopez, Maria Fernanda"
+
+
+def test_last_name_first_column_falls_back_to_full_name():
+    column = COLUMN_BY_KEY["last_name_first"]
+
+    missionary = SimpleNamespace(
+        full_name="Maria Fernanda Lopez Garcia",
+        preferred_name="",
+    )
+
+    assert column.getter(missionary) == "Lopez Garcia, Maria Fernanda"
 
 
 def test_temporary_group_filter_label_is_marked():
@@ -260,6 +303,71 @@ def test_missionaries_page_group_filter_shows_only_members(monkeypatch, qapp):
 
         assert page.table.rowCount() == 1
         assert page.table.item(0, 1).text() == "Group Member"
+    finally:
+        page.close()
+
+
+def test_missionaries_page_search_includes_last_name_first(monkeypatch, qapp):
+    _ = qapp
+    from ui.pages import missionaries_page as page_module
+
+    missionaries = [
+        SimpleNamespace(
+            id=1,
+            missionary_code="1",
+            full_name="Maria Fernanda Lopez Garcia",
+            preferred_name="",
+            nationality="Peru",
+            passport_number="A1",
+            current_stage="",
+        ),
+        SimpleNamespace(
+            id=2,
+            missionary_code="2",
+            full_name="James William VanOrden",
+            preferred_name="",
+            nationality="USA",
+            passport_number="B2",
+            current_stage="",
+        ),
+    ]
+
+    class FakeMissionaryService:
+        def get_all_missionaries(self):
+            return missionaries
+
+    class FakeGroupService:
+        def list_groups(self):
+            return []
+
+    class FakeSettingsService:
+        def get_missionaries_table_columns(self, default):
+            return default
+
+        def set_missionaries_table_columns(self, keys):
+            _ = keys
+
+        def get_missionaries_table_column_widths(self):
+            return {}
+
+        def set_missionaries_table_column_widths(self, widths):
+            _ = widths
+
+    monkeypatch.setattr(page_module, "MissionaryService", FakeMissionaryService)
+    monkeypatch.setattr(page_module, "MissionaryGroupService", FakeGroupService)
+
+    window = SimpleNamespace(
+        settings_service=FakeSettingsService(),
+        detail_page=SimpleNamespace(load_missionary=lambda missionary: None),
+        stack=SimpleNamespace(setCurrentWidget=lambda widget: None),
+    )
+    page = MissionariesPage(window)
+
+    try:
+        page.search_input.setText("Lopez Garcia")
+
+        assert page.table.rowCount() == 1
+        assert page.table.item(0, 1).text() == "Maria Fernanda Lopez Garcia"
     finally:
         page.close()
 

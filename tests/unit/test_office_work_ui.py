@@ -257,6 +257,25 @@ def test_office_work_task_archive_and_delete_actions(monkeypatch, qapp):
         page.close()
 
 
+def test_office_work_task_opens_alert_workspace(qapp):
+    _ = qapp
+    opened = []
+    page = OfficeWorkPage(
+        main_window=SimpleNamespace(
+            open_alert_workspace=lambda task_id, return_key="office_work":
+            opened.append((task_id, return_key))
+        ),
+        service=FakeSecretaryWorkService(),
+    )
+
+    try:
+        page._open_task_workspace(1)
+
+        assert opened == [(1, "office_work")]
+    finally:
+        page.close()
+
+
 def test_office_work_project_archive_action(qapp):
     _ = qapp
     service = FakeSecretaryWorkService()

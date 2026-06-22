@@ -771,6 +771,12 @@ class DashboardPage(QWidget):
     def _open_digest_item(self, item):
         if not item:
             return
+        task_id = item.get("task_id")
+        if task_id and self.main_window is not None:
+            opener = getattr(self.main_window, "open_alert_workspace", None)
+            if callable(opener):
+                opener(task_id, return_key="dashboard")
+                return
         if item.get("missionary_id") and self.main_window is not None:
             opener = getattr(self.main_window, "open_missionary_detail", None)
             if callable(opener):
@@ -858,52 +864,251 @@ class DashboardPage(QWidget):
             SectionHeader("Recommended This Week")
         )
 
-        card = ListCard()
+        card = SimpleCardWidget()
         card.setObjectName("RecommendedThisWeekCard")
+        layout = QVBoxLayout()
+        layout.setContentsMargins(18, 16, 18, 16)
+        layout.setSpacing(14)
+        card.setLayout(layout)
 
         if not tasks:
-            card.add_empty("No recommended process work this week.")
+            self._add_recommended_empty(layout)
             self.content_layout.addWidget(card)
             return
 
-        for i, task in enumerate(tasks[:10]):
-            row = TableRow(alternate=(i % 2 == 1))
-            row.setObjectName("RecommendedThisWeekRow")
-            row.set_click_data({
-                "target": (
-                    "missionary"
-                    if task.get("missionary_id")
-                    else "office_work"
-                ),
-                "missionary_id": task.get("missionary_id"),
-            })
-            row.clicked.connect(self._open_attention_item)
+        header = QHBoxLayout()
+        header.setContentsMargins(0, 0, 0, 0)
+        header.setSpacing(10)
 
-            row.add_cell(
-                task.get("title", "Recommended task"),
-                stretch=4,
-                bold=True,
+        title_stack = QVBoxLayout()
+        title_stack.setContentsMargins(0, 0, 0, 0)
+        title_stack.setSpacing(2)
+
+        title = QLabel("Weekly Mission Plan")
+        title.setObjectName("PanelTitle")
+
+        subtitle = QLabel(self._recommended_summary_text(tasks))
+        subtitle.setObjectName("MutedText")
+        subtitle.setWordWrap(True)
+
+        title_stack.addWidget(title)
+        title_stack.addWidget(subtitle)
+
+        header.addLayout(title_stack, stretch=1)
+        header.addWidget(
+            self._make_digest_chip(
+                f"{len(tasks)} open",
+                "#71717A",
             )
-            row.add_cell(
-                task.get("detail", ""),
-                stretch=5,
-                word_wrap=True,
-                color="#52525B",
-            )
-            row.add_cell(
-                task.get("timing", ""),
-                stretch=2,
-                color=self._attention_color(task.get("severity")),
-            )
-            row.add_button(
-                self._attention_action_label(row.item_data),
-                lambda checked=False, payload=row.item_data:
-                self._open_attention_item(payload),
-                variant="secondary",
-            )
-            card.add_widget(row)
+        )
+        layout.addLayout(header)
+
+        lead_task = tasks[0]
+        self._add_recommended_focus(layout, lead_task)
+
+        if len(tasks) > 1:
+            queue_label = QLabel("This Week Queue")
+            queue_label.setObjectName("SectionHeader")
+            layout.addWidget(queue_label)
+
+        for task in tasks[1:10]:
+            layout.addWidget(self._make_recommended_row(task))
+
+        if len(tasks) > 10:
+            more = QLabel(f"+ {len(tasks) - 10} more recommendations this week")
+            more.setObjectName("MutedText")
+            layout.addWidget(more)
 
         self.content_layout.addWidget(card)
+
+    def _add_recommended_empty(self, layout):
+        panel = QFrame()
+        panel.setObjectName("RecommendedEmptyPanel")
+        panel.setAttribute(Qt.WA_StyledBackground, True)
+
+        panel_layout = QHBoxLayout()
+        panel_layout.setContentsMargins(16, 14, 16, 14)
+        panel_layout.setSpacing(14)
+        panel.setLayout(panel_layout)
+
+        accent = QFrame()
+        accent.setObjectName("RecommendedAccent")
+        accent.setFixedWidth(4)
+        accent.setMinimumHeight(44)
+        accent.setProperty("tone", "success")
+
+        text_stack = QVBoxLayout()
+        text_stack.setContentsMargins(0, 0, 0, 0)
+        text_stack.setSpacing(3)
+
+        title = QLabel("No recommended process work this week.")
+        title.setObjectName("StrongText")
+
+        detail = QLabel("The automated queue is clear. Nice and quiet.")
+        detail.setObjectName("MutedText")
+        detail.setWordWrap(True)
+
+        text_stack.addWidget(title)
+        text_stack.addWidget(detail)
+        panel_layout.addWidget(accent)
+        panel_layout.addLayout(text_stack, stretch=1)
+
+        layout.addWidget(panel)
+
+    def _add_recommended_focus(self, layout, task):
+        panel = QFrame()
+        panel.setObjectName("RecommendedFocusPanel")
+        panel.setAttribute(Qt.WA_StyledBackground, True)
+
+        panel_layout = QHBoxLayout()
+        panel_layout.setContentsMargins(16, 14, 16, 14)
+        panel_layout.setSpacing(14)
+        panel.setLayout(panel_layout)
+
+        accent = QFrame()
+        accent.setObjectName("RecommendedAccent")
+        accent.setFixedWidth(4)
+        accent.setMinimumHeight(58)
+        accent.setProperty("tone", self._recommended_tone(task))
+
+        text_stack = QVBoxLayout()
+        text_stack.setContentsMargins(0, 0, 0, 0)
+        text_stack.setSpacing(5)
+
+        label = QLabel("Next Best Move")
+        label.setObjectName("SectionHeader")
+
+        title = QLabel(task.get("title", "Recommended task"))
+        title.setObjectName("PanelTitle")
+        title.setWordWrap(True)
+
+        detail = QLabel(task.get("detail", ""))
+        detail.setObjectName("MutedText")
+        detail.setWordWrap(True)
+
+        text_stack.addWidget(label)
+        text_stack.addWidget(title)
+        if task.get("detail"):
+            text_stack.addWidget(detail)
+
+        chip = self._make_digest_chip(
+            task.get("timing", "Open"),
+            self._attention_color(task.get("severity")),
+        )
+
+        open_btn = create_button(
+            self._attention_action_label(self._recommended_payload(task)),
+            "primary",
+            fixed_height=30,
+        )
+        open_btn.clicked.connect(
+            lambda checked=False, payload=self._recommended_payload(task):
+            self._open_attention_item(payload)
+        )
+
+        panel_layout.addWidget(accent)
+        panel_layout.addLayout(text_stack, stretch=1)
+        panel_layout.addWidget(chip)
+        panel_layout.addWidget(open_btn)
+
+        layout.addWidget(panel)
+
+    def _make_recommended_row(self, task):
+        row = QFrame()
+        row.setObjectName("RecommendedThisWeekRow")
+        row.setAttribute(Qt.WA_StyledBackground, True)
+        row.setCursor(Qt.PointingHandCursor)
+        row.mousePressEvent = (
+            lambda event, payload=self._recommended_payload(task):
+            self._open_attention_item(payload)
+        )
+
+        row_layout = QHBoxLayout()
+        row_layout.setContentsMargins(10, 8, 10, 8)
+        row_layout.setSpacing(10)
+        row.setLayout(row_layout)
+
+        accent = QFrame()
+        accent.setObjectName("RecommendedAccent")
+        accent.setFixedWidth(4)
+        accent.setMinimumHeight(42)
+        accent.setProperty("tone", self._recommended_tone(task))
+
+        text_stack = QVBoxLayout()
+        text_stack.setContentsMargins(0, 0, 0, 0)
+        text_stack.setSpacing(2)
+
+        title = QLabel(task.get("title", "Recommended task"))
+        title.setObjectName("StrongText")
+        title.setWordWrap(True)
+
+        detail = QLabel(task.get("detail", ""))
+        detail.setObjectName("RowText")
+        detail.setWordWrap(True)
+
+        text_stack.addWidget(title)
+        if task.get("detail"):
+            text_stack.addWidget(detail)
+
+        chip = self._make_digest_chip(
+            task.get("timing", "Open"),
+            self._attention_color(task.get("severity")),
+        )
+
+        open_btn = create_button(
+            self._attention_action_label(self._recommended_payload(task)),
+            "subtle",
+            fixed_height=28,
+        )
+        open_btn.clicked.connect(
+            lambda checked=False, payload=self._recommended_payload(task):
+            self._open_attention_item(payload)
+        )
+
+        row_layout.addWidget(accent)
+        row_layout.addLayout(text_stack, stretch=1)
+        row_layout.addWidget(chip)
+        row_layout.addWidget(open_btn)
+
+        return row
+
+    @staticmethod
+    def _recommended_payload(task):
+        task_id = task.get("task_id") or task.get("id")
+        return {
+            "type": "secretary_task" if task_id else None,
+            "task_id": task_id,
+            "target": (
+                "missionary"
+                if task.get("missionary_id")
+                else "office_work"
+            ),
+            "missionary_id": task.get("missionary_id"),
+        }
+
+    @staticmethod
+    def _recommended_summary_text(tasks):
+        overdue = sum(1 for task in tasks if task.get("days", 0) < 0)
+        today = sum(1 for task in tasks if task.get("days") == 0)
+        upcoming = max(0, len(tasks) - overdue - today)
+
+        parts = []
+        if overdue:
+            parts.append(f"{overdue} overdue")
+        if today:
+            parts.append(f"{today} due today")
+        if upcoming:
+            parts.append(f"{upcoming} upcoming")
+        return " | ".join(parts) if parts else "No dated recommendations"
+
+    @staticmethod
+    def _recommended_tone(task):
+        severity = task.get("severity")
+        if severity == "critical":
+            return "danger"
+        if severity == "warning":
+            return "warning"
+        return "info"
 
     @staticmethod
     def _attention_type_label(item_type):
@@ -935,6 +1140,17 @@ class DashboardPage(QWidget):
     def _open_attention_item(self, item):
         if not item:
             return
+
+        task_id = item.get("task_id")
+        if (
+            task_id
+            and item.get("type") == "secretary_task"
+            and self.main_window is not None
+        ):
+            opener = getattr(self.main_window, "open_alert_workspace", None)
+            if callable(opener):
+                opener(task_id, return_key="dashboard")
+                return
 
         missionary_id = item.get("missionary_id")
         if missionary_id and self.main_window is not None:

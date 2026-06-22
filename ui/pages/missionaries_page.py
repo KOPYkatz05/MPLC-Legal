@@ -86,6 +86,35 @@ def _text_attr(field_name):
     return lambda missionary: getattr(missionary, field_name, None) or ""
 
 
+def _last_name_first(full_name):
+    parts = str(full_name or "").strip().split()
+
+    if len(parts) <= 1:
+        return " ".join(parts)
+
+    surname_count = 2 if len(parts) >= 4 else 1
+    surname = " ".join(parts[-surname_count:])
+    given_names = " ".join(parts[:-surname_count])
+
+    if not given_names:
+        return surname
+
+    return f"{surname}, {given_names}"
+
+
+def _last_name_first_attr(missionary):
+    preferred_name = (
+        getattr(missionary, "preferred_name", None) or ""
+    ).strip()
+
+    if preferred_name:
+        return preferred_name
+
+    return _last_name_first(
+        getattr(missionary, "full_name", None)
+    )
+
+
 MISSIONARY_COLUMNS = [
     MissionaryColumn(
         "missionary_id",
@@ -102,6 +131,12 @@ MISSIONARY_COLUMNS = [
         260,
         default_visible=True,
         required=True,
+    ),
+    MissionaryColumn(
+        "last_name_first",
+        "Last Name First",
+        _last_name_first_attr,
+        240,
     ),
     MissionaryColumn(
         "preferred_name",
@@ -1276,10 +1311,15 @@ class MissionariesPage(QWidget):
                 (m.preferred_name or "").lower()
             )
 
+            last_name_first = (
+                _last_name_first_attr(m).lower()
+            )
+
             if search_text and (
                 search_text not in display_id
                 and search_text not in name
                 and search_text not in preferred
+                and search_text not in last_name_first
             ):
                 continue
 

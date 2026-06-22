@@ -1949,6 +1949,7 @@ class MissionaryDetailPage(QWidget):
                 tr("dates_saved"),
             )
             self._reload_missionary()
+            self._refresh_missionaries_table()
         except Exception:
             logger.exception("Failed to save dates")
             show_message(

@@ -419,6 +419,57 @@ class SecretaryWorkService:
         finally:
             session.close()
 
+    def get_task_workspace(self, task_id, today=None):
+        today = today or date.today()
+        session = SessionLocal()
+        try:
+            task = session.query(SecretaryTask).filter_by(id=task_id).first()
+            if task is None:
+                raise SecretaryWorkError("Task not found.")
+
+            snapshot = self._task_snapshot(task, session)
+            days = (
+                (task.due_date - today).days
+                if task.due_date is not None
+                else None
+            )
+            affected = self._workspace_missionaries(task, session, today)
+            workspace = dict(snapshot)
+            workspace.update({
+                "days": days,
+                "timing": self._workspace_timing(days),
+                "due_date_text": self._format_workspace_date(task.due_date),
+                "work_date_text": self._format_workspace_date(task.work_date),
+                "brief_text": self._workspace_brief_text(
+                    snapshot,
+                    affected,
+                    days,
+                ),
+                "why_text": self._workspace_why_text(
+                    snapshot,
+                    affected,
+                    days,
+                ),
+                "why_points": self._workspace_why_points(
+                    snapshot,
+                    affected,
+                    days,
+                ),
+                "key_facts": self._workspace_key_facts(
+                    snapshot,
+                    affected,
+                    days,
+                ),
+                "evidence": self._workspace_evidence(snapshot),
+                "affected_missionaries": affected,
+                "recommended_steps": self._workspace_recommended_steps(
+                    snapshot
+                ),
+            })
+            return workspace
+        finally:
+            session.close()
+
     def archive_obsolete_automatic_tasks(
         self,
         *,
@@ -857,6 +908,292 @@ class SecretaryWorkService:
             "updated_at": task.updated_at,
             "completed_at": task.completed_at,
         }
+
+    def _workspace_missionaries(self, task, session, today):
+        missionary_ids, _names = self._task_missionary_scope(task, session)
+        if not missionary_ids:
+            return []
+
+        missionaries = (
+            session.query(Missionary)
+            .filter(Missionary.id.in_(missionary_ids))
+            .order_by(Missionary.full_name)
+            .all()
+        )
+        return [
+            self._workspace_missionary_snapshot(missionary, task, today)
+            for missionary in missionaries
+        ]
+
+    def _workspace_missionary_snapshot(self, missionary, task, today):
+        flags = self._workspace_missionary_flags(missionary, task, today)
+        return {
+            "id": missionary.id,
+            "name": missionary.full_name,
+            "current_stage": missionary.current_stage or "",
+            "nationality": missionary.nationality or "",
+            "passport_number": missionary.passport_number or "",
+            "carnet_number": missionary.carnet_number or "",
+            "visa_expiration": missionary.visa_expiration,
+            "visa_expiration_text": self._format_workspace_date(
+                missionary.visa_expiration
+            ),
+            "residency_expiration": missionary.residency_expiration,
+            "residency_expiration_text": self._format_workspace_date(
+                missionary.residency_expiration
+            ),
+            "prorroga_expiration": missionary.prorroga_expiration,
+            "prorroga_expiration_text": self._format_workspace_date(
+                missionary.prorroga_expiration
+            ),
+            "issue_flags": flags,
+            "issue_summary": ", ".join(flags) if flags else "Review record",
+        }
+
+    def _workspace_missionary_flags(self, missionary, task, today):
+        title = (task.title or "").casefold()
+        key = (task.automation_key or "").casefold()
+        flags = []
+
+        if "prorroga" in title or "prorroga" in key:
+            if missionary.residency_expiration:
+                days = (missionary.residency_expiration - today).days
+                if days < 0:
+                    flags.append("Residency expired")
+                elif days <= 30:
+                    flags.append("Residency expires soon")
+            else:
+                flags.append("Missing residency date")
+            if not missionary.prorroga_expiration:
+                flags.append("Missing Prorroga confirmation")
+
+        if "gvm" in title or "travel connect" in title or key.startswith("gvm:"):
+            flags.append("Needs GVM update")
+
+        if task.appointment_field:
+            flags.append("Appointment follow-up")
+
+        return flags
+
+    def _workspace_evidence(self, snapshot):
+        evidence = [
+            ("Automation source", snapshot.get("automation_source")),
+            ("Automation key", snapshot.get("automation_key")),
+            ("Automation status", snapshot.get("automation_status_reason")),
+            ("Created", snapshot.get("created_at")),
+            ("Updated", snapshot.get("updated_at")),
+        ]
+        return [
+            {
+                "label": label,
+                "value": self._format_workspace_value(value),
+            }
+            for label, value in evidence
+            if value
+        ]
+
+    def _workspace_brief_text(self, snapshot, affected, days):
+        count = len(affected)
+        timing = self._workspace_timing(days).lower()
+        title = (snapshot.get("title") or "task").casefold()
+        key = (snapshot.get("automation_key") or "").casefold()
+
+        if "prorroga" in title or "prorroga" in key:
+            return (
+                f"Prorroga follow-up is {timing} for "
+                f"{count or 'the linked'} missionary record"
+                f"{'s' if count != 1 else ''}."
+            )
+
+        if "gvm" in title or "travel connect" in title or key.startswith("gvm:"):
+            return (
+                f"Travel Connect/GVM needs an update for "
+                f"{count or 'the linked'} missionary record"
+                f"{'s' if count != 1 else ''}."
+            )
+
+        if snapshot.get("automation_source"):
+            linked = (
+                f" for {count} linked missionary record"
+                f"{'s' if count != 1 else ''}"
+                if count
+                else ""
+            )
+            return f"Process automation found a task that is {timing}{linked}."
+
+        if days is not None:
+            return f"This task is {timing}."
+        return "This task needs review."
+
+    def _workspace_why_text(self, snapshot, affected, days):
+        title = snapshot.get("title") or "This task"
+        description = snapshot.get("description") or ""
+        count = len(affected)
+        title_key = title.casefold()
+        automation_key = (snapshot.get("automation_key") or "").casefold()
+
+        if "prorroga" in title_key or "prorroga" in automation_key:
+            return (
+                "The system is asking for attention because Prorroga follow-up "
+                "is due or overdue and the linked records still need "
+                "confirmation."
+            )
+
+        if "gvm" in title_key or "travel connect" in title_key:
+            return (
+                "The system is asking for attention because a missionary "
+                "record has information that should be reflected in Travel "
+                "Connect/GVM."
+            )
+
+        if snapshot.get("automation_source"):
+            scope = (
+                f" for {count} missionaries"
+                if count != 1
+                else " for 1 missionary"
+            ) if count else ""
+            timing = (
+                f" It is {abs(days)} day(s) overdue."
+                if days is not None and days < 0
+                else " It is due today."
+                if days == 0
+                else ""
+            )
+            return (
+                f"This alert was created by process automation{scope}. "
+                f"{title}{timing}"
+            )
+
+        if description:
+            return description
+
+        if days is not None and days < 0:
+            return (
+                "This task was created manually and is overdue based on its "
+                "due date."
+            )
+        if days == 0:
+            return (
+                "This task was created manually and is due today based on its "
+                "due date."
+            )
+        return (
+            "This task was created manually. Review the task details, resolve "
+            "the needed work, then mark it done."
+        )
+
+    def _workspace_why_points(self, snapshot, affected, days):
+        points = []
+        if days is not None:
+            points.append(self._workspace_timing(days))
+        if affected:
+            points.append(
+                f"{len(affected)} linked missionary record"
+                f"{'s' if len(affected) != 1 else ''}"
+            )
+        if snapshot.get("group_scope_label"):
+            points.append(snapshot["group_scope_label"])
+        if snapshot.get("automation_source"):
+            points.append("Created by process automation")
+        elif snapshot.get("description"):
+            points.append("Manual task with notes")
+        return points
+
+    def _workspace_key_facts(self, snapshot, affected, days):
+        facts = [
+            {
+                "label": "Due",
+                "value": self._workspace_timing(days),
+                "color": "#DC2626"
+                if days is not None and days < 0
+                else "#2563EB",
+            },
+            {
+                "label": "Affected",
+                "value": str(len(affected)),
+                "color": "#0F766E",
+            },
+            {
+                "label": "Status",
+                "value": (snapshot.get("status") or "").title(),
+                "color": "#2563EB",
+            },
+            {
+                "label": "Priority",
+                "value": (snapshot.get("priority") or "").title(),
+                "color": (
+                    "#DC2626"
+                    if snapshot.get("priority") == "CRITICAL"
+                    else "#D97706"
+                    if snapshot.get("priority") == "IMPORTANT"
+                    else "#71717A"
+                ),
+            },
+        ]
+        if snapshot.get("group_scope_label"):
+            facts.append({
+                "label": "Group",
+                "value": snapshot["group_scope_label"],
+                "color": "#71717A",
+            })
+        return facts
+
+    @staticmethod
+    def _workspace_recommended_steps(snapshot):
+        title = (snapshot.get("title") or "").casefold()
+        key = (snapshot.get("automation_key") or "").casefold()
+
+        if "prorroga" in title or "prorroga" in key:
+            return [
+                "Review each affected missionary record.",
+                "Confirm whether Prorroga was submitted or approved.",
+                "Upload or update Prorroga confirmation if available.",
+                "Mark this alert done when the records are resolved.",
+            ]
+
+        if "gvm" in title or "travel connect" in title or key.startswith("gvm:"):
+            return [
+                "Open the affected missionary record.",
+                "Confirm the latest document information is available.",
+                "Update Travel Connect/GVM as needed.",
+                "Mark this task done after the external system is updated.",
+            ]
+
+        if snapshot.get("appointment_label"):
+            return [
+                "Open the affected missionary record.",
+                "Confirm the appointment outcome and related documents.",
+                "Upload or update any missing follow-up information.",
+                "Mark this task done when the follow-up is complete.",
+            ]
+
+        return [
+            "Review the task details and affected records.",
+            "Complete the needed follow-up work.",
+            "Add notes or edit the task if more context is needed.",
+            "Mark this task done when the work is resolved.",
+        ]
+
+    @staticmethod
+    def _workspace_timing(days):
+        if days is None:
+            return "No due date"
+        if days < 0:
+            return f"{abs(days)} day(s) overdue"
+        if days == 0:
+            return "Due today"
+        return f"Due in {days} day(s)"
+
+    @staticmethod
+    def _format_workspace_date(value):
+        if not value:
+            return "Not set"
+        return value.strftime("%b %d, %Y")
+
+    def _format_workspace_value(self, value):
+        if hasattr(value, "strftime"):
+            return self._format_workspace_date(value)
+        return str(value)
 
     def _resolve_task_scope(
         self,

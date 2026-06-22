@@ -8,6 +8,7 @@ from sqlalchemy.orm import sessionmaker
 from database.db import Base
 from database.models.missionary import Missionary
 from database.models.secretary_work import (
+    MissionaryGroup,
     MissionaryGroupMember,
     SecretaryProject,
     SecretaryTask,
@@ -79,6 +80,99 @@ def test_create_update_complete_and_archive_task(secretary_service):
 
     archived = secretary_service.archive_task(task["id"])
     assert archived["status"] == "ARCHIVED"
+
+
+def test_task_workspace_includes_grouped_prorroga_context(secretary_service):
+    session = service_module.SessionLocal()
+    try:
+        first = Missionary(
+            missionary_code="elder-one",
+            full_name="Elder One",
+            status="ACTIVE",
+            current_stage="PRORROGA",
+            residency_expiration=date(2026, 8, 9),
+        )
+        second = Missionary(
+            missionary_code="sister-two",
+            full_name="Sister Two",
+            status="ACTIVE",
+            current_stage="PRORROGA",
+            residency_expiration=date(2026, 8, 11),
+        )
+        group = MissionaryGroup(
+            name="Temporary - Critical Prorroga follow-up needed",
+            group_type="TEMPORARY_AUTOMATION",
+            automation_key="prorroga:group:30:2026-07-10",
+        )
+        session.add_all([first, second, group])
+        session.flush()
+        task = SecretaryTask(
+            title="Critical Prorroga follow-up needed",
+            description="2 missionaries need this prorroga step.",
+            status="OPEN",
+            priority="CRITICAL",
+            due_date=date(2026, 7, 10),
+            group_id=group.id,
+            group_scope_label=group.name,
+            automation_key="prorroga:group:30:2026-07-10",
+            automation_source="process_automation",
+        )
+        session.add(task)
+        session.flush()
+        session.add_all([
+            SecretaryTaskMissionary(task_id=task.id, missionary_id=first.id),
+            SecretaryTaskMissionary(task_id=task.id, missionary_id=second.id),
+            MissionaryGroupMember(group_id=group.id, missionary_id=first.id),
+            MissionaryGroupMember(group_id=group.id, missionary_id=second.id),
+        ])
+        session.commit()
+        task_id = task.id
+    finally:
+        session.close()
+
+    workspace = secretary_service.get_task_workspace(
+        task_id,
+        today=date(2026, 7, 29),
+    )
+
+    assert workspace["timing"] == "19 day(s) overdue"
+    assert "Prorroga follow-up is 19 day(s) overdue" in workspace["brief_text"]
+    assert "Prorroga follow-up" in workspace["why_text"]
+    assert "Created by process automation" in workspace["why_points"]
+    assert workspace["key_facts"][0]["label"] == "Due"
+    assert len(workspace["affected_missionaries"]) == 2
+    assert workspace["affected_missionaries"][0]["issue_flags"]
+    assert any(
+        item["label"] == "Automation key"
+        for item in workspace["evidence"]
+    )
+    assert workspace["recommended_steps"][0] == (
+        "Review each affected missionary record."
+    )
+
+
+def test_task_workspace_uses_manual_task_fallback(secretary_service):
+    task = secretary_service.create_task(
+        "Call mission office",
+        description="Ask for missing travel confirmation.",
+        due_date=date(2026, 6, 12),
+    )
+
+    workspace = secretary_service.get_task_workspace(
+        task["id"],
+        today=date(2026, 6, 13),
+    )
+
+    assert workspace["why_text"] == "Ask for missing travel confirmation."
+    assert workspace["affected_missionaries"] == []
+    assert workspace["recommended_steps"][-1] == (
+        "Mark this task done when the work is resolved."
+    )
+
+
+def test_task_workspace_missing_task_raises(secretary_service):
+    with pytest.raises(SecretaryWorkError):
+        secretary_service.get_task_workspace(999)
 
 
 def test_waiting_task_requires_reason_and_clears_when_reopened(secretary_service):

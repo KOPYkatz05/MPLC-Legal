@@ -33,6 +33,39 @@ def test_detail_stage_refresh_updates_related_pages():
     assert reports_page.load_count == 1
 
 
+def test_save_dates_refreshes_missionaries_table(monkeypatch):
+    page = MissionaryDetailPage.__new__(MissionaryDetailPage)
+    missionaries_page = LoadCounter()
+    page.main_window = SimpleNamespace(missionaries_page=missionaries_page)
+    page.current_missionary = SimpleNamespace(
+        id=7,
+        arrival_date=None,
+        visa_expiration=None,
+        field_sources=None,
+    )
+    page._date_edits = {}
+    page._text_edits = {}
+    page._date_empty_on_load = set()
+    page.missionary_service = SimpleNamespace(
+        update_fields=lambda missionary_id, updates: None
+    )
+    page._reload_missionary = lambda: None
+
+    monkeypatch.setattr(
+        "ui.pages.missionary_detail_page.show_message",
+        lambda *args, **kwargs: None,
+    )
+
+    page._text_edits["carnet_number"] = SimpleNamespace(
+        text=lambda: "CE123456"
+    )
+    page.current_missionary.carnet_number = None
+
+    page._save_dates()
+
+    assert missionaries_page.load_count == 1
+
+
 def test_batch_stage_refresh_reloads_open_selected_detail():
     page = MissionariesPage.__new__(MissionariesPage)
     detail_page = SimpleNamespace(

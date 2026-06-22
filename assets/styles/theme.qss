@@ -489,6 +489,57 @@ QFrame#DashboardAlertAccent[tone="warning"] {
     background-color: #D97706;
 }
 
+QFrame#RecommendedThisWeekCard,
+QWidget#RecommendedThisWeekCard {
+    background-color: #FFFFFF;
+    border: 1px solid #E4E4E7;
+    border-radius: 8px;
+}
+
+QFrame#RecommendedFocusPanel {
+    background-color: #F8FAFC;
+    border: 1px solid #CCFBF1;
+    border-radius: 8px;
+}
+
+QFrame#RecommendedEmptyPanel {
+    background-color: #F8FAFC;
+    border: 1px solid #E5E7EB;
+    border-radius: 8px;
+}
+
+QFrame#RecommendedThisWeekRow {
+    background-color: #FAFAFA;
+    border: 1px solid #F4F4F5;
+    border-radius: 6px;
+}
+
+QFrame#RecommendedThisWeekRow:hover {
+    background-color: #FFFFFF;
+    border-color: #CBD5E1;
+}
+
+QFrame#RecommendedAccent {
+    background-color: #2563EB;
+    border-radius: 2px;
+}
+
+QFrame#RecommendedAccent[tone="danger"] {
+    background-color: #DC2626;
+}
+
+QFrame#RecommendedAccent[tone="warning"] {
+    background-color: #D97706;
+}
+
+QFrame#RecommendedAccent[tone="info"] {
+    background-color: #2563EB;
+}
+
+QFrame#RecommendedAccent[tone="success"] {
+    background-color: #059669;
+}
+
 /* ==========================================
    LIST CARD
    ========================================== */
@@ -1598,6 +1649,131 @@ QTabBar::tab:hover:!selected {
     color: #27272A;
     background-color: #F4F4F5;
     border-radius: 6px 6px 0 0;
+}
+
+QTabWidget#SettingsTabs::pane {
+    border: none;
+    background-color: #F4F4F5;
+    top: 0px;
+}
+
+QTabWidget#SettingsTabs > QWidget {
+    background-color: #F4F4F5;
+}
+
+QTabWidget#SettingsTabs QTabBar {
+    background-color: #FFFFFF;
+    border-bottom: 1px solid #E4E4E7;
+}
+
+QTabWidget#SettingsTabs QTabBar::tab {
+    background-color: transparent;
+    color: #52525B;
+    min-height: 36px;
+    padding: 0px 18px;
+    margin: 0px 2px 0px 0px;
+    border: none;
+    border-bottom: 2px solid transparent;
+    font-size: 13px;
+    font-weight: 500;
+}
+
+QTabWidget#SettingsTabs QTabBar::tab:selected {
+    color: #0F6CBD;
+    background-color: #FFFFFF;
+    border-bottom: 2px solid #0F6CBD;
+    font-weight: 600;
+}
+
+QTabWidget#SettingsTabs QTabBar::tab:hover:!selected {
+    color: #18181B;
+    background-color: #F7F7F8;
+    border-radius: 0px;
+}
+
+QWidget#SettingsTabPage {
+    background-color: #F4F4F5;
+}
+
+QWidget#SettingsScrollShell {
+    background-color: #F4F4F5;
+}
+
+QWidget#SettingsContent {
+    background-color: #F4F4F5;
+}
+
+QWidget#SettingsColumn {
+    background-color: transparent;
+}
+
+QFrame#SettingsCard {
+    background-color: #FFFFFF;
+    border: 1px solid #E4E4E7;
+    border-radius: 8px;
+}
+
+QFrame#SettingsCard:hover {
+    border-color: #D4D4D8;
+}
+
+QLabel#SettingsCardTitle {
+    color: #242424;
+    font-size: 16px;
+    font-weight: 600;
+    letter-spacing: 0px;
+}
+
+QLabel#SettingsCardHint,
+QWidget#SettingsTabPage QLabel#MutedText {
+    color: #616161;
+    font-size: 12px;
+}
+
+QWidget#SettingsActionRow {
+    background-color: transparent;
+}
+
+QWidget#SettingsTabPage QLineEdit,
+QWidget#SettingsTabPage QComboBox,
+QWidget#SettingsTabPage QDateEdit,
+QWidget#SettingsTabPage QTimeEdit,
+QWidget#SettingsTabPage QSpinBox {
+    background-color: #FFFFFF;
+    border: 1px solid #D1D1D1;
+    border-radius: 6px;
+    min-height: 32px;
+    padding: 0px 10px;
+}
+
+QWidget#SettingsTabPage QLineEdit:hover,
+QWidget#SettingsTabPage QComboBox:hover,
+QWidget#SettingsTabPage QDateEdit:hover,
+QWidget#SettingsTabPage QTimeEdit:hover,
+QWidget#SettingsTabPage QSpinBox:hover {
+    border-color: #B3B3B3;
+}
+
+QWidget#SettingsTabPage QLineEdit:focus,
+QWidget#SettingsTabPage QComboBox:focus,
+QWidget#SettingsTabPage QDateEdit:focus,
+QWidget#SettingsTabPage QTimeEdit:focus,
+QWidget#SettingsTabPage QSpinBox:focus {
+    border: 1px solid #0F6CBD;
+}
+
+QPushButton#SettingsHelpButton {
+    background-color: #FFFFFF;
+    color: #0F6CBD;
+    border: 1px solid #D1D1D1;
+    border-radius: 12px;
+    font-weight: 700;
+    padding: 0px;
+}
+
+QPushButton#SettingsHelpButton:hover {
+    background-color: #EBF3FC;
+    border-color: #0F6CBD;
 }
 
 

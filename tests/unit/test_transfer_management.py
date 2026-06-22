@@ -89,8 +89,16 @@ def test_transfer_setting_saves_loads_and_clears():
     assert service.get_next_transfer_wednesday() is None
 
 
-def test_transfer_setting_rejects_non_wednesday():
+def test_transfer_setting_accepts_any_arrival_weekday():
     service = _settings_service()
 
-    with pytest.raises(ValueError):
-        service.set_next_transfer_wednesday(date(2026, 6, 18))
+    saved = service.set_next_transfer_wednesday(date(2026, 6, 18))
+
+    assert saved == date(2026, 6, 18)
+    assert service.get_upcoming_transfer_wednesdays(
+        today=date(2026, 6, 1),
+        count=2,
+    ) == [
+        date(2026, 6, 18),
+        date(2026, 7, 30),
+    ]

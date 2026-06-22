@@ -84,6 +84,8 @@ def test_dashboard_attention_includes_expiring_missing_tasks_and_appointments(
         item for item in items if item["type"] == "appointment_due"
     )
     assert appointment_item["appointment_id"]
+    task_item = next(item for item in items if item["type"] == "secretary_task")
+    assert task_item["task_id"]
 
 
 def test_dashboard_includes_recommended_automatic_tasks(dashboard_env):
@@ -320,6 +322,47 @@ def test_dashboard_attention_action_routes_to_missionary_detail(qapp):
     )
 
     assert opened == [42]
+
+
+def test_dashboard_attention_task_routes_to_alert_workspace(qapp):
+    _ = qapp
+    page = DashboardPage.__new__(DashboardPage)
+    opened = []
+    page.main_window = SimpleNamespace(
+        open_alert_workspace=lambda task_id, return_key="dashboard":
+        opened.append((task_id, return_key))
+    )
+
+    DashboardPage._open_attention_item(
+        page,
+        {
+            "type": "secretary_task",
+            "task_id": 55,
+            "target": "office_work",
+        },
+    )
+
+    assert opened == [(55, "dashboard")]
+
+
+def test_dashboard_digest_task_routes_to_alert_workspace(qapp):
+    _ = qapp
+    page = DashboardPage.__new__(DashboardPage)
+    opened = []
+    page.main_window = SimpleNamespace(
+        open_alert_workspace=lambda task_id, return_key="dashboard":
+        opened.append((task_id, return_key))
+    )
+
+    DashboardPage._open_digest_item(
+        page,
+        {
+            "task_id": 66,
+            "action": "Critical Prorroga follow-up needed",
+        },
+    )
+
+    assert opened == [(66, "dashboard")]
 
 
 def test_dashboard_attention_complete_appointment_refreshes_pages(monkeypatch, qapp):

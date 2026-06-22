@@ -413,6 +413,7 @@ class OfficeWorkPage(QWidget):
 
     def _task_row(self, task):
         card = create_card(object_name="OfficeWorkRow")
+        card.setCursor(Qt.PointingHandCursor)
         layout = QHBoxLayout()
         layout.setContentsMargins(16, 12, 16, 12)
         layout.setSpacing(12)
@@ -459,6 +460,13 @@ class OfficeWorkPage(QWidget):
         text_stack.addWidget(meta)
         layout.addLayout(text_stack, stretch=1)
 
+        review_btn = create_button("Review", "primary", fixed_height=28)
+        review_btn.clicked.connect(
+            lambda _=None, task_id=task["id"]:
+            self._open_task_workspace(task_id)
+        )
+        layout.addWidget(review_btn)
+
         if task["status"] not in {"DONE", "ARCHIVED"}:
             done_btn = create_button("Done", "success", fixed_height=28)
             done_btn.clicked.connect(lambda _=None, task_id=task["id"]: self._complete_task(task_id))
@@ -495,6 +503,10 @@ class OfficeWorkPage(QWidget):
             )
             layout.addWidget(open_btn)
 
+        card.mousePressEvent = (
+            lambda event, task_id=task["id"]:
+            self._task_row_clicked(event, task_id)
+        )
         return card
 
     def _project_row(self, project):
@@ -610,7 +622,9 @@ class OfficeWorkPage(QWidget):
         self.render_tasks()
 
     def focus_task_context(self, task_id=None, title=""):
-        _ = task_id
+        if task_id is not None:
+            self._open_task_workspace(task_id)
+            return
         self._select_tab("tasks")
         if hasattr(self, "task_status_filter"):
             self._set_combo_data(self.task_status_filter, None)
@@ -638,6 +652,21 @@ class OfficeWorkPage(QWidget):
         if dialog.exec():
             self.load_data()
             self._refresh_calendar_page()
+
+    def _task_row_clicked(self, event, task_id):
+        if event.button() == Qt.LeftButton:
+            self._open_task_workspace(task_id)
+            event.accept()
+            return
+        event.ignore()
+
+    def _open_task_workspace(self, task_id):
+        if self.main_window is not None:
+            opener = getattr(self.main_window, "open_alert_workspace", None)
+            if callable(opener):
+                opener(task_id, return_key="office_work")
+                return
+        self.focus_task_context(title="")
 
     def _add_project(self):
         dialog = ProjectDialog(self.service, parent=self)

@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
 
 from services.settings_service import SettingsService
 from ui.foundation import AppShell, FLUENT_AVAILABLE, fluent_icon
+from ui.pages.alert_workspace_page import AlertWorkspacePage
 from ui.pages.calendar_page import CalendarPage
 from ui.pages.dashboard_page import DashboardPage
 from ui.pages.missionaries_page import MissionariesPage
@@ -81,11 +82,11 @@ class _SidebarCompat:
         self._index_to_key = {
             0: "dashboard",
             1: "missionaries",
-            3: "office_work",
-            4: "appointments",
-            5: "reports",
-            6: "trash",
-            7: "settings",
+            4: "office_work",
+            5: "appointments",
+            6: "reports",
+            7: "trash",
+            8: "settings",
         }
 
     def setCurrentRow(self, row):
@@ -141,6 +142,7 @@ class MainWindow(FluentWindow if FLUENT_AVAILABLE else QMainWindow):
         )
         self.missionaries_page = MissionariesPage(self)
         self.detail_page = MissionaryDetailPage(self)
+        self.alert_workspace_page = AlertWorkspacePage(self)
         self.office_work_page = OfficeWorkPage(self)
         self.calendar_page = CalendarPage(self)
         self.reports_page = ReportsPage(self)
@@ -186,6 +188,8 @@ class MainWindow(FluentWindow if FLUENT_AVAILABLE else QMainWindow):
 
         self.detail_page.setObjectName("MissionaryDetailPage")
         self.stackedWidget.addWidget(self.detail_page)
+        self.alert_workspace_page.setObjectName("AlertWorkspacePage")
+        self.stackedWidget.addWidget(self.alert_workspace_page)
 
         for widget, key, icon_name, _stack_index in [
             (self.office_work_page, "office_work", "EDIT", 3),
@@ -221,6 +225,7 @@ class MainWindow(FluentWindow if FLUENT_AVAILABLE else QMainWindow):
             self.dashboard_page,
             self.missionaries_page,
             self.detail_page,
+            self.alert_workspace_page,
             self.office_work_page,
             self.calendar_page,
             self.reports_page,
@@ -232,11 +237,11 @@ class MainWindow(FluentWindow if FLUENT_AVAILABLE else QMainWindow):
         for key, index, group in [
             ("dashboard", 0, "Work"),
             ("missionaries", 1, "Work"),
-            ("office_work", 3, "Work"),
-            ("appointments", 4, "Work"),
-            ("reports", 5, "Insights"),
-            ("trash", 6, "System"),
-            ("settings", 7, "System"),
+            ("office_work", 4, "Work"),
+            ("appointments", 5, "Work"),
+            ("reports", 6, "Insights"),
+            ("trash", 7, "System"),
+            ("settings", 8, "System"),
         ]:
             self.shell.add_nav_item(key, tr(self._nav_keys[key]), index, group)
 
@@ -267,19 +272,17 @@ class MainWindow(FluentWindow if FLUENT_AVAILABLE else QMainWindow):
             nav_widget.setText(title)
 
     def _on_nav_changed(self, nav_key, stack_index):
-        _ = nav_key
-
-        if stack_index == 0:
+        if nav_key == "dashboard" or stack_index == 0:
             self.dashboard_page.load_data()
-        elif stack_index == 1:
+        elif nav_key == "missionaries" or stack_index == 1:
             self.missionaries_page.load_data()
-        elif stack_index == 3:
+        elif nav_key == "office_work" or stack_index == 4:
             self.office_work_page.load_data()
-        elif stack_index == 4:
+        elif nav_key == "appointments" or stack_index == 5:
             self.calendar_page.load_data()
-        elif stack_index == 5:
+        elif nav_key == "reports" or stack_index == 6:
             self.reports_page.load_data()
-        elif stack_index == 6:
+        elif nav_key == "trash" or stack_index == 7:
             self.trash_page.load_data()
 
     def retranslate_ui(self):
@@ -336,6 +339,27 @@ class MainWindow(FluentWindow if FLUENT_AVAILABLE else QMainWindow):
             logger.exception(
                 "Failed to open missionary detail for ID %s",
                 missionary_id,
+            )
+            return False
+
+    def open_alert_workspace(self, task_id, return_key="dashboard"):
+        try:
+            self.alert_workspace_page.load_task(task_id, return_key=return_key)
+            self.stack.setCurrentWidget(self.alert_workspace_page)
+
+            if (
+                FLUENT_AVAILABLE
+                and hasattr(self, "navigationInterface")
+                and return_key in self._nav_widgets
+            ):
+                widget = self._nav_widgets[return_key]
+                self.navigationInterface.setCurrentItem(widget.objectName())
+
+            return True
+        except Exception:
+            logger.exception(
+                "Failed to open alert workspace for task ID %s",
+                task_id,
             )
             return False
 
