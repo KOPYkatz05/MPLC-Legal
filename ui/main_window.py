@@ -1,3 +1,5 @@
+from datetime import date
+
 from PySide6.QtCore import QEvent, QRectF, QSize, Qt, QTimer
 from PySide6.QtGui import QColor, QImage, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
@@ -12,6 +14,7 @@ from PySide6.QtWidgets import (
 )
 
 from services.settings_service import SettingsService
+from services.notification_feed_service import NotificationFeedService
 from ui.foundation import AppShell, FLUENT_AVAILABLE, fluent_icon
 from ui.pages.alert_workspace_page import AlertWorkspacePage
 from ui.pages.calendar_page import CalendarPage
@@ -497,22 +500,21 @@ class MainWindow(FluentWindow if FLUENT_AVAILABLE else QMainWindow):
 
     def _load_startup_alerts(self):
         try:
-            from services.alert_service import AlertService
-
-            alert_service = AlertService()
-            alerts = alert_service.get_all_alerts(within_days=30)
+            feed_service = NotificationFeedService(self.settings_service)
+            alerts = feed_service.startup_items()
             self._startup_alerts = list(alerts or [])
 
             if not alerts:
-                logger.info("No startup expiration alerts.")
+                logger.info("No startup notification items.")
                 self.dashboard_page.set_startup_alerts([])
                 return
 
             logger.info(
-                "Loaded %s startup expiration alert(s)",
+                "Loaded %s startup notification item(s)",
                 len(self._startup_alerts),
             )
             self.dashboard_page.set_startup_alerts(self._startup_alerts)
+            self._show_windows_startup_notification(feed_service)
             log_top_level_windows("startup-alerts-loaded", delay_ms=0)
 
         except Exception:
@@ -523,18 +525,62 @@ class MainWindow(FluentWindow if FLUENT_AVAILABLE else QMainWindow):
             return
 
         try:
-            from ui.dialogs.expiration_alert_dialog import (
-                ExpirationAlertDialog,
-            )
+            from ui.foundation import show_message
 
             logger.info(
-                "Opening %s startup expiration alert(s) on request",
+                "Opening %s startup notification item(s) on request",
                 len(self._startup_alerts),
             )
-            log_top_level_windows("before-open-startup-alert-dialog")
-            dialog = ExpirationAlertDialog(self._startup_alerts, parent=self)
-            log_top_level_windows("startup-alert-dialog-created")
-            dialog.exec()
-            log_top_level_windows("after-startup-alert-dialog-closed")
+            lines = [
+                f"- {item.get('title', 'Item')}: {item.get('detail', '')}"
+                for item in self._startup_alerts[:10]
+            ]
+            if len(self._startup_alerts) > 10:
+                lines.append(
+                    f"- {len(self._startup_alerts) - 10} more item(s)"
+                )
+            show_message(
+                self,
+                "Mission Legal needs attention",
+                "\n".join(lines),
+                kind="warning",
+            )
         except Exception:
             logger.exception("Failed to open startup alerts")
+
+    def _show_windows_startup_notification(self, feed_service):
+        summary = feed_service.windows_summary(self._startup_alerts)
+        if not summary:
+            return
+
+        today = date.today().isoformat()
+        state = self.settings_service.get_windows_notification_state()
+        if (
+            state.get("date") == today
+            and state.get("fingerprint") == summary["fingerprint"]
+        ):
+            return
+
+        if not self._send_windows_toast(summary["title"], summary["body"]):
+            return
+
+        self.settings_service.set_windows_notification_state(
+            today,
+            summary["fingerprint"],
+        )
+
+    @staticmethod
+    def _send_windows_toast(title, body):
+        try:
+            from winotify import Notification
+
+            toast = Notification(
+                app_id="Mission Legal",
+                title=title,
+                msg=body,
+            )
+            toast.show()
+            return True
+        except Exception:
+            logger.exception("Failed to show Windows notification")
+            return False

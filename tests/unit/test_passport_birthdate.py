@@ -175,11 +175,15 @@ def test_missionary_detail_page_handles_birthdate_field(monkeypatch, qapp):
 
     page._date_edits["date_of_birth"].setDate(QDate(1991, 4, 5))
     page.carnet_number_input.setText("CE123456")
+    page.tramite_usuario_input.setText("reset-user")
+    page.tramite_contrasena_input.setText("reset-pass")
     page._save_dates()
 
     assert captured["missionary_id"] == 1
     assert captured["updates"]["date_of_birth"] == date(1991, 4, 5)
     assert captured["updates"]["carnet_number"] == "CE123456"
+    assert captured["updates"]["tramite_usuario"] == "reset-user"
+    assert captured["updates"]["tramite_contrasena"] == "reset-pass"
 
 
 def test_missionary_detail_lists_open_tasks(monkeypatch, qapp):

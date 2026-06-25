@@ -2,6 +2,7 @@ from datetime import date
 from types import SimpleNamespace
 
 from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QDialog
 
 from ui.pages.missionaries_page import (
     COLUMN_BY_KEY,
@@ -604,6 +605,350 @@ def test_edit_group_dialog_updates_existing_members(qapp):
         )
     finally:
         dialog.close()
+
+
+def test_create_group_dialog_preselects_initial_members(qapp):
+    _ = qapp
+    missionaries = [
+        SimpleNamespace(id=1, full_name="Selected One"),
+        SimpleNamespace(id=2, full_name="Not Selected"),
+        SimpleNamespace(id=3, full_name="Selected Three"),
+    ]
+
+    dialog = CreateMissionaryGroupDialog(
+        SimpleNamespace(),
+        missionaries,
+        selected_missionary_ids=[1, 3],
+    )
+
+    try:
+        assert dialog.member_list.item(0).checkState() == Qt.Checked
+        assert dialog.member_list.item(1).checkState() == Qt.Unchecked
+        assert dialog.member_list.item(2).checkState() == Qt.Checked
+    finally:
+        dialog.close()
+
+
+def test_create_group_uses_selected_table_rows(monkeypatch, qapp):
+    from ui.pages import missionaries_page as page_module
+
+    missionaries = [
+        SimpleNamespace(
+            id=1,
+            missionary_code="1",
+            full_name="Selected One",
+            preferred_name="",
+            nationality="Peru",
+            passport_number="A1",
+            current_stage="INTERPOL",
+        ),
+        SimpleNamespace(
+            id=2,
+            missionary_code="2",
+            full_name="Selected Two",
+            preferred_name="",
+            nationality="Chile",
+            passport_number="B2",
+            current_stage="INTERPOL",
+        ),
+    ]
+
+    class FakeMissionaryService:
+        def get_all_missionaries(self):
+            return missionaries
+
+    class FakeGroupService:
+        def list_groups(self):
+            return []
+
+    class FakeSettingsService:
+        def get_missionaries_table_columns(self, default):
+            _ = default
+            return ["missionary_id", "full_name"]
+
+        def set_missionaries_table_columns(self, keys):
+            _ = keys
+
+        def get_missionaries_table_column_widths(self):
+            return {}
+
+        def set_missionaries_table_column_widths(self, widths):
+            _ = widths
+
+    captured = {}
+
+    class FakeCreateGroupDialog:
+        saved_group = None
+
+        def __init__(
+            self,
+            group_service,
+            dialog_missionaries,
+            parent=None,
+            group=None,
+            selected_missionary_ids=None,
+        ):
+            captured["ids"] = list(selected_missionary_ids or [])
+            captured["missionaries"] = dialog_missionaries
+
+        def exec(self):
+            return QDialog.Rejected
+
+    monkeypatch.setattr(page_module, "MissionaryService", FakeMissionaryService)
+    monkeypatch.setattr(page_module, "MissionaryGroupService", FakeGroupService)
+    monkeypatch.setattr(
+        page_module,
+        "CreateMissionaryGroupDialog",
+        FakeCreateGroupDialog,
+    )
+
+    window = SimpleNamespace(
+        settings_service=FakeSettingsService(),
+        detail_page=SimpleNamespace(load_missionary=lambda missionary: None),
+        stack=SimpleNamespace(setCurrentWidget=lambda widget: None),
+    )
+    page = MissionariesPage(window)
+
+    try:
+        page.table.item(0, 0).setSelected(True)
+        page.table.item(1, 0).setSelected(True)
+        page._create_group()
+
+        assert captured["ids"] == [1, 2]
+        assert captured["missionaries"] == missionaries
+    finally:
+        page.close()
+
+
+def test_batch_actions_archive_selected_rows(monkeypatch, qapp):
+    from ui.pages import missionaries_page as page_module
+
+    missionaries = [
+        SimpleNamespace(
+            id=1,
+            missionary_code="1",
+            full_name="Archive One",
+            preferred_name="",
+            nationality="Peru",
+            passport_number="A1",
+            current_stage="INTERPOL",
+        ),
+        SimpleNamespace(
+            id=2,
+            missionary_code="2",
+            full_name="Archive Two",
+            preferred_name="",
+            nationality="Chile",
+            passport_number="B2",
+            current_stage="PRORROGA",
+        ),
+    ]
+
+    class FakeMissionaryService:
+        def __init__(self):
+            self.archived_ids = []
+
+        def get_all_missionaries(self):
+            return missionaries
+
+        def archive_missionaries(self, missionary_ids):
+            self.archived_ids = list(missionary_ids)
+
+        def archive_missionaries_as_group(self, missionary_ids, group_name):
+            _ = missionary_ids
+            _ = group_name
+
+    class FakeGroupService:
+        def list_groups(self):
+            return []
+
+    class FakeSettingsService:
+        def get_missionaries_table_columns(self, default):
+            _ = default
+            return ["missionary_id", "full_name"]
+
+        def set_missionaries_table_columns(self, keys):
+            _ = keys
+
+        def get_missionaries_table_column_widths(self):
+            return {}
+
+        def set_missionaries_table_column_widths(self, widths):
+            _ = widths
+
+    shown_actions = []
+
+    class FakeMenu:
+        def __init__(self):
+            self.actions = []
+
+        def addAction(self, action):
+            self.actions.append(action)
+
+        def exec(self, pos):
+            _ = pos
+            shown_actions.extend(action.text() for action in self.actions)
+            archive_action = next(
+                action
+                for action in self.actions
+                if action.text() == "Archive"
+            )
+            archive_action.trigger()
+
+    class FakeBatchArchiveDialog:
+        archive_mode = "individual"
+        group_name = ""
+
+        def __init__(self, selected_count, parent=None):
+            self.selected_count = selected_count
+
+        def exec(self):
+            return QDialog.Accepted
+
+    monkeypatch.setattr(page_module, "MissionaryService", FakeMissionaryService)
+    monkeypatch.setattr(page_module, "MissionaryGroupService", FakeGroupService)
+    monkeypatch.setattr(page_module, "create_menu", lambda *args: FakeMenu())
+    monkeypatch.setattr(
+        page_module,
+        "BatchArchiveDialog",
+        FakeBatchArchiveDialog,
+    )
+
+    window = SimpleNamespace(
+        settings_service=FakeSettingsService(),
+        detail_page=SimpleNamespace(load_missionary=lambda missionary: None),
+        stack=SimpleNamespace(setCurrentWidget=lambda widget: None),
+    )
+    page = MissionariesPage(window)
+
+    try:
+        page.table.item(0, 0).setSelected(True)
+        page.table.item(1, 0).setSelected(True)
+        page._batch_actions()
+
+        assert shown_actions == ["Advance Stage", "Archive"]
+        assert page.missionary_service.archived_ids == [1, 2]
+    finally:
+        page.close()
+
+
+def test_batch_actions_group_archives_selected_rows(monkeypatch, qapp):
+    from ui.pages import missionaries_page as page_module
+
+    missionaries = [
+        SimpleNamespace(
+            id=1,
+            missionary_code="1",
+            full_name="Transfer One",
+            preferred_name="",
+            nationality="Peru",
+            passport_number="A1",
+            current_stage="INTERPOL",
+        ),
+        SimpleNamespace(
+            id=2,
+            missionary_code="2",
+            full_name="Transfer Two",
+            preferred_name="",
+            nationality="Chile",
+            passport_number="B2",
+            current_stage="PRORROGA",
+        ),
+    ]
+
+    class FakeMissionaryService:
+        def __init__(self):
+            self.group_archive = None
+
+        def get_all_missionaries(self):
+            return missionaries
+
+        def archive_missionaries(self, missionary_ids):
+            _ = missionary_ids
+
+        def archive_missionaries_as_group(self, missionary_ids, group_name):
+            self.group_archive = (list(missionary_ids), group_name)
+            return "Archive/2026/Transfers.zip"
+
+    class FakeGroupService:
+        def list_groups(self):
+            return []
+
+    class FakeSettingsService:
+        def get_missionaries_table_columns(self, default):
+            _ = default
+            return ["missionary_id", "full_name"]
+
+        def set_missionaries_table_columns(self, keys):
+            _ = keys
+
+        def get_missionaries_table_column_widths(self):
+            return {}
+
+        def set_missionaries_table_column_widths(self, widths):
+            _ = widths
+
+    class FakeMenu:
+        def __init__(self):
+            self.actions = []
+
+        def addAction(self, action):
+            self.actions.append(action)
+
+        def exec(self, pos):
+            _ = pos
+            archive_action = next(
+                action
+                for action in self.actions
+                if action.text() == "Archive"
+            )
+            archive_action.trigger()
+
+    class FakeBatchArchiveDialog:
+        archive_mode = "group"
+        group_name = "Transfers"
+
+        def __init__(self, selected_count, parent=None):
+            self.selected_count = selected_count
+
+        def exec(self):
+            return QDialog.Accepted
+
+    messages = []
+
+    monkeypatch.setattr(page_module, "MissionaryService", FakeMissionaryService)
+    monkeypatch.setattr(page_module, "MissionaryGroupService", FakeGroupService)
+    monkeypatch.setattr(page_module, "create_menu", lambda *args: FakeMenu())
+    monkeypatch.setattr(
+        page_module,
+        "BatchArchiveDialog",
+        FakeBatchArchiveDialog,
+    )
+    monkeypatch.setattr(
+        page_module,
+        "show_message",
+        lambda *args, **kwargs: messages.append(args),
+    )
+
+    window = SimpleNamespace(
+        settings_service=FakeSettingsService(),
+        detail_page=SimpleNamespace(load_missionary=lambda missionary: None),
+        stack=SimpleNamespace(setCurrentWidget=lambda widget: None),
+    )
+    page = MissionariesPage(window)
+
+    try:
+        page.table.item(0, 0).setSelected(True)
+        page.table.item(1, 0).setSelected(True)
+        page._batch_actions()
+
+        assert page.missionary_service.group_archive == (
+            [1, 2],
+            "Transfers",
+        )
+        assert messages
+    finally:
+        page.close()
 
 
 def test_group_dropdown_includes_edit_action(monkeypatch, qapp):

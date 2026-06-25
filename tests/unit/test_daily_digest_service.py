@@ -12,6 +12,7 @@ from database.models.secretary_work import (
     SecretaryTaskMissionary,
 )
 from services import daily_digest_service as digest_module
+from services import notification_feed_service as feed_module
 from services.daily_digest_service import DailyDigestService
 
 
@@ -20,6 +21,7 @@ def _session(monkeypatch):
     Base.metadata.create_all(bind=engine)
     TestingSession = sessionmaker(bind=engine, autoflush=False, autocommit=False)
     monkeypatch.setattr(digest_module, "SessionLocal", TestingSession)
+    monkeypatch.setattr(feed_module, "SessionLocal", TestingSession)
     return TestingSession()
 
 
@@ -146,15 +148,39 @@ def test_digest_has_summary_and_grouped_who_needs_what(monkeypatch):
     assert digest["summary"]["critical"] == 1
     assert digest["summary"]["overdue"] == 1
     assert digest["summary"]["due_today"] == 1
-    assert digest["summary"]["total"] == 2
+    assert digest["summary"]["tasks"] == 2
+    assert digest["summary"]["total"] == 6
     groups = {
         group["key"]: group
         for group in digest["detail_groups"]
     }
-    assert set(groups) == {"gvm", "prorroga"}
+    assert {"gvm", "prorroga"}.issubset(set(groups))
     assert groups["gvm"]["items"][0]["who"] == "Elder Smith"
     assert "Who needs what" in digest["text"]
     assert "Elder Smith: Update Travel Connect/GVM with Carne" in digest["text"]
+
+
+def test_digest_uses_missionary_name_for_document_expiration(monkeypatch):
+    today = date(2026, 6, 18)
+    session = _session(monkeypatch)
+    try:
+        _missionary(
+            session,
+            "Sister Rivera",
+        ).residency_expiration = today - timedelta(days=1)
+        session.commit()
+    finally:
+        session.close()
+
+    digest = DailyDigestService().build_digest(today=today)
+    groups = {
+        group["key"]: group
+        for group in digest["detail_groups"]
+    }
+
+    assert groups["document"]["items"][0]["who"] == "Sister Rivera"
+    assert "Sister Rivera: Residency Expiration needs attention" in digest["text"]
+    assert "Missionary #" not in digest["text"]
 
 
 def test_digest_includes_task_identity_and_grouped_missionary_count(monkeypatch):

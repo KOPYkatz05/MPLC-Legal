@@ -1156,8 +1156,10 @@ class MissionaryDetailPage(QWidget):
         self.passport_label = make_field()
         self.carnet_number_input = create_line_edit("Carnet Number")
         self._text_edits["carnet_number"] = self.carnet_number_input
-        self.tramite_usuario_label = make_field()
-        self.tramite_contrasena_label = make_field()
+        self.tramite_usuario_input = create_line_edit("Tramite Usuario")
+        self._text_edits["tramite_usuario"] = self.tramite_usuario_input
+        self.tramite_contrasena_input = create_line_edit("Tramite Contrasena")
+        self._text_edits["tramite_contrasena"] = self.tramite_contrasena_input
         self.folder_label = make_field()
         self.folder_label.setWordWrap(True)
 
@@ -1200,12 +1202,12 @@ class MissionaryDetailPage(QWidget):
             (
                 "tramite_usuario",
                 "Trámite Usuario:",
-                self.tramite_usuario_label,
+                self.tramite_usuario_input,
             ),
             (
                 "tramite_contrasena",
                 "Trámite Contraseña:",
-                self.tramite_contrasena_label,
+                self.tramite_contrasena_input,
             ),
         ]
         for field_key, label_text, value_label in credential_rows:
@@ -1256,7 +1258,7 @@ class MissionaryDetailPage(QWidget):
             self.folder_label,
         )
 
-        self.save_dates_btn = create_button(tr("save_dates"), "primary")
+        self.save_dates_btn = create_button(tr("save_details"), "primary")
         self.save_dates_btn.setFixedWidth(160)
         self.save_dates_btn.clicked.connect(self._save_dates)
 
@@ -1361,8 +1363,14 @@ class MissionaryDetailPage(QWidget):
         self.passport_label = self._build_value_label()
         self.carnet_number_input = create_line_edit(field_label("carnet_number"))
         self._text_edits["carnet_number"] = self.carnet_number_input
-        self.tramite_usuario_label = self._build_value_label()
-        self.tramite_contrasena_label = self._build_value_label()
+        self.tramite_usuario_input = create_line_edit(
+            field_label("tramite_usuario")
+        )
+        self._text_edits["tramite_usuario"] = self.tramite_usuario_input
+        self.tramite_contrasena_input = create_line_edit(
+            field_label("tramite_contrasena")
+        )
+        self._text_edits["tramite_contrasena"] = self.tramite_contrasena_input
         self.folder_label = self._build_value_label(elided=True)
 
         self.birthdate_picker = create_date_picker()
@@ -1466,11 +1474,15 @@ class MissionaryDetailPage(QWidget):
 
         for col, (field_key, label_text, value_label) in enumerate(
             [
-                ("tramite_usuario", field_label("tramite_usuario"), self.tramite_usuario_label),
+                (
+                    "tramite_usuario",
+                    field_label("tramite_usuario"),
+                    self.tramite_usuario_input,
+                ),
                 (
                     "tramite_contrasena",
                     field_label("tramite_contrasena"),
-                    self.tramite_contrasena_label,
+                    self.tramite_contrasena_input,
                 ),
             ]
         ):
@@ -1548,7 +1560,7 @@ class MissionaryDetailPage(QWidget):
         columns_layout.addWidget(right_column, 1)
         content_layout.addWidget(columns)
 
-        self.save_dates_btn = create_button(tr("save_dates"), "primary")
+        self.save_dates_btn = create_button(tr("save_details"), "primary")
         self.save_dates_btn.setFixedWidth(160)
         self.save_dates_btn.clicked.connect(self._save_dates)
 
@@ -2092,8 +2104,8 @@ class MissionaryDetailPage(QWidget):
             )
             show_message(
                 self,
-                tr("save_dates"),
-                tr("dates_saved"),
+                tr("save_details"),
+                tr("details_saved"),
             )
             self._reload_missionary()
             self._refresh_missionaries_table()
@@ -2101,8 +2113,8 @@ class MissionaryDetailPage(QWidget):
             logger.exception("Failed to save dates")
             show_message(
                 self,
-                tr("save_dates"),
-                tr("dates_save_failed"),
+                tr("save_details"),
+                tr("details_save_failed"),
                 kind="critical",
             )
 
@@ -2214,7 +2226,7 @@ class MissionaryDetailPage(QWidget):
         if hasattr(self, "save_notes_btn"):
             self.save_notes_btn.setText(tr("missionary_detail_save_notes"))
         if hasattr(self, "save_dates_btn"):
-            self.save_dates_btn.setText(tr("save_dates"))
+            self.save_dates_btn.setText(tr("save_details"))
         if hasattr(self, "current_missionary"):
             self.load_missionary(self.current_missionary)
 
@@ -2750,14 +2762,14 @@ class MissionaryDetailPage(QWidget):
             self.carnet_number_input.setText(
                 getattr(missionary, "carnet_number", None) or ""
             )
-        self._set_value_text(
-            self.tramite_usuario_label,
-            getattr(missionary, "tramite_usuario", None),
-        )
-        self._set_value_text(
-            self.tramite_contrasena_label,
-            getattr(missionary, "tramite_contrasena", None),
-        )
+        if hasattr(self, "tramite_usuario_input"):
+            self.tramite_usuario_input.setText(
+                getattr(missionary, "tramite_usuario", None) or ""
+            )
+        if hasattr(self, "tramite_contrasena_input"):
+            self.tramite_contrasena_input.setText(
+                getattr(missionary, "tramite_contrasena", None) or ""
+            )
         self._set_value_text(
             self.folder_label,
             missionary.folder_path,

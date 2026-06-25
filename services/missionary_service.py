@@ -1,7 +1,9 @@
 import os
+import re
 import stat
 import shutil
 
+from datetime import datetime
 from pathlib import Path
 
 from database.db import SessionLocal
@@ -12,6 +14,9 @@ from database.models.missionary import (
 
 from database.models.document import (
     Document,
+)
+from database.models.stage_history import (
+    StageHistory,
 )
 
 from services.onedrive_service import (
@@ -325,6 +330,168 @@ class MissionaryService:
 
         finally:
             session.close()
+
+    def archive_missionary(
+        self,
+        missionary_id,
+        archive_group_name=None,
+    ):
+        session = SessionLocal()
+
+        try:
+            missionary = (
+                session.query(Missionary)
+                .filter_by(id=missionary_id)
+                .first()
+            )
+
+            if not missionary:
+                logger.warning(
+                    f"Missionary ID "
+                    f"{missionary_id} "
+                    f"not found for archive"
+                )
+                return
+
+            current_stage = missionary.current_stage
+
+            if missionary.folder_path:
+                destination_folder = (
+                    self.onedrive_service
+                    .archive_missionary_folder(
+                        missionary.folder_path,
+                        group_name=archive_group_name,
+                    )
+                )
+                missionary.folder_path = str(destination_folder)
+
+            missionary.status = "ARCHIVED"
+
+            if current_stage:
+                session.add(
+                    StageHistory(
+                        missionary_id=missionary.id,
+                        from_stage=current_stage,
+                        to_stage="ARCHIVED",
+                    )
+                )
+
+            session.commit()
+
+            logger.info(
+                f"Archived missionary: "
+                f"{missionary.full_name}"
+            )
+
+        except Exception:
+            session.rollback()
+
+            logger.exception(
+                f"Failed to archive missionary "
+                f"ID {missionary_id}"
+            )
+
+            raise
+
+        finally:
+            session.close()
+
+    def archive_missionaries(self, missionary_ids):
+        for missionary_id in missionary_ids:
+            self.archive_missionary(missionary_id)
+
+    def archive_missionaries_as_group(
+        self,
+        missionary_ids,
+        group_name,
+    ):
+        group_name = (group_name or "").strip()
+
+        if not group_name:
+            raise ValueError("Archive group name is required.")
+
+        missionaries = self._load_missionaries_for_archive(missionary_ids)
+
+        if not missionaries:
+            return None
+
+        package_path = self._archive_group_package_path(group_name)
+
+        from services.group_package_export_service import (
+            GroupPackageExportService,
+        )
+
+        GroupPackageExportService().export_missionaries_package(
+            group_name,
+            missionaries,
+            package_path,
+        )
+
+        for missionary in missionaries:
+            self.archive_missionary(
+                missionary.id,
+                archive_group_name=group_name,
+            )
+
+        return package_path
+
+    def _load_missionaries_for_archive(self, missionary_ids):
+        ids = list(dict.fromkeys(missionary_ids or []))
+        if not ids:
+            return []
+
+        session = SessionLocal()
+
+        try:
+            missionaries = (
+                session.query(Missionary)
+                .filter(Missionary.id.in_(ids))
+                .all()
+            )
+
+            by_id = {
+                missionary.id: missionary
+                for missionary in missionaries
+            }
+
+            ordered = [
+                by_id[missionary_id]
+                for missionary_id in ids
+                if missionary_id in by_id
+            ]
+
+            for missionary in ordered:
+                session.expunge(missionary)
+
+            return ordered
+
+        finally:
+            session.close()
+
+    def _archive_group_package_path(self, group_name):
+        archive_year = str(datetime.now().year)
+        archive_folder = (
+            self.onedrive_service.archive_root
+            / archive_year
+        )
+        archive_folder.mkdir(parents=True, exist_ok=True)
+
+        safe_name = self._safe_archive_group_name(group_name)
+        package_path = archive_folder / f"{safe_name}.zip"
+
+        counter = 1
+        while package_path.exists():
+            package_path = archive_folder / f"{safe_name}_{counter}.zip"
+            counter += 1
+
+        return package_path
+
+    @staticmethod
+    def _safe_archive_group_name(value):
+        value = (value or "").strip() or "Archived Group"
+        value = re.sub(r'[<>:"/\\|?*]+', "-", value)
+        value = re.sub(r"\s+", " ", value)
+        return value.strip(" .") or "Archived Group"
 
     def get_trashed(self):
         session = SessionLocal()

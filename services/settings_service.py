@@ -16,6 +16,8 @@ DIGEST_PASSWORD_USERNAME = "smtp_password"
 DIGEST_DEFAULT_TIME = "10:00"
 DIGEST_DEFAULT_DETAIL_LEVEL = "balanced"
 TRANSFER_DATE_KEY = "transfer_management/next_transfer_wednesday"
+WINDOWS_NOTIFICATION_DATE_KEY = "notifications/windows_last_date"
+WINDOWS_NOTIFICATION_FINGERPRINT_KEY = "notifications/windows_last_fingerprint"
 NOTIFICATION_DEFAULTS = {
     "startup_popup_enabled": True,
     "dashboard_expiration_days": 60,
@@ -401,6 +403,30 @@ class SettingsService:
                 f"notifications/{key}",
                 bool(values.get(key, defaults[key])),
             )
+
+    def get_windows_notification_state(self):
+        return {
+            "date": str(
+                self._settings.value(WINDOWS_NOTIFICATION_DATE_KEY, "") or ""
+            ),
+            "fingerprint": str(
+                self._settings.value(
+                    WINDOWS_NOTIFICATION_FINGERPRINT_KEY,
+                    "",
+                )
+                or ""
+            ),
+        }
+
+    def set_windows_notification_state(self, value_date, fingerprint):
+        self._settings.setValue(
+            WINDOWS_NOTIFICATION_DATE_KEY,
+            value_date or "",
+        )
+        self._settings.setValue(
+            WINDOWS_NOTIFICATION_FINGERPRINT_KEY,
+            fingerprint or "",
+        )
 
     def get_daily_digest_password(self):
         keyring = _keyring()

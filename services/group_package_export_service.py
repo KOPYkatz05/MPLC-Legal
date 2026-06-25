@@ -36,9 +36,17 @@ class GroupPackageExportService:
 
     def export_group_package(self, group_id, output_zip_path):
         group_name, missionaries = self._load_group_missionaries(group_id)
+        return self.export_missionaries_package(
+            group_name,
+            missionaries,
+            output_zip_path,
+        )
+
+    def export_missionaries_package(self, group_name, missionaries, output_zip_path):
         if not missionaries:
             raise GroupPackageExportError("Selected group has no missionaries.")
 
+        missionaries = list(missionaries)
         output_zip_path = Path(output_zip_path)
         output_zip_path.parent.mkdir(parents=True, exist_ok=True)
 

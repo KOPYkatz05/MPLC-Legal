@@ -5,6 +5,7 @@ from database.db import SessionLocal
 from database.models.appointment import APPOINTMENT_STATUS_SCHEDULED, Appointment
 from database.models.missionary import Missionary
 from database.models.secretary_work import SecretaryTask, SecretaryTaskMissionary
+from services.notification_feed_service import NotificationFeedService
 from utils.logger import logger
 
 
@@ -33,7 +34,11 @@ TEXT = {
         "task_due": "{count} {label} due today",
         "task_overdue": "{count} overdue {label}",
         "appt_due": "{count} {label} appointments due today",
+        "appt_week": "{count} {label} appointments this week",
         "appt_overdue": "{count} overdue {label} appointments",
+        "doc_expiring": "{count} expiring/expired documents",
+        "missing_docs": "{count} missing required documents",
+        "transfer": "{count} transfer-cycle reminders",
         "office_tasks": "office tasks",
         "prorrogas": "prorrogas",
         "tasks": "tasks",
@@ -52,7 +57,11 @@ TEXT = {
         "task_due": "{count} {label} para hoy",
         "task_overdue": "{count} {label} atrasadas",
         "appt_due": "{count} citas {label} para hoy",
+        "appt_week": "{count} citas {label} esta semana",
         "appt_overdue": "{count} citas {label} atrasadas",
+        "doc_expiring": "{count} documentos vencidos/por vencer",
+        "missing_docs": "{count} documentos requeridos faltantes",
+        "transfer": "{count} recordatorios de traslados",
         "office_tasks": "tareas de oficina",
         "prorrogas": "prórrogas",
         "tasks": "tareas",
@@ -68,12 +77,20 @@ GROUP_LABELS = {
     "prorroga": "Prorrogas",
     "gvm": "Travel Connect/GVM",
     "appointment": "Appointments",
+    "document": "Documents",
+    "missing": "Missing Documents",
+    "transfer": "Transfer Reminders",
     "office": "Office Work",
     "other": "Other Tasks",
 }
 
 
 class DailyDigestService:
+    def __init__(self, notification_feed_service=None):
+        self.notification_feed_service = (
+            notification_feed_service or NotificationFeedService()
+        )
+
     def build_digest(
         self,
         *,
@@ -85,13 +102,20 @@ class DailyDigestService:
         language = language if language in TEXT else "en"
         today = today or date.today()
 
-        session = SessionLocal()
         try:
-            tasks = self._load_tasks(session, today, include_overdue)
-            appointments = self._load_appointments(session, today, include_overdue)
+            settings = (
+                self.notification_feed_service
+                .settings_service
+                .get_notification_settings()
+            )
+            if not include_overdue:
+                settings["include_overdue_tasks"] = False
+            items = self.notification_feed_service.build_feed(
+                today=today,
+                settings=settings,
+            )
             top_items = self._top_items(
-                tasks,
-                appointments,
+                items,
                 DETAIL_LIMITS.get(detail_level, DETAIL_LIMITS["balanced"]),
                 today,
                 language,
@@ -102,26 +126,21 @@ class DailyDigestService:
                 "language": language,
                 "title": TEXT[language]["title"],
                 "subject": TEXT[language]["subject"],
-                "summary": self._summary_counts(tasks, appointments, today),
+                "summary": self._summary_counts(items, today),
                 "due_today": self._summaries(
-                    tasks,
-                    appointments,
+                    items,
                     today,
                     False,
                     language,
                 ),
                 "overdue": (
-                    self._summaries(tasks, appointments, today, True, language)
+                    self._summaries(items, today, True, language)
                     if include_overdue
                     else []
                 ),
                 "top_items": top_items,
-                "detail_groups": self._detail_groups(
-                    session,
-                    tasks,
-                    appointments,
-                    today,
-                ),
+                "detail_groups": self._detail_groups(items, today),
+                "items": items,
             }
             digest["is_empty"] = not (
                 digest["due_today"]
@@ -134,8 +153,6 @@ class DailyDigestService:
         except Exception:
             logger.exception("Failed to build daily digest")
             return self._empty_digest(today, language)
-        finally:
-            session.close()
 
     def render_text(self, digest):
         language = digest.get("language", "en")
@@ -232,92 +249,116 @@ class DailyDigestService:
             query = query.filter(Appointment.scheduled_date == today)
         return query.all()
 
-    def _summaries(self, tasks, appointments, today, overdue, language):
+    def _summaries(self, items, today, overdue, language):
         text = TEXT[language]
         lines = []
-        due_tasks = [
-            task
-            for task in tasks
-            if bool(task.due_date < today) == overdue
-            and (overdue or task.due_date == today)
-        ]
-        due_appointments = [
-            row
-            for row in appointments
-            if bool(row[0].scheduled_date < today) == overdue
-            and (overdue or row[0].scheduled_date == today)
+        due_items = [
+            item for item in items
+            if bool(item.get("days", 9999) < 0) == overdue
+            and (overdue or item.get("days") == 0)
         ]
 
-        task_counts = Counter(self._task_category(task, language) for task in due_tasks)
+        task_counts = Counter(
+            self._task_category(item, language)
+            for item in due_items
+            if item.get("type") == "secretary_task"
+        )
         for label, count in sorted(task_counts.items()):
             template = text["task_overdue"] if overdue else text["task_due"]
             lines.append(template.format(count=count, label=label))
 
         appointment_counts = Counter(
-            row[0].appointment_type or text["tasks"] for row in due_appointments
+            self._appointment_label(item)
+            for item in due_items
+            if item.get("type") == "appointment_due"
         )
         for label, count in sorted(appointment_counts.items()):
             template = text["appt_overdue"] if overdue else text["appt_due"]
             lines.append(template.format(count=count, label=label))
 
+        if not overdue:
+            week_counts = Counter(
+                self._appointment_label(item)
+                for item in items
+                if item.get("type") == "appointment_due"
+                and item.get("days", 9999) > 0
+            )
+            for label, count in sorted(week_counts.items()):
+                lines.append(text["appt_week"].format(count=count, label=label))
+
+            transfer_count = sum(
+                1 for item in due_items
+                if item.get("type") == "transfer_reminder"
+            )
+            if transfer_count:
+                lines.append(text["transfer"].format(count=transfer_count))
+
+            doc_count = sum(
+                1 for item in items
+                if item.get("type") == "document_expiration"
+            )
+            if doc_count:
+                lines.append(text["doc_expiring"].format(count=doc_count))
+
+            missing_count = sum(
+                1 for item in items
+                if item.get("type") == "missing_document"
+            )
+            if missing_count:
+                lines.append(text["missing_docs"].format(count=missing_count))
+
         return lines
 
     @staticmethod
-    def _summary_counts(tasks, appointments, today):
-        task_count = len(tasks)
-        appointment_count = len(appointments)
+    def _summary_counts(items, today):
+        task_count = sum(
+            1 for item in items
+            if item.get("type") in {"secretary_task", "transfer_reminder"}
+        )
+        appointment_count = sum(
+            1 for item in items
+            if item.get("type") == "appointment_due"
+        )
         critical = sum(
             1
-            for task in tasks
-            if (task.priority or "").upper() == "CRITICAL"
-        )
-        critical += sum(
-            1
-            for appointment, _missionary in appointments
-            if appointment.scheduled_date < today
+            for item in items
+            if item.get("severity") == "critical"
+            and (
+                item.get("type") != "secretary_task"
+                or item.get("priority") == "CRITICAL"
+            )
         )
         overdue = sum(
             1
-            for task in tasks
-            if task.due_date is not None and task.due_date < today
-        )
-        overdue += sum(
-            1
-            for appointment, _missionary in appointments
-            if appointment.scheduled_date < today
+            for item in items
+            if item.get("days", 9999) < 0
+            and item.get("type") != "missing_document"
         )
         due_today = sum(
             1
-            for task in tasks
-            if task.due_date == today
-        )
-        due_today += sum(
-            1
-            for appointment, _missionary in appointments
-            if appointment.scheduled_date == today
+            for item in items
+            if item.get("days") == 0
+            and item.get("type") in {
+                "secretary_task",
+                "transfer_reminder",
+                "appointment_due",
+            }
         )
         return {
             "critical": critical,
             "overdue": overdue,
             "due_today": due_today,
-            "total": task_count + appointment_count,
+            "total": len(items),
+            "tasks": task_count,
+            "appointments": appointment_count,
         }
 
-    def _detail_groups(self, session, tasks, appointments, today):
+    def _detail_groups(self, items, today):
         grouped = defaultdict(list)
 
-        for task in tasks:
-            grouped[self._task_group_key(task)].append(
-                self._task_detail_item(session, task, today)
-            )
-
-        for appointment, missionary in appointments:
-            grouped["appointment"].append(
-                self._appointment_detail_item(
-                    appointment,
-                    missionary,
-                    today,
-                )
+        for item in items:
+            grouped[self._item_group_key(item)].append(
+                self._detail_item(item, today)
             )
 
         groups = []
@@ -349,49 +390,63 @@ class DailyDigestService:
     @staticmethod
     def _task_category(task, language):
         text = TEXT[language]
-        title = (task.title or "").casefold()
-        appointment_field = (task.appointment_field or "").casefold()
+        title = (task.get("title") or "").casefold()
+        appointment_field = (task.get("appointment_field") or "").casefold()
         if "prorroga" in title or "prórroga" in title or "prorroga" in appointment_field:
             return text["prorrogas"]
-        if task.missionary_id or task.group_id:
+        if task.get("missionary_id") or task.get("group_id"):
             return text["tasks"]
         return text["office_tasks"]
 
     @staticmethod
-    def _task_group_key(task):
-        title = (task.title or "").casefold()
-        automation_key = (task.automation_key or "").casefold()
-        appointment_field = (task.appointment_field or "").casefold()
+    def _item_group_key(item):
+        item_type = item.get("type")
+        if item_type == "appointment_due":
+            return "appointment"
+        if item_type == "document_expiration":
+            return "document"
+        if item_type == "missing_document":
+            return "missing"
+        if item_type == "transfer_reminder":
+            return "transfer"
+        title = (item.get("title") or "").casefold()
+        automation_key = (item.get("automation_key") or "").casefold()
+        appointment_field = (item.get("appointment_field") or "").casefold()
         if "prorroga" in title or "prorroga" in automation_key:
             return "prorroga"
         if "gvm" in title or "travel connect" in title or automation_key.startswith("gvm:"):
             return "gvm"
         if appointment_field:
             return "appointment"
-        if task.missionary_id or task.group_id:
+        if item.get("missionary_id") or item.get("group_id"):
             return "other"
         return "office"
 
-    def _task_detail_item(self, session, task, today):
-        days = (task.due_date - today).days if task.due_date else 9999
-        who = self._task_who(task)
-        priority = (task.priority or "NORMAL").upper()
-        missionary_count = self._task_missionary_count(session, task)
+    def _detail_item(self, item, today):
+        _ = today
+        days = item.get("days", 9999)
+        who = item.get("who") or self._item_who(item)
+        priority = (item.get("priority") or "NORMAL").upper()
         return {
-            "kind": "task",
-            "task_id": task.id,
-            "group_id": task.group_id,
-            "missionary_id": task.missionary_id,
-            "missionary_count": missionary_count,
+            "kind": item.get("type"),
+            "task_id": item.get("task_id"),
+            "appointment_id": item.get("appointment_id"),
+            "group_id": item.get("group_id"),
+            "missionary_id": item.get("missionary_id"),
+            "missionary_count": item.get("missionary_count", 0),
             "who": who,
-            "action": task.title or "Task",
-            "detail": task.description or "",
+            "action": item.get("action") or item.get("title") or "Item",
+            "detail": item.get("detail") or "",
             "priority": priority,
-            "due_date": task.due_date,
+            "due_date": item.get("target_date"),
             "days": days,
             "timing": self._timing_label(days),
-            "severity": self._severity(priority, days),
-            "severity_rank": self._severity_rank(priority, days),
+            "severity": item.get("severity") or self._severity(priority, days),
+            "severity_rank": self._severity_rank(
+                priority,
+                days,
+                item.get("severity"),
+            ),
         }
 
     @staticmethod
@@ -413,9 +468,19 @@ class DailyDigestService:
         if names:
             return ", ".join(names)
         if task.missionary_id:
-            return f"Missionary #{task.missionary_id}"
+            return "Missionary record"
         if task.group_id:
             return task.group_scope_label or "Missionary group"
+        return "Office"
+
+    @staticmethod
+    def _item_who(item):
+        for key in ("who", "missionary_name", "name"):
+            value = item.get(key)
+            if value:
+                return value
+        if item.get("missionary_id"):
+            return "Missionary record"
         return "Office"
 
     @staticmethod
@@ -444,7 +509,11 @@ class DailyDigestService:
         return "info"
 
     @staticmethod
-    def _severity_rank(priority, days):
+    def _severity_rank(priority, days, severity=None):
+        if severity == "critical":
+            return 0
+        if severity == "warning":
+            return 1
         if priority == "CRITICAL" or days < 0:
             return 0
         if days == 0 or priority == "IMPORTANT":
@@ -461,43 +530,53 @@ class DailyDigestService:
             return "No due date"
         return f"In {days} day(s)"
 
-    def _top_items(self, tasks, appointments, limit, today, language):
+    def _top_items(self, items, limit, today, language):
         if limit <= 0:
             return []
 
-        items = []
+        ranked_items = []
         text = TEXT[language]
-        for task in tasks:
-            priority = task.priority or "NORMAL"
-            days = (task.due_date - today).days
-            if priority not in {"CRITICAL", "IMPORTANT"} and days >= 0:
+        for item in items:
+            item_type = item.get("type")
+            priority = item.get("priority") or "NORMAL"
+            days = item.get("days", 9999)
+            if item_type == "secretary_task":
+                if priority not in {"CRITICAL", "IMPORTANT"} and days >= 0:
+                    continue
+                label = text["task_item"].format(
+                    priority=priority.title(),
+                    title=item.get("title"),
+                )
+            elif item_type == "appointment_due":
+                if days >= 0:
+                    continue
+                label = text["appt_item"].format(
+                    type=self._appointment_label(item),
+                    name=item.get("who") or self._item_who(item),
+                )
+            elif item.get("severity") == "critical":
+                label = item.get("title", "")
+            else:
                 continue
-            items.append({
+            ranked_items.append({
                 "rank": (
                     PRIORITY_RANK.get(priority, 9),
                     0 if days < 0 else 1,
                     days,
-                    task.title or "",
+                    item.get("title") or "",
                 ),
-                "text": text["task_item"].format(
-                    priority=priority.title(),
-                    title=task.title,
-                ),
-            })
-
-        for appointment, missionary in appointments:
-            days = (appointment.scheduled_date - today).days
-            if days >= 0:
-                continue
-            items.append({
-                "rank": (0, 0, days, missionary.full_name or ""),
-                "text": text["appt_item"].format(
-                    type=appointment.appointment_type,
-                    name=missionary.full_name,
-                ),
+                "text": label,
             })
 
         return [
             {"text": item["text"]}
-            for item in sorted(items, key=lambda item: item["rank"])[:limit]
+            for item in sorted(ranked_items, key=lambda item: item["rank"])[:limit]
         ]
+
+    @staticmethod
+    def _appointment_label(item):
+        title = item.get("title") or "Appointment"
+        suffix = " appointment"
+        if title.casefold().endswith(suffix):
+            return title[:-len(suffix)]
+        return title

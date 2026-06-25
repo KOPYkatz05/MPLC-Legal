@@ -107,7 +107,8 @@ class OneDriveService:
 
     def archive_missionary_folder(
         self,
-        current_folder_path
+        current_folder_path,
+        group_name=None,
     ):
         try:
             current_folder = Path(
@@ -122,6 +123,11 @@ class OneDriveService:
                 self.archive_root
                 / archive_year
             )
+
+            if group_name:
+                archive_folder = archive_folder / self._safe_folder_name(
+                    group_name
+                )
 
             archive_folder.mkdir(
                 parents=True,
@@ -163,6 +169,16 @@ class OneDriveService:
             )
 
             raise
+
+    @staticmethod
+    def _safe_folder_name(value):
+        blocked = '<>:"/\\|?*'
+        safe = "".join(
+            "-" if char in blocked else char
+            for char in str(value or "")
+        )
+        safe = " ".join(safe.split())
+        return safe.strip(" .") or "Archived Group"
 
     def trash_missionary_folder(
         self,

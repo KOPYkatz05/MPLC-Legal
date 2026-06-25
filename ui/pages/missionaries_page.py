@@ -6,12 +6,14 @@ from PySide6.QtGui import QAction, QColor, QIcon, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
     QAbstractItemView,
+    QButtonGroup,
     QDialog,
     QFileDialog,
     QHBoxLayout,
     QLabel,
     QListWidgetItem,
     QPushButton,
+    QRadioButton,
     QTableWidgetItem,
     QVBoxLayout,
     QWidget,
@@ -622,7 +624,14 @@ class EditMissionaryColumnsDialog(MaskDialogBase):
 
 
 class CreateMissionaryGroupDialog(MaskDialogBase):
-    def __init__(self, group_service, missionaries, parent=None, group=None):
+    def __init__(
+        self,
+        group_service,
+        missionaries,
+        parent=None,
+        group=None,
+        selected_missionary_ids=None,
+    ):
         fluent_parent = parent.window() if parent is not None else None
         self._use_fluent_dialog = (
             FLUENT_AVAILABLE and fluent_parent is not None
@@ -636,8 +645,10 @@ class CreateMissionaryGroupDialog(MaskDialogBase):
         self.group_service = group_service
         self.missionaries = list(missionaries)
         self.group = group or {}
+        self._is_editing = group is not None
+        if group is None and selected_missionary_ids:
+            self.group["missionary_ids"] = list(selected_missionary_ids)
         self.saved_group = None
-        self._is_editing = bool(self.group)
 
         self.setWindowTitle("Edit Group" if self._is_editing else "Create Group")
         self.surface = setup_dialog_shell(
@@ -780,6 +791,147 @@ class CreateMissionaryGroupDialog(MaskDialogBase):
             )
         else:
             self.saved_group = self.group_service.create_group(**payload)
+        self.accept()
+
+
+class BatchArchiveDialog(MaskDialogBase):
+    def __init__(self, selected_count, parent=None):
+        fluent_parent = parent.window() if parent is not None else None
+        self._use_fluent_dialog = (
+            FLUENT_AVAILABLE and fluent_parent is not None
+        )
+
+        if self._use_fluent_dialog:
+            super().__init__(fluent_parent)
+        else:
+            QDialog.__init__(self, parent)
+
+        self.selected_count = selected_count
+        self.archive_mode = "group"
+        self.group_name = ""
+
+        self.setWindowTitle("Archive Missionaries")
+        self.surface = setup_dialog_shell(
+            self,
+            surface_width=520,
+            surface_min_height=360,
+        )
+        self.setup_ui()
+
+    def _onDone(self, code):
+        if self._use_fluent_dialog:
+            super()._onDone(code)
+        else:
+            QDialog.done(self, code)
+
+    def done(self, code):
+        if self._use_fluent_dialog:
+            super().done(code)
+        else:
+            QDialog.done(self, code)
+
+    def setup_ui(self):
+        root = QVBoxLayout()
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+        self.surface.setLayout(root)
+
+        root.addWidget(
+            PageHeader(
+                "Archive Missionaries",
+                (
+                    "Make group out of selected missionaries and archive? "
+                    "Or archive each individually all at once?"
+                ),
+            )
+        )
+
+        body = QWidget()
+        body.setObjectName("DialogBody")
+        body.setAttribute(Qt.WA_StyledBackground, True)
+        body_layout = QVBoxLayout()
+        body_layout.setContentsMargins(24, 20, 24, 20)
+        body_layout.setSpacing(12)
+        body.setLayout(body_layout)
+
+        count_label = QLabel(
+            f"{self.selected_count} missionary(s) selected."
+        )
+        count_label.setObjectName("MutedText")
+        body_layout.addWidget(count_label)
+
+        self.mode_group = QButtonGroup(self)
+        self.group_radio = QRadioButton(
+            "Group into one archive file"
+        )
+        self.individual_radio = QRadioButton(
+            "Archive each individually"
+        )
+        self.group_radio.setChecked(True)
+        self.mode_group.addButton(self.group_radio)
+        self.mode_group.addButton(self.individual_radio)
+
+        body_layout.addWidget(self.group_radio)
+
+        self.name_input = create_line_edit("Archive group name")
+        body_layout.addWidget(
+            self._field("Group Name", self.name_input)
+        )
+
+        body_layout.addWidget(self.individual_radio)
+
+        self.group_radio.toggled.connect(
+            self._update_name_enabled
+        )
+        self._update_name_enabled()
+
+        root.addWidget(body, stretch=1)
+
+        footer = DialogFooter()
+        cancel_btn = create_button("Cancel", "secondary")
+        cancel_btn.clicked.connect(self.reject)
+        footer.add_action(cancel_btn)
+        archive_btn = create_button("Archive", "primary")
+        archive_btn.clicked.connect(self._accept_archive)
+        footer.add_action(archive_btn)
+        root.addWidget(footer)
+
+    def _field(self, label_text, control):
+        wrapper = QWidget()
+        layout = QVBoxLayout()
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(5)
+        wrapper.setLayout(layout)
+        label = QLabel(label_text)
+        label.setObjectName("OfficeWorkFieldLabel")
+        layout.addWidget(label)
+        layout.addWidget(control)
+        return wrapper
+
+    def _update_name_enabled(self, checked=True):
+        _ = checked
+        enabled = self.group_radio.isChecked()
+        self.name_input.setEnabled(enabled)
+
+    def _accept_archive(self):
+        if self.group_radio.isChecked():
+            group_name = self.name_input.text().strip()
+            if not group_name:
+                show_message(
+                    self,
+                    "Group Name Required",
+                    "Enter a name for the archive group.",
+                    kind="warning",
+                )
+                return
+
+            self.archive_mode = "group"
+            self.group_name = group_name
+
+        else:
+            self.archive_mode = "individual"
+            self.group_name = ""
+
         self.accept()
 
 
@@ -1836,6 +1988,22 @@ class MissionariesPage(QWidget):
 
         return None
 
+    def _selected_missionary_ids(self):
+        selected_rows = {
+            item.row()
+            for item in self.table.selectedItems()
+        }
+
+        ids = []
+
+        for row in sorted(selected_rows):
+            missionary_id = self._missionary_id_for_row(row)
+
+            if missionary_id is not None and missionary_id not in ids:
+                ids.append(missionary_id)
+
+        return ids
+
     def _open_missionary_by_id(self, missionary_id):
         try:
             opener = getattr(
@@ -1852,12 +2020,9 @@ class MissionariesPage(QWidget):
             )
 
     def _batch_actions(self):
-        selected_rows = set()
+        ids = self._selected_missionary_ids()
 
-        for item in self.table.selectedItems():
-            selected_rows.add(item.row())
-
-        if not selected_rows:
+        if not ids:
             show_message(
                 self,
                 "No Selection",
@@ -1867,50 +2032,100 @@ class MissionariesPage(QWidget):
 
             return
 
-        ids = []
-
-        for row in selected_rows:
-            missionary_id = self._missionary_id_for_row(row)
-
-            if missionary_id is not None:
-                ids.append(missionary_id)
-
-        # Show simple menu
         menu = create_menu("", self)
 
-        advance_action = menu.addAction(
-            "Advance Stage"
+        advance_action = QAction(
+            "Advance Stage",
+            self,
+        )
+        archive_action = QAction(
+            "Archive",
+            self,
         )
 
-        action = menu.exec(
+        advance_action.triggered.connect(
+            lambda checked=False: self._batch_advance_stage(ids)
+        )
+        archive_action.triggered.connect(
+            lambda checked=False: self._batch_archive(ids)
+        )
+
+        menu.addAction(advance_action)
+        menu.addAction(archive_action)
+        self._batch_menu = menu
+
+        menu.exec(
             self.batch_button.mapToGlobal(
                 self.batch_button.rect().bottomLeft()
             )
         )
 
-        if action == advance_action:
-            from ui.dialogs.batch_stage_advance_dialog import (
-                BatchStageAdvanceDialog,
+    def _batch_advance_stage(self, missionary_ids):
+        from ui.dialogs.batch_stage_advance_dialog import (
+            BatchStageAdvanceDialog,
+        )
+
+        dialog = BatchStageAdvanceDialog(
+            missionary_ids,
+            parent=self,
+        )
+
+        if dialog.exec() == QDialog.Accepted:
+            self._refresh_after_batch(missionary_ids)
+
+    def _batch_archive(self, missionary_ids):
+        dialog = BatchArchiveDialog(
+            len(missionary_ids),
+            parent=self,
+        )
+
+        if dialog.exec() != QDialog.Accepted:
+            return
+
+        try:
+            if dialog.archive_mode == "group":
+                package_path = (
+                    self.missionary_service
+                    .archive_missionaries_as_group(
+                        missionary_ids,
+                        dialog.group_name,
+                    )
+                )
+            else:
+                package_path = None
+                self.missionary_service.archive_missionaries(
+                    missionary_ids
+                )
+        except Exception:
+            show_message(
+                self,
+                "Archive Failed",
+                "Failed to archive selected missionaries.",
+                kind="critical",
+            )
+            return
+
+        self._refresh_after_batch(missionary_ids)
+
+        if package_path:
+            show_message(
+                self,
+                "Archive Complete",
+                f"Created archive package:\n{package_path}",
             )
 
-            dialog = BatchStageAdvanceDialog(
-                ids, parent=self
-            )
+    def _refresh_after_batch(self, missionary_ids):
+        self.load_data()
+        self._refresh_open_detail_if_selected(missionary_ids)
 
-            if dialog.exec() == QDialog.Accepted:
-                self.load_data()
-                self._refresh_open_detail_if_selected(ids)
+        if hasattr(self.main_window, "dashboard_page"):
+            self.main_window.dashboard_page.load_data()
 
-                # Also refresh dashboard
-                if hasattr(
-                    self.main_window, "dashboard_page"
-                ):
-                    self.main_window.dashboard_page.load_data()
-                for page_name in ("calendar_page", "reports_page"):
-                    page = getattr(self.main_window, page_name, None)
-                    load_data = getattr(page, "load_data", None)
-                    if callable(load_data):
-                        load_data()
+        for page_name in ("calendar_page", "reports_page"):
+            page = getattr(self.main_window, page_name, None)
+            load_data = getattr(page, "load_data", None)
+            if callable(load_data):
+                load_data()
 
     def _refresh_open_detail_if_selected(self, missionary_ids):
         detail_page = getattr(self.main_window, "detail_page", None)
@@ -1924,10 +2139,13 @@ class MissionariesPage(QWidget):
             reload_detail()
 
     def _create_group(self):
+        selected_ids = self._selected_missionary_ids()
+
         dialog = CreateMissionaryGroupDialog(
             self.group_service,
             self._all_missionaries,
             parent=self,
+            selected_missionary_ids=selected_ids,
         )
         if dialog.exec() == QDialog.Accepted:
             self.load_data()

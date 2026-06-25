@@ -365,13 +365,13 @@ class DashboardPage(QWidget):
         overdue_count = sum(
             1
             for alert in self.startup_alerts
-            if alert.get("overdue") or int(alert.get("days_remaining", 0)) < 0
+            if int(alert.get("days", 0)) < 0
         )
         urgent_count = sum(
             1
             for alert in self.startup_alerts
-            if not alert.get("overdue")
-            and 0 <= int(alert.get("days_remaining", 0)) <= 7
+            if alert.get("severity") in {"critical", "warning"}
+            and int(alert.get("days", 9999)) >= 0
         )
         parts = []
         if overdue_count:
@@ -404,7 +404,7 @@ class DashboardPage(QWidget):
         text_stack.setSpacing(2)
 
         title = QLabel(
-            f"{len(self.startup_alerts)} document"
+            f"{len(self.startup_alerts)} item"
             f"{'s' if len(self.startup_alerts) != 1 else ''} need attention"
         )
         title.setObjectName("StrongText")

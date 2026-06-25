@@ -11,6 +11,7 @@ from database.models.document import Document
 from database.models.missionary import Missionary
 from database.models.secretary_work import SecretaryTask
 from services import dashboard_service as dashboard_module
+from services import notification_feed_service as feed_module
 from services.dashboard_service import DashboardService
 from ui.pages import dashboard_page
 from ui.pages.dashboard_page import DashboardPage
@@ -22,6 +23,7 @@ def dashboard_env(monkeypatch):
     Base.metadata.create_all(bind=engine)
     TestingSession = sessionmaker(bind=engine, autoflush=False, autocommit=False)
     monkeypatch.setattr(dashboard_module, "SessionLocal", TestingSession)
+    monkeypatch.setattr(feed_module, "SessionLocal", TestingSession)
     return TestingSession
 
 

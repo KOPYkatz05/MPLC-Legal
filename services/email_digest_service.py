@@ -3,6 +3,7 @@ from datetime import date
 from email.message import EmailMessage
 
 from services.daily_digest_service import DailyDigestService
+from services.process_automation_service import ProcessAutomationService
 from services.settings_service import SettingsService
 from utils.logger import logger
 
@@ -46,6 +47,7 @@ class EmailDigestService:
                 "missing": missing,
             }
 
+        self._refresh_process_automation()
         digest = self.digest_service.build_digest(
             include_overdue=settings.get("include_overdue", True),
             detail_level=settings.get("detail_level", "balanced"),
@@ -125,3 +127,11 @@ class EmailDigestService:
             for key in required
             if not str(settings.get(key, "")).strip()
         ]
+
+    def _refresh_process_automation(self):
+        try:
+            ProcessAutomationService(
+                settings_service=self.settings_service
+            ).run()
+        except Exception:
+            logger.exception("Process automation failed before daily digest")
