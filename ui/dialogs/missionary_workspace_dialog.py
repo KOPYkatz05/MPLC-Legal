@@ -1,7 +1,8 @@
 from dataclasses import dataclass
 from pathlib import Path
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QUrl
+from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QFrame,
     QGridLayout,
@@ -11,6 +12,11 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+
+try:
+    from PySide6.QtWebEngineWidgets import QWebEngineView
+except Exception:
+    QWebEngineView = None
 
 from services.document_service import DocumentService
 from services.residency_service import ResidencyService
@@ -87,6 +93,7 @@ BLOCK_LABELS = {
     "personal_info": "workspace_block_personal_info",
     "documents": "workspace_block_documents",
     "document_viewer": "workspace_block_document_viewer",
+    "web_viewer": "workspace_block_web_viewer",
     "missing_documents": "workspace_block_missing_documents",
     "workflow": "workspace_block_workflow",
     "open_tasks": "workspace_block_open_tasks",
@@ -239,6 +246,7 @@ class WorkspaceBlockFactory:
             "personal_info": self.personal_info,
             "documents": self.documents,
             "document_viewer": self.document_viewer,
+            "web_viewer": self.web_viewer,
             "missing_documents": self.missing_documents,
             "workflow": self.workflow,
             "open_tasks": self.open_tasks,
@@ -349,6 +357,52 @@ class WorkspaceBlockFactory:
             show_header=False,
         )
         layout.addWidget(preview, stretch=1)
+        return card
+
+    def web_viewer(self, block):
+        card, layout = self.card(block)
+        url = self.dialog.normalized_web_url(block.get("web_url", ""))
+        if not url:
+            layout.addWidget(
+                self.empty(
+                    tr("workspace_no_web_url"),
+                    tr("workspace_no_web_url_hint"),
+                ),
+                stretch=1,
+            )
+            return card
+
+        if getattr(self.dialog, "preview_mode", False):
+            layout.addWidget(
+                self.empty(
+                    tr("workspace_web_preview"),
+                    url,
+                ),
+                stretch=1,
+            )
+            return card
+
+        if QWebEngineView is None:
+            layout.addWidget(
+                self.empty(
+                    tr("workspace_web_viewer_unavailable"),
+                    tr("workspace_web_viewer_unavailable_hint"),
+                ),
+                stretch=1,
+            )
+            open_btn = create_button(tr("workspace_open_website"), "primary")
+            open_btn.clicked.connect(lambda checked=False: self.dialog.open_web_url(url))
+            layout.addWidget(open_btn)
+            return card
+
+        web_view = QWebEngineView(card)
+        web_view.setObjectName("WorkspaceWebViewer")
+        web_view.setUrl(QUrl(url))
+        layout.addWidget(web_view, stretch=1)
+
+        open_btn = create_button(tr("workspace_open_website"), "secondary", fixed_height=28)
+        open_btn.clicked.connect(lambda checked=False: self.dialog.open_web_url(url))
+        layout.addWidget(open_btn, alignment=Qt.AlignRight)
         return card
 
     def missing_documents(self, block):
@@ -574,6 +628,20 @@ class MissionaryWorkspaceDialog(MaskDialogBase):
             key=lambda doc: getattr(doc, "uploaded_at", None) or 0,
             reverse=True,
         )[0]
+
+    @staticmethod
+    def normalized_web_url(value):
+        url = (value or "").strip()
+        if not url or url == "https://":
+            return ""
+        if "://" not in url:
+            url = f"https://{url}"
+        return url
+
+    def open_web_url(self, url):
+        normalized = self.normalized_web_url(url)
+        if normalized:
+            QDesktopServices.openUrl(QUrl(normalized))
 
     def open_document_viewer(self, doc):
         file_path = getattr(doc, "file_path", None)

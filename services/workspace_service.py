@@ -63,6 +63,7 @@ def new_block(block_type):
         "personal_info": "Personal Information",
         "documents": "Documents",
         "document_viewer": "Document Viewer",
+        "web_viewer": "Web Viewer",
         "missing_documents": "Missing Documents",
         "workflow": "Workflow",
         "open_tasks": "Open Tasks",
@@ -85,6 +86,10 @@ def new_block(block_type):
         ]
     if block_type == "document_viewer":
         block["document_type"] = ""
+        block["height"] = "tall"
+        block["width"] = "full"
+    if block_type == "web_viewer":
+        block["web_url"] = "https://"
         block["height"] = "tall"
         block["width"] = "full"
     block["layout"] = validate_block_layout(block)

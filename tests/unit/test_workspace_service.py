@@ -1,7 +1,7 @@
 import json
 
 from services.workspace_layout import normalize_workspace_layout
-from services.workspace_service import WorkspaceService, new_workspace
+from services.workspace_service import WorkspaceService, new_block, new_workspace
 
 
 def test_missing_workspace_file_returns_empty_list(tmp_path):
@@ -113,3 +113,13 @@ def test_phase_one_blocks_are_auto_packed_without_overlap():
     assert layouts[0] == {"row": 0, "col": 0, "row_span": 2, "col_span": 6}
     assert layouts[1] == {"row": 0, "col": 6, "row_span": 2, "col_span": 6}
     assert layouts[2] == {"row": 2, "col": 0, "row_span": 1, "col_span": 12}
+
+
+def test_web_viewer_block_defaults_to_full_tall_layout():
+    block = new_block("web_viewer")
+
+    assert block["web_url"] == "https://"
+    assert block["width"] == "full"
+    assert block["height"] == "tall"
+    assert block["layout"]["col_span"] == 12
+    assert block["layout"]["row_span"] == 3

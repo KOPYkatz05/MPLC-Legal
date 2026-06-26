@@ -47,6 +47,7 @@ from services.workspace_layout import (
 from ui.dialogs.missionary_workspace_dialog import (
     BLOCK_LABELS,
     FIELD_KEYS,
+    MissionaryWorkspaceDialog,
     WorkspaceBlockFactory,
     clear_layout,
 )
@@ -791,6 +792,13 @@ class SettingsPage(QWidget):
             tr("workspace_block_document_type"),
             self.block_document_combo,
         )
+
+        self.block_web_url_input = create_line_edit(
+            tr("workspace_block_web_url"),
+            "WorkspaceBlockWebUrlInput",
+        )
+        self.block_web_url_input.textChanged.connect(self._update_block_web_url)
+        options_layout.addRow(tr("workspace_block_web_url"), self.block_web_url_input)
         editor_body.addWidget(self.block_options_card)
 
         self.workspace_save_btn = create_button(tr("workspace_save"), "primary")
@@ -943,6 +951,7 @@ class SettingsPage(QWidget):
             self.field_down_btn,
             self.field_remove_btn,
             self.block_document_combo,
+            self.block_web_url_input,
         ):
             widget.setEnabled(enabled)
         if not block:
@@ -950,6 +959,7 @@ class SettingsPage(QWidget):
             self.block_fields_list.clear()
             self.block_fields_widget.setVisible(False)
             self.block_document_combo.setVisible(False)
+            self.block_web_url_input.setVisible(False)
             return
         self.block_title_input.blockSignals(True)
         self.block_title_input.setText(block.get("title", ""))
@@ -976,8 +986,12 @@ class SettingsPage(QWidget):
         self.block_document_combo.blockSignals(True)
         self.block_document_combo.setCurrentIndex(max(doc_idx, 0))
         self.block_document_combo.blockSignals(False)
+        self.block_web_url_input.blockSignals(True)
+        self.block_web_url_input.setText(block.get("web_url", ""))
+        self.block_web_url_input.blockSignals(False)
         self.block_fields_widget.setVisible(block.get("type") == "personal_info")
         self.block_document_combo.setVisible(block.get("type") == "document_viewer")
+        self.block_web_url_input.setVisible(block.get("type") == "web_viewer")
 
     def _select_block_item(self, block_id):
         for row in range(self.blocks_list.count()):
@@ -1200,6 +1214,12 @@ class SettingsPage(QWidget):
             block["document_type"] = self.block_document_combo.currentData() or ""
             self._refresh_workspace_preview()
 
+    def _update_block_web_url(self, value):
+        block = self._current_block()
+        if block is not None and block.get("type") == "web_viewer":
+            block["web_url"] = value
+            self._refresh_workspace_preview()
+
     def _sample_workspace_context(self):
         missionary = SimpleNamespace(
             id=0,
@@ -1256,8 +1276,11 @@ class SettingsPage(QWidget):
             return
         preview_workspace = normalize_workspace_layout(workspace)
         fake_dialog = SimpleNamespace(
+            preview_mode=True,
             context=self._sample_workspace_context(),
             find_document=lambda document_type=None: None,
+            normalized_web_url=MissionaryWorkspaceDialog.normalized_web_url,
+            open_web_url=lambda url: None,
             open_document_viewer=lambda doc: None,
             open_document_notes=lambda doc: None,
             open_document_file=lambda doc: None,

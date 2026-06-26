@@ -64,3 +64,24 @@ def test_workspaces_page_renders_editor_and_preview(qapp):
     assert page.workspace_layout_editor.workspace is not None
     assert page._current_block()["layout"]["col_span"] == 12
     assert page.workspace_preview_grid.count() > 0
+
+
+def test_workspaces_page_configures_web_viewer_url(qapp):
+    _ = qapp
+    service = MemoryWorkspaceService()
+    main_window = SimpleNamespace(
+        settings_service=SettingsService(),
+        workspace_service=service,
+    )
+    page = WorkspacesPage(main_window)
+
+    page._new_workspace()
+    index = page.block_add_combo.findData("web_viewer")
+    page.block_add_combo.setCurrentIndex(index)
+    page._add_workspace_block()
+    page.block_web_url_input.setText("https://example.org")
+
+    block = page._current_block()
+    assert block["type"] == "web_viewer"
+    assert block["web_url"] == "https://example.org"
+    assert page.workspace_preview_grid.count() > 0
