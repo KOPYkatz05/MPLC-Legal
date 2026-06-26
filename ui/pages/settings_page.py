@@ -5,6 +5,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QListWidgetItem,
     QPushButton,
+    QSizePolicy,
     QSpinBox,
     QTabWidget,
     QTimeEdit,
@@ -29,6 +30,7 @@ from ui.foundation import (
 )
 from PySide6.QtCore import QDate, Qt, QTime
 from datetime import date, timedelta
+from types import SimpleNamespace
 from services.email_digest_service import EmailDigestService
 from services.scheduler_service import SchedulerService
 from services.settings_service import SettingsService
@@ -37,7 +39,18 @@ from services.workspace_service import (
     new_block,
     new_workspace,
 )
-from ui.dialogs.missionary_workspace_dialog import BLOCK_LABELS, FIELD_KEYS
+from services.workspace_layout import (
+    WORKSPACE_GRID_COLUMNS,
+    normalize_workspace_layout,
+    validate_block_layout,
+)
+from ui.dialogs.missionary_workspace_dialog import (
+    BLOCK_LABELS,
+    FIELD_KEYS,
+    WorkspaceBlockFactory,
+    clear_layout,
+)
+from ui.widgets.workspace_layout_editor import WorkspaceLayoutEditor
 from utils.constants import DOCUMENTS
 from utils.language_helper import ui_text as tr
 from utils.logger import logger
@@ -85,10 +98,9 @@ class SettingsPage(QWidget):
             tr("settings_tab_notifications"),
         )
         self.tabs.addTab(self._build_transfer_tab(), tr("settings_tab_transfer"))
-        self.tabs.addTab(self._build_workspaces_tab(), tr("settings_tab_workspaces"))
         outer.addWidget(self.tabs, stretch=1)
 
-    def _build_tab_scroll(self, content_widget):
+    def _build_tab_scroll(self, content_widget, *, full_width=False):
         tab = QWidget()
         tab.setObjectName("SettingsTabPage")
         layout = QVBoxLayout()
@@ -103,17 +115,24 @@ class SettingsPage(QWidget):
         shell_layout.setContentsMargins(0, 0, 0, 0)
         shell_layout.setSpacing(0)
         shell.setLayout(shell_layout)
-        shell_layout.addStretch()
-        shell_layout.addWidget(content_widget, alignment=Qt.AlignTop)
-        shell_layout.addStretch()
+        if full_width:
+            shell_layout.addWidget(content_widget, stretch=1, alignment=Qt.AlignTop)
+        else:
+            shell_layout.addStretch()
+            shell_layout.addWidget(content_widget, alignment=Qt.AlignTop)
+            shell_layout.addStretch()
         scroll.setWidget(shell)
         layout.addWidget(scroll, stretch=1)
         return tab
 
-    def _build_settings_content(self):
+    def _build_settings_content(self, *, full_width=False):
         content = QWidget()
         content.setObjectName("SettingsContent")
-        content.setMaximumWidth(1180)
+        if full_width:
+            content.setMinimumWidth(980)
+            content.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        else:
+            content.setMaximumWidth(1180)
         content_layout = QVBoxLayout()
         content_layout.setContentsMargins(32, 24, 32, 32)
         content_layout.setSpacing(16)
@@ -573,7 +592,7 @@ class SettingsPage(QWidget):
         return self._build_tab_scroll(content)
 
     def _build_workspaces_tab(self):
-        content, layout = self._build_settings_content()
+        content, layout = self._build_settings_content(full_width=True)
 
         shell = QHBoxLayout()
         shell.setContentsMargins(0, 0, 0, 0)
@@ -607,7 +626,7 @@ class SettingsPage(QWidget):
                 self.workspace_delete_btn,
             )
         )
-        shell.addWidget(list_card, stretch=3)
+        shell.addWidget(list_card, stretch=2)
 
         editor_card, editor_body, self.workspace_editor_title, _ = (
             self._settings_card(
@@ -669,6 +688,19 @@ class SettingsPage(QWidget):
             )
         )
 
+        self.workspace_layout_editor = WorkspaceLayoutEditor(
+            lambda block_type: tr(
+                BLOCK_LABELS.get(block_type, "workspace_block_unsupported")
+            )
+        )
+        self.workspace_layout_editor.blockSelected.connect(
+            self._select_block_from_layout
+        )
+        self.workspace_layout_editor.layoutChanged.connect(
+            self._workspace_layout_changed
+        )
+        editor_body.addWidget(self.workspace_layout_editor)
+
         self.block_options_card = QFrame()
         self.block_options_card.setObjectName("SettingsCard")
         options_layout = QFormLayout()
@@ -695,6 +727,16 @@ class SettingsPage(QWidget):
         self.block_height_combo.addItem(tr("workspace_height_tall"), "tall")
         self.block_height_combo.currentIndexChanged.connect(self._update_block_height)
         options_layout.addRow(tr("workspace_block_height"), self.block_height_combo)
+
+        self.block_col_span_spin = QSpinBox()
+        self.block_col_span_spin.setRange(1, WORKSPACE_GRID_COLUMNS)
+        self.block_col_span_spin.valueChanged.connect(self._update_block_col_span)
+        options_layout.addRow(tr("workspace_block_columns"), self.block_col_span_spin)
+
+        self.block_row_span_spin = QSpinBox()
+        self.block_row_span_spin.setRange(1, 8)
+        self.block_row_span_spin.valueChanged.connect(self._update_block_row_span)
+        options_layout.addRow(tr("workspace_block_rows"), self.block_row_span_spin)
 
         field_editor = QWidget()
         field_editor_layout = QVBoxLayout()
@@ -754,11 +796,24 @@ class SettingsPage(QWidget):
         self.workspace_save_btn = create_button(tr("workspace_save"), "primary")
         self.workspace_save_btn.clicked.connect(self._save_current_workspace)
         editor_body.addWidget(self._action_row(self.workspace_save_btn))
-        shell.addWidget(editor_card, stretch=5)
+        shell.addWidget(editor_card, stretch=6)
+
+        preview_card, preview_body, self.workspace_preview_title, _ = (
+            self._settings_card(
+                tr("workspace_preview_title"),
+                tr("workspace_preview_hint"),
+            )
+        )
+        self.workspace_preview_grid = QGridLayout()
+        self.workspace_preview_grid.setContentsMargins(0, 0, 0, 0)
+        self.workspace_preview_grid.setHorizontalSpacing(10)
+        self.workspace_preview_grid.setVerticalSpacing(10)
+        preview_body.addLayout(self.workspace_preview_grid)
+        shell.addWidget(preview_card, stretch=5)
 
         layout.addStretch()
         self._load_workspaces()
-        return self._build_tab_scroll(content)
+        return self._build_tab_scroll(content, full_width=True)
 
     def _load_workspaces(self):
         self._workspaces = self.workspace_service.list_workspaces()
@@ -810,6 +865,7 @@ class SettingsPage(QWidget):
             self.block_up_btn,
             self.block_down_btn,
             self.block_remove_btn,
+            self.workspace_layout_editor,
             self.block_options_card,
             self.workspace_save_btn,
             self.workspace_duplicate_btn,
@@ -828,7 +884,11 @@ class SettingsPage(QWidget):
         if not workspace:
             self.workspace_name_input.clear()
             self.blocks_list.clear()
+            self.workspace_layout_editor.set_workspace(None)
+            self._refresh_workspace_preview()
             return
+        normalized = normalize_workspace_layout(workspace)
+        workspace["blocks"] = normalized.get("blocks", [])
         self.workspace_name_input.blockSignals(True)
         self.workspace_name_input.setText(workspace.get("name", ""))
         self.workspace_name_input.blockSignals(False)
@@ -838,9 +898,14 @@ class SettingsPage(QWidget):
             self.workspace_size_combo.setCurrentIndex(idx)
             self.workspace_size_combo.blockSignals(False)
         self._refresh_blocks_list()
+        self.workspace_layout_editor.set_workspace(workspace)
+        self._refresh_workspace_preview()
 
-    def _refresh_blocks_list(self):
+    def _refresh_blocks_list(self, selected_block_id=None):
         workspace = self._current_workspace()
+        current_block = self._current_block()
+        if selected_block_id is None and current_block is not None:
+            selected_block_id = current_block.get("id")
         self.blocks_list.blockSignals(True)
         self.blocks_list.clear()
         if workspace:
@@ -851,6 +916,8 @@ class SettingsPage(QWidget):
                 item.setData(Qt.UserRole, block.get("id"))
                 self.blocks_list.addItem(item)
         self.blocks_list.blockSignals(False)
+        if selected_block_id and self._select_block_item(selected_block_id):
+            return
         if self.blocks_list.count():
             self.blocks_list.setCurrentRow(0)
         else:
@@ -866,6 +933,8 @@ class SettingsPage(QWidget):
             self.block_title_input,
             self.block_width_combo,
             self.block_height_combo,
+            self.block_col_span_spin,
+            self.block_row_span_spin,
             self.block_fields_widget,
             self.field_add_combo,
             self.field_add_btn,
@@ -894,6 +963,14 @@ class SettingsPage(QWidget):
                 combo.blockSignals(True)
                 combo.setCurrentIndex(idx)
                 combo.blockSignals(False)
+        layout = validate_block_layout(block)
+        self.block_col_span_spin.blockSignals(True)
+        self.block_col_span_spin.setValue(layout["col_span"])
+        self.block_col_span_spin.blockSignals(False)
+        self.block_row_span_spin.blockSignals(True)
+        self.block_row_span_spin.setValue(layout["row_span"])
+        self.block_row_span_spin.blockSignals(False)
+        self.workspace_layout_editor.set_selected_block(block.get("id"))
         self._refresh_block_fields_list()
         doc_idx = self.block_document_combo.findData(block.get("document_type", ""))
         self.block_document_combo.blockSignals(True)
@@ -901,6 +978,27 @@ class SettingsPage(QWidget):
         self.block_document_combo.blockSignals(False)
         self.block_fields_widget.setVisible(block.get("type") == "personal_info")
         self.block_document_combo.setVisible(block.get("type") == "document_viewer")
+
+    def _select_block_item(self, block_id):
+        for row in range(self.blocks_list.count()):
+            item = self.blocks_list.item(row)
+            if item.data(Qt.UserRole) == block_id:
+                self.blocks_list.setCurrentRow(row)
+                return True
+        return False
+
+    def _select_block_from_layout(self, block_id):
+        if block_id:
+            self._select_block_item(block_id)
+
+    def _workspace_layout_changed(self):
+        workspace = self._current_workspace()
+        if not workspace:
+            return
+        selected_id = self.workspace_layout_editor.selected_block_id
+        self._refresh_blocks_list(selected_id)
+        self._populate_block_options(self._current_block())
+        self._refresh_workspace_preview()
 
     def _new_workspace(self):
         workspace = self.workspace_service.save_workspace(
@@ -936,18 +1034,24 @@ class SettingsPage(QWidget):
         workspace = self._current_workspace()
         if workspace is not None:
             workspace["name"] = value
+            self._refresh_workspace_preview()
 
     def _update_workspace_size(self):
         workspace = self._current_workspace()
         if workspace is not None:
             workspace["dialog_size"] = self.workspace_size_combo.currentData()
+            self._refresh_workspace_preview()
 
     def _add_workspace_block(self):
         workspace = self._current_workspace()
         if not workspace:
             return
-        workspace.setdefault("blocks", []).append(new_block(self.block_add_combo.currentData()))
-        self._refresh_blocks_list()
+        block = new_block(self.block_add_combo.currentData())
+        workspace.setdefault("blocks", []).append(block)
+        workspace["blocks"] = normalize_workspace_layout(workspace).get("blocks", [])
+        self._refresh_blocks_list(block.get("id"))
+        self.workspace_layout_editor.set_workspace(workspace)
+        self._refresh_workspace_preview()
 
     def _move_workspace_block(self, direction):
         workspace = self._current_workspace()
@@ -961,8 +1065,11 @@ class SettingsPage(QWidget):
         if index < 0 or target < 0 or target >= len(blocks):
             return
         blocks[index], blocks[target] = blocks[target], blocks[index]
-        self._refresh_blocks_list()
+        workspace["blocks"] = normalize_workspace_layout(workspace).get("blocks", [])
+        self._refresh_blocks_list(block_id)
         self.blocks_list.setCurrentRow(target)
+        self.workspace_layout_editor.set_workspace(workspace)
+        self._refresh_workspace_preview()
 
     def _remove_workspace_block(self):
         workspace = self._current_workspace()
@@ -976,22 +1083,64 @@ class SettingsPage(QWidget):
             if block.get("id") != block_id
         ]
         self._refresh_blocks_list()
+        self.workspace_layout_editor.set_workspace(workspace)
+        self._refresh_workspace_preview()
 
     def _update_block_title(self, value):
         block = self._current_block()
         if block is not None:
             block["title"] = value
-            self._refresh_blocks_list()
+            self._refresh_blocks_list(block.get("id"))
+            self.workspace_layout_editor.set_workspace(self._current_workspace())
+            self._refresh_workspace_preview()
 
     def _update_block_width(self):
         block = self._current_block()
         if block is not None:
             block["width"] = self.block_width_combo.currentData()
+            layout = validate_block_layout(block)
+            layout["col_span"] = (
+                WORKSPACE_GRID_COLUMNS
+                if block["width"] == "full"
+                else WORKSPACE_GRID_COLUMNS // 2
+            )
+            block["layout"] = validate_block_layout({"layout": layout})
+            self.block_col_span_spin.blockSignals(True)
+            self.block_col_span_spin.setValue(block["layout"]["col_span"])
+            self.block_col_span_spin.blockSignals(False)
+            self.workspace_layout_editor.set_workspace(self._current_workspace())
+            self._refresh_workspace_preview()
 
     def _update_block_height(self):
         block = self._current_block()
         if block is not None:
             block["height"] = self.block_height_combo.currentData()
+            layout = validate_block_layout(block)
+            layout["row_span"] = {
+                "compact": 1,
+                "normal": 2,
+                "tall": 3,
+            }.get(block["height"], 2)
+            block["layout"] = validate_block_layout({"layout": layout})
+            self.block_row_span_spin.blockSignals(True)
+            self.block_row_span_spin.setValue(block["layout"]["row_span"])
+            self.block_row_span_spin.blockSignals(False)
+            self.workspace_layout_editor.set_workspace(self._current_workspace())
+            self._refresh_workspace_preview()
+
+    def _update_block_col_span(self, value):
+        block = self._current_block()
+        if block is not None:
+            block["width"] = "full" if value >= WORKSPACE_GRID_COLUMNS else "half"
+            self.workspace_layout_editor.update_selected_layout(col_span=value)
+            self._refresh_workspace_preview()
+
+    def _update_block_row_span(self, value):
+        block = self._current_block()
+        if block is not None:
+            block["height"] = "compact" if value <= 1 else "tall" if value >= 3 else "normal"
+            self.workspace_layout_editor.update_selected_layout(row_span=value)
+            self._refresh_workspace_preview()
 
     def _refresh_block_fields_list(self):
         block = self._current_block()
@@ -1013,6 +1162,7 @@ class SettingsPage(QWidget):
         if field_key not in fields:
             fields.append(field_key)
             self._refresh_block_fields_list()
+            self._refresh_workspace_preview()
 
     def _remove_block_field(self):
         block = self._current_block()
@@ -1026,6 +1176,7 @@ class SettingsPage(QWidget):
             block["fields"] = fields
             self._refresh_block_fields_list()
             self.block_fields_list.setCurrentRow(min(row, len(fields) - 1))
+            self._refresh_workspace_preview()
 
     def _move_block_field(self, direction):
         block = self._current_block()
@@ -1041,11 +1192,92 @@ class SettingsPage(QWidget):
         block["fields"] = fields
         self._refresh_block_fields_list()
         self.block_fields_list.setCurrentRow(target)
+        self._refresh_workspace_preview()
 
     def _update_block_document_type(self):
         block = self._current_block()
         if block is not None and block.get("type") == "document_viewer":
             block["document_type"] = self.block_document_combo.currentData() or ""
+            self._refresh_workspace_preview()
+
+    def _sample_workspace_context(self):
+        missionary = SimpleNamespace(
+            id=0,
+            full_name=tr("workspace_preview_sample_name"),
+            missionary_code="SAMPLE-001",
+            nationality="Peru",
+            passport_number="P000000",
+            carnet_number="CE-000000",
+            date_of_birth=date(2000, 1, 1),
+            arrival_date=date.today(),
+            visa_expiration=None,
+            passport_expiration=None,
+            residency_expiration=None,
+            prorroga_expiration=None,
+            carnet_issue_date=None,
+            interpol_appointment_date=None,
+            biometric_appointment_date=None,
+            pickup_appointment_date=None,
+            folder_path="",
+            current_stage="INTERPOL",
+            notes=tr("workspace_preview_sample_notes"),
+        )
+        workflow = SimpleNamespace(
+            id=0,
+            stage_name="INTERPOL",
+            status="IN PROGRESS",
+        )
+        return SimpleNamespace(
+            missionary=missionary,
+            documents=[],
+            workflows=[workflow],
+            tasks=[
+                {
+                    "id": 0,
+                    "title": tr("workspace_preview_sample_task"),
+                    "priority": "NORMAL",
+                    "status": "TODO",
+                    "due_date": None,
+                }
+            ],
+            residency_rows=[],
+            missing_groups=[("INTERPOL", ["PASSPORT"], True)],
+        )
+
+    def _refresh_workspace_preview(self):
+        if not hasattr(self, "workspace_preview_grid"):
+            return
+        clear_layout(self.workspace_preview_grid)
+        workspace = self._current_workspace()
+        if not workspace:
+            label = QLabel(tr("workspace_no_workspaces"))
+            label.setObjectName("MutedText")
+            self.workspace_preview_grid.addWidget(label, 0, 0, 1, WORKSPACE_GRID_COLUMNS)
+            return
+        preview_workspace = normalize_workspace_layout(workspace)
+        fake_dialog = SimpleNamespace(
+            context=self._sample_workspace_context(),
+            find_document=lambda document_type=None: None,
+            open_document_viewer=lambda doc: None,
+            open_document_notes=lambda doc: None,
+            open_document_file=lambda doc: None,
+            change_workflow_status=lambda workflow: None,
+            add_task=lambda: None,
+            complete_task=lambda task: None,
+            edit_task=lambda task: None,
+        )
+        factory = WorkspaceBlockFactory(fake_dialog)
+        for col in range(WORKSPACE_GRID_COLUMNS):
+            self.workspace_preview_grid.setColumnStretch(col, 1)
+        for block in preview_workspace.get("blocks", []):
+            layout = validate_block_layout(block)
+            self.workspace_preview_grid.addWidget(
+                factory.build(block),
+                layout["row"],
+                layout["col"],
+                layout["row_span"],
+                layout["col_span"],
+            )
 
     def _save_current_workspace(self):
         workspace = self._current_workspace()
@@ -1281,7 +1513,6 @@ class SettingsPage(QWidget):
         self.tabs.setTabText(0, tr("settings_tab_general"))
         self.tabs.setTabText(1, tr("settings_tab_notifications"))
         self.tabs.setTabText(2, tr("settings_tab_transfer"))
-        self.tabs.setTabText(3, tr("settings_tab_workspaces"))
         self.lang_label.setText(tr("settings_language"))
         self.hint_label.setText(tr("settings_language_hint"))
         self.storage_label.setText(tr("settings_storage_root"))
@@ -1315,21 +1546,6 @@ class SettingsPage(QWidget):
         self.transfer_enabled_check.setText(tr("settings_transfer_enabled"))
         self.transfer_preview_title.setText(tr("settings_transfer_preview_title"))
         self.save_transfer_btn.setText(tr("settings_save"))
-        self.workspaces_list_title.setText(tr("workspaces_title"))
-        self.workspace_editor_title.setText(tr("workspace_editor_title"))
-        self.workspace_new_btn.setText(tr("workspace_new"))
-        self.workspace_duplicate_btn.setText(tr("workspace_duplicate"))
-        self.workspace_delete_btn.setText(tr("workspace_delete"))
-        self.workspace_blocks_label.setText(tr("workspace_blocks"))
-        self.block_add_btn.setText(tr("workspace_add_block"))
-        self.block_up_btn.setText(tr("workspace_move_up"))
-        self.block_down_btn.setText(tr("workspace_move_down"))
-        self.block_remove_btn.setText(tr("workspace_remove_block"))
-        self.field_add_btn.setText(tr("workspace_add_field"))
-        self.field_up_btn.setText(tr("workspace_move_up"))
-        self.field_down_btn.setText(tr("workspace_move_down"))
-        self.field_remove_btn.setText(tr("workspace_remove_field"))
-        self.workspace_save_btn.setText(tr("workspace_save"))
         current = self.lang_combo.currentData()
         self.lang_combo.clear()
         self.lang_combo.addItem(tr("lang_english"), "en")

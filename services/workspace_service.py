@@ -6,6 +6,10 @@ from uuid import uuid4
 
 from PySide6.QtCore import QStandardPaths
 
+from services.workspace_layout import (
+    normalize_workspace_layout,
+    validate_block_layout,
+)
 from utils.logger import logger
 
 
@@ -46,12 +50,12 @@ def _default_config_dir():
 
 
 def new_workspace(name="New Workspace"):
-    return {
+    return normalize_workspace_layout({
         "id": uuid4().hex,
         "name": name,
         "dialog_size": "large",
         "blocks": deepcopy(DEFAULT_BLOCKS),
-    }
+    })
 
 
 def new_block(block_type):
@@ -83,6 +87,7 @@ def new_block(block_type):
         block["document_type"] = ""
         block["height"] = "tall"
         block["width"] = "full"
+    block["layout"] = validate_block_layout(block)
     return block
 
 
@@ -192,7 +197,7 @@ class WorkspaceService:
             for block in blocks
             if isinstance(block, dict)
         ]
-        return normalized
+        return normalize_workspace_layout(normalized)
 
     @staticmethod
     def _normalize_block(block):
@@ -212,4 +217,5 @@ class WorkspaceService:
             if normalized.get("height") in {"compact", "normal", "tall"}
             else "normal"
         )
+        normalized["layout"] = validate_block_layout(normalized)
         return normalized

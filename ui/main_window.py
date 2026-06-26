@@ -26,6 +26,7 @@ from ui.pages.office_work_page import OfficeWorkPage
 from ui.pages.reports_page import ReportsPage
 from ui.pages.settings_page import SettingsPage
 from ui.pages.trash_page import TrashPage
+from ui.pages.workspaces_page import WorkspacesPage
 from utils.i18n import tr
 from utils.logger import logger
 from utils.window_diagnostics import log_top_level_windows
@@ -90,7 +91,8 @@ class _SidebarCompat:
             5: "appointments",
             6: "reports",
             7: "trash",
-            8: "settings",
+            8: "workspaces",
+            9: "settings",
         }
 
     def setCurrentRow(self, row):
@@ -159,6 +161,7 @@ class MainWindow(FluentWindow if FLUENT_AVAILABLE else QMainWindow):
         self.calendar_page = CalendarPage(self)
         self.reports_page = ReportsPage(self)
         self.trash_page = TrashPage(self)
+        self.workspaces_page = WorkspacesPage(self)
         self.settings_page = SettingsPage(self)
 
         self._nav_keys = {
@@ -168,6 +171,7 @@ class MainWindow(FluentWindow if FLUENT_AVAILABLE else QMainWindow):
             "appointments": "sidebar_appointments",
             "reports": "sidebar_reports",
             "trash": "sidebar_trash",
+            "workspaces": "sidebar_workspaces",
             "settings": "sidebar_settings",
         }
 
@@ -208,6 +212,7 @@ class MainWindow(FluentWindow if FLUENT_AVAILABLE else QMainWindow):
             (self.calendar_page, "appointments", "CALENDAR", 4),
             (self.reports_page, "reports", "DOCUMENT", 5),
             (self.trash_page, "trash", "DELETE", 6),
+            (self.workspaces_page, "workspaces", "EDIT", 7),
             (self.settings_page, "settings", "SETTING", 7),
         ]:
             self._add_fluent_nav_page(widget, key, icon_name)
@@ -242,6 +247,7 @@ class MainWindow(FluentWindow if FLUENT_AVAILABLE else QMainWindow):
             self.calendar_page,
             self.reports_page,
             self.trash_page,
+            self.workspaces_page,
             self.settings_page,
         ]:
             self.stack.addWidget(widget)
@@ -253,7 +259,8 @@ class MainWindow(FluentWindow if FLUENT_AVAILABLE else QMainWindow):
             ("appointments", 5, "Work"),
             ("reports", 6, "Insights"),
             ("trash", 7, "System"),
-            ("settings", 8, "System"),
+            ("workspaces", 8, "System"),
+            ("settings", 9, "System"),
         ]:
             self.shell.add_nav_item(key, tr(self._nav_keys[key]), index, group)
 
@@ -296,6 +303,8 @@ class MainWindow(FluentWindow if FLUENT_AVAILABLE else QMainWindow):
             self.reports_page.load_data()
         elif nav_key == "trash" or stack_index == 7:
             self.trash_page.load_data()
+        elif nav_key == "workspaces" or stack_index == 8:
+            self.workspaces_page.load_data()
 
     def retranslate_ui(self):
         self.setWindowTitle(tr("app_title"))
@@ -303,6 +312,8 @@ class MainWindow(FluentWindow if FLUENT_AVAILABLE else QMainWindow):
             self.set_nav_title(nav_key, tr(translation_key))
         if hasattr(self.settings_page, "retranslate_ui"):
             self.settings_page.retranslate_ui()
+        if hasattr(self.workspaces_page, "retranslate_ui"):
+            self.workspaces_page.retranslate_ui()
         if hasattr(self.missionaries_page, "retranslate_ui"):
             self.missionaries_page.retranslate_ui()
         if hasattr(self.detail_page, "retranslate_ui"):

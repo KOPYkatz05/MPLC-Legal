@@ -15,6 +15,11 @@ from PySide6.QtWidgets import (
 from services.document_service import DocumentService
 from services.residency_service import ResidencyService
 from services.secretary_work_service import SecretaryWorkService
+from services.workspace_layout import (
+    WORKSPACE_GRID_COLUMNS,
+    normalize_workspace_layout,
+    validate_block_layout,
+)
 from services.workflow_service import WorkflowService
 from services.workflow_validator import WorkflowValidator
 from ui.dialogs.document_preview import (
@@ -454,7 +459,7 @@ class MissionaryWorkspaceDialog(MaskDialogBase):
     def __init__(self, missionary, workspace, parent=None, on_refresh=None):
         super().__init__(parent)
         self.missionary = missionary
-        self.workspace = workspace or {}
+        self.workspace = normalize_workspace_layout(workspace or {})
         self.on_refresh = on_refresh
         self.document_service = DocumentService()
         self.workflow_service = WorkflowService()
@@ -524,23 +529,21 @@ class MissionaryWorkspaceDialog(MaskDialogBase):
     def _render_blocks(self):
         clear_layout(self.grid)
         factory = WorkspaceBlockFactory(self)
-        row = 0
-        col = 0
+        max_row = 0
+        for col in range(WORKSPACE_GRID_COLUMNS):
+            self.grid.setColumnStretch(col, 1)
         for block in self.workspace.get("blocks", []):
             widget = factory.build(block)
-            width = 2 if block.get("width") == "full" else 1
-            if width == 2 and col == 1:
-                row += 1
-                col = 0
-            self.grid.addWidget(widget, row, col, 1, width)
-            if width == 2 or col == 1:
-                row += 1
-                col = 0
-            else:
-                col = 1
-        self.grid.setColumnStretch(0, 1)
-        self.grid.setColumnStretch(1, 1)
-        self.grid.setRowStretch(row + 1, 1)
+            layout = validate_block_layout(block)
+            max_row = max(max_row, layout["row"] + layout["row_span"])
+            self.grid.addWidget(
+                widget,
+                layout["row"],
+                layout["col"],
+                layout["row_span"],
+                layout["col_span"],
+            )
+        self.grid.setRowStretch(max_row + 1, 1)
 
     def refresh_context(self):
         self.context = MissionaryWorkspaceContext.load(self.missionary)
