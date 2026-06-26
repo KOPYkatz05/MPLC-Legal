@@ -528,6 +528,39 @@ def test_appointment_chip_opens_missionary_detail(monkeypatch, qapp):
         page.close()
 
 
+def test_appointment_row_click_opens_missionary_detail(monkeypatch, qapp):
+    appointment = _appointment(days_offset=1)
+    page = _build_page(monkeypatch, qapp, [appointment])
+    opened = []
+
+    try:
+        monkeypatch.setattr(
+            page,
+            "_open_missionary",
+            lambda missionary_id: opened.append(missionary_id),
+        )
+        row = page._make_appointment_row(appointment)
+        row.mousePressEvent(SimpleNamespace())
+
+        assert opened == [appointment.missionary_id]
+    finally:
+        page.close()
+
+
+def test_calendar_open_missionary_delegates_to_main_window(qapp):
+    _ = qapp
+    opened = []
+    page = CalendarPage.__new__(CalendarPage)
+    page.main_window = SimpleNamespace(
+        open_missionary_detail=lambda missionary_id:
+        opened.append(missionary_id)
+    )
+
+    page._open_missionary(42)
+
+    assert opened == [42]
+
+
 def test_collect_appointments_reads_scheduled_service_without_backfill(monkeypatch):
     class FakeAppointmentService:
         def backfill_all(self):

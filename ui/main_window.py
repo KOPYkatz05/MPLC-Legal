@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
 )
 
 from services.settings_service import SettingsService
+from services.workspace_service import WorkspaceService
 from services.notification_feed_service import NotificationFeedService
 from ui.foundation import AppShell, FLUENT_AVAILABLE, fluent_icon
 from ui.pages.alert_workspace_page import AlertWorkspacePage
@@ -115,6 +116,7 @@ class MainWindow(FluentWindow if FLUENT_AVAILABLE else QMainWindow):
         super().__init__()
 
         self.settings_service = SettingsService()
+        self.workspace_service = WorkspaceService()
         self._nav_widgets = {}
         self._nav_titles = {}
         self._content_overlay = None
@@ -137,6 +139,13 @@ class MainWindow(FluentWindow if FLUENT_AVAILABLE else QMainWindow):
 
         QTimer.singleShot(0, lambda: log_top_level_windows("main-window-created"))
         QTimer.singleShot(800, self._load_startup_alerts)
+
+    def refresh_workspace_actions(self):
+        if hasattr(self, "detail_page") and hasattr(
+            self.detail_page,
+            "refresh_workspace_actions",
+        ):
+            self.detail_page.refresh_workspace_actions()
 
     def setup_ui(self):
         self.dashboard_page = DashboardPage(self)
@@ -525,26 +534,14 @@ class MainWindow(FluentWindow if FLUENT_AVAILABLE else QMainWindow):
             return
 
         try:
-            from ui.foundation import show_message
+            from ui.dialogs.startup_alerts_dialog import StartupAlertsDialog
 
             logger.info(
                 "Opening %s startup notification item(s) on request",
                 len(self._startup_alerts),
             )
-            lines = [
-                f"- {item.get('title', 'Item')}: {item.get('detail', '')}"
-                for item in self._startup_alerts[:10]
-            ]
-            if len(self._startup_alerts) > 10:
-                lines.append(
-                    f"- {len(self._startup_alerts) - 10} more item(s)"
-                )
-            show_message(
-                self,
-                "Mission Legal needs attention",
-                "\n".join(lines),
-                kind="warning",
-            )
+            dialog = StartupAlertsDialog(self._startup_alerts, self)
+            dialog.exec()
         except Exception:
             logger.exception("Failed to open startup alerts")
 

@@ -6,6 +6,7 @@ from PySide6.QtWidgets import QWidget
 from ui.dialogs.document_viewer_dialog import (
     PREVIEW_MAX_SCALE,
     PREVIEW_MIN_SCALE,
+    DocumentPreviewWidget,
     DocumentViewerDialog,
 )
 
@@ -43,6 +44,18 @@ def test_image_loads_preview_without_page_controls(tmp_path, qapp):
         assert dialog.file_type_badge.text() == "Image"
     finally:
         dialog.close()
+
+
+def test_document_preview_widget_embeds_without_dialog_shell(tmp_path, qapp):
+    image_path = _make_image(tmp_path / "document.png")
+
+    widget = DocumentPreviewWidget(str(image_path), show_header=False)
+    try:
+        assert widget.current_pixmap is not None
+        assert widget._preview_item is not None
+        assert widget.preview_name_label.parent().isHidden()
+    finally:
+        widget.close()
 
 
 def test_pdf_page_navigation_updates_current_page(tmp_path, qapp):

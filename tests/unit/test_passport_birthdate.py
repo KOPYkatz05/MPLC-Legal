@@ -268,6 +268,64 @@ def test_missionary_detail_add_task_preselects_missionary(monkeypatch, qapp):
         page.close()
 
 
+def test_interpol_packet_opens_with_default_pdf_viewer(monkeypatch):
+    opened = []
+    page = detail_module.MissionaryDetailPage.__new__(
+        detail_module.MissionaryDetailPage
+    )
+
+    monkeypatch.setattr(
+        detail_module,
+        "open_document_with_default_app",
+        lambda file_path: opened.append(file_path),
+    )
+
+    page._open_packet_in_default_pdf_viewer("C:/Temp/interpol_packet.pdf")
+
+    assert opened == ["C:/Temp/interpol_packet.pdf"]
+
+
+def test_print_interpol_packet_uses_default_viewer_after_build(monkeypatch):
+    page = detail_module.MissionaryDetailPage.__new__(
+        detail_module.MissionaryDetailPage
+    )
+    page.current_missionary = SimpleNamespace(id=7)
+    calls = []
+
+    monkeypatch.setattr(
+        page,
+        "_collect_interpol_packet_docs",
+        lambda: ([{"label": "Passport", "file_path": "passport.pdf"}], []),
+    )
+    monkeypatch.setattr(
+        page,
+        "_create_interpol_packet_temp_path",
+        lambda: "C:/Temp/interpol_packet.pdf",
+    )
+    monkeypatch.setattr(
+        page,
+        "_build_interpol_packet_pdf",
+        lambda docs, output_path:
+        calls.append(("build", docs, output_path)),
+    )
+    monkeypatch.setattr(
+        page,
+        "_open_packet_in_default_pdf_viewer",
+        lambda packet_path: calls.append(("open", packet_path)),
+    )
+
+    page._print_interpol_packet()
+
+    assert calls == [
+        (
+            "build",
+            [{"label": "Passport", "file_path": "passport.pdf"}],
+            "C:/Temp/interpol_packet.pdf",
+        ),
+        ("open", "C:/Temp/interpol_packet.pdf"),
+    ]
+
+
 def test_run_migrations_adds_birthdate_column(monkeypatch):
     engine = create_engine("sqlite:///:memory:")
     with engine.begin() as conn:

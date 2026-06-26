@@ -22,13 +22,11 @@ try:
 except Exception:
     TransparentToolButton = None
 
-from database.db import SessionLocal
 from database.models.appointment import (
     APPOINTMENT_STATUS_COMPLETED,
     APPOINTMENT_STATUS_MISSED,
     APPOINTMENT_STATUS_SCHEDULED,
 )
-from database.models.missionary import Missionary
 from services.appointment_service import AppointmentService
 from services.secretary_work_service import SecretaryWorkService
 from ui.dialogs.office_work_dialogs import TaskDialog
@@ -1655,6 +1653,11 @@ class CalendarPage(QWidget):
             else "CalendarAppointmentRow"
         )
         row.setProperty("tone", appointment_tone(appointment))
+        row.setCursor(Qt.PointingHandCursor)
+        row.mousePressEvent = (
+            lambda event, m_id=appointment.missionary_id:
+            self._open_missionary(m_id)
+        )
 
         layout = QHBoxLayout()
         layout.setContentsMargins(18, 11, 18, 11)
@@ -2017,25 +2020,13 @@ class CalendarPage(QWidget):
                 widget.deleteLater()
 
     def _open_missionary(self, missionary_id):
-        try:
-            detail = self.main_window.detail_page
+        if missionary_id is None or self.main_window is None:
+            return
 
-            session = SessionLocal()
-
-            try:
-                missionary = (
-                    session.query(Missionary)
-                    .filter_by(id=missionary_id)
-                    .first()
-                )
-
-                if missionary:
-                    detail.load_missionary(missionary)
-                    self.main_window.stack.setCurrentIndex(2)
-                    self.main_window.sidebar.setCurrentRow(1)
-
-            finally:
-                session.close()
-
-        except Exception:
-            logger.exception("Failed to open missionary detail")
+        opener = getattr(
+            self.main_window,
+            "open_missionary_detail",
+            None,
+        )
+        if callable(opener):
+            opener(missionary_id)

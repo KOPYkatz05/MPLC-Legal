@@ -442,7 +442,7 @@ class DashboardPage(QWidget):
         self._set_dashboard_subtitle_from_digest(digest)
 
         self.content_layout.addWidget(
-            SectionHeader("Today's Missions")
+            SectionHeader("Today")
         )
 
         card = SimpleCardWidget()

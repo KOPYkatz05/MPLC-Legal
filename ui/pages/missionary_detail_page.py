@@ -76,6 +76,14 @@ from utils.i18n import field_label
 from utils.language_helper import ui_text as tr
 from utils.logger import logger
 from services.workflow_validator import WorkflowValidator
+from services.workspace_service import WorkspaceService
+from ui.widgets.missionary_block_widgets import (
+    build_document_card,
+    build_empty_state_card,
+    build_missing_stage_card,
+    build_task_card,
+    build_workflow_stage_card,
+)
 
 DATE_PLACEHOLDER = QDate(1900, 1, 1)
 DATE_EDIT_MAX_WIDTH = 300
@@ -317,6 +325,11 @@ class MissionaryDetailPage(QWidget):
         self.residency_service = ResidencyService()
 
         self.workflow_validator = WorkflowValidator()
+        self.workspace_service = (
+            getattr(main_window, "workspace_service", None)
+            if main_window
+            else None
+        ) or WorkspaceService()
 
         self.thumb_service = ThumbnailService()
 
@@ -699,6 +712,12 @@ class MissionaryDetailPage(QWidget):
         self.print_interpol_packet_action.triggered.connect(
             self._print_interpol_packet
         )
+        self.workspace_menu = create_menu(
+            tr("missionary_detail_open_workspace"),
+            self.actions_menu,
+        )
+        self.actions_menu.addMenu(self.workspace_menu)
+        self.refresh_workspace_actions()
         self.actions_button.setMenu(self.actions_menu)
 
         self.delete_button = create_button(
@@ -2132,6 +2151,9 @@ class MissionaryDetailPage(QWidget):
             self.print_interpol_packet_action.setText(
                 tr("missionary_detail_print_interpol_packet")
             )
+        if hasattr(self, "workspace_menu"):
+            self.workspace_menu.setTitle(tr("missionary_detail_open_workspace"))
+            self.refresh_workspace_actions()
         if hasattr(self, "delete_button"):
             self.delete_button.setText(tr("missionary_detail_delete_missionary"))
         if hasattr(self, "banner_now_btn"):
@@ -2312,6 +2334,50 @@ class MissionaryDetailPage(QWidget):
         if action == print_interpol_action:
             self._print_interpol_packet()
 
+    def refresh_workspace_actions(self):
+        if not hasattr(self, "workspace_menu"):
+            return
+        self.workspace_menu.clear()
+        workspaces = self.workspace_service.list_workspaces()
+        if not workspaces:
+            empty_action = QAction(
+                tr("workspace_no_workspaces"),
+                self.workspace_menu,
+            )
+            self.workspace_menu.addAction(empty_action)
+            empty_action.setEnabled(False)
+            return
+        for workspace in workspaces:
+            action = QAction(
+                workspace.get("name") or tr("workspace_title"),
+                self.workspace_menu,
+            )
+            self.workspace_menu.addAction(action)
+            action.setData(workspace.get("id"))
+            action.triggered.connect(
+                lambda checked=False, workspace_id=workspace.get("id"): (
+                    self._open_workspace(workspace_id)
+                )
+            )
+
+    def _open_workspace(self, workspace_id):
+        if not hasattr(self, "current_missionary"):
+            return
+        workspace = self.workspace_service.get_workspace(workspace_id)
+        if not workspace:
+            return
+        from ui.dialogs.missionary_workspace_dialog import (
+            MissionaryWorkspaceDialog,
+        )
+
+        dialog = MissionaryWorkspaceDialog(
+            self.current_missionary,
+            workspace,
+            parent=self,
+            on_refresh=lambda: self.load_missionary(self.current_missionary),
+        )
+        dialog.exec()
+
     def _print_interpol_packet(self, checked=False):
         if not hasattr(self, "current_missionary"):
             return
@@ -2349,7 +2415,7 @@ class MissionaryDetailPage(QWidget):
             temp_path = self._create_interpol_packet_temp_path()
 
             self._build_interpol_packet_pdf(packet_docs, temp_path)
-            self._open_packet_in_acrobat_print_viewer(temp_path)
+            self._open_packet_in_default_pdf_viewer(temp_path)
 
         except Exception:
             logger.exception("Failed to print Interpol packet")
@@ -2488,13 +2554,13 @@ class MissionaryDetailPage(QWidget):
             if packet.page_count == 0:
                 raise ValueError("Interpol packet has no printable pages")
 
-            self._add_acrobat_print_open_action(packet)
+            self._add_print_open_action(packet)
             packet.save(output_path)
 
         finally:
             packet.close()
 
-    def _add_acrobat_print_open_action(self, packet):
+    def _add_print_open_action(self, packet):
         js = (
             "this.print({"
             "bUI: true, "
@@ -2514,86 +2580,12 @@ class MissionaryDetailPage(QWidget):
             f"{js_xref} 0 R",
         )
 
-    def _open_packet_in_acrobat_print_viewer(self, packet_path):
-        acrobat_path = self._find_acrobat_executable()
-
-        if acrobat_path is None:
-            show_message(
-                self,
-                tr("missionary_detail_acrobat_not_found_title"),
-                tr("missionary_detail_acrobat_not_found"),
-                kind="warning",
-            )
-            return
-
+    def _open_packet_in_default_pdf_viewer(self, packet_path):
         logger.info(
-            "Opening Interpol packet in Acrobat print UI: %s",
+            "Opening Interpol packet in default PDF viewer: %s",
             packet_path,
         )
-        subprocess.Popen(
-            [
-                str(acrobat_path),
-                "/n",
-                str(packet_path),
-            ],
-            cwd=str(Path(packet_path).parent),
-        )
-
-    def _find_acrobat_executable(self):
-        candidates = [
-            Path(
-                r"C:\Program Files\Adobe\Acrobat DC\Acrobat\Acrobat.exe"
-            ),
-            Path(
-                r"C:\Program Files (x86)\Adobe\Acrobat DC\Acrobat\x86\Acrobat\Acrobat.exe"
-            ),
-            Path(os.environ.get("ProgramFiles", ""))
-            / "Adobe"
-            / "Acrobat DC"
-            / "Acrobat"
-            / "Acrobat.exe",
-            Path(os.environ.get("ProgramFiles", ""))
-            / "Adobe"
-            / "Acrobat"
-            / "Acrobat.exe",
-            Path(os.environ.get("ProgramFiles(x86)", ""))
-            / "Adobe"
-            / "Acrobat DC"
-            / "Acrobat"
-            / "Acrobat.exe",
-            Path(os.environ.get("ProgramFiles(x86)", ""))
-            / "Adobe"
-            / "Acrobat Reader DC"
-            / "Reader"
-            / "AcroRd32.exe",
-            Path(os.environ.get("ProgramFiles", ""))
-            / "Adobe"
-            / "Acrobat Reader DC"
-            / "Reader"
-            / "AcroRd32.exe",
-        ]
-
-        for candidate in candidates:
-            if candidate and candidate.exists():
-                return candidate
-
-        search_roots = [
-            Path(os.environ.get("ProgramFiles", "")) / "Adobe",
-            Path(os.environ.get("ProgramFiles(x86)", "")) / "Adobe",
-        ]
-
-        for root in search_roots:
-            if not root.exists():
-                continue
-            for executable_name in ("Acrobat.exe", "AcroRd32.exe"):
-                try:
-                    match = next(root.rglob(executable_name), None)
-                except Exception:
-                    match = None
-                if match and match.exists():
-                    return match
-
-        return None
+        open_document_with_default_app(packet_path)
 
     def _find_doc_data(self, doc_id):
         return next(
@@ -3055,80 +3047,11 @@ class MissionaryDetailPage(QWidget):
             self.open_tasks_list.setItemWidget(item, widget)
 
     def _build_open_task_widget(self, task):
-        card = create_card()
-        layout = QHBoxLayout()
-        layout.setContentsMargins(12, 10, 12, 10)
-        layout.setSpacing(10)
-        card.setLayout(layout)
-
-        if task.get("is_group_task"):
-            accent = QFrame()
-            accent.setFixedWidth(4)
-            accent.setStyleSheet(
-                "QFrame { background-color: #7C3AED; border-radius: 2px; }"
-            )
-            layout.addWidget(accent)
-
-        copy = QVBoxLayout()
-        copy.setContentsMargins(0, 0, 0, 0)
-        copy.setSpacing(4)
-
-        title = QLabel(
-            task.get("title", tr("missionary_detail_untitled_task"))
+        return build_task_card(
+            task,
+            on_done=lambda task_data: self._complete_missionary_task(task_data["id"]),
+            on_edit=self._edit_missionary_task,
         )
-        title.setObjectName("StrongText")
-        copy.addWidget(title)
-
-        status_label = (
-            tr("missionary_detail_task_waiting")
-            if task.get("status") == "WAITING"
-            else tr("missionary_detail_task_to_do")
-        )
-        meta_parts = [
-            task.get("priority", "NORMAL").title(),
-            status_label,
-        ]
-        if task.get("due_date"):
-            meta_parts.append(task["due_date"].strftime("%b %d, %Y"))
-        else:
-            meta_parts.append(tr("missionary_detail_no_due_date"))
-        if task.get("waiting_reason_label"):
-            meta_parts.append(task["waiting_reason_label"])
-        if task.get("is_group_task"):
-            shared_label = tr(
-                "missionary_detail_shared_with",
-                count=task.get("missionary_count", 0),
-            )
-            if task.get("group_scope_label"):
-                shared_label = f"{shared_label} - {task['group_scope_label']}"
-            meta_parts.append(shared_label)
-        meta = QLabel("  |  ".join(meta_parts))
-        meta.setObjectName("MutedText")
-        meta.setWordWrap(True)
-        copy.addWidget(meta)
-        layout.addLayout(copy, stretch=1)
-
-        done_btn = create_button(
-            tr("missionary_detail_done"),
-            "success",
-            fixed_height=28,
-        )
-        done_btn.clicked.connect(
-            lambda _=None, task_id=task["id"]: self._complete_missionary_task(task_id)
-        )
-        layout.addWidget(done_btn)
-
-        edit_btn = create_button(
-            tr("missionary_detail_edit"),
-            "secondary",
-            fixed_height=28,
-        )
-        edit_btn.clicked.connect(
-            lambda _=None, task_data=task: self._edit_missionary_task(task_data)
-        )
-        layout.addWidget(edit_btn)
-
-        return card
 
     def _add_missionary_task(self):
         if not hasattr(self, "current_missionary"):
@@ -3413,24 +3336,20 @@ class MissionaryDetailPage(QWidget):
         return latest
 
     def _build_empty_state_card(self, title, text, tone="muted"):
-        card = create_card()
-        card.setMinimumHeight(EMPTY_STATE_MIN_HEIGHT)
-        layout = QVBoxLayout()
-        layout.setContentsMargins(14, 12, 14, 12)
-        layout.setSpacing(4)
-        card.setLayout(layout)
-
-        title_lbl = QLabel(title)
-        title_lbl.setWordWrap(True)
-
-        text_lbl = QLabel(text)
-        text_lbl.setWordWrap(True)
-
-        layout.addWidget(title_lbl)
-        layout.addWidget(text_lbl)
-        return card
+        return build_empty_state_card(
+            title,
+            text,
+            min_height=EMPTY_STATE_MIN_HEIGHT,
+            tone=tone,
+        )
 
     def _build_workflow_stage_widget(self, workflow, is_current=False):
+        return build_workflow_stage_card(
+            workflow,
+            hint=self._workflow_stage_hint(workflow, is_current),
+            is_current=is_current,
+            on_update=lambda workflow_data: self.change_workflow_status(workflow_data.id),
+        )
         card = create_card()
         card.setMinimumHeight(WORKFLOW_CARD_MIN_HEIGHT)
 
@@ -3509,121 +3428,24 @@ class MissionaryDetailPage(QWidget):
         return tr("missionary_detail_workflow_update_hint")
 
     def _build_document_item_widget(self, doc, label, pixmap=None):
-        card = create_card()
-        card.setMinimumHeight(DOCUMENT_CARD_MIN_HEIGHT)
-        layout = QHBoxLayout()
-        layout.setContentsMargins(12, 10, 12, 10)
-        layout.setSpacing(10)
-        card.setLayout(layout)
-
-        thumb = QLabel()
-        thumb.setObjectName("DocumentThumb")
-        thumb.setFixedSize(54, 64)
-        thumb.setAlignment(Qt.AlignCenter)
-
-        if pixmap and not pixmap.isNull():
-            thumb.setPixmap(
-                pixmap.scaled(
-                    48, 60, Qt.KeepAspectRatio, Qt.SmoothTransformation
-                )
-            )
-        else:
-            thumb.setText("DOC")
-
-        copy = QVBoxLayout()
-        copy.setContentsMargins(0, 0, 0, 0)
-        copy.setSpacing(4)
-
-        title_row = QHBoxLayout()
-        title_row.setContentsMargins(0, 0, 0, 0)
-        title_row.setSpacing(8)
-
-        title = QLabel(label)
-
-        status = QLabel(tr("missionary_detail_uploaded_status"))
-
-        title_row.addWidget(title)
-        title_row.addWidget(status)
-        title_row.addStretch()
-
-        file_name = QLabel(doc.file_name)
-        file_name.setWordWrap(True)
-
-        meta_text = []
-        uploaded_at = getattr(doc, "uploaded_at", None)
-        if uploaded_at:
-            meta_text.append(
-                tr(
-                    "missionary_detail_uploaded_date",
-                    date=uploaded_at.strftime("%b %d, %Y"),
-                )
-            )
-        if doc.workflow_stage:
-            meta_text.append(
-                tr(
-                    "missionary_detail_document_stage",
-                    stage=_stage_display_name(doc.workflow_stage),
-                )
-            )
-        if not meta_text:
-            meta_text.append(tr("missionary_detail_added_to_record"))
-
-        meta = QLabel("  \u2022  ".join(meta_text))
-        meta.setWordWrap(True)
-
-        copy.addLayout(title_row)
-        copy.addWidget(file_name)
-        copy.addWidget(meta)
-
-        actions = QHBoxLayout()
-        actions.setContentsMargins(0, 0, 0, 0)
-        actions.setSpacing(8)
-
-        view_btn = create_button(
-            tr("missionary_detail_view"),
-            "primary",
-            fixed_height=28,
+        return build_document_card(
+            doc,
+            label=label,
+            pixmap=pixmap,
+            on_view=lambda doc_data: self._open_document_viewer(doc_data.id),
+            on_notes=lambda doc_data: self._open_document_notes(doc_data.id),
+            on_open=lambda doc_data: self._open_document_file(doc_data.id),
+            on_delete=lambda doc_data: self._delete_document(doc_data.id),
         )
-        view_btn.clicked.connect(
-            lambda checked=False, doc_id=doc.id: self._open_document_viewer(doc_id)
-        )
-        notes_btn = create_button(
-            tr("missionary_detail_notes"),
-            "secondary",
-            fixed_height=28,
-        )
-        notes_btn.clicked.connect(
-            lambda checked=False, doc_id=doc.id: self._open_document_notes(doc_id)
-        )
-        open_btn = create_button(
-            tr("missionary_detail_open"),
-            "subtle",
-            fixed_height=28,
-        )
-        open_btn.clicked.connect(
-            lambda checked=False, doc_id=doc.id: self._open_document_file(doc_id)
-        )
-        delete_btn = create_button(
-            tr("delete_document"),
-            "danger",
-            fixed_height=28,
-        )
-        delete_btn.clicked.connect(
-            lambda checked=False, doc_id=doc.id: self._delete_document(doc_id)
-        )
-
-        actions.addStretch()
-        actions.addWidget(view_btn)
-        actions.addWidget(notes_btn)
-        actions.addWidget(open_btn)
-        actions.addWidget(delete_btn)
-
-        layout.addWidget(thumb)
-        layout.addLayout(copy, stretch=1)
-        layout.addLayout(actions)
-        return card
 
     def _build_missing_stage_widget(self, stage_name, missing_docs, is_current=False):
+        return build_missing_stage_card(
+            stage_name,
+            missing_docs,
+            is_current=is_current,
+            summary_text=self._missing_stage_summary(stage_name, len(missing_docs)),
+            reason_for_doc=self._missing_doc_reason,
+        )
         card = create_card()
         card.setMinimumHeight(MISSING_CARD_MIN_HEIGHT)
 

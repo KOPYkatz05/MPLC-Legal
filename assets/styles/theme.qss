@@ -854,6 +854,12 @@ QLabel#AlertBadge[tone="caution"] {
     border: 1px solid #FCD34D;
 }
 
+QFrame#StartupAlertRow {
+    background-color: #FAFAFA;
+    border: 1px solid #F4F4F5;
+    border-radius: 6px;
+}
+
 
 /* ==========================================
    CALENDAR AGENDA
