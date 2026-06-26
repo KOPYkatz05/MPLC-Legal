@@ -1,6 +1,8 @@
+from copy import deepcopy
 from PySide6.QtCore import QPoint, Qt, Signal
 from PySide6.QtWidgets import QFrame, QGridLayout, QLabel, QSizePolicy, QVBoxLayout, QWidget
 
+from services.workspace_service import new_block
 from services.workspace_layout import (
     WORKSPACE_GRID_COLUMNS,
     normalize_workspace_layout,
@@ -66,6 +68,8 @@ class WorkspaceLayoutEditor(QWidget):
         self.workspace = None
         self.selected_block_id = None
         self.row_height = 66
+        self._undo_stack = []
+        self._redo_stack = []
 
         root = QVBoxLayout()
         root.setContentsMargins(0, 0, 0, 0)
@@ -75,6 +79,8 @@ class WorkspaceLayoutEditor(QWidget):
         self.surface = create_card()
         self.surface.setObjectName("WorkspaceLayoutEditorSurface")
         self.surface.setMinimumHeight(220)
+        self.surface.setAcceptDrops(True)
+        self.setFocusPolicy(Qt.StrongFocus)
         self.surface.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.MinimumExpanding)
         self.grid = QGridLayout()
         self.grid.setContentsMargins(12, 12, 12, 12)
@@ -86,9 +92,77 @@ class WorkspaceLayoutEditor(QWidget):
         for col in range(WORKSPACE_GRID_COLUMNS):
             self.grid.setColumnStretch(col, 1)
 
+
+    def add_block_at(self, block_type, row=0, col=0):
+        if not self.workspace:
+            return None
+        self._push_undo()
+        block = new_block(block_type)
+        layout = validate_block_layout(block)
+        layout.update({"row": row, "col": col})
+        block["layout"] = layout
+        self.workspace.setdefault("blocks", []).append(block)
+        self.workspace["blocks"] = update_block_layout(
+            self.workspace.get("blocks", []), block.get("id"), layout
+        )
+        self.selected_block_id = block.get("id")
+        self._sync_source()
+        self.blockSelected.emit(self.selected_block_id or "")
+        self.layoutChanged.emit()
+        self.render()
+        return block
+
+    def resize_selected(self, col_delta=0, row_delta=0):
+        block = self._block(self.selected_block_id)
+        if not block:
+            return
+        layout = validate_block_layout(block)
+        self.update_selected_layout(
+            col_span=max(1, layout["col_span"] + col_delta),
+            row_span=max(1, layout["row_span"] + row_delta),
+        )
+
+    def undo(self):
+        if not self._undo_stack or not self.workspace:
+            return
+        self._redo_stack.append(deepcopy(self.workspace.get("blocks", [])))
+        self.workspace["blocks"] = self._undo_stack.pop()
+        self._sync_source(); self.layoutChanged.emit(); self.render()
+
+    def redo(self):
+        if not self._redo_stack or not self.workspace:
+            return
+        self._undo_stack.append(deepcopy(self.workspace.get("blocks", [])))
+        self.workspace["blocks"] = self._redo_stack.pop()
+        self._sync_source(); self.layoutChanged.emit(); self.render()
+
+    def _push_undo(self):
+        if self.workspace:
+            self._undo_stack.append(deepcopy(self.workspace.get("blocks", [])))
+            self._redo_stack.clear()
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key_Delete and self.workspace and self.selected_block_id:
+            self._push_undo()
+            self.workspace["blocks"] = [b for b in self.workspace.get("blocks", []) if b.get("id") != self.selected_block_id]
+            self.selected_block_id = None
+            self._sync_source(); self.layoutChanged.emit(); self.render(); return
+        arrows = {Qt.Key_Left: (0, -1), Qt.Key_Right: (0, 1), Qt.Key_Up: (-1, 0), Qt.Key_Down: (1, 0)}
+        if event.key() in arrows and self.selected_block_id:
+            dr, dc = arrows[event.key()]
+            block = self._block(self.selected_block_id)
+            layout = validate_block_layout(block)
+            if event.modifiers() & Qt.ShiftModifier:
+                self.update_selected_layout(col_span=layout["col_span"] + dc, row_span=layout["row_span"] + dr)
+            else:
+                self.update_selected_layout(row=max(0, layout["row"] + dr), col=max(0, layout["col"] + dc))
+            return
+        super().keyPressEvent(event)
+
     def set_workspace(self, workspace):
         self._source_workspace = workspace
         self.workspace = normalize_workspace_layout(workspace) if workspace else None
+        self._undo_stack.clear(); self._redo_stack.clear()
         self._sync_source()
         self.render()
 
@@ -104,6 +178,7 @@ class WorkspaceLayoutEditor(QWidget):
     def drop_block(self, block_id, global_pos):
         if not self.workspace or not block_id:
             return
+        self._push_undo()
         pos = self.surface.mapFromGlobal(global_pos)
         available_width = max(1, self.surface.width() - 24)
         cell_width = max(1, available_width / WORKSPACE_GRID_COLUMNS)
@@ -130,6 +205,7 @@ class WorkspaceLayoutEditor(QWidget):
         block = self._block(self.selected_block_id)
         if not block:
             return
+        self._push_undo()
         layout = validate_block_layout(block)
         layout.update(changes)
         self.workspace["blocks"] = update_block_layout(

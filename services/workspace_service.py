@@ -6,6 +6,7 @@ from uuid import uuid4
 
 from PySide6.QtCore import QStandardPaths
 
+from services.workspace_block_registry import default_block_payload
 from services.workspace_layout import (
     normalize_workspace_layout,
     validate_block_layout,
@@ -59,39 +60,8 @@ def new_workspace(name="New Workspace"):
 
 
 def new_block(block_type):
-    labels = {
-        "personal_info": "Personal Information",
-        "documents": "Documents",
-        "document_viewer": "Document Viewer",
-        "web_viewer": "Web Viewer",
-        "missing_documents": "Missing Documents",
-        "workflow": "Workflow",
-        "open_tasks": "Open Tasks",
-        "notes": "Notes",
-        "residency_timeline": "Residency Timeline",
-    }
-    block = {
-        "id": uuid4().hex,
-        "type": block_type,
-        "title": labels.get(block_type, block_type),
-        "width": "half",
-        "height": "normal",
-    }
-    if block_type == "personal_info":
-        block["fields"] = [
-            "full_name",
-            "nationality",
-            "passport_number",
-            "carnet_number",
-        ]
-    if block_type == "document_viewer":
-        block["document_type"] = ""
-        block["height"] = "tall"
-        block["width"] = "full"
-    if block_type == "web_viewer":
-        block["web_url"] = "https://"
-        block["height"] = "tall"
-        block["width"] = "full"
+    block = default_block_payload(block_type)
+    block["id"] = uuid4().hex
     block["layout"] = validate_block_layout(block)
     return block
 

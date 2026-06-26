@@ -21,6 +21,7 @@ except Exception:
 from services.document_service import DocumentService
 from services.residency_service import ResidencyService
 from services.secretary_work_service import SecretaryWorkService
+from services.workspace_block_registry import BLOCK_LABELS, block_definition
 from services.workspace_layout import (
     WORKSPACE_GRID_COLUMNS,
     normalize_workspace_layout,
@@ -87,19 +88,6 @@ FIELD_KEYS = [
     "folder_path",
     "current_stage",
 ]
-
-
-BLOCK_LABELS = {
-    "personal_info": "workspace_block_personal_info",
-    "documents": "workspace_block_documents",
-    "document_viewer": "workspace_block_document_viewer",
-    "web_viewer": "workspace_block_web_viewer",
-    "missing_documents": "workspace_block_missing_documents",
-    "workflow": "workspace_block_workflow",
-    "open_tasks": "workspace_block_open_tasks",
-    "notes": "workspace_block_notes",
-    "residency_timeline": "workspace_block_residency_timeline",
-}
 
 
 def stage_display_name(stage):
@@ -252,6 +240,16 @@ class WorkspaceBlockFactory:
             "open_tasks": self.open_tasks,
             "notes": self.notes,
             "residency_timeline": self.residency_timeline,
+            "quick_actions": self.quick_actions,
+            "appointments": self.appointments,
+            "status_summary": self.status_summary,
+            "document_checklist": self.document_checklist,
+            "task_board": self.task_board,
+            "notes_editor": self.notes,
+            "contact_info": self.contact_info,
+            "workflow_next_steps": self.workflow_next_steps,
+            "recent_activity": self.recent_activity,
+            "link_list": self.link_list,
         }
         builder = builders.get(block_type)
         if builder is None:
@@ -267,9 +265,19 @@ class WorkspaceBlockFactory:
         layout.setContentsMargins(18, 16, 18, 16)
         layout.setSpacing(10)
         card.setLayout(layout)
+        definition = block_definition(block.get("type"))
+        header = QHBoxLayout()
+        icon = QLabel(definition.get("icon", "□"))
+        icon.setObjectName("MutedText")
         title = QLabel(block.get("title") or tr(BLOCK_LABELS.get(block.get("type"), "workspace_block_unsupported")))
         title.setObjectName("PanelTitle")
-        layout.addWidget(title)
+        header.addWidget(icon)
+        header.addWidget(title, stretch=1)
+        if definition.get("supports_actions") and not getattr(self.dialog, "preview_mode", False):
+            action_hint = QLabel("⋯")
+            action_hint.setObjectName("MutedText")
+            header.addWidget(action_hint)
+        layout.addLayout(header)
         return card, layout
 
     def empty(self, title, detail):
@@ -501,6 +509,88 @@ class WorkspaceBlockFactory:
             layout.addLayout(line)
         layout.addStretch()
         return card
+
+
+
+    def quick_actions(self, block):
+        card, layout = self.card(block)
+        actions = (block.get("settings") or {}).get("actions") or ["upload_document", "add_task", "open_folder", "update_workflow"]
+        labels = {
+            "upload_document": "Upload Document",
+            "add_task": "Add Task",
+            "open_folder": "Open Folder",
+            "update_workflow": "Update Workflow",
+        }
+        row = QHBoxLayout()
+        row.setContentsMargins(0, 0, 0, 0)
+        for action in actions:
+            btn = create_button(labels.get(action, str(action).replace("_", " ").title()), "secondary", fixed_height=30)
+            btn.setEnabled(not getattr(self.dialog, "preview_mode", False))
+            row.addWidget(btn)
+        row.addStretch()
+        layout.addLayout(row)
+        layout.addStretch()
+        return card
+
+    def appointments(self, block):
+        card, layout = self.card(block)
+        fields = ["interpol_appointment_date", "biometric_appointment_date", "pickup_appointment_date", "visa_expiration", "passport_expiration", "residency_expiration", "prorroga_expiration"]
+        for field in fields:
+            value = getattr(self.dialog.context.missionary, field, None)
+            if value:
+                line = QHBoxLayout(); line.addWidget(QLabel(field_label(field))); line.addStretch(); line.addWidget(QLabel(format_value(value))); layout.addLayout(line)
+        if layout.count() <= 1:
+            layout.addWidget(self.empty("No upcoming appointments", "Appointment and expiration dates will appear here."))
+        layout.addStretch(); return card
+
+    def status_summary(self, block):
+        card, layout = self.card(block)
+        current = stage_display_name(getattr(self.dialog.context.missionary, "current_stage", None))
+        layout.addWidget(QLabel(f"Stage: {current}"))
+        layout.addWidget(QLabel(f"Missing document groups: {len(self.dialog.context.missing_groups)}"))
+        layout.addWidget(QLabel(f"Open tasks: {len(self.dialog.context.tasks)}"))
+        layout.addStretch(); return card
+
+    def document_checklist(self, block):
+        return self.missing_documents(block)
+
+    def task_board(self, block):
+        return self.open_tasks(block)
+
+    def contact_info(self, block):
+        card, layout = self.card(block)
+        for field in ["phone", "email", "emergency_contact", "folder_path"]:
+            value = getattr(self.dialog.context.missionary, field, None)
+            line = QHBoxLayout(); line.addWidget(QLabel(field_label(field))); line.addStretch(); line.addWidget(QLabel(format_value(value))); layout.addLayout(line)
+        layout.addStretch(); return card
+
+    def workflow_next_steps(self, block):
+        card, layout = self.card(block)
+        current = stage_display_name(getattr(self.dialog.context.missionary, "current_stage", None))
+        layout.addWidget(QLabel(f"Current workflow: {current}"))
+        for text in ["Review missing documents", "Confirm appointments", "Update open tasks"]:
+            layout.addWidget(QLabel(f"• {text}"))
+        layout.addStretch(); return card
+
+    def recent_activity(self, block):
+        card, layout = self.card(block)
+        for doc in self.dialog.context.documents[:4]:
+            layout.addWidget(QLabel(f"Document uploaded: {document_label(getattr(doc, 'document_type', ''))}"))
+        for task in self.dialog.context.tasks[:4]:
+            title = task.get("title") if isinstance(task, dict) else getattr(task, "title", "Task")
+            layout.addWidget(QLabel(f"Task updated: {title}"))
+        if layout.count() <= 1:
+            layout.addWidget(self.empty("No recent activity", "Document, task, and workflow changes will appear here."))
+        layout.addStretch(); return card
+
+    def link_list(self, block):
+        card, layout = self.card(block)
+        links = (block.get("settings") or {}).get("links") or []
+        if not links:
+            layout.addWidget(self.empty("No links configured", "Add government portals or reference links in the inspector."))
+        for link in links:
+            layout.addWidget(QLabel(link.get("label") or link.get("url") or "Link"))
+        layout.addStretch(); return card
 
     def unsupported(self, block):
         card, layout = self.card(block)
