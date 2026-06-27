@@ -246,10 +246,10 @@ class WorkspaceBlockFactory:
             "document_checklist": self.document_checklist,
             "task_board": self.task_board,
             "notes_editor": self.notes,
-            "contact_info": self.contact_info,
-            "workflow_next_steps": self.workflow_next_steps,
-            "recent_activity": self.recent_activity,
-            "link_list": self.link_list,
+            "contact_info": self.contact_info_polished,
+            "workflow_next_steps": self.workflow_next_steps_polished,
+            "recent_activity": self.recent_activity_polished,
+            "link_list": self.link_list_polished,
         }
         builder = builders.get(block_type)
         if builder is None:
@@ -282,6 +282,56 @@ class WorkspaceBlockFactory:
 
     def empty(self, title, detail):
         return build_empty_state_card(title, detail)
+
+    def key_value_row(self, label, value, action=None):
+        row = QFrame()
+        row.setObjectName("WorkspaceInfoRow")
+        row_layout = QHBoxLayout()
+        row_layout.setContentsMargins(10, 8, 10, 8)
+        row_layout.setSpacing(10)
+        row.setLayout(row_layout)
+
+        label_widget = QLabel(label)
+        label_widget.setObjectName("MutedText")
+        value_widget = QLabel(format_value(value))
+        value_widget.setObjectName("ReadOnlyValue")
+        value_widget.setWordWrap(True)
+
+        row_layout.addWidget(label_widget)
+        row_layout.addStretch()
+        row_layout.addWidget(value_widget)
+        if action is not None:
+            row_layout.addWidget(action)
+        return row
+
+    def metric_card(self, label, value, detail=None):
+        metric = QFrame()
+        metric.setObjectName("WorkspaceMetricCard")
+        metric_layout = QVBoxLayout()
+        metric_layout.setContentsMargins(12, 10, 12, 10)
+        metric_layout.setSpacing(3)
+        metric.setLayout(metric_layout)
+
+        value_widget = QLabel(str(value))
+        value_widget.setObjectName("PanelTitle")
+        label_widget = QLabel(label)
+        label_widget.setObjectName("MutedText")
+        label_widget.setWordWrap(True)
+        metric_layout.addWidget(value_widget)
+        metric_layout.addWidget(label_widget)
+        if detail:
+            detail_widget = QLabel(detail)
+            detail_widget.setObjectName("MutedText")
+            detail_widget.setWordWrap(True)
+            metric_layout.addWidget(detail_widget)
+        return metric
+
+    def current_workflow(self):
+        current_stage = getattr(self.dialog.context.missionary, "current_stage", None)
+        for workflow in self.dialog.context.workflows:
+            if getattr(workflow, "stage_name", None) == current_stage:
+                return workflow
+        return self.dialog.context.workflows[0] if self.dialog.context.workflows else None
 
     def personal_info(self, block):
         card, layout = self.card(block)
@@ -514,42 +564,86 @@ class WorkspaceBlockFactory:
 
     def quick_actions(self, block):
         card, layout = self.card(block)
-        actions = (block.get("settings") or {}).get("actions") or ["upload_document", "add_task", "open_folder", "update_workflow"]
+        actions = (
+            (block.get("settings") or {}).get("actions")
+            or ["upload_document", "add_task", "open_folder", "update_workflow"]
+        )
         labels = {
             "upload_document": "Upload Document",
             "add_task": "Add Task",
             "open_folder": "Open Folder",
             "update_workflow": "Update Workflow",
         }
-        row = QHBoxLayout()
-        row.setContentsMargins(0, 0, 0, 0)
-        for action in actions:
-            btn = create_button(labels.get(action, str(action).replace("_", " ").title()), "secondary", fixed_height=30)
-            btn.setEnabled(not getattr(self.dialog, "preview_mode", False))
-            row.addWidget(btn)
-        row.addStretch()
-        layout.addLayout(row)
+        handlers = {
+            "upload_document": self.dialog.upload_document,
+            "add_task": self.dialog.add_task,
+            "open_folder": self.dialog.open_folder_path,
+            "update_workflow": self.dialog.update_current_workflow,
+        }
+        grid = QGridLayout()
+        grid.setContentsMargins(0, 0, 0, 0)
+        grid.setHorizontalSpacing(8)
+        grid.setVerticalSpacing(8)
+        for index, action in enumerate(actions):
+            btn = create_button(
+                labels.get(action, str(action).replace("_", " ").title()),
+                "secondary",
+                fixed_height=30,
+            )
+            handler = handlers.get(action)
+            btn.setEnabled(
+                handler is not None
+                and not getattr(self.dialog, "preview_mode", False)
+            )
+            if handler is not None:
+                btn.clicked.connect(handler)
+            grid.addWidget(btn, index // 2, index % 2)
+        layout.addLayout(grid)
         layout.addStretch()
         return card
 
     def appointments(self, block):
         card, layout = self.card(block)
         fields = ["interpol_appointment_date", "biometric_appointment_date", "pickup_appointment_date", "visa_expiration", "passport_expiration", "residency_expiration", "prorroga_expiration"]
+        added = 0
         for field in fields:
             value = getattr(self.dialog.context.missionary, field, None)
             if value:
-                line = QHBoxLayout(); line.addWidget(QLabel(field_label(field))); line.addStretch(); line.addWidget(QLabel(format_value(value))); layout.addLayout(line)
-        if layout.count() <= 1:
+                layout.addWidget(self.key_value_row(field_label(field), value))
+                added += 1
+        if not added:
             layout.addWidget(self.empty("No upcoming appointments", "Appointment and expiration dates will appear here."))
-        layout.addStretch(); return card
+        layout.addStretch()
+        return card
 
     def status_summary(self, block):
         card, layout = self.card(block)
-        current = stage_display_name(getattr(self.dialog.context.missionary, "current_stage", None))
-        layout.addWidget(QLabel(f"Stage: {current}"))
-        layout.addWidget(QLabel(f"Missing document groups: {len(self.dialog.context.missing_groups)}"))
-        layout.addWidget(QLabel(f"Open tasks: {len(self.dialog.context.tasks)}"))
-        layout.addStretch(); return card
+        current = stage_display_name(
+            getattr(self.dialog.context.missionary, "current_stage", None)
+        )
+        metrics = QGridLayout()
+        metrics.setContentsMargins(0, 0, 0, 0)
+        metrics.setHorizontalSpacing(8)
+        metrics.setVerticalSpacing(8)
+        metric_data = [
+            ("Stage", current),
+            ("Documents", len(self.dialog.context.documents)),
+            ("Missing groups", len(self.dialog.context.missing_groups)),
+            ("Open tasks", len(self.dialog.context.tasks)),
+        ]
+        for index, (label, value) in enumerate(metric_data):
+            metrics.addWidget(self.metric_card(label, value), index // 2, index % 2)
+        layout.addLayout(metrics)
+        workflow = self.current_workflow()
+        if workflow:
+            layout.addWidget(
+                self.key_value_row(
+                    "Workflow status",
+                    status_label(getattr(workflow, "status", "")),
+                )
+            )
+        layout.addStretch()
+        return card
 
     def document_checklist(self, block):
         return self.missing_documents(block)
@@ -563,6 +657,32 @@ class WorkspaceBlockFactory:
             value = getattr(self.dialog.context.missionary, field, None)
             line = QHBoxLayout(); line.addWidget(QLabel(field_label(field))); line.addStretch(); line.addWidget(QLabel(format_value(value))); layout.addLayout(line)
         layout.addStretch(); return card
+
+    def contact_info_polished(self, block):
+        card, layout = self.card(block)
+        added = 0
+        for field in ["phone", "email", "emergency_contact", "folder_path"]:
+            value = getattr(self.dialog.context.missionary, field, None)
+            if not value:
+                continue
+            action = None
+            if field == "folder_path":
+                action = create_button("Open", "secondary", fixed_height=26)
+                action.setEnabled(not getattr(self.dialog, "preview_mode", False))
+                action.clicked.connect(self.dialog.open_folder_path)
+            layout.addWidget(
+                self.key_value_row(field_label(field), value, action=action)
+            )
+            added += 1
+        if not added:
+            layout.addWidget(
+                self.empty(
+                    "No contact details",
+                    "Phone, email, emergency contact, and folder details will appear here.",
+                )
+            )
+        layout.addStretch()
+        return card
 
     def workflow_next_steps(self, block):
         card, layout = self.card(block)
@@ -591,6 +711,92 @@ class WorkspaceBlockFactory:
         for link in links:
             layout.addWidget(QLabel(link.get("label") or link.get("url") or "Link"))
         layout.addStretch(); return card
+
+    def workflow_next_steps_polished(self, block):
+        card, layout = self.card(block)
+        current = stage_display_name(
+            getattr(self.dialog.context.missionary, "current_stage", None)
+        )
+        layout.addWidget(self.key_value_row("Current workflow", current))
+
+        next_steps = []
+        if self.dialog.context.missing_groups:
+            stage_name, missing_docs, _ = self.dialog.context.missing_groups[0]
+            next_steps.append(
+                f"Review {len(missing_docs)} missing document(s) for {stage_display_name(stage_name)}"
+            )
+        if self.dialog.context.tasks:
+            next_steps.append(f"Complete {len(self.dialog.context.tasks)} open task(s)")
+        workflow = self.current_workflow()
+        if workflow and getattr(workflow, "status", "") != "COMPLETED":
+            next_steps.append(
+                f"Update {stage_display_name(getattr(workflow, 'stage_name', ''))} status"
+            )
+        if not next_steps:
+            next_steps.append("No urgent next steps for this workspace.")
+
+        for text in next_steps[:5]:
+            layout.addWidget(self.key_value_row("Next", text))
+        layout.addStretch()
+        return card
+
+    def recent_activity_polished(self, block):
+        card, layout = self.card(block)
+        added = 0
+        documents = sorted(
+            self.dialog.context.documents,
+            key=lambda doc: getattr(doc, "uploaded_at", None) or 0,
+            reverse=True,
+        )
+        for doc in documents[:3]:
+            layout.addWidget(
+                self.key_value_row(
+                    "Document",
+                    document_label(getattr(doc, "document_type", "")),
+                )
+            )
+            added += 1
+        for task in self.dialog.context.tasks[:3]:
+            title = task.get("title") if isinstance(task, dict) else getattr(task, "title", "Task")
+            layout.addWidget(self.key_value_row("Task", title))
+            added += 1
+        if not added:
+            layout.addWidget(
+                self.empty(
+                    "No recent activity",
+                    "Document, task, and workflow changes will appear here.",
+                )
+            )
+        layout.addStretch()
+        return card
+
+    def link_list_polished(self, block):
+        card, layout = self.card(block)
+        links = (block.get("settings") or {}).get("links") or []
+        if not links:
+            layout.addWidget(
+                self.empty(
+                    "No links configured",
+                    "Add government portals or reference links in the inspector.",
+                )
+            )
+        for link in links:
+            if isinstance(link, str):
+                label = link
+                url = link
+            else:
+                label = link.get("label") or link.get("url") or "Link"
+                url = link.get("url") or ""
+            open_btn = create_button("Open", "secondary", fixed_height=26)
+            open_btn.setEnabled(
+                bool(url) and not getattr(self.dialog, "preview_mode", False)
+            )
+            open_btn.clicked.connect(
+                lambda checked=False, target=url: self.dialog.open_web_url(target)
+            )
+            layout.addWidget(self.key_value_row("Link", label, action=open_btn))
+        layout.addStretch()
+        return card
 
     def unsupported(self, block):
         card, layout = self.card(block)
@@ -677,6 +883,8 @@ class MissionaryWorkspaceDialog(MaskDialogBase):
         for col in range(WORKSPACE_GRID_COLUMNS):
             self.grid.setColumnStretch(col, 1)
         for block in self.workspace.get("blocks", []):
+            if block.get("visible") is False:
+                continue
             widget = factory.build(block)
             layout = validate_block_layout(block)
             max_row = max(max_row, layout["row"] + layout["row_span"])
@@ -732,6 +940,67 @@ class MissionaryWorkspaceDialog(MaskDialogBase):
         normalized = self.normalized_web_url(url)
         if normalized:
             QDesktopServices.openUrl(QUrl(normalized))
+
+    def upload_document(self):
+        try:
+            from ui.dialogs.upload_session_dialog import UploadSessionDialog
+
+            dialog = UploadSessionDialog(self.missionary, parent=self)
+            dialog.exec()
+            saved_any = getattr(dialog, "saved_any", None)
+            if callable(saved_any) and saved_any():
+                self.refresh_context()
+        except Exception:
+            logger.exception("Failed to upload document from workspace")
+            show_message(
+                self,
+                tr("missionary_detail_upload_document"),
+                tr("workspace_action_failed"),
+                kind="warning",
+            )
+
+    def open_folder_path(self):
+        folder_path = getattr(self.missionary, "folder_path", None)
+        if not folder_path:
+            show_message(
+                self,
+                tr("missionary_detail_open_folder"),
+                tr("missionary_detail_open_folder_missing"),
+                kind="warning",
+            )
+            return
+        path = Path(folder_path)
+        if not path.exists():
+            show_message(
+                self,
+                tr("missionary_detail_open_folder"),
+                tr(
+                    "missionary_detail_folder_not_found",
+                    folder_path=folder_path,
+                ),
+                kind="warning",
+            )
+            return
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(path)))
+
+    def update_current_workflow(self):
+        current_stage = getattr(self.missionary, "current_stage", None)
+        workflow = None
+        for candidate in self.context.workflows:
+            if getattr(candidate, "stage_name", None) == current_stage:
+                workflow = candidate
+                break
+        if workflow is None and self.context.workflows:
+            workflow = self.context.workflows[0]
+        if workflow is None:
+            show_message(
+                self,
+                tr("workspace_block_workflow"),
+                tr("missionary_detail_no_workflow_stages"),
+                kind="info",
+            )
+            return
+        self.change_workflow_status(workflow)
 
     def open_document_viewer(self, doc):
         file_path = getattr(doc, "file_path", None)

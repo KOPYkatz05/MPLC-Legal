@@ -13,6 +13,7 @@ def test_missing_workspace_file_returns_empty_list(tmp_path):
 def test_workspace_save_load_round_trip(tmp_path):
     service = WorkspaceService(tmp_path / "workspaces.json")
     workspace = new_workspace("Interpol Prep")
+    workspace["blocks"].append(new_block("personal_info"))
 
     saved = service.save_workspace(workspace)
     reloaded = WorkspaceService(tmp_path / "workspaces.json")
@@ -20,6 +21,12 @@ def test_workspace_save_load_round_trip(tmp_path):
     assert reloaded.get_workspace(saved["id"])["name"] == "Interpol Prep"
     assert reloaded.list_workspaces()[0]["blocks"]
     assert reloaded.list_workspaces()[0]["blocks"][0]["layout"]
+
+
+def test_new_workspace_starts_with_blank_canvas():
+    workspace = new_workspace("Blank")
+
+    assert workspace["blocks"] == []
 
 
 def test_corrupt_workspace_json_returns_empty_list(tmp_path):
@@ -32,7 +39,9 @@ def test_corrupt_workspace_json_returns_empty_list(tmp_path):
 
 def test_duplicate_workspace_copies_blocks_with_new_ids(tmp_path):
     service = WorkspaceService(tmp_path / "workspaces.json")
-    workspace = service.save_workspace(new_workspace("Review"))
+    workspace = new_workspace("Review")
+    workspace["blocks"].append(new_block("documents"))
+    workspace = service.save_workspace(workspace)
 
     duplicate = service.duplicate_workspace(workspace["id"])
 
@@ -55,6 +64,7 @@ def test_workspace_file_uses_versioned_payload(tmp_path):
 def test_workspace_layout_fields_survive_save_load_and_duplicate(tmp_path):
     service = WorkspaceService(tmp_path / "workspaces.json")
     workspace = new_workspace("Grid")
+    workspace["blocks"].append(new_block("documents"))
     workspace["blocks"][0]["layout"] = {
         "row": 3,
         "col": 4,
@@ -78,6 +88,7 @@ def test_workspace_layout_fields_survive_save_load_and_duplicate(tmp_path):
 def test_invalid_workspace_layout_values_are_normalized(tmp_path):
     service = WorkspaceService(tmp_path / "workspaces.json")
     workspace = new_workspace("Invalid")
+    workspace["blocks"].append(new_block("documents"))
     workspace["blocks"][0]["layout"] = {
         "row": -5,
         "col": 50,

@@ -17,30 +17,7 @@ from utils.logger import logger
 WORKSPACE_SCHEMA_VERSION = 1
 WORKSPACES_FILE_NAME = "workspaces.json"
 
-DEFAULT_BLOCKS = [
-    {
-        "id": "personal-info",
-        "type": "personal_info",
-        "title": "Personal Information",
-        "width": "half",
-        "height": "normal",
-        "fields": [
-            "full_name",
-            "nationality",
-            "passport_number",
-            "carnet_number",
-            "date_of_birth",
-            "folder_path",
-        ],
-    },
-    {
-        "id": "documents",
-        "type": "documents",
-        "title": "Documents",
-        "width": "half",
-        "height": "normal",
-    },
-]
+DEFAULT_BLOCKS = []
 
 
 def _default_config_dir():
