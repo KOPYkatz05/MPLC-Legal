@@ -12,7 +12,6 @@ from ui.foundation import (
     DialogFooter,
     FLUENT_AVAILABLE,
     MaskDialogBase,
-    PageHeader,
     create_button,
     create_card,
     create_scroll_area,
@@ -68,21 +67,42 @@ class ExpirationAlertDialog(MaskDialogBase):
         count_badge.setObjectName("WarningBadge")
         count_badge.setAlignment(Qt.AlignCenter)
 
-        return PageHeader(
-            "Document Expiration Alerts",
+        header = QFrame()
+        header.setObjectName("ExpirationAlertDialogHeader")
+        header.setAttribute(Qt.WA_StyledBackground, True)
+
+        header_layout = QHBoxLayout()
+        header_layout.setContentsMargins(18, 16, 18, 12)
+        header_layout.setSpacing(12)
+        header.setLayout(header_layout)
+
+        title_stack = QVBoxLayout()
+        title_stack.setContentsMargins(0, 0, 0, 0)
+        title_stack.setSpacing(4)
+
+        title = QLabel("Document Expiration Alerts")
+        title.setObjectName("ExpirationAlertDialogTitle")
+        subtitle = QLabel(
             "Review the most urgent expirations first. "
-            "Each row shows the deadline, document type, and days remaining.",
-            actions=[count_badge],
+            "Each row shows the deadline, document type, and days remaining."
         )
+        subtitle.setObjectName("ExpirationAlertDialogSubtitle")
+        subtitle.setWordWrap(True)
+        title_stack.addWidget(title)
+        title_stack.addWidget(subtitle)
+
+        header_layout.addLayout(title_stack, stretch=1)
+        header_layout.addWidget(count_badge, alignment=Qt.AlignRight)
+        return header
 
     def _build_body(self):
         body = QWidget()
-        body.setObjectName("DialogBody")
+        body.setObjectName("ExpirationAlertDialogBody")
         body.setAttribute(Qt.WA_StyledBackground, True)
 
         body_layout = QVBoxLayout()
-        body_layout.setContentsMargins(28, 20, 28, 20)
-        body_layout.setSpacing(14)
+        body_layout.setContentsMargins(18, 16, 18, 16)
+        body_layout.setSpacing(12)
         body.setLayout(body_layout)
 
         body_layout.addWidget(self._build_summary_card())
@@ -90,7 +110,7 @@ class ExpirationAlertDialog(MaskDialogBase):
         scroll = create_scroll_area(single_direction=True)
 
         scroll_content = QWidget()
-        scroll_content.setObjectName("DialogBody")
+        scroll_content.setObjectName("ExpirationAlertDialogScrollBody")
         scroll_content.setAttribute(Qt.WA_StyledBackground, True)
 
         scroll_layout = QVBoxLayout()
@@ -127,6 +147,7 @@ class ExpirationAlertDialog(MaskDialogBase):
                 soon_count += 1
 
         card = create_card()
+        card.setObjectName("ExpirationAlertSummaryCard")
         card.setAttribute(Qt.WA_StyledBackground, True)
 
         card_layout = QHBoxLayout()
@@ -187,6 +208,7 @@ class ExpirationAlertDialog(MaskDialogBase):
 
     def _build_empty_state(self):
         empty_card = create_card()
+        empty_card.setObjectName("ExpirationAlertEmptyCard")
         empty_card.setAttribute(Qt.WA_StyledBackground, True)
 
         empty_layout = QVBoxLayout()
@@ -210,6 +232,7 @@ class ExpirationAlertDialog(MaskDialogBase):
 
     def _build_footer(self):
         footer = DialogFooter()
+        footer.setObjectName("ExpirationAlertDialogFooter")
 
         note = QLabel(
             "These alerts cover visa, residency, and pr\u00F3rroga expirations."
@@ -230,6 +253,7 @@ class ExpirationAlertDialog(MaskDialogBase):
         overdue = alert.get("overdue", False) or days < 0
 
         row = create_card()
+        row.setObjectName("ExpirationAlertRow")
         row.setAttribute(Qt.WA_StyledBackground, True)
 
         row_layout = QHBoxLayout()

@@ -19,8 +19,9 @@ def test_expiration_alert_dialog_uses_shared_fluent_shell(qapp):
 
     try:
         assert dialog.surface.objectName() == "AppDialogSurface"
-        assert dialog.findChild(QFrame, "PageHeader") is not None
-        assert dialog.findChild(QFrame, "DialogFooter") is not None
+        assert dialog.findChild(QFrame, "ExpirationAlertDialogHeader") is not None
+        assert dialog.findChild(QFrame, "ExpirationAlertDialogFooter") is not None
+        assert dialog.findChild(QFrame, "ExpirationAlertRow") is not None
 
         label_texts = {
             label.text()

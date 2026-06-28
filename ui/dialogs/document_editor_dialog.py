@@ -17,6 +17,8 @@ from PySide6.QtWidgets import (
     QDialog,
     QVBoxLayout,
     QHBoxLayout,
+    QLabel,
+    QFrame,
     QWidget,
     QListWidgetItem,
     QGraphicsScene,
@@ -28,7 +30,6 @@ from ui.widgets.crop_graphics_view import (
 )
 from ui.foundation import (
     DialogFooter,
-    PageHeader,
     create_button,
     create_list_widget,
     create_slider,
@@ -85,25 +86,38 @@ class DocumentEditorDialog(QDialog):
             main_layout
         )
 
-        header = PageHeader(
-            "Document Editor",
-            "Review the selected page, rotation, and crop area before export.",
+        header = QFrame()
+        header.setObjectName("DocumentEditorDialogHeader")
+        header.setAttribute(Qt.WA_StyledBackground, True)
+        header_layout = QVBoxLayout()
+        header_layout.setContentsMargins(18, 16, 18, 12)
+        header_layout.setSpacing(4)
+        header.setLayout(header_layout)
+
+        title = QLabel("Document Editor")
+        title.setObjectName("DocumentEditorDialogTitle")
+        subtitle = QLabel(
+            "Review the selected page, rotation, and crop area before export."
         )
+        subtitle.setObjectName("DocumentEditorDialogSubtitle")
+        subtitle.setWordWrap(True)
+        header_layout.addWidget(title)
+        header_layout.addWidget(subtitle)
 
         main_layout.addWidget(
             header
         )
 
         body = QWidget()
-        body.setObjectName("DialogBody")
+        body.setObjectName("DocumentEditorDialogBody")
         body.setAttribute(
             Qt.WA_StyledBackground,
             True,
         )
 
         body_layout = QVBoxLayout()
-        body_layout.setContentsMargins(24, 20, 24, 20)
-        body_layout.setSpacing(14)
+        body_layout.setContentsMargins(18, 16, 18, 16)
+        body_layout.setSpacing(12)
         body.setLayout(body_layout)
 
         # =====================================
@@ -124,6 +138,7 @@ class DocumentEditorDialog(QDialog):
         # =====================================
 
         self.page_list = create_list_widget()
+        self.page_list.setObjectName("DocumentEditorPageList")
 
         self.page_list.setFixedWidth(
             180
@@ -142,6 +157,7 @@ class DocumentEditorDialog(QDialog):
         self.graphics_view = (
             CropGraphicsView()
         )
+        self.graphics_view.setObjectName("DocumentEditorGraphicsView")
 
         self.graphics_view.setScene(
             self.scene
@@ -159,6 +175,7 @@ class DocumentEditorDialog(QDialog):
         self.rotation_slider = create_slider(
             Qt.Horizontal
         )
+        self.rotation_slider.setObjectName("DocumentEditorRotationSlider")
 
         self.rotation_slider.setRange(
             -180,
@@ -187,6 +204,7 @@ class DocumentEditorDialog(QDialog):
         self.confirm_button = create_button("Confirm", "primary")
 
         footer = DialogFooter()
+        footer.setObjectName("DocumentEditorDialogFooter")
         footer.add_action(
             self.cancel_button
         )

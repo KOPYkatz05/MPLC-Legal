@@ -74,7 +74,7 @@ class LoadingSpinner(QWidget):
         painter.setPen(base_pen)
         painter.drawArc(rect, 0, 360 * 16)
 
-        accent_pen = QPen(QColor(37, 99, 235), 5)
+        accent_pen = QPen(QColor(14, 165, 172), 5)
         accent_pen.setCapStyle(Qt.RoundCap)
         painter.setPen(accent_pen)
         painter.drawArc(rect, -self._angle * 16, -110 * 16)
@@ -113,7 +113,7 @@ class _FluentShellCompat:
         self.window.set_nav_title(key, title)
 
 
-class MainWindow(FluentWindow if FLUENT_AVAILABLE else QMainWindow):
+class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
 
@@ -175,11 +175,7 @@ class MainWindow(FluentWindow if FLUENT_AVAILABLE else QMainWindow):
             "settings": "sidebar_settings",
         }
 
-        if FLUENT_AVAILABLE and hasattr(self, "addSubInterface"):
-            self._setup_fluent_shell()
-            self.shell = _FluentShellCompat(self)
-        else:
-            self._setup_fallback_shell()
+        self._setup_fallback_shell()
 
         self.sidebar = _SidebarCompat(self)
         self.stack.installEventFilter(self)
@@ -431,7 +427,7 @@ class MainWindow(FluentWindow if FLUENT_AVAILABLE else QMainWindow):
         panel.setAttribute(Qt.WA_StyledBackground, True)
         panel.setFixedWidth(340)
         panel_layout = QVBoxLayout()
-        panel_layout.setContentsMargins(28, 26, 28, 26)
+        panel_layout.setContentsMargins(20, 18, 20, 18)
         panel_layout.setSpacing(10)
         panel.setLayout(panel_layout)
 
@@ -449,7 +445,7 @@ class MainWindow(FluentWindow if FLUENT_AVAILABLE else QMainWindow):
         panel_layout.addWidget(subtitle)
 
         layout = QVBoxLayout()
-        layout.setContentsMargins(24, 24, 24, 24)
+        layout.setContentsMargins(20, 18, 20, 20)
         layout.addStretch()
         layout.addWidget(panel, alignment=Qt.AlignCenter)
         layout.addStretch()

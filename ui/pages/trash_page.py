@@ -2,6 +2,8 @@ from PySide6.QtWidgets import (
     QWidget,
     QVBoxLayout,
     QHBoxLayout,
+    QLabel,
+    QFrame,
     QTableWidgetItem,
     QHeaderView,
     QAbstractItemView,
@@ -14,11 +16,9 @@ from services.missionary_service import (
     MissionaryService,
 )
 from ui.foundation import (
-    PageHeader,
     configure_data_table,
     create_button,
     create_table,
-    divider,
     show_message,
 )
 
@@ -48,17 +48,19 @@ class TrashPage(QWidget):
 
         self.setLayout(outer)
 
-        header = PageHeader(
-            "Trash / Archive",
-            "Restore archived records or remove them permanently.",
-        )
+        outer.addWidget(self._build_top_bar())
 
-        outer.addWidget(header)
-
-        outer.addWidget(divider())
+        workspace = QFrame()
+        workspace.setObjectName("TrashWorkspace")
+        workspace.setAttribute(Qt.WA_StyledBackground, True)
+        workspace_layout = QVBoxLayout()
+        workspace_layout.setContentsMargins(12, 12, 24, 24)
+        workspace_layout.setSpacing(0)
+        workspace.setLayout(workspace_layout)
 
         # Table
         self.table = create_table()
+        self.table.setObjectName("TrashTable")
 
         self.table.setColumnCount(6)
 
@@ -87,7 +89,26 @@ class TrashPage(QWidget):
             sorting=False,
         )
 
-        outer.addWidget(self.table, stretch=1)
+        workspace_layout.addWidget(self.table, stretch=1)
+        outer.addWidget(workspace, stretch=1)
+
+    def _build_top_bar(self):
+        frame = QFrame()
+        frame.setObjectName("TrashTopBar")
+        frame.setAttribute(Qt.WA_StyledBackground, True)
+
+        layout = QVBoxLayout()
+        layout.setContentsMargins(12, 10, 16, 10)
+        layout.setSpacing(2)
+        frame.setLayout(layout)
+
+        title = QLabel("Trash / Archive")
+        title.setObjectName("TrashTitle")
+        subtitle = QLabel("Restore archived records or remove them permanently.")
+        subtitle.setObjectName("TrashSubtitle")
+        layout.addWidget(title)
+        layout.addWidget(subtitle)
+        return frame
 
     def load_data(self):
         try:

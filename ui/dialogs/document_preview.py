@@ -148,10 +148,10 @@ class DocumentPreviewWidget(QWidget):
         self.setLayout(root)
 
         self.header = QFrame()
-        self.header.setObjectName("PageHeader")
+        self.header.setObjectName("DocumentViewerHeader")
         self.header.setAttribute(Qt.WA_StyledBackground, True)
         header_layout = QHBoxLayout()
-        header_layout.setContentsMargins(24, 16, 24, 16)
+        header_layout.setContentsMargins(18, 16, 18, 12)
         header_layout.setSpacing(12)
         self.header.setLayout(header_layout)
 
@@ -159,9 +159,9 @@ class DocumentPreviewWidget(QWidget):
         title_stack.setContentsMargins(0, 0, 0, 0)
         title_stack.setSpacing(4)
         self.preview_name_label = QLabel(self.path.name or "Document Viewer")
-        self.preview_name_label.setObjectName("PanelTitle")
+        self.preview_name_label.setObjectName("DocumentViewerTitle")
         self.preview_meta_label = QLabel("Loading document...")
-        self.preview_meta_label.setObjectName("MutedText")
+        self.preview_meta_label.setObjectName("DocumentViewerSubtitle")
         title_stack.addWidget(self.preview_name_label)
         title_stack.addWidget(self.preview_meta_label)
 
@@ -181,17 +181,18 @@ class DocumentPreviewWidget(QWidget):
         root.addWidget(self.header)
 
         body = QFrame()
-        body.setObjectName("DialogBody")
+        body.setObjectName("DocumentViewerBody")
         body.setAttribute(Qt.WA_StyledBackground, True)
         body_layout = QVBoxLayout()
-        body_layout.setContentsMargins(18, 18, 18, 18)
+        body_layout.setContentsMargins(18, 16, 18, 18)
         body_layout.setSpacing(12)
         body.setLayout(body_layout)
 
         self.preview_card = create_card(object_name="UploadSurfaceCard")
+        self.preview_card.setObjectName("DocumentViewerPreviewCard")
         self.preview_card.setAttribute(Qt.WA_StyledBackground, True)
         card_layout = QVBoxLayout()
-        card_layout.setContentsMargins(18, 18, 18, 18)
+        card_layout.setContentsMargins(18, 16, 18, 16)
         card_layout.setSpacing(12)
         self.preview_card.setLayout(card_layout)
 

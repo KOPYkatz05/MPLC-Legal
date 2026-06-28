@@ -150,40 +150,40 @@ class BatchStageAdvanceDialog(QDialog):
         # Header
         header = QFrame()
 
-        header.setObjectName("PageHeader")
+        header.setObjectName("BatchStageDialogHeader")
+        header.setAttribute(Qt.WA_StyledBackground, True)
 
-        header_layout = QHBoxLayout()
+        header_layout = QVBoxLayout()
 
-        header_layout.setContentsMargins(24, 18, 24, 18)
+        header_layout.setContentsMargins(18, 16, 18, 12)
+        header_layout.setSpacing(4)
 
         header.setLayout(header_layout)
 
         title = QLabel("Batch Stage Advance")
 
-        title.setObjectName("PageTitle")
+        title.setObjectName("BatchStageDialogTitle")
 
         header_layout.addWidget(title)
 
+        subtitle = QLabel("Review document readiness before moving selected missionaries.")
+        subtitle.setObjectName("BatchStageDialogSubtitle")
+        subtitle.setWordWrap(True)
+        header_layout.addWidget(subtitle)
+
         layout.addWidget(header)
-
-        divider = QFrame()
-
-        divider.setFixedHeight(1)
-
-        divider.setObjectName("HeaderDivider")
-
-        layout.addWidget(divider)
 
         # Body
         body = QWidget()
 
-        body.setObjectName("DialogBody")
+        body.setObjectName("BatchStageDialogBody")
+        body.setAttribute(Qt.WA_StyledBackground, True)
 
         body_layout = QVBoxLayout()
 
-        body_layout.setContentsMargins(24, 20, 24, 20)
+        body_layout.setContentsMargins(18, 16, 18, 16)
 
-        body_layout.setSpacing(16)
+        body_layout.setSpacing(12)
 
         body.setLayout(body_layout)
 
@@ -201,7 +201,7 @@ class BatchStageAdvanceDialog(QDialog):
 
         # Table
         table = create_table()
-        table.setObjectName("MissionaryTable")
+        table.setObjectName("BatchStageTable")
 
         table.setColumnCount(5)
 
@@ -310,11 +310,13 @@ class BatchStageAdvanceDialog(QDialog):
         # Footer
         footer = QFrame()
 
-        footer.setObjectName("PageHeader")
+        footer.setObjectName("BatchStageDialogFooter")
+        footer.setAttribute(Qt.WA_StyledBackground, True)
 
         footer_layout = QHBoxLayout()
 
-        footer_layout.setContentsMargins(24, 12, 24, 12)
+        footer_layout.setContentsMargins(18, 12, 18, 12)
+        footer_layout.setSpacing(8)
 
         footer.setLayout(footer_layout)
 

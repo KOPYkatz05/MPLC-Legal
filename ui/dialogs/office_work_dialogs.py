@@ -3,6 +3,7 @@ from datetime import date
 from PySide6.QtCore import QDate, Qt
 from PySide6.QtWidgets import (
     QDialog,
+    QFrame,
     QLabel,
     QListWidgetItem,
     QVBoxLayout,
@@ -17,7 +18,6 @@ from ui.foundation import (
     DialogFooter,
     FLUENT_AVAILABLE,
     MaskDialogBase,
-    PageHeader,
     create_button,
     create_check_box,
     create_combo_box,
@@ -170,18 +170,34 @@ class _OfficeWorkDialogBase(MaskDialogBase):
         layout.setSpacing(0)
         self.surface.setLayout(layout)
 
-        layout.addWidget(PageHeader(self._dialog_title, self._dialog_subtitle))
+        header = QFrame()
+        header.setObjectName("OfficeWorkDialogHeader")
+        header.setAttribute(Qt.WA_StyledBackground, True)
+        header_layout = QVBoxLayout()
+        header_layout.setContentsMargins(18, 16, 18, 12)
+        header_layout.setSpacing(4)
+        header.setLayout(header_layout)
+
+        title = QLabel(self._dialog_title)
+        title.setObjectName("OfficeWorkDialogTitle")
+        subtitle = QLabel(self._dialog_subtitle)
+        subtitle.setObjectName("OfficeWorkDialogSubtitle")
+        subtitle.setWordWrap(True)
+        header_layout.addWidget(title)
+        header_layout.addWidget(subtitle)
+        layout.addWidget(header)
 
         body = QWidget()
-        body.setObjectName("DialogBody")
+        body.setObjectName("OfficeWorkDialogBody")
         body.setAttribute(Qt.WA_StyledBackground, True)
         self.body_layout = QVBoxLayout()
-        self.body_layout.setContentsMargins(24, 20, 24, 20)
+        self.body_layout.setContentsMargins(18, 16, 18, 16)
         self.body_layout.setSpacing(12)
         body.setLayout(self.body_layout)
         layout.addWidget(body)
 
         footer = DialogFooter()
+        footer.setObjectName("OfficeWorkDialogFooter")
         cancel_btn = create_button("Cancel", "secondary")
         cancel_btn.clicked.connect(self.reject)
         footer.add_action(cancel_btn)
@@ -340,8 +356,9 @@ class TaskDialog(_OfficeWorkDialogBase):
 
         self.details_widget = QWidget()
         self.details_widget.setObjectName("TaskDialogDetails")
+        self.details_widget.setAttribute(Qt.WA_StyledBackground, True)
         details_layout = QVBoxLayout()
-        details_layout.setContentsMargins(0, 0, 0, 0)
+        details_layout.setContentsMargins(12, 12, 12, 12)
         details_layout.setSpacing(12)
         self.details_widget.setLayout(details_layout)
 

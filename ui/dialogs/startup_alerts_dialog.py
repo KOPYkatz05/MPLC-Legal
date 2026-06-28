@@ -16,7 +16,6 @@ from ui.foundation import (
     DialogFooter,
     FLUENT_AVAILABLE,
     MaskDialogBase,
-    PageHeader,
     create_button,
     create_card,
     create_scroll_area,
@@ -143,20 +142,43 @@ class StartupAlertsDialog(MaskDialogBase):
         count_badge.setObjectName("WarningBadge")
         count_badge.setAlignment(Qt.AlignCenter)
 
-        return PageHeader(
-            "Mission Legal needs attention",
-            "Start with the first item, then scan each section by person, action, and due date.",
-            actions=[count_badge],
+        header = QFrame()
+        header.setObjectName("StartupAlertsDialogHeader")
+        header.setAttribute(Qt.WA_StyledBackground, True)
+
+        header_layout = QHBoxLayout()
+        header_layout.setContentsMargins(18, 16, 18, 12)
+        header_layout.setSpacing(12)
+        header.setLayout(header_layout)
+
+        title_stack = QVBoxLayout()
+        title_stack.setContentsMargins(0, 0, 0, 0)
+        title_stack.setSpacing(4)
+
+        title = QLabel("Mission Legal needs attention")
+        title.setObjectName("StartupAlertsDialogTitle")
+        subtitle = QLabel(
+            "Start with the first item, then scan each section by person, "
+            "action, and due date."
         )
+        subtitle.setObjectName("StartupAlertsDialogSubtitle")
+        subtitle.setWordWrap(True)
+
+        title_stack.addWidget(title)
+        title_stack.addWidget(subtitle)
+
+        header_layout.addLayout(title_stack, stretch=1)
+        header_layout.addWidget(count_badge, alignment=Qt.AlignRight)
+        return header
 
     def _build_body(self):
         body = QWidget()
-        body.setObjectName("DialogBody")
+        body.setObjectName("StartupAlertsDialogBody")
         body.setAttribute(Qt.WA_StyledBackground, True)
 
         body_layout = QVBoxLayout()
-        body_layout.setContentsMargins(28, 20, 28, 20)
-        body_layout.setSpacing(14)
+        body_layout.setContentsMargins(18, 16, 18, 16)
+        body_layout.setSpacing(12)
         body.setLayout(body_layout)
 
         body_layout.addWidget(self._build_summary_card())
@@ -165,7 +187,7 @@ class StartupAlertsDialog(MaskDialogBase):
 
         scroll = create_scroll_area(single_direction=True)
         scroll_content = QWidget()
-        scroll_content.setObjectName("DialogBody")
+        scroll_content.setObjectName("StartupAlertsDialogScrollBody")
         scroll_content.setAttribute(Qt.WA_StyledBackground, True)
 
         scroll_layout = QVBoxLayout()
@@ -184,6 +206,7 @@ class StartupAlertsDialog(MaskDialogBase):
 
     def _build_summary_card(self):
         card = create_card()
+        card.setObjectName("StartupAlertsSummaryCard")
         card.setAttribute(Qt.WA_StyledBackground, True)
 
         layout = QHBoxLayout()
@@ -222,6 +245,7 @@ class StartupAlertsDialog(MaskDialogBase):
 
     def _build_start_here_card(self, item):
         card = create_card()
+        card.setObjectName("StartupAlertsStartCard")
         card.setAttribute(Qt.WA_StyledBackground, True)
 
         layout = QHBoxLayout()
@@ -257,6 +281,7 @@ class StartupAlertsDialog(MaskDialogBase):
 
     def _build_group(self, group):
         section = create_card()
+        section.setObjectName("StartupAlertsGroupCard")
         section.setAttribute(Qt.WA_StyledBackground, True)
 
         layout = QVBoxLayout()
@@ -333,6 +358,7 @@ class StartupAlertsDialog(MaskDialogBase):
 
     def _build_footer(self):
         footer = DialogFooter()
+        footer.setObjectName("StartupAlertsDialogFooter")
 
         note = QLabel("Dashboard shows the full queue after this dialog closes.")
         note.setObjectName("SubtleText")

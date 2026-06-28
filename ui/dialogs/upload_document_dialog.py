@@ -3,6 +3,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QFormLayout,
     QLabel,
+    QFrame,
     QWidget,
 )
 
@@ -10,7 +11,6 @@ from PySide6.QtCore import Qt
 
 from ui.foundation import (
     DialogFooter,
-    PageHeader,
     create_button,
     create_combo_box,
     setup_dialog_shell,
@@ -54,20 +54,33 @@ class UploadDocumentDialog(QDialog):
 
         self.surface.setLayout(layout)
 
-        header = PageHeader(
-            "Upload Document",
+        header = QFrame()
+        header.setObjectName("UploadDocumentDialogHeader")
+        header.setAttribute(Qt.WA_StyledBackground, True)
+        header_layout = QVBoxLayout()
+        header_layout.setContentsMargins(18, 16, 18, 12)
+        header_layout.setSpacing(4)
+        header.setLayout(header_layout)
+
+        title = QLabel("Upload Document")
+        title.setObjectName("UploadDocumentDialogTitle")
+        subtitle = QLabel(
             "Select the document type. "
-            "The workflow stage will be filled in automatically.",
+            "The workflow stage will be filled in automatically."
         )
+        subtitle.setObjectName("UploadDocumentDialogSubtitle")
+        subtitle.setWordWrap(True)
+        header_layout.addWidget(title)
+        header_layout.addWidget(subtitle)
         layout.addWidget(header)
 
         body = QWidget()
-        body.setObjectName("DialogBody")
+        body.setObjectName("UploadDocumentDialogBody")
         body.setAttribute(Qt.WA_StyledBackground, True)
 
         body_layout = QVBoxLayout()
-        body_layout.setContentsMargins(24, 20, 24, 20)
-        body_layout.setSpacing(14)
+        body_layout.setContentsMargins(18, 16, 18, 16)
+        body_layout.setSpacing(12)
         body.setLayout(body_layout)
 
         info = QLabel(
@@ -135,6 +148,7 @@ class UploadDocumentDialog(QDialog):
         self.ok_btn.setDefault(True)
 
         footer = DialogFooter()
+        footer.setObjectName("UploadDocumentDialogFooter")
         footer.add_action(self.cancel_btn)
         footer.add_action(self.ok_btn)
         layout.addWidget(footer)

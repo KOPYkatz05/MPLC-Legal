@@ -65,21 +65,38 @@ class WorkspaceBlockPropertiesDialog(QDialog):
         self.setObjectName("WorkspacePropertiesDialog")
 
         root = QVBoxLayout()
-        root.setContentsMargins(20, 18, 20, 18)
-        root.setSpacing(14)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
         self.setLayout(root)
 
+        header = QFrame()
+        header.setObjectName("WorkspacePropertiesHeader")
+        header.setAttribute(Qt.WA_StyledBackground, True)
+        header_layout = QVBoxLayout()
+        header_layout.setContentsMargins(18, 16, 18, 12)
+        header_layout.setSpacing(4)
+        header.setLayout(header_layout)
+
         title = QLabel("Edit Properties")
-        title.setObjectName("WorkspaceDialogTitle")
-        root.addWidget(title)
+        title.setObjectName("WorkspacePropertiesTitle")
+        header_layout.addWidget(title)
         helper = QLabel("Adjust what this block shows. Layout and size can still be changed directly on the canvas.")
-        helper.setObjectName("MutedText")
+        helper.setObjectName("WorkspacePropertiesSubtitle")
         helper.setWordWrap(True)
-        root.addWidget(helper)
+        header_layout.addWidget(helper)
+        root.addWidget(header)
+
+        body = QFrame()
+        body.setObjectName("WorkspacePropertiesBody")
+        body.setAttribute(Qt.WA_StyledBackground, True)
+        body_layout = QVBoxLayout()
+        body_layout.setContentsMargins(18, 16, 18, 16)
+        body_layout.setSpacing(12)
+        body.setLayout(body_layout)
 
         form = QFormLayout()
         form.setSpacing(10)
-        root.addLayout(form, stretch=1)
+        body_layout.addLayout(form, stretch=1)
 
         self.title_input = create_line_edit("Block title", "WorkspaceBlockTitleDialogInput")
         self.title_input.setText(self.block.get("title", ""))
@@ -164,7 +181,8 @@ class WorkspaceBlockPropertiesDialog(QDialog):
         apply_btn.clicked.connect(self.accept)
         footer.add_action(cancel_btn)
         footer.add_action(apply_btn)
-        root.addWidget(footer)
+        body_layout.addWidget(footer)
+        root.addWidget(body, stretch=1)
 
     def updated_block(self):
         block = deepcopy(self.block)
@@ -270,66 +288,25 @@ class WorkspacesPage(QWidget):
         super().keyPressEvent(event)
 
     def setup_ui(self):
-        self.setStyleSheet(
-            """
-            #WorkspacesPage { background: #eef1f7; color: #172033; }
-            #WorkspaceTopBar, #WorkspaceLeftRail, #WorkspaceInspector {
-                background: #ffffff; border: 1px solid #dfe5ef; border-radius: 16px;
-            }
-            #WorkspaceCanvasCard { background: transparent; border: none; }
-            #WorkspaceCanvasSurface { border-radius: 20px; border: 1px solid #d8deea; }
-            #WorkspacePaletteButton, #WorkspaceListItemCard {
-                background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px;
-            }
-            #WorkspacePaletteButton:hover { background: #eef5ff; border-color: #93c5fd; }
-            #WorkspaceLayoutTile {
-                background: #ffffff; border: 1px solid #cfd8e8; border-radius: 14px;
-            }
-            #WorkspaceTileEditButton {
-                background: #111827; color: white; border: none; border-radius: 10px;
-                padding: 2px 10px;
-            }
-            #WorkspaceTileSizeChip {
-                background: #eff6ff; color: #1d4ed8; border: 1px solid #bfdbfe;
-                border-radius: 9px; padding: 2px 8px; font-weight: 650;
-            }
-            #WorkspaceTilePreviewStrong {
-                background: #f8fafc; color: #111827; border: 1px solid #e2e8f0;
-                border-radius: 8px; padding: 4px 7px; font-weight: 650;
-            }
-            #WorkspaceTilePreviewLine {
-                background: #ffffff; color: #475569; border: 1px solid #edf2f7;
-                border-radius: 8px; padding: 3px 7px;
-            }
-            #WorkspaceCanvasEmptyState {
-                color: #64748b; font-size: 18px; font-weight: 650;
-                background: transparent;
-            }
-            #WorkspaceSelectionMetrics {
-                background: #111827; color: white; border-radius: 12px;
-                padding: 4px 10px; font-weight: 650;
-            }
-            #WorkspaceDialogTitle { font-size: 20px; font-weight: 700; }
-            """
-        )
-
         root = QVBoxLayout()
-        root.setContentsMargins(18, 18, 18, 18)
-        root.setSpacing(14)
+        root.setContentsMargins(12, 10, 16, 16)
+        root.setSpacing(12)
         self.setLayout(root)
 
         top = QFrame()
         top.setObjectName("WorkspaceTopBar")
+        top.setAttribute(Qt.WA_StyledBackground, True)
         top_layout = QHBoxLayout()
-        top_layout.setContentsMargins(18, 12, 18, 12)
-        top_layout.setSpacing(10)
+        top_layout.setContentsMargins(0, 0, 0, 0)
+        top_layout.setSpacing(12)
         top.setLayout(top_layout)
         title_stack = QVBoxLayout()
         title_stack.setContentsMargins(0, 0, 0, 0)
+        title_stack.setSpacing(2)
         title = QLabel("Workspace Builder")
-        title.setObjectName("WorkspaceDialogTitle")
+        title.setObjectName("WorkspacePageTitle")
         subtitle = QLabel("Design missionary workspaces on a free canvas. Drag, resize, and edit blocks like a modern editor.")
-        subtitle.setObjectName("MutedText")
+        subtitle.setObjectName("WorkspacePageSubtitle")
         title_stack.addWidget(title)
         title_stack.addWidget(subtitle)
         top_layout.addLayout(title_stack, stretch=1)
@@ -348,13 +325,15 @@ class WorkspacesPage(QWidget):
         root.addWidget(top)
 
         splitter = QSplitter(Qt.Horizontal)
+        splitter.setObjectName("WorkspaceBuilderSplitter")
         splitter.setChildrenCollapsible(False)
         root.addWidget(splitter, stretch=1)
 
         left = QFrame()
         left.setObjectName("WorkspaceLeftRail")
+        left.setAttribute(Qt.WA_StyledBackground, True)
         left_layout = QVBoxLayout()
-        left_layout.setContentsMargins(14, 14, 14, 14)
+        left_layout.setContentsMargins(12, 12, 12, 12)
         left_layout.setSpacing(10)
         left.setLayout(left_layout)
         left.setMinimumWidth(250)
@@ -377,7 +356,7 @@ class WorkspacesPage(QWidget):
         left_layout.addWidget(self.workspaces_list, stretch=1)
 
         palette_label = QLabel("Blocks")
-        palette_label.setObjectName("WorkspaceDialogTitle")
+        palette_label.setObjectName("WorkspacePanelTitle")
         left_layout.addWidget(palette_label)
         self.palette_search = create_search_edit("Search blocks")
         self.palette_search.textChanged.connect(self._refresh_palette)
@@ -394,13 +373,19 @@ class WorkspacesPage(QWidget):
 
         center = QFrame()
         center.setObjectName("WorkspaceCanvasCard")
+        center.setAttribute(Qt.WA_StyledBackground, True)
         center_layout = QVBoxLayout()
         center_layout.setContentsMargins(12, 0, 12, 0)
         center_layout.setSpacing(10)
         center.setLayout(center_layout)
 
+        toolbar_frame = QFrame()
+        toolbar_frame.setObjectName("WorkspaceToolbar")
+        toolbar_frame.setAttribute(Qt.WA_StyledBackground, True)
         toolbar = QHBoxLayout()
-        toolbar.setContentsMargins(0, 0, 0, 0)
+        toolbar.setContentsMargins(10, 8, 10, 8)
+        toolbar.setSpacing(6)
+        toolbar_frame.setLayout(toolbar)
         self.undo_btn = create_button("Undo", "secondary")
         self.redo_btn = create_button("Redo", "secondary")
         self.zoom_out_btn = create_button("-", "secondary")
@@ -433,7 +418,7 @@ class WorkspacesPage(QWidget):
         toolbar.addStretch()
         toolbar.addWidget(self.block_add_combo)
         toolbar.addWidget(self.add_selected_btn)
-        center_layout.addLayout(toolbar)
+        center_layout.addWidget(toolbar_frame)
 
         status_row = QHBoxLayout()
         status_row.setContentsMargins(0, 0, 0, 0)
@@ -442,7 +427,7 @@ class WorkspacesPage(QWidget):
         self.shortcut_hint_label = QLabel(
             "Ctrl+click multi-select | Ctrl+G group | Ctrl+L lock | Ctrl+H hide"
         )
-        self.shortcut_hint_label.setObjectName("MutedText")
+        self.shortcut_hint_label.setObjectName("WorkspaceShortcutHint")
         status_row.addWidget(self.selection_metrics_label)
         status_row.addStretch()
         status_row.addWidget(self.shortcut_hint_label)
@@ -465,21 +450,22 @@ class WorkspacesPage(QWidget):
 
         inspector = QFrame()
         inspector.setObjectName("WorkspaceInspector")
+        inspector.setAttribute(Qt.WA_StyledBackground, True)
         inspector_layout = QVBoxLayout()
-        inspector_layout.setContentsMargins(14, 14, 14, 14)
+        inspector_layout.setContentsMargins(12, 12, 12, 12)
         inspector_layout.setSpacing(10)
         inspector.setLayout(inspector_layout)
         inspector.setMinimumWidth(260)
         inspector.setMaximumWidth(360)
         inspector_title = QLabel("Inspector")
-        inspector_title.setObjectName("WorkspaceDialogTitle")
+        inspector_title.setObjectName("WorkspacePanelTitle")
         inspector_layout.addWidget(inspector_title)
         self.selected_block_label = QLabel("Select a block")
         self.selected_block_label.setWordWrap(True)
         inspector_layout.addWidget(self.selected_block_label)
 
         layers_label = QLabel("Layers")
-        layers_label.setObjectName("WorkspaceDialogTitle")
+        layers_label.setObjectName("WorkspacePanelTitle")
         inspector_layout.addWidget(layers_label)
         self.layers_list = create_list_widget("WorkspaceLayersList")
         self.layers_list.setSelectionMode(QAbstractItemView.ExtendedSelection)

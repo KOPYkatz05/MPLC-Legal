@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QSize, Qt, Signal
 from PySide6.QtGui import QColor, QPalette
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
     QHeaderView,
     QLabel,
     QPushButton,
+    QToolButton,
     QSizePolicy,
     QStackedWidget,
     QTableWidget,
@@ -18,7 +19,7 @@ from PySide6.QtWidgets import (
 )
 
 from ui.foundation.fluent import create_button
-from ui.foundation.fluent import CardWidget, SimpleCardWidget
+from ui.foundation.fluent import CardWidget, SimpleCardWidget, fluent_icon
 
 
 @dataclass(frozen=True)
@@ -47,7 +48,7 @@ class PageHeader(SimpleCardWidget):
         self.subtitle_label.setVisible(bool(subtitle))
 
         layout = QHBoxLayout()
-        layout.setContentsMargins(32, 18, 32, 18)
+        layout.setContentsMargins(12, 10, 16, 10)
         layout.setSpacing(12)
         self.setLayout(layout)
 
@@ -81,7 +82,7 @@ class FilterBar(SimpleCardWidget):
         super().__init__(parent)
         self.setObjectName("FilterBar")
         self.layout_ = QHBoxLayout()
-        self.layout_.setContentsMargins(32, 12, 32, 12)
+        self.layout_.setContentsMargins(18, 12, 18, 12)
         self.layout_.setSpacing(12)
         self.setLayout(self.layout_)
 
@@ -111,7 +112,7 @@ class StatCard(SimpleCardWidget):
         value,
         title,
         subtitle="",
-        accent="#2563EB",
+        accent="#0EA5AC",
         color=None,
         parent=None,
     ):
@@ -189,6 +190,16 @@ class AppShell(QWidget):
         self.setObjectName("CentralWidget")
         self._items = []
         self._buttons = {}
+        self._icon_names = {
+            "dashboard": ("VIEW_DASHBOARD", "HOME"),
+            "missionaries": ("PEOPLE", "CONTACT"),
+            "office_work": ("BULLETS", "EDIT"),
+            "appointments": ("CALENDAR",),
+            "reports": ("BAR_CHART", "DOCUMENT"),
+            "trash": ("DELETE",),
+            "workspaces": ("PACKAGE", "FOLDER"),
+            "settings": ("SETTING",),
+        }
 
         root = QHBoxLayout()
         root.setContentsMargins(0, 0, 0, 0)
@@ -197,16 +208,20 @@ class AppShell(QWidget):
 
         self.sidebar = QFrame()
         self.sidebar.setObjectName("FluentSidebar")
-        self.sidebar.setFixedWidth(238)
+        self.sidebar.setFixedWidth(71)
         self.sidebar_layout = QVBoxLayout()
-        self.sidebar_layout.setContentsMargins(12, 16, 12, 16)
-        self.sidebar_layout.setSpacing(4)
+        self.sidebar_layout.setContentsMargins(8, 8, 8, 8)
+        self.sidebar_layout.setSpacing(0)
         self.sidebar.setLayout(self.sidebar_layout)
 
-        brand = QLabel(app_title)
-        brand.setObjectName("SidebarBrand")
-        brand.setWordWrap(True)
-        self.sidebar_layout.addWidget(brand)
+        self.menu_button = QToolButton(self.sidebar)
+        self.menu_button.setObjectName("SidebarMenuButton")
+        self.menu_button.setFixedSize(55, 55)
+        self.menu_button.setToolTip(app_title)
+        self.menu_button.setText("Menu")
+        self.menu_button.setAutoRaise(True)
+        self.sidebar_layout.addWidget(self.menu_button)
+        self.sidebar_layout.addWidget(self._nav_separator())
 
         self._button_group = QButtonGroup(self)
         self._button_group.setExclusive(True)
@@ -220,18 +235,22 @@ class AppShell(QWidget):
         self.sidebar_layout.addStretch()
 
     def add_nav_item(self, key, title, stack_index, group=""):
-        if group and (
-            not self._items or self._items[-1].group != group
-        ):
-            label = QLabel(group.upper())
-            label.setObjectName("SidebarGroupLabel")
+        if group and self._items and self._items[-1].group != group:
             insert_at = max(1, self.sidebar_layout.count() - 1)
-            self.sidebar_layout.insertWidget(insert_at, label)
+            self.sidebar_layout.insertWidget(insert_at, self._nav_separator())
 
-        button = QPushButton(title)
+        button = QToolButton(self.sidebar)
         button.setCheckable(True)
         button.setObjectName("SidebarNavButton")
-        button.setFixedHeight(38)
+        button.setFixedSize(55, 55)
+        button.setToolTip(title)
+        button.setAutoRaise(True)
+        button.setText(self._fallback_icon_text(key, title))
+        icon = self._nav_icon(key)
+        if icon is not None:
+            button.setIcon(icon)
+            button.setIconSize(QSize(20, 20))
+            button.setText("")
         button.clicked.connect(
             lambda checked=False, item_key=key: self.set_current_key(item_key)
         )
@@ -252,7 +271,39 @@ class AppShell(QWidget):
 
     def set_nav_title(self, key, title):
         if key in self._buttons:
-            self._buttons[key].setText(title)
+            self._buttons[key].setToolTip(title)
+
+    def _nav_icon(self, key):
+        for name in self._icon_names.get(key, ()):
+            icon = fluent_icon(name)
+            if hasattr(icon, "icon"):
+                try:
+                    return icon.icon()
+                except Exception:
+                    continue
+            if icon is not None:
+                return icon
+        return None
+
+    @staticmethod
+    def _fallback_icon_text(key, title):
+        return {
+            "dashboard": "D",
+            "missionaries": "M",
+            "office_work": "W",
+            "appointments": "C",
+            "reports": "R",
+            "trash": "T",
+            "workspaces": "B",
+            "settings": "S",
+        }.get(key, (title or "?")[:1])
+
+    @staticmethod
+    def _nav_separator():
+        line = QFrame()
+        line.setObjectName("SidebarSeparator")
+        line.setFixedHeight(17)
+        return line
 
 
 def configure_data_table(

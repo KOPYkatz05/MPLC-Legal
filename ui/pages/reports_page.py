@@ -18,7 +18,7 @@ from database.models.missionary import Missionary
 from database.models.document import Document
 
 from database.models.stage_history import StageHistory
-from ui.foundation import PageHeader, StatCard, create_card, create_scroll_area, divider
+from ui.foundation import StatCard, create_card, create_scroll_area
 
 from utils.constants import WORKFLOW_STAGES
 
@@ -46,29 +46,24 @@ class ReportsPage(QWidget):
 
         self.setLayout(outer)
 
-        header = PageHeader(
-            "Reports & Statistics",
-            "Operational metrics for workflow health.",
-        )
-
-        outer.addWidget(header)
-
-        outer.addWidget(divider())
+        outer.addWidget(self._build_top_bar())
 
         # Scroll area
         scroll = create_scroll_area(single_direction=True)
 
-        scroll.setObjectName("PageSurface")
+        scroll.setObjectName("ReportsWorkspaceScroll")
 
         content = QWidget()
+        content.setObjectName("ReportsWorkspace")
+        content.setAttribute(Qt.WA_StyledBackground, True)
 
         self.content_layout = QVBoxLayout()
 
         self.content_layout.setContentsMargins(
-            32, 24, 32, 24
+            12, 14, 24, 24
         )
 
-        self.content_layout.setSpacing(20)
+        self.content_layout.setSpacing(14)
 
         self.content_layout.addStretch()
 
@@ -77,6 +72,24 @@ class ReportsPage(QWidget):
         scroll.setWidget(content)
 
         outer.addWidget(scroll, stretch=1)
+
+    def _build_top_bar(self):
+        frame = QFrame()
+        frame.setObjectName("ReportsTopBar")
+        frame.setAttribute(Qt.WA_StyledBackground, True)
+
+        layout = QVBoxLayout()
+        layout.setContentsMargins(12, 10, 16, 10)
+        layout.setSpacing(2)
+        frame.setLayout(layout)
+
+        title = QLabel("Reports & Statistics")
+        title.setObjectName("ReportsTitle")
+        subtitle = QLabel("Operational metrics for workflow health.")
+        subtitle.setObjectName("ReportsSubtitle")
+        layout.addWidget(title)
+        layout.addWidget(subtitle)
+        return frame
 
     def load_data(self):
         try:
@@ -195,7 +208,7 @@ class ReportsPage(QWidget):
                     StatCard(
                         total,
                         "Active Missionaries",
-                        color="#3B82F6",
+                        color="#0EA5AC",
                     )
                 )
 
@@ -246,7 +259,7 @@ class ReportsPage(QWidget):
                         StatCard(
                             stage_counts[stage],
                             stage,
-                            color="#7C3AED",
+                            color="#7A6EEC",
                         )
                     )
 
@@ -266,12 +279,12 @@ class ReportsPage(QWidget):
                             "_", " "
                         ).title()
 
-                        row_widget = create_card()
+                        row_widget = create_card(object_name="ReportAlertRow")
 
                         row_layout = QHBoxLayout()
 
                         row_layout.setContentsMargins(
-                            16, 10, 16, 10
+                            12, 10, 12, 10
                         )
 
                         row_widget.setLayout(row_layout)
@@ -282,7 +295,7 @@ class ReportsPage(QWidget):
 
                         type_lbl = QLabel(label)
 
-                        type_lbl.setObjectName("MutedText")
+                        type_lbl.setObjectName("ReportMeta")
 
                         days_text = (
                             "TODAY"
@@ -347,6 +360,7 @@ class ReportsPage(QWidget):
 
     def _add_row_layout(self, layout):
         widget = QWidget()
+        widget.setObjectName("ReportMetricRow")
 
         widget.setLayout(layout)
 

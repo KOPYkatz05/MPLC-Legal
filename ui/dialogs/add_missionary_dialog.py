@@ -3,7 +3,7 @@ import json
 from pathlib import Path
 
 from PySide6.QtCore import QPoint, QSize, Qt, QRegularExpression
-from PySide6.QtGui import QPalette, QRegularExpressionValidator, QStandardItem, QStandardItemModel
+from PySide6.QtGui import QRegularExpressionValidator, QStandardItem, QStandardItemModel
 from PySide6.QtWidgets import (
     QCompleter,
     QDialog,
@@ -145,9 +145,6 @@ def _build_country_completion_row(code, country_name, parent=None):
     country_label = QLabel(country_name)
     country_label.setObjectName("CountryCompletionName")
     country_label.setAttribute(Qt.WA_TransparentForMouseEvents, True)
-    country_label.setStyleSheet(
-        f"color: {country_label.palette().color(QPalette.Mid).name()};"
-    )
 
     layout.addWidget(code_label, 0, Qt.AlignVCenter)
     layout.addWidget(country_label, 1, Qt.AlignVCenter)
@@ -412,22 +409,22 @@ class AddMissionaryDialog(MaskDialogBase):
 
         layout = QVBoxLayout()
         layout.setContentsMargins(
-            28, 26, 28, 18
+            18, 16, 18, 12
         )
-        layout.setSpacing(6)
+        layout.setSpacing(4)
         header.setLayout(layout)
 
         title = SubtitleLabel(
             "Add Missionary"
         )
-        title.setObjectName("PageTitle")
+        title.setObjectName("AddMissionaryTitle")
 
         subtitle = BodyLabel(
             "Create the missionary record now, "
             "then let document uploads fill in "
             "the rest later."
         )
-        subtitle.setObjectName("PageSubtitle")
+        subtitle.setObjectName("AddMissionarySubtitle")
         subtitle.setWordWrap(True)
 
         layout.addWidget(title)
@@ -445,9 +442,9 @@ class AddMissionaryDialog(MaskDialogBase):
 
         layout = QVBoxLayout()
         layout.setContentsMargins(
-            28, 10, 28, 22
+            18, 16, 18, 16
         )
-        layout.setSpacing(16)
+        layout.setSpacing(12)
         body.setLayout(layout)
 
         self.missionary_id_input = create_line_edit(
@@ -671,6 +668,7 @@ class AddMissionaryDialog(MaskDialogBase):
 
     def _build_footer(self):
         footer = DialogFooter()
+        footer.setObjectName("AddMissionaryFooter")
 
         self.cancel_button = create_button(
             "Cancel",

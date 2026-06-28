@@ -24,15 +24,12 @@ from services.secretary_work_service import (
 from ui.dialogs.office_work_dialogs import ProjectDialog, TaskDialog
 from ui.foundation import (
     FilterBar,
-    PageHeader,
     StatCard,
     create_button,
     create_card,
     create_combo_box,
-    create_pivot,
     create_scroll_area,
     create_search_edit,
-    divider,
     fluent_icon,
     show_message,
 )
@@ -40,13 +37,6 @@ from utils.logger import logger
 
 
 TASK_GROUP_LABELS = dict(TASK_GROUPS)
-PRIORITY_COLORS = {
-    "LOW": "#71717A",
-    "NORMAL": "#2563EB",
-    "IMPORTANT": "#D97706",
-    "CRITICAL": "#DC2626",
-}
-SHARED_TASK_COLOR = "#7C3AED"
 TASK_STATUS_LABELS = {
     "OPEN": "To Do",
     "WAITING": "Waiting",
@@ -59,6 +49,12 @@ PROJECT_STATUS_LABELS = {
     "DONE": "Done",
     "ARCHIVED": "Archived",
 }
+
+
+def _task_priority_tone(task):
+    if task.get("is_group_task"):
+        return "group"
+    return str(task.get("priority", "LOW")).lower()
 
 
 def _format_date(value):
@@ -98,23 +94,57 @@ class OfficeWorkPage(QWidget):
         outer.setSpacing(0)
         self.setLayout(outer)
 
-        self.header = PageHeader(
-            "Office Work",
-            "Track secretary tasks, projects, and follow-up work.",
-            [self._build_header_action()],
-        )
+        self.header = self._build_top_bar()
         outer.addWidget(self.header)
-        outer.addWidget(divider())
-
-        self._build_tabs()
-        outer.addWidget(self.tab_bar)
 
         self.stack = QStackedWidget()
-        outer.addWidget(self.stack, stretch=1)
+        self.stack.setObjectName("OfficeWorkStack")
+
+        workspace = QFrame()
+        workspace.setObjectName("OfficeWorkWorkspace")
+        workspace.setAttribute(Qt.WA_StyledBackground, True)
+        workspace_layout = QVBoxLayout()
+        workspace_layout.setContentsMargins(12, 12, 24, 24)
+        workspace_layout.setSpacing(0)
+        workspace.setLayout(workspace_layout)
+        workspace_layout.addWidget(self.stack)
+        outer.addWidget(workspace, stretch=1)
 
         self._build_tasks_tab()
         self._build_projects_tab()
         self._select_tab("tasks")
+
+    def _build_top_bar(self):
+        frame = QFrame()
+        frame.setObjectName("OfficeWorkTopBar")
+        frame.setAttribute(Qt.WA_StyledBackground, True)
+        layout = QVBoxLayout()
+        layout.setContentsMargins(12, 10, 16, 10)
+        layout.setSpacing(10)
+        frame.setLayout(layout)
+
+        top_row = QHBoxLayout()
+        top_row.setContentsMargins(0, 0, 0, 0)
+        top_row.setSpacing(12)
+
+        title_stack = QVBoxLayout()
+        title_stack.setContentsMargins(0, 0, 0, 0)
+        title_stack.setSpacing(2)
+
+        title = QLabel("Office Work")
+        title.setObjectName("OfficeWorkTitle")
+        subtitle = QLabel("Track secretary tasks, projects, and follow-up work.")
+        subtitle.setObjectName("OfficeWorkSubtitle")
+        title_stack.addWidget(title)
+        title_stack.addWidget(subtitle)
+
+        top_row.addLayout(title_stack, stretch=1)
+        top_row.addWidget(self._build_header_action(), alignment=Qt.AlignRight)
+        layout.addLayout(top_row)
+
+        self._build_tabs()
+        layout.addWidget(self.tab_bar)
+        return frame
 
     def _build_header_action(self):
         self.add_task_btn = create_button(
@@ -127,27 +157,20 @@ class OfficeWorkPage(QWidget):
 
     def _build_tabs(self):
         self.tab_bar = QFrame()
-        self.tab_bar.setObjectName("OfficeWorkTabs")
+        self.tab_bar.setObjectName("OfficeWorkTopTabStrip")
+        self.tab_bar.setAttribute(Qt.WA_StyledBackground, True)
         layout = QHBoxLayout()
-        layout.setContentsMargins(32, 8, 32, 8)
+        layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(8)
         self.tab_bar.setLayout(layout)
 
-        self.tab_control = create_pivot()
+        self.tab_control = None
         self.tab_buttons = {}
-        if self.tab_control is not None:
-            self.tab_control.addItem("tasks", "Tasks")
-            self.tab_control.addItem("projects", "Projects")
-            self.tab_control.currentItemChanged.connect(self._select_tab)
-            layout.addWidget(self.tab_control)
-            layout.addStretch()
-            return
-
         self.tab_button_group = QButtonGroup(self)
         self.tab_button_group.setExclusive(True)
         for key, title in [("tasks", "Tasks"), ("projects", "Projects")]:
             button = QPushButton(title)
-            button.setObjectName("OfficeWorkTabButton")
+            button.setObjectName("OfficeWorkTopTab")
             button.setCheckable(True)
             button.clicked.connect(
                 lambda checked=False, route_key=key:
@@ -174,7 +197,7 @@ class OfficeWorkPage(QWidget):
         content = QWidget()
         content.setObjectName("PageSurface")
         self.task_content_layout = QVBoxLayout()
-        self.task_content_layout.setContentsMargins(32, 24, 32, 24)
+        self.task_content_layout.setContentsMargins(20, 18, 20, 20)
         self.task_content_layout.setSpacing(16)
         content.setLayout(self.task_content_layout)
         scroll.setWidget(content)
@@ -197,7 +220,7 @@ class OfficeWorkPage(QWidget):
         content = QWidget()
         content.setObjectName("PageSurface")
         self.project_content_layout = QVBoxLayout()
-        self.project_content_layout.setContentsMargins(32, 24, 32, 24)
+        self.project_content_layout.setContentsMargins(20, 18, 20, 20)
         self.project_content_layout.setSpacing(16)
         content.setLayout(self.project_content_layout)
         scroll.setWidget(content)
@@ -206,6 +229,7 @@ class OfficeWorkPage(QWidget):
 
     def _build_task_filters(self):
         self.task_filter_bar = FilterBar()
+        self.task_filter_bar.setObjectName("OfficeWorkFilterBar")
 
         self.task_search = create_search_edit("Search tasks")
         self.task_search.textChanged.connect(self.render_tasks)
@@ -262,6 +286,7 @@ class OfficeWorkPage(QWidget):
 
     def _build_project_filters(self):
         self.project_filter_bar = FilterBar()
+        self.project_filter_bar.setObjectName("OfficeWorkFilterBar")
 
         self.project_search = create_search_edit("Search projects")
         self.project_search.textChanged.connect(self.render_projects)
@@ -397,9 +422,9 @@ class OfficeWorkPage(QWidget):
     def _build_summary_cards(self):
         summary = self.service.summary()
         row = QHBoxLayout()
-        row.setSpacing(16)
+        row.setSpacing(10)
         for key, label, color in [
-            ("open", "To Do", "#2563EB"),
+            ("open", "To Do", "#0EA5AC"),
             ("overdue", "Overdue", "#DC2626"),
             ("due_today", "Due Today", "#D97706"),
             ("waiting", "Waiting", "#71717A"),
@@ -415,24 +440,14 @@ class OfficeWorkPage(QWidget):
         card = create_card(object_name="OfficeWorkRow")
         card.setCursor(Qt.PointingHandCursor)
         layout = QHBoxLayout()
-        layout.setContentsMargins(16, 12, 16, 12)
+        layout.setContentsMargins(12, 10, 12, 10)
         layout.setSpacing(12)
         card.setLayout(layout)
 
         accent = QFrame()
         accent.setObjectName("OfficeWorkPriorityAccent")
         accent.setFixedWidth(4)
-        accent_color = (
-            SHARED_TASK_COLOR
-            if task.get("is_group_task")
-            else PRIORITY_COLORS.get(task["priority"], "#71717A")
-        )
-        accent.setStyleSheet(
-            "QFrame#OfficeWorkPriorityAccent {"
-            f"background-color: {accent_color};"
-            "border-radius: 2px;"
-            "}"
-        )
+        accent.setProperty("tone", _task_priority_tone(task))
         layout.addWidget(accent)
 
         text_stack = QVBoxLayout()
@@ -456,7 +471,7 @@ class OfficeWorkPage(QWidget):
         elif task.get("missionary_name"):
             meta_parts.append(task["missionary_name"])
         meta = QLabel("  |  ".join(meta_parts))
-        meta.setObjectName("MutedText")
+        meta.setObjectName("OfficeWorkMeta")
         text_stack.addWidget(meta)
         layout.addLayout(text_stack, stretch=1)
 
@@ -512,7 +527,7 @@ class OfficeWorkPage(QWidget):
     def _project_row(self, project):
         card = create_card(object_name="OfficeWorkRow")
         layout = QHBoxLayout()
-        layout.setContentsMargins(16, 12, 16, 12)
+        layout.setContentsMargins(12, 10, 12, 10)
         layout.setSpacing(12)
         card.setLayout(layout)
 
@@ -532,7 +547,7 @@ class OfficeWorkPage(QWidget):
                 f"{project['open_tasks']} open",
             ])
         )
-        meta.setObjectName("MutedText")
+        meta.setObjectName("OfficeWorkMeta")
         text_stack.addWidget(meta)
         layout.addLayout(text_stack, stretch=1)
 
@@ -576,19 +591,24 @@ class OfficeWorkPage(QWidget):
         row = QFrame()
         row.setObjectName("OfficeWorkSectionHeader")
         layout = QHBoxLayout()
-        layout.setContentsMargins(0, 8, 0, 0)
+        layout.setContentsMargins(0, 12, 0, 0)
         row.setLayout(layout)
 
-        label = QLabel(f"{title.upper()}  {count}")
-        label.setObjectName("SectionHeader")
+        label = QLabel(title)
+        label.setObjectName("OfficeWorkSectionTitle")
         layout.addWidget(label)
+        count_label = QLabel(str(count))
+        count_label.setObjectName("OfficeWorkSectionCount")
+        layout.addWidget(count_label)
         layout.addStretch()
         return row
 
     def _empty_state(self, message):
         card = create_card()
+        card.setObjectName("OfficeWorkEmptyState")
         layout = QVBoxLayout()
-        layout.setContentsMargins(24, 30, 24, 30)
+        layout.setContentsMargins(20, 18, 20, 20)
+        layout.setSpacing(6)
         card.setLayout(layout)
         label = QLabel(message)
         label.setObjectName("PanelTitle")
@@ -610,6 +630,13 @@ class OfficeWorkPage(QWidget):
                 self.tab_control.setCurrentItem(key)
         elif key in self.tab_buttons:
             self.tab_buttons[key].setChecked(True)
+        self._refresh_tab_buttons()
+
+    def _refresh_tab_buttons(self):
+        for tab_key, button in self.tab_buttons.items():
+            button.setProperty("active", tab_key == self._selected_tab)
+            button.style().unpolish(button)
+            button.style().polish(button)
 
     def _show_project_tasks(self, project_id):
         self._project_filter_id = project_id

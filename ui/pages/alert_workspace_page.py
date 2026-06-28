@@ -11,21 +11,32 @@ from PySide6.QtWidgets import (
 from services.secretary_work_service import SecretaryWorkError, SecretaryWorkService
 from ui.dialogs.office_work_dialogs import TaskDialog
 from ui.foundation import (
-    PageHeader,
     create_button,
     create_card,
     create_scroll_area,
-    divider,
     show_message,
 )
 
 
 PRIORITY_COLORS = {
     "LOW": "#71717A",
-    "NORMAL": "#2563EB",
+    "NORMAL": "#0EA5AC",
     "IMPORTANT": "#D97706",
     "CRITICAL": "#DC2626",
 }
+TONE_COLORS = {
+    "#DC2626": "danger",
+    "#D97706": "warning",
+    "#0EA5AC": "info",
+    "#059669": "success",
+    "#71717A": "neutral",
+    "#52525B": "neutral",
+    "#18181B": "strong",
+}
+
+
+def _tone_from_color(color):
+    return TONE_COLORS.get(str(color or "").upper(), "strong")
 
 STATUS_LABELS = {
     "OPEN": "To Do",
@@ -33,6 +44,18 @@ STATUS_LABELS = {
     "DONE": "Done",
     "ARCHIVED": "Archived",
 }
+
+
+class _HeaderCompat:
+    def __init__(self, title_label, subtitle_label):
+        self.title_label = title_label
+        self.subtitle_label = subtitle_label
+
+    def set_title(self, title):
+        self.title_label.setText(title)
+
+    def set_subtitle(self, subtitle):
+        self.subtitle_label.setText(subtitle)
 
 
 class AlertWorkspacePage(QWidget):
@@ -60,24 +83,74 @@ class AlertWorkspacePage(QWidget):
         self.done_btn = create_button("Mark Done", "primary")
         self.done_btn.clicked.connect(self._mark_done)
 
-        self.header = PageHeader(
-            "Alert Workspace",
-            "Mission Control / Alert Workspace",
-            [self.back_btn, self.edit_btn, self.done_btn],
-        )
-        outer.addWidget(self.header)
-        outer.addWidget(divider())
+        outer.addWidget(self._build_top_bar())
 
         scroll = create_scroll_area(single_direction=True)
-        scroll.setObjectName("PageSurface")
+        scroll.setObjectName("AlertWorkspaceScroll")
         self.content = QWidget()
-        self.content.setObjectName("PageSurface")
+        self.content.setObjectName("AlertWorkspaceContent")
         self.content_layout = QVBoxLayout()
-        self.content_layout.setContentsMargins(32, 24, 32, 32)
-        self.content_layout.setSpacing(16)
+        self.content_layout.setContentsMargins(12, 12, 24, 24)
+        self.content_layout.setSpacing(12)
         self.content.setLayout(self.content_layout)
         scroll.setWidget(self.content)
         outer.addWidget(scroll, stretch=1)
+
+    def _build_top_bar(self):
+        top_bar = QFrame()
+        top_bar.setObjectName("AlertWorkspaceTopBar")
+        top_bar.setAttribute(Qt.WA_StyledBackground, True)
+
+        layout = QVBoxLayout()
+        layout.setContentsMargins(12, 10, 16, 10)
+        layout.setSpacing(10)
+        top_bar.setLayout(layout)
+
+        tabs = QFrame()
+        tabs.setObjectName("AlertWorkspaceTabStrip")
+        tabs.setAttribute(Qt.WA_StyledBackground, True)
+        tabs_layout = QHBoxLayout()
+        tabs_layout.setContentsMargins(0, 0, 0, 0)
+        tabs_layout.setSpacing(18)
+        tabs.setLayout(tabs_layout)
+
+        for text, active in [
+            ("Brief", True),
+            ("People", False),
+            ("Evidence", False),
+        ]:
+            label = QLabel(text)
+            label.setObjectName("AlertWorkspaceTopTab")
+            label.setProperty("active", active)
+            tabs_layout.addWidget(label)
+        tabs_layout.addStretch()
+        layout.addWidget(tabs)
+
+        command_row = QHBoxLayout()
+        command_row.setContentsMargins(0, 0, 0, 0)
+        command_row.setSpacing(12)
+
+        title_stack = QVBoxLayout()
+        title_stack.setContentsMargins(0, 0, 0, 0)
+        title_stack.setSpacing(3)
+
+        self.title_label = QLabel("Alert Workspace")
+        self.title_label.setObjectName("AlertWorkspaceTitle")
+        self.subtitle_label = QLabel("Mission Control / Alert Workspace")
+        self.subtitle_label.setObjectName("AlertWorkspaceSubtitle")
+        self.header = _HeaderCompat(self.title_label, self.subtitle_label)
+
+        title_stack.addWidget(self.title_label)
+        title_stack.addWidget(self.subtitle_label)
+
+        command_row.addLayout(title_stack)
+        command_row.addStretch()
+        command_row.addWidget(self.back_btn)
+        command_row.addWidget(self.edit_btn)
+        command_row.addWidget(self.done_btn)
+
+        layout.addLayout(command_row)
+        return top_bar
 
     def load_task(self, task_id, return_key="dashboard"):
         self.task_id = task_id
@@ -95,8 +168,8 @@ class AlertWorkspacePage(QWidget):
         self._clear_layout(self.content_layout)
 
         title = self.workspace.get("title", "Alert Workspace")
-        self.header.set_title(title)
-        self.header.set_subtitle(self._breadcrumb_text())
+        self.title_label.setText(title)
+        self.subtitle_label.setText(self._breadcrumb_text())
 
         status = self.workspace.get("status", "")
         self.done_btn.setVisible(status not in {"DONE", "ARCHIVED"})
@@ -129,14 +202,14 @@ class AlertWorkspacePage(QWidget):
 
     def _render_error(self, message):
         self._clear_layout(self.content_layout)
-        self.header.set_title("Alert Workspace")
-        self.header.set_subtitle(self._breadcrumb_text())
+        self.title_label.setText("Alert Workspace")
+        self.subtitle_label.setText(self._breadcrumb_text())
         self.done_btn.setVisible(False)
         self.edit_btn.setVisible(False)
 
-        card = create_card()
+        card = create_card(object_name="AlertWorkspaceErrorCard")
         layout = QVBoxLayout()
-        layout.setContentsMargins(24, 24, 24, 24)
+        layout.setContentsMargins(20, 18, 20, 18)
         layout.setSpacing(8)
         card.setLayout(layout)
 
@@ -224,13 +297,6 @@ class AlertWorkspacePage(QWidget):
             row = QFrame()
             row.setObjectName("AlertStepRow")
             row.setAttribute(Qt.WA_StyledBackground, True)
-            row.setStyleSheet(
-                "QFrame#AlertStepRow {"
-                "background: #FAFAFA;"
-                "border: 1px solid #F4F4F5;"
-                "border-radius: 8px;"
-                "}"
-            )
             row_layout = QHBoxLayout()
             row_layout.setContentsMargins(10, 8, 10, 8)
             row_layout.setSpacing(10)
@@ -240,15 +306,6 @@ class AlertWorkspacePage(QWidget):
             number.setObjectName("AlertStepNumber")
             number.setAlignment(Qt.AlignCenter)
             number.setFixedWidth(24)
-            number.setStyleSheet(
-                "QLabel#AlertStepNumber {"
-                "color: #0F766E;"
-                "border: 1px solid #99F6E4;"
-                "border-radius: 8px;"
-                "background: #F0FDFA;"
-                "font-weight: 700;"
-                "}"
-            )
             label = QLabel(step)
             label.setObjectName("RowText")
             label.setWordWrap(True)
@@ -321,13 +378,6 @@ class AlertWorkspacePage(QWidget):
         row = QFrame()
         row.setObjectName("AlertMissionaryRow")
         row.setAttribute(Qt.WA_StyledBackground, True)
-        row.setStyleSheet(
-            "QFrame#AlertMissionaryRow {"
-            "background: #FAFAFA;"
-            "border: 1px solid #E5E7EB;"
-            "border-radius: 8px;"
-            "}"
-        )
         layout = QHBoxLayout()
         layout.setContentsMargins(12, 10, 12, 10)
         layout.setSpacing(10)
@@ -377,21 +427,16 @@ class AlertWorkspacePage(QWidget):
         tile = QFrame()
         tile.setObjectName("AlertFactTile")
         tile.setAttribute(Qt.WA_StyledBackground, True)
-        tile.setStyleSheet(
-            "QFrame#AlertFactTile {"
-            "background: #FFFFFF;"
-            "border: 1px solid #E5E7EB;"
-            "border-radius: 8px;"
-            "}"
-        )
         layout = QVBoxLayout()
         layout.setContentsMargins(10, 8, 10, 8)
         layout.setSpacing(2)
         tile.setLayout(layout)
 
         value = QLabel(str(fact.get("value", "")))
-        value.setObjectName("StrongText")
-        value.setStyleSheet(f"color: {fact.get('color', '#18181B')};")
+        value.setObjectName("AlertFactValue")
+        value.setProperty(
+            "tone", _tone_from_color(fact.get("color", "#18181B"))
+        )
         value.setWordWrap(True)
         label = QLabel(str(fact.get("label", "")))
         label.setObjectName("MiniMutedText")
@@ -405,17 +450,7 @@ class AlertWorkspacePage(QWidget):
         chip = QLabel(str(text or ""))
         chip.setObjectName("AlertWorkspaceChip")
         chip.setAlignment(Qt.AlignCenter)
-        chip.setStyleSheet(
-            "QLabel#AlertWorkspaceChip {"
-            f"color: {color};"
-            f"border: 1px solid {color};"
-            "border-radius: 8px;"
-            "padding: 3px 8px;"
-            "background: #FFFFFF;"
-            "font-size: 11px;"
-            "font-weight: 600;"
-            "}"
-        )
+        chip.setProperty("tone", _tone_from_color(color))
         return chip
 
     @staticmethod

@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (
     QButtonGroup,
     QDialog,
     QFileDialog,
+    QFrame,
     QHBoxLayout,
     QLabel,
     QListWidgetItem,
@@ -37,7 +38,6 @@ from ui.foundation import (
     DialogFooter,
     FLUENT_AVAILABLE,
     MaskDialogBase,
-    PageHeader,
     configure_data_table,
     create_button,
     create_combo_box,
@@ -47,7 +47,6 @@ from ui.foundation import (
     create_plain_text_edit,
     create_search_edit,
     create_table,
-    divider,
     fluent_icon,
     setup_dialog_shell,
     show_message,
@@ -280,6 +279,28 @@ REQUIRED_COLUMN_KEYS = [
     if column.required
 ]
 
+
+def _missionaries_dialog_header(title_text, subtitle_text):
+    header = QFrame()
+    header.setObjectName("MissionariesDialogHeader")
+    header.setAttribute(Qt.WA_StyledBackground, True)
+
+    layout = QVBoxLayout()
+    layout.setContentsMargins(18, 16, 18, 12)
+    layout.setSpacing(4)
+    header.setLayout(layout)
+
+    title = QLabel(title_text)
+    title.setObjectName("MissionariesDialogTitle")
+    subtitle = QLabel(subtitle_text)
+    subtitle.setObjectName("MissionariesDialogSubtitle")
+    subtitle.setWordWrap(True)
+
+    layout.addWidget(title)
+    layout.addWidget(subtitle)
+    return header
+
+
 SORT_VALUE_ROLE = Qt.UserRole + 1
 MIN_TABLE_COLUMN_WIDTH = 64
 DATE_COLUMN_KEYS = {
@@ -449,7 +470,7 @@ class EditMissionaryColumnsDialog(MaskDialogBase):
         root.setSpacing(0)
         self.surface.setLayout(root)
 
-        header = PageHeader(
+        header = _missionaries_dialog_header(
             "Edit Columns",
             "Choose the fields shown in the missionaries table.",
         )
@@ -464,7 +485,7 @@ class EditMissionaryColumnsDialog(MaskDialogBase):
         )
 
         body_layout = QVBoxLayout()
-        body_layout.setContentsMargins(24, 20, 24, 20)
+        body_layout.setContentsMargins(20, 18, 20, 20)
         body_layout.setSpacing(14)
         body.setLayout(body_layout)
 
@@ -677,7 +698,7 @@ class CreateMissionaryGroupDialog(MaskDialogBase):
         self.surface.setLayout(root)
 
         root.addWidget(
-            PageHeader(
+            _missionaries_dialog_header(
                 "Edit Group" if self._is_editing else "Create Group",
                 (
                     "Update who belongs to this reusable missionary group."
@@ -688,10 +709,10 @@ class CreateMissionaryGroupDialog(MaskDialogBase):
         )
 
         body = QWidget()
-        body.setObjectName("DialogBody")
+        body.setObjectName("MissionariesDialogBody")
         body.setAttribute(Qt.WA_StyledBackground, True)
         body_layout = QVBoxLayout()
-        body_layout.setContentsMargins(24, 20, 24, 20)
+        body_layout.setContentsMargins(18, 16, 18, 16)
         body_layout.setSpacing(12)
         body.setLayout(body_layout)
 
@@ -717,6 +738,8 @@ class CreateMissionaryGroupDialog(MaskDialogBase):
         root.addWidget(body, stretch=1)
 
         footer = DialogFooter()
+        footer.setObjectName("MissionariesDialogFooter")
+        footer.setObjectName("MissionariesDialogFooter")
         cancel_btn = create_button("Cancel", "secondary")
         cancel_btn.clicked.connect(self.reject)
         footer.add_action(cancel_btn)
@@ -837,7 +860,7 @@ class BatchArchiveDialog(MaskDialogBase):
         self.surface.setLayout(root)
 
         root.addWidget(
-            PageHeader(
+            _missionaries_dialog_header(
                 "Archive Missionaries",
                 (
                     "Make group out of selected missionaries and archive? "
@@ -847,10 +870,10 @@ class BatchArchiveDialog(MaskDialogBase):
         )
 
         body = QWidget()
-        body.setObjectName("DialogBody")
+        body.setObjectName("MissionariesDialogBody")
         body.setAttribute(Qt.WA_StyledBackground, True)
         body_layout = QVBoxLayout()
-        body_layout.setContentsMargins(24, 20, 24, 20)
+        body_layout.setContentsMargins(18, 16, 18, 16)
         body_layout.setSpacing(12)
         body.setLayout(body_layout)
 
@@ -1051,26 +1074,18 @@ class MissionariesPage(QWidget):
             self._auto_fit_column_widths
         )
 
-        header = PageHeader(
-            "Missionaries",
-            "Track legal workflow status and documents.",
-            [
-                self.edit_columns_button,
-                self.auto_widths_button,
-                self.export_button,
-                self.add_button,
-            ],
-        )
+        outer.addWidget(self._build_top_bar())
 
-        outer.addWidget(header)
-
-        outer.addWidget(divider())
-
-        # ==========================================
-        # Search + filter bar
-        # ==========================================
+        workspace = QWidget()
+        workspace.setObjectName("MissionariesWorkspace")
+        workspace.setAttribute(Qt.WA_StyledBackground, True)
+        workspace_layout = QVBoxLayout()
+        workspace_layout.setContentsMargins(12, 12, 24, 24)
+        workspace_layout.setSpacing(12)
+        workspace.setLayout(workspace_layout)
 
         filter_bar = FilterBar()
+        filter_bar.setObjectName("MissionariesFilterBar")
 
         self.search_input = create_line_edit(
             "Search by ID or name..."
@@ -1130,11 +1145,8 @@ class MissionariesPage(QWidget):
         filter_bar.add_spacer()
         filter_bar.add_filter(self.create_group_button)
         filter_bar.add_filter(self.batch_button)
-        filter_bar.add_filter(self.result_label)
 
-        outer.addWidget(filter_bar)
-
-        outer.addWidget(divider())
+        workspace_layout.addWidget(filter_bar)
 
         # ==========================================
         # Table
@@ -1160,7 +1172,89 @@ class MissionariesPage(QWidget):
             lambda value: self._position_copy_button()
         )
 
-        outer.addWidget(self.table, stretch=1)
+        table_surface = QFrame()
+        table_surface.setObjectName("MissionariesTableSurface")
+        table_surface.setAttribute(Qt.WA_StyledBackground, True)
+        table_surface_layout = QVBoxLayout()
+        table_surface_layout.setContentsMargins(0, 0, 0, 0)
+        table_surface_layout.setSpacing(0)
+        table_surface.setLayout(table_surface_layout)
+
+        table_header = QFrame()
+        table_header.setObjectName("MissionariesTableHeader")
+        table_header.setAttribute(Qt.WA_StyledBackground, True)
+        table_header_layout = QHBoxLayout()
+        table_header_layout.setContentsMargins(16, 10, 16, 10)
+        table_header_layout.setSpacing(10)
+        table_header.setLayout(table_header_layout)
+
+        table_title = QLabel("Missionary Records")
+        table_title.setObjectName("PanelTitle")
+        table_header_layout.addWidget(table_title)
+        table_header_layout.addStretch()
+        table_header_layout.addWidget(self.result_label)
+
+        table_surface_layout.addWidget(table_header)
+        table_surface_layout.addWidget(self.table, stretch=1)
+
+        workspace_layout.addWidget(table_surface, stretch=1)
+        outer.addWidget(workspace, stretch=1)
+
+    def _build_top_bar(self):
+        top_bar = QFrame()
+        top_bar.setObjectName("MissionariesTopBar")
+        top_bar.setAttribute(Qt.WA_StyledBackground, True)
+
+        layout = QVBoxLayout()
+        layout.setContentsMargins(12, 10, 16, 10)
+        layout.setSpacing(10)
+        top_bar.setLayout(layout)
+
+        tabs = QFrame()
+        tabs.setObjectName("MissionariesTabStrip")
+        tabs.setAttribute(Qt.WA_StyledBackground, True)
+        tabs_layout = QHBoxLayout()
+        tabs_layout.setContentsMargins(0, 0, 0, 0)
+        tabs_layout.setSpacing(18)
+        tabs.setLayout(tabs_layout)
+
+        for text, active in [
+            ("Active", True),
+            ("Groups", False),
+            ("Archive", False),
+        ]:
+            label = QLabel(text)
+            label.setObjectName("MissionariesTopTab")
+            label.setProperty("active", active)
+            tabs_layout.addWidget(label)
+        tabs_layout.addStretch()
+        layout.addWidget(tabs)
+
+        command_row = QHBoxLayout()
+        command_row.setContentsMargins(0, 0, 0, 0)
+        command_row.setSpacing(12)
+
+        title_stack = QVBoxLayout()
+        title_stack.setContentsMargins(0, 0, 0, 0)
+        title_stack.setSpacing(3)
+
+        title = QLabel("Missionaries")
+        title.setObjectName("MissionariesTitle")
+        subtitle = QLabel("Track legal workflow status and documents.")
+        subtitle.setObjectName("MissionariesSubtitle")
+        title_stack.addWidget(title)
+        title_stack.addWidget(subtitle)
+
+        command_row.addLayout(title_stack)
+        command_row.addStretch()
+        command_row.addWidget(self.edit_columns_button)
+        command_row.addWidget(self.auto_widths_button)
+        command_row.addWidget(self.export_button)
+        command_row.addWidget(self.add_button)
+
+        layout.addLayout(command_row)
+
+        return top_bar
 
     # ==========================================
     # COLUMN SETTINGS

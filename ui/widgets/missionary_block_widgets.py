@@ -101,8 +101,8 @@ def build_task_card(task, *, on_done=None, on_edit=None):
 
     if task.get("is_group_task"):
         accent = QFrame()
+        accent.setObjectName("TaskGroupAccent")
         accent.setFixedWidth(4)
-        accent.setStyleSheet("QFrame { background-color: #7C3AED; border-radius: 2px; }")
         layout.addWidget(accent)
 
     copy = QVBoxLayout()

@@ -611,9 +611,6 @@ def setup_dialog_shell(
     else:
         dialog.setModal(True)
         dialog.setAttribute(Qt.WA_StyledBackground, True)
-        dialog.setStyleSheet(
-            dialog.styleSheet()
-        )
         root = QVBoxLayout()
         root.setContentsMargins(*shell_margins)
         root.setSpacing(0)
@@ -672,7 +669,7 @@ class FluentLoadingDialog(MaskDialogBase):
         )
 
         layout = QVBoxLayout()
-        layout.setContentsMargins(28, 28, 28, 24)
+        layout.setContentsMargins(20, 18, 20, 20)
         layout.setSpacing(12)
         layout.setAlignment(Qt.AlignCenter)
         self.surface.setLayout(layout)

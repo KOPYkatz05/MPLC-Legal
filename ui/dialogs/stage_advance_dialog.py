@@ -13,7 +13,6 @@ from ui.foundation import (
     DialogFooter,
     FLUENT_AVAILABLE,
     MaskDialogBase,
-    PageHeader,
     create_button,
     create_card,
     setup_dialog_shell,
@@ -149,10 +148,23 @@ class StageAdvanceDialog(MaskDialogBase):
         # Header
         # ==========================================
 
-        header = PageHeader(
-            "Stage Transition",
-            "Review required documents before moving this missionary forward.",
+        header = QFrame()
+        header.setObjectName("StageAdvanceDialogHeader")
+        header.setAttribute(Qt.WA_StyledBackground, True)
+        header_layout = QVBoxLayout()
+        header_layout.setContentsMargins(18, 16, 18, 12)
+        header_layout.setSpacing(4)
+        header.setLayout(header_layout)
+
+        title = QLabel("Stage Transition")
+        title.setObjectName("StageAdvanceDialogTitle")
+        subtitle = QLabel(
+            "Review required documents before moving this missionary forward."
         )
+        subtitle.setObjectName("StageAdvanceDialogSubtitle")
+        subtitle.setWordWrap(True)
+        header_layout.addWidget(title)
+        header_layout.addWidget(subtitle)
 
         layout.addWidget(header)
 
@@ -162,7 +174,7 @@ class StageAdvanceDialog(MaskDialogBase):
 
         body = QWidget()
 
-        body.setObjectName("DialogBody")
+        body.setObjectName("StageAdvanceDialogBody")
         body.setAttribute(
             Qt.WA_StyledBackground,
             True,
@@ -171,7 +183,7 @@ class StageAdvanceDialog(MaskDialogBase):
         body_layout = QVBoxLayout()
 
         body_layout.setContentsMargins(
-            24, 20, 24, 20
+            18, 16, 18, 16
         )
 
         body_layout.setSpacing(16)
@@ -179,7 +191,8 @@ class StageAdvanceDialog(MaskDialogBase):
         body.setLayout(body_layout)
 
         # Stage flow row
-        flow_frame = create_card()
+        flow_frame = create_card(object_name="StageAdvanceFlowCard")
+        flow_frame.setObjectName("StageAdvanceFlowCard")
 
         flow_layout = QHBoxLayout()
 
@@ -193,12 +206,12 @@ class StageAdvanceDialog(MaskDialogBase):
 
         from_label.setObjectName("StageFromLabel")
 
-        arrow = QLabel("→")
+        arrow = QLabel("->")
 
         arrow.setObjectName("FlowArrow")
 
         to_stage = (
-            self.next_stage or "✓ Complete"
+            self.next_stage or "Complete"
         )
 
         to_label = QLabel(to_stage)
@@ -233,7 +246,8 @@ class StageAdvanceDialog(MaskDialogBase):
 
             body_layout.addWidget(section_label)
 
-            docs_frame = create_card()
+            docs_frame = create_card(object_name="StageAdvanceDocsCard")
+            docs_frame.setObjectName("StageAdvanceDocsCard")
 
             docs_layout = QVBoxLayout()
 
@@ -251,7 +265,7 @@ class StageAdvanceDialog(MaskDialogBase):
                 row = QHBoxLayout()
 
                 icon = QLabel(
-                    "✓" if uploaded else "✗"
+                    "OK" if uploaded else "Missing"
                 )
 
                 icon.setObjectName(
@@ -299,7 +313,7 @@ class StageAdvanceDialog(MaskDialogBase):
 
             warn.setLayout(warn_layout)
 
-            warn_icon = QLabel("⚠")
+            warn_icon = QLabel("!")
 
             warn_icon.setObjectName("WarningIcon")
 
@@ -333,6 +347,7 @@ class StageAdvanceDialog(MaskDialogBase):
         # ==========================================
 
         footer = DialogFooter()
+        footer.setObjectName("StageAdvanceDialogFooter")
 
         cancel_btn = create_button("Cancel", "secondary")
 

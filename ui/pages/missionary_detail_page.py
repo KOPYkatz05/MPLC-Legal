@@ -13,6 +13,7 @@ import fitz
 
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
+    QButtonGroup,
     QGridLayout,
     QWidget,
     QVBoxLayout,
@@ -21,6 +22,7 @@ from PySide6.QtWidgets import (
     QFrame,
     QListWidgetItem,
     QFormLayout,
+    QPushButton,
     QStackedWidget,
     QSizePolicy,
 )
@@ -57,10 +59,8 @@ from ui.foundation import (
     create_list_widget,
     create_menu,
     create_plain_text_edit,
-    create_pivot,
     create_scroll_area,
     create_text_edit,
-    divider,
     show_message,
     setup_dialog_shell,
     tune_fluent_scrollable,
@@ -645,12 +645,13 @@ class MissionaryDetailPage(QWidget):
         # Page Header
         # ==========================================
 
-        header = create_card(object_name="PageHeader")
+        header = create_card(object_name="MissionaryDetailTopBar")
+        header.setObjectName("MissionaryDetailTopBar")
 
         header_layout = QHBoxLayout()
 
         header_layout.setContentsMargins(
-            32, 18, 32, 18
+            12, 10, 16, 10
         )
 
         header_layout.setSpacing(12)
@@ -661,9 +662,9 @@ class MissionaryDetailPage(QWidget):
 
         name_stage.setSpacing(4)
 
-        self.name_label = QLabel("—")
+        self.name_label = QLabel("-")
 
-        self.name_label.setObjectName("PageTitle")
+        self.name_label.setObjectName("MissionaryDetailTitle")
 
         self.stage_badge = QLabel("")
 
@@ -737,8 +738,6 @@ class MissionaryDetailPage(QWidget):
 
         main_layout.addWidget(header)
 
-        main_layout.addWidget(divider())
-
         # ==========================================
         # Auto-advance banner (hidden by default)
         # ==========================================
@@ -746,13 +745,14 @@ class MissionaryDetailPage(QWidget):
         self.advance_banner = create_card(
             object_name="SuccessBanner"
         )
+        self.advance_banner.setObjectName("SuccessBanner")
 
         self.advance_banner.setVisible(False)
 
         banner_layout = QHBoxLayout()
 
         banner_layout.setContentsMargins(
-            32, 10, 32, 10
+            18, 10, 18, 10
         )
 
         banner_layout.setSpacing(12)
@@ -761,7 +761,7 @@ class MissionaryDetailPage(QWidget):
             banner_layout
         )
 
-        banner_icon = QLabel("✓")
+        banner_icon = QLabel("OK")
 
         banner_icon.setObjectName("SuccessIcon")
 
@@ -795,17 +795,21 @@ class MissionaryDetailPage(QWidget):
         # Static tabs
         # ==========================================
 
-        self.tabs = create_pivot()
         self.tab_stack = QStackedWidget()
         self._tab_route_indexes = {}
+        self.tab_buttons = {}
+        self.tab_button_group = QButtonGroup(self)
+        self.tab_button_group.setExclusive(True)
         self.tab_stack.setObjectName("StaticTabStack")
 
-        if self.tabs is not None:
-            self.tabs.setObjectName("StaticTabs")
-            self.tabs.currentItemChanged.connect(
-                self._select_static_tab
-            )
-            main_layout.addWidget(self.tabs)
+        self.tab_bar = QFrame()
+        self.tab_bar.setObjectName("MissionaryDetailTopTabs")
+        self.tab_bar.setAttribute(Qt.WA_StyledBackground, True)
+        self.tab_bar_layout = QHBoxLayout()
+        self.tab_bar_layout.setContentsMargins(12, 0, 16, 0)
+        self.tab_bar_layout.setSpacing(8)
+        self.tab_bar.setLayout(self.tab_bar_layout)
+        main_layout.addWidget(self.tab_bar)
 
         self._build_overview_tab()
 
@@ -815,8 +819,8 @@ class MissionaryDetailPage(QWidget):
 
         self._build_timeline_tab()
 
-        if self.tabs is not None:
-            self.tabs.setCurrentItem("overview")
+        self.tab_bar_layout.addStretch()
+        self._select_static_tab("overview")
 
         main_layout.addWidget(
             self.tab_stack, stretch=1
@@ -830,14 +834,29 @@ class MissionaryDetailPage(QWidget):
     def _add_static_tab(self, route_key, title, widget):
         index = self.tab_stack.addWidget(widget)
         self._tab_route_indexes[route_key] = index
-        if self.tabs is not None:
-            self.tabs.addItem(route_key, title)
+        button = QPushButton(title)
+        button.setObjectName("MissionaryDetailTopTab")
+        button.setCheckable(True)
+        button.setFixedHeight(35)
+        button.clicked.connect(
+            lambda checked=False, key=route_key:
+            self._select_static_tab(key)
+        )
+        self.tab_button_group.addButton(button)
+        self.tab_buttons[route_key] = button
+        self.tab_bar_layout.addWidget(button)
         return index
 
     def _select_static_tab(self, route_key):
         index = self._tab_route_indexes.get(route_key)
         if index is not None:
             self.tab_stack.setCurrentIndex(index)
+        for tab_key, button in self.tab_buttons.items():
+            active = tab_key == route_key
+            button.setChecked(active)
+            button.setProperty("active", active)
+            button.style().unpolish(button)
+            button.style().polish(button)
 
     def _build_overview_tab(self):
         overview_tab = QWidget()
@@ -865,7 +884,7 @@ class MissionaryDetailPage(QWidget):
         content_layout = QVBoxLayout()
 
         content_layout.setContentsMargins(
-            32, 24, 32, 24
+            20, 18, 20, 20
         )
 
         content_layout.setSpacing(OVERVIEW_CONTENT_SPACING)
@@ -1023,7 +1042,7 @@ class MissionaryDetailPage(QWidget):
             "—",
             tr("missionary_detail_current_stage"),
             subtitle=tr("missionary_detail_current_stage_subtitle"),
-            color="#2563EB",
+            color="#0EA5AC",
         )
         self.summary_complete_card = StatCard(
             "0",
@@ -1041,7 +1060,7 @@ class MissionaryDetailPage(QWidget):
             "—",
             tr("missionary_detail_last_upload"),
             subtitle=tr("missionary_detail_last_upload_subtitle"),
-            color="#7C3AED",
+            color="#7A6EEC",
         )
 
         metrics_grid.addWidget(self.summary_current_stage_card, 0, 0)
@@ -1142,7 +1161,7 @@ class MissionaryDetailPage(QWidget):
         details_layout = QVBoxLayout()
 
         details_layout.setContentsMargins(
-            32, 24, 32, 24
+            20, 18, 20, 20
         )
 
         details_layout.setSpacing(0)
@@ -1153,7 +1172,7 @@ class MissionaryDetailPage(QWidget):
 
         form = QFormLayout()
 
-        form.setContentsMargins(24, 20, 24, 20)
+        form.setContentsMargins(20, 18, 20, 20)
 
         form.setSpacing(14)
 
@@ -1316,7 +1335,7 @@ class MissionaryDetailPage(QWidget):
         details_content.setObjectName("PageSurface")
 
         content_layout = QVBoxLayout()
-        content_layout.setContentsMargins(32, 24, 32, 24)
+        content_layout.setContentsMargins(20, 18, 20, 20)
         content_layout.setSpacing(14)
         details_content.setLayout(content_layout)
 
@@ -1715,7 +1734,7 @@ class MissionaryDetailPage(QWidget):
         notes_layout = QVBoxLayout()
 
         notes_layout.setContentsMargins(
-            32, 24, 32, 24
+            20, 18, 20, 20
         )
 
         notes_layout.setSpacing(12)
@@ -3602,7 +3621,7 @@ class MissionaryDetailPage(QWidget):
         timeline_layout = QVBoxLayout()
 
         timeline_layout.setContentsMargins(
-            32, 24, 32, 24
+            20, 18, 20, 20
         )
 
         timeline_layout.setSpacing(12)

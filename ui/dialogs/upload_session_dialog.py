@@ -1050,9 +1050,10 @@ class UploadSessionDialog(MaskDialogBase):
 
     def _build_queue_panel(self):
         self.left_panel = create_card(object_name="UploadSurfaceCard")
+        self.left_panel.setObjectName("UploadSurfaceCard")
         self.left_panel.setAttribute(Qt.WA_StyledBackground, True)
         left_layout = QVBoxLayout()
-        left_layout.setContentsMargins(24, 18, 24, 18)
+        left_layout.setContentsMargins(18, 16, 18, 16)
         left_layout.setSpacing(12)
         self.left_panel.setLayout(left_layout)
 
@@ -1114,10 +1115,11 @@ class UploadSessionDialog(MaskDialogBase):
 
     def _build_details_panel(self):
         self.middle_panel = create_card(object_name="UploadSurfaceCard")
+        self.middle_panel.setObjectName("UploadSurfaceCard")
         self.middle_panel.setAttribute(Qt.WA_StyledBackground, True)
         middle_layout = QVBoxLayout()
-        middle_layout.setContentsMargins(18, 18, 18, 18)
-        middle_layout.setSpacing(14)
+        middle_layout.setContentsMargins(18, 16, 18, 16)
+        middle_layout.setSpacing(12)
         self.middle_panel.setLayout(middle_layout)
 
         details_title = QLabel("Document Details")
@@ -1211,9 +1213,10 @@ class UploadSessionDialog(MaskDialogBase):
 
     def _build_preview_panel(self):
         self.right_panel = create_card(object_name="UploadSurfaceCard")
+        self.right_panel.setObjectName("UploadSurfaceCard")
         self.right_panel.setAttribute(Qt.WA_StyledBackground, True)
         right_layout = QVBoxLayout()
-        right_layout.setContentsMargins(18, 18, 18, 18)
+        right_layout.setContentsMargins(18, 16, 18, 16)
         right_layout.setSpacing(12)
         self.right_panel.setLayout(right_layout)
 
@@ -1339,6 +1342,7 @@ class UploadSessionDialog(MaskDialogBase):
 
     def _build_progress_panel(self, root):
         self.progress_card = create_card(object_name="UploadSurfaceCard")
+        self.progress_card.setObjectName("UploadSurfaceCard")
         self.progress_card.setAttribute(Qt.WA_StyledBackground, True)
         progress_layout = QHBoxLayout()
         progress_layout.setContentsMargins(18, 14, 18, 14)
@@ -1361,10 +1365,10 @@ class UploadSessionDialog(MaskDialogBase):
 
     def _build_footer(self, root):
         self.footer = QFrame()
-        self.footer.setObjectName("PageHeader")
+        self.footer.setObjectName("UploadWorkspaceFooter")
         self.footer.setAttribute(Qt.WA_StyledBackground, True)
         footer_layout = QHBoxLayout()
-        footer_layout.setContentsMargins(24, 14, 24, 18)
+        footer_layout.setContentsMargins(18, 12, 18, 12)
         footer_layout.setSpacing(12)
         self.footer.setLayout(footer_layout)
 

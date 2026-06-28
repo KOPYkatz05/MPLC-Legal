@@ -3,6 +3,7 @@ from PySide6.QtWidgets import (
     QWidget,
     QVBoxLayout,
     QHBoxLayout,
+    QGridLayout,
     QLabel,
     QFrame,
 )
@@ -17,12 +18,10 @@ from services.appointment_service import AppointmentService
 from services.daily_digest_service import DailyDigestService
 from services.settings_service import SettingsService
 from ui.foundation import (
-    PageHeader,
     SectionTitle as SectionHeader,
     StatCard,
     create_button,
     create_scroll_area,
-    divider,
     show_message,
 )
 from ui.foundation.fluent import SimpleCardWidget
@@ -37,11 +36,24 @@ from utils.logger import logger
 # ==========================================
 
 STAGE_COLORS = {
-    "INTERPOL": "#7C3AED",
+    "INTERPOL": "#7A6EEC",
     "CARNET DE EXTRANJERIA": "#D97706",
     "PRORROGA": "#059669",
     "CANCELACION": "#DC2626",
 }
+
+TONE_COLORS = {
+    "#DC2626": "danger",
+    "#D97706": "warning",
+    "#0EA5AC": "info",
+    "#059669": "success",
+    "#71717A": "neutral",
+    "#52525B": "neutral",
+}
+
+
+def _tone_from_color(color):
+    return TONE_COLORS.get(str(color or "").upper(), "neutral")
 
 STAGE_LABELS = {
     "INTERPOL": "Interpol",
@@ -204,36 +216,29 @@ class DashboardPage(QWidget):
 
         self.setLayout(outer)
 
-        # ======================================
-        # Top header bar
-        # ======================================
-
         header_bar = QFrame()
-
-        header_bar.setObjectName("PageHeader")
-
-        header_layout = QHBoxLayout()
-
-        header_layout.setContentsMargins(32, 20, 32, 20)
-
+        header_bar.setObjectName("DashboardTopBar")
+        header_layout = QVBoxLayout()
+        header_layout.setContentsMargins(12, 10, 16, 10)
+        header_layout.setSpacing(10)
         header_bar.setLayout(header_layout)
 
-        title = QLabel("Mission Control")
+        header_layout.addWidget(self._build_dashboard_tabs())
 
-        title.setObjectName("PageTitle")
+        command_row = QHBoxLayout()
+        command_row.setContentsMargins(0, 0, 0, 0)
+        command_row.setSpacing(12)
+
+        title = QLabel("Mission Control")
+        title.setObjectName("DashboardTitle")
 
         self.dashboard_subtitle = QLabel("Loading today's work...")
-
-        self.dashboard_subtitle.setObjectName("PageSubtitle")
+        self.dashboard_subtitle.setObjectName("DashboardSubtitle")
 
         title_stack = QVBoxLayout()
-
         title_stack.setContentsMargins(0, 0, 0, 0)
-
         title_stack.setSpacing(3)
-
         title_stack.addWidget(title)
-
         title_stack.addWidget(self.dashboard_subtitle)
 
         self.refresh_btn = create_button(
@@ -247,25 +252,12 @@ class DashboardPage(QWidget):
             self.load_data
         )
 
-        header_layout.addLayout(title_stack)
-
-        header_layout.addStretch()
-
-        header_layout.addWidget(self.refresh_btn)
+        command_row.addLayout(title_stack)
+        command_row.addStretch()
+        command_row.addWidget(self.refresh_btn)
+        header_layout.addLayout(command_row)
 
         outer.addWidget(header_bar)
-
-        # ======================================
-        # Divider
-        # ======================================
-
-        divider = QFrame()
-
-        divider.setObjectName("HeaderDivider")
-
-        divider.setFixedHeight(1)
-
-        outer.addWidget(divider)
 
         # ======================================
         # Scrollable content area
@@ -284,10 +276,10 @@ class DashboardPage(QWidget):
         self.content_layout = QVBoxLayout()
 
         self.content_layout.setContentsMargins(
-            32, 24, 32, 32
+            12, 12, 24, 24
         )
 
-        self.content_layout.setSpacing(20)
+        self.content_layout.setSpacing(12)
 
         self.content_widget.setLayout(
             self.content_layout
@@ -298,6 +290,29 @@ class DashboardPage(QWidget):
         outer.addWidget(scroll, stretch=1)
 
         self.load_data()
+
+    def _build_dashboard_tabs(self):
+        strip = QFrame()
+        strip.setObjectName("DashboardTabStrip")
+        strip.setAttribute(Qt.WA_StyledBackground, True)
+
+        layout = QHBoxLayout()
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(18)
+        strip.setLayout(layout)
+
+        for text, active in [
+            ("Mission", True),
+            ("Process", False),
+            ("Link", False),
+        ]:
+            label = QLabel(text)
+            label.setObjectName("DashboardTopTab")
+            label.setProperty("active", active)
+            layout.addWidget(label)
+
+        layout.addStretch()
+        return strip
 
     def load_data(self):
         self._run_process_automation()
@@ -311,31 +326,58 @@ class DashboardPage(QWidget):
 
         data = self.service.get_summary()
 
-        self._build_startup_alert_banner()
-
-        self._build_daily_digest_section()
-
-        self._build_attention_section(
-            data.get("attention_items", [])
-        )
-
-        self._build_recommended_section(
-            data.get("recommended_tasks", [])
-        )
-
-        self._build_stat_cards(data)
-
-        self._build_expiring_section(
-            data["expiring"]
-        )
-
-        self._build_missing_section(
-            data["missing_docs"]
-        )
+        self._build_dashboard_workspace(data)
 
         self.content_layout.addStretch()
 
         logger.info("Dashboard data loaded")
+
+    def _build_dashboard_workspace(self, data):
+        self._build_startup_alert_banner()
+
+        workspace = QWidget()
+        workspace.setObjectName("DashboardWorkspace")
+        workspace.setAttribute(Qt.WA_StyledBackground, True)
+
+        layout = QHBoxLayout()
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(16)
+        workspace.setLayout(layout)
+
+        primary = QWidget()
+        primary.setObjectName("DashboardPrimaryColumn")
+        primary_layout = QVBoxLayout()
+        primary_layout.setContentsMargins(0, 0, 0, 0)
+        primary_layout.setSpacing(12)
+        primary.setLayout(primary_layout)
+
+        side = QWidget()
+        side.setObjectName("DashboardSideColumn")
+        side_layout = QVBoxLayout()
+        side_layout.setContentsMargins(0, 0, 0, 0)
+        side_layout.setSpacing(12)
+        side.setLayout(side_layout)
+
+        layout.addWidget(primary, stretch=7)
+        layout.addWidget(side, stretch=5)
+
+        self._build_daily_digest_section(primary_layout)
+        self._build_attention_section(
+            data.get("attention_items", []),
+            primary_layout,
+        )
+        primary_layout.addStretch()
+
+        self._build_recommended_section(
+            data.get("recommended_tasks", []),
+            side_layout,
+        )
+        self._build_stat_cards(data, side_layout)
+        self._build_expiring_section(data["expiring"], side_layout)
+        self._build_missing_section(data["missing_docs"], side_layout)
+        side_layout.addStretch()
+
+        self.content_layout.addWidget(workspace)
 
     def _run_process_automation(self):
         if self.main_window is None or self._automation_running:
@@ -358,7 +400,7 @@ class DashboardPage(QWidget):
         self.startup_alerts = list(alerts or [])
         self.load_data()
 
-    def _build_startup_alert_banner(self):
+    def _build_startup_alert_banner(self, target_layout=None):
         if not self.startup_alerts:
             return
 
@@ -423,9 +465,10 @@ class DashboardPage(QWidget):
         layout.addLayout(text_stack, stretch=1)
         layout.addWidget(button)
 
-        self.content_layout.addWidget(banner)
+        (target_layout or self.content_layout).addWidget(banner)
 
-    def _build_daily_digest_section(self):
+    def _build_daily_digest_section(self, target_layout=None):
+        target_layout = target_layout or self.content_layout
         settings_service = (
             self.main_window.settings_service
             if self.main_window is not None
@@ -441,7 +484,7 @@ class DashboardPage(QWidget):
 
         self._set_dashboard_subtitle_from_digest(digest)
 
-        self.content_layout.addWidget(
+        target_layout.addWidget(
             SectionHeader("Today")
         )
 
@@ -472,7 +515,7 @@ class DashboardPage(QWidget):
         actions.addWidget(copy)
         layout.addLayout(actions)
 
-        self.content_layout.addWidget(card)
+        target_layout.addWidget(card)
 
     def _set_dashboard_subtitle_from_digest(self, digest):
         if not hasattr(self, "dashboard_subtitle"):
@@ -512,7 +555,7 @@ class DashboardPage(QWidget):
         for key, label, color in [
             ("critical", "Critical", "#DC2626"),
             ("overdue", "Overdue", "#D97706"),
-            ("due_today", "Due Today", "#2563EB"),
+            ("due_today", "Due Today", "#0EA5AC"),
             ("total", "Total Open", "#71717A"),
         ]:
             row.addWidget(
@@ -543,13 +586,6 @@ class DashboardPage(QWidget):
         panel = QFrame()
         panel.setObjectName("DigestStartHerePanel")
         panel.setAttribute(Qt.WA_StyledBackground, True)
-        panel.setStyleSheet(
-            "QFrame#DigestStartHerePanel {"
-            "background: #F8FAFC;"
-            "border: 1px solid #CCFBF1;"
-            "border-radius: 8px;"
-            "}"
-        )
 
         panel_layout = QHBoxLayout()
         panel_layout.setContentsMargins(16, 14, 16, 14)
@@ -557,9 +593,9 @@ class DashboardPage(QWidget):
         panel.setLayout(panel_layout)
 
         accent = QFrame()
+        accent.setObjectName("DigestStartHereAccent")
         accent.setFixedWidth(4)
         accent.setMinimumHeight(58)
-        accent.setStyleSheet("background: #0F766E; border-radius: 2px;")
 
         text_stack = QVBoxLayout()
         text_stack.setContentsMargins(0, 0, 0, 0)
@@ -631,13 +667,6 @@ class DashboardPage(QWidget):
         card = QFrame()
         card.setObjectName("DigestMissionCard")
         card.setAttribute(Qt.WA_StyledBackground, True)
-        card.setStyleSheet(
-            "QFrame#DigestMissionCard {"
-            "background: #FFFFFF;"
-            "border: 1px solid #E5E7EB;"
-            "border-radius: 8px;"
-            "}"
-        )
 
         card_layout = QVBoxLayout()
         card_layout.setContentsMargins(14, 12, 14, 12)
@@ -663,13 +692,7 @@ class DashboardPage(QWidget):
         for item in group.get("items", [])[:12]:
             row = QFrame()
             row.setObjectName("DigestMissionRow")
-            row.setStyleSheet(
-                "QFrame#DigestMissionRow {"
-                "background: #FAFAFA;"
-                "border: 1px solid #F4F4F5;"
-                "border-radius: 6px;"
-                "}"
-            )
+            row.setAttribute(Qt.WA_StyledBackground, True)
             row_layout = QHBoxLayout()
             row_layout.setContentsMargins(10, 8, 10, 8)
             row_layout.setSpacing(10)
@@ -726,21 +749,14 @@ class DashboardPage(QWidget):
         tile = QFrame()
         tile.setObjectName("DigestSummaryTile")
         tile.setAttribute(Qt.WA_StyledBackground, True)
-        tile.setStyleSheet(
-            "QFrame#DigestSummaryTile {"
-            "border: 1px solid #E5E7EB;"
-            "border-radius: 8px;"
-            "background: #FFFFFF;"
-            "}"
-        )
         tile_layout = QVBoxLayout()
         tile_layout.setContentsMargins(12, 10, 12, 10)
         tile_layout.setSpacing(2)
         tile.setLayout(tile_layout)
 
         value_label = QLabel(str(value))
-        value_label.setObjectName("PanelTitle")
-        value_label.setStyleSheet(f"color: {color};")
+        value_label.setObjectName("DigestMetricValue")
+        value_label.setProperty("tone", _tone_from_color(color))
 
         caption = QLabel(label)
         caption.setObjectName("MutedText")
@@ -755,17 +771,7 @@ class DashboardPage(QWidget):
         chip = QLabel(str(text or "Open"))
         chip.setObjectName("DigestChip")
         chip.setAlignment(Qt.AlignCenter)
-        chip.setStyleSheet(
-            "QLabel#DigestChip {"
-            f"color: {color};"
-            f"border: 1px solid {color};"
-            "border-radius: 8px;"
-            "padding: 3px 8px;"
-            "background: #FFFFFF;"
-            "font-size: 11px;"
-            "font-weight: 600;"
-            "}"
-        )
+        chip.setProperty("tone", _tone_from_color(color))
         return chip
 
     def _open_digest_item(self, item):
@@ -800,8 +806,9 @@ class DashboardPage(QWidget):
             "Digest copied to clipboard.",
         )
 
-    def _build_attention_section(self, attention_items):
-        self.content_layout.addWidget(
+    def _build_attention_section(self, attention_items, target_layout=None):
+        target_layout = target_layout or self.content_layout
+        target_layout.addWidget(
             SectionHeader("Needs Attention")
         )
 
@@ -810,7 +817,7 @@ class DashboardPage(QWidget):
 
         if not attention_items:
             card.add_empty("No urgent items need attention.")
-            self.content_layout.addWidget(card)
+            target_layout.addWidget(card)
             return
 
         for i, item in enumerate(attention_items[:12]):
@@ -857,10 +864,11 @@ class DashboardPage(QWidget):
             )
             card.add_widget(row)
 
-        self.content_layout.addWidget(card)
+        target_layout.addWidget(card)
 
-    def _build_recommended_section(self, tasks):
-        self.content_layout.addWidget(
+    def _build_recommended_section(self, tasks, target_layout=None):
+        target_layout = target_layout or self.content_layout
+        target_layout.addWidget(
             SectionHeader("Recommended This Week")
         )
 
@@ -873,7 +881,7 @@ class DashboardPage(QWidget):
 
         if not tasks:
             self._add_recommended_empty(layout)
-            self.content_layout.addWidget(card)
+            target_layout.addWidget(card)
             return
 
         header = QHBoxLayout()
@@ -919,7 +927,7 @@ class DashboardPage(QWidget):
             more.setObjectName("MutedText")
             layout.addWidget(more)
 
-        self.content_layout.addWidget(card)
+        target_layout.addWidget(card)
 
     def _add_recommended_empty(self, layout):
         panel = QFrame()
@@ -1125,7 +1133,7 @@ class DashboardPage(QWidget):
         return {
             "critical": "#DC2626",
             "warning": "#D97706",
-            "info": "#2563EB",
+            "info": "#0EA5AC",
         }.get(severity, "#71717A")
 
     @staticmethod
@@ -1231,23 +1239,27 @@ class DashboardPage(QWidget):
     # STAT CARDS
     # ==========================================
 
-    def _build_stat_cards(self, data):
-        self.content_layout.addWidget(
+    def _build_stat_cards(self, data, target_layout=None):
+        target_layout = target_layout or self.content_layout
+        target_layout.addWidget(
             SectionHeader("Overview")
         )
 
-        row = QHBoxLayout()
+        grid = QGridLayout()
+        grid.setContentsMargins(0, 0, 0, 0)
+        grid.setHorizontalSpacing(10)
+        grid.setVerticalSpacing(10)
 
-        row.setSpacing(16)
+        cards = []
 
         # Total card
         total_card = StatCard(
             data["total"],
             "Active Missionaries",
-            color="#3B82F6",
+            color="#0EA5AC",
         )
 
-        row.addWidget(total_card)
+        cards.append(total_card)
 
         # Per-stage cards
         for stage in WORKFLOW_STAGES:
@@ -1262,20 +1274,24 @@ class DashboardPage(QWidget):
                 ),
             )
 
-            row.addWidget(card)
+            cards.append(card)
+
+        for index, card in enumerate(cards):
+            grid.addWidget(card, index // 2, index % 2)
 
         wrapper = QWidget()
+        wrapper.setObjectName("DashboardStatGrid")
+        wrapper.setLayout(grid)
 
-        wrapper.setLayout(row)
-
-        self.content_layout.addWidget(wrapper)
+        target_layout.addWidget(wrapper)
 
     # ==========================================
     # EXPIRING DOCUMENTS
     # ==========================================
 
-    def _build_expiring_section(self, expiring):
-        self.content_layout.addWidget(
+    def _build_expiring_section(self, expiring, target_layout=None):
+        target_layout = target_layout or self.content_layout
+        target_layout.addWidget(
             SectionHeader("Expiring Within 60 Days")
         )
 
@@ -1355,15 +1371,16 @@ class DashboardPage(QWidget):
 
                 card.add_widget(row)
 
-        self.content_layout.addWidget(card)
+        target_layout.addWidget(card)
 
     # ==========================================
     # MISSING DOCUMENTS
     # ==========================================
 
-    def _build_missing_section(self, missing_docs):
-        self.content_layout.addWidget(
-            SectionHeader("✗   Missing Required Documents")
+    def _build_missing_section(self, missing_docs, target_layout=None):
+        target_layout = target_layout or self.content_layout
+        target_layout.addWidget(
+            SectionHeader("Missing Required Documents")
         )
 
         card = ListCard()
@@ -1424,7 +1441,7 @@ class DashboardPage(QWidget):
 
                 card.add_widget(row)
 
-        self.content_layout.addWidget(card)
+        target_layout.addWidget(card)
 
     def _open_missionary(self, missionary_id):
         if missionary_id is None or self.main_window is None:

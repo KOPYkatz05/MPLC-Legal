@@ -24,6 +24,23 @@ from services.workspace_layout import (
 from utils.language_helper import ui_text as tr
 
 
+CANVAS_OUTER = "#FBFBFC"
+CANVAS_SURFACE = "#FFFFFF"
+GRID_MINOR = "#ECECEC"
+GRID_MAJOR = "#DADADF"
+GRID_EDGE = "#9BE3E6"
+ACCENT_TEAL = "#0EA5AC"
+ACCENT_TEAL_SOFT = QColor(14, 165, 172, 28)
+ACCENT_GROUP = "#7A6EEC"
+ACCENT_GROUP_SOFT = QColor(122, 110, 236, 30)
+ACCENT_WARNING = "#D97706"
+ACCENT_WARNING_SOFT = QColor(217, 119, 6, 30)
+SELECTION_MUTED = "#A1A1AA"
+DARK_CHIP = "#18181B"
+WHITE = "#FFFFFF"
+HIDDEN_OVERLAY = QColor(251, 251, 252, 180)
+
+
 def _event_position(event):
     return event.position().toPoint() if hasattr(event, "position") else event.pos()
 
@@ -108,11 +125,11 @@ class WorkspaceCanvasSurface(QFrame):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing, False)
         rect = self.editor.canvas_rect()
-        painter.fillRect(self.rect(), QColor("#f7f8fb"))
-        painter.fillRect(rect, QColor("#ffffff"))
+        painter.fillRect(self.rect(), QColor(CANVAS_OUTER))
+        painter.fillRect(rect, QColor(CANVAS_SURFACE))
 
-        minor_pen = QPen(QColor("#edf0f6"))
-        major_pen = QPen(QColor("#d8deea"))
+        minor_pen = QPen(QColor(GRID_MINOR))
+        major_pen = QPen(QColor(GRID_MAJOR))
         cell_width = self.editor.cell_width()
         for col in range(WORKSPACE_GRID_COLUMNS + 1):
             x = int(rect.left() + col * cell_width)
@@ -124,13 +141,13 @@ class WorkspaceCanvasSurface(QFrame):
             painter.setPen(major_pen if row == 0 else minor_pen)
             painter.drawLine(rect.left(), y, rect.right(), y)
 
-        painter.setPen(QPen(QColor("#c7d2fe"), 2))
+        painter.setPen(QPen(QColor(GRID_EDGE), 2))
         painter.drawRect(rect.adjusted(0, 0, -1, -1))
 
         alignment_guides = self.editor.alignment_guides
         if alignment_guides.get("vertical") or alignment_guides.get("horizontal"):
             painter.setRenderHint(QPainter.Antialiasing, False)
-            guide_pen = QPen(QColor("#db2777"), 2, Qt.DashLine)
+            guide_pen = QPen(QColor(ACCENT_GROUP), 2, Qt.DashLine)
             painter.setPen(guide_pen)
             for col in alignment_guides.get("vertical", []):
                 x = int(rect.left() + (col * cell_width))
@@ -145,18 +162,18 @@ class WorkspaceCanvasSurface(QFrame):
             adjusted = self.editor.placement_guide_status == "adjusted"
             snapped = self.editor.placement_guide_status == "snapped"
             accent = (
-                QColor("#f97316")
+                QColor(ACCENT_WARNING)
                 if adjusted
-                else QColor("#db2777")
+                else QColor(ACCENT_GROUP)
                 if snapped
-                else QColor("#2563eb")
+                else QColor(ACCENT_TEAL)
             )
             fill = (
-                QColor(249, 115, 22, 30)
+                ACCENT_WARNING_SOFT
                 if adjusted
-                else QColor(219, 39, 119, 28)
+                else ACCENT_GROUP_SOFT
                 if snapped
-                else QColor(37, 99, 235, 28)
+                else ACCENT_TEAL_SOFT
             )
             painter.setRenderHint(QPainter.Antialiasing, True)
             painter.setBrush(QBrush(fill))
@@ -176,15 +193,15 @@ class WorkspaceCanvasSurface(QFrame):
             painter.setPen(Qt.NoPen)
             painter.setBrush(accent)
             painter.drawRoundedRect(chip_rect, 8, 8)
-            painter.setPen(QColor("#ffffff"))
+            painter.setPen(QColor(WHITE))
             painter.drawText(chip_rect, Qt.AlignCenter, chip)
 
             if adjusted:
                 note_rect = QRect(chip_rect.right() + 6, chip_rect.top(), 138, 22)
                 painter.setPen(Qt.NoPen)
-                painter.setBrush(QColor("#111827"))
+                painter.setBrush(QColor(DARK_CHIP))
                 painter.drawRoundedRect(note_rect, 8, 8)
-                painter.setPen(QColor("#ffffff"))
+                painter.setPen(QColor(WHITE))
                 painter.drawText(note_rect, Qt.AlignCenter, "Moved to open spot")
 
             dimensions = (
@@ -198,9 +215,9 @@ class WorkspaceCanvasSurface(QFrame):
                 22,
             )
             painter.setPen(Qt.NoPen)
-            painter.setBrush(QColor("#111827"))
+            painter.setBrush(QColor(DARK_CHIP))
             painter.drawRoundedRect(dimensions_rect, 8, 8)
-            painter.setPen(QColor("#ffffff"))
+            painter.setPen(QColor(WHITE))
             painter.drawText(dimensions_rect, Qt.AlignCenter, dimensions)
 
     def dragEnterEvent(self, event):
@@ -428,8 +445,8 @@ class WorkspaceLayoutTile(QFrame):
         hidden = self.block.get("visible") is False
         locked = bool(self.block.get("locked"))
         if hidden:
-            painter.fillRect(self.rect(), QColor(248, 250, 252, 178))
-        color = QColor("#2563eb") if selected else QColor("#aab4c5")
+            painter.fillRect(self.rect(), HIDDEN_OVERLAY)
+        color = QColor(ACCENT_TEAL) if selected else QColor(SELECTION_MUTED)
         painter.setPen(QPen(color, 2, Qt.DashLine if hidden else Qt.SolidLine))
         painter.drawRoundedRect(self.rect().adjusted(1, 1, -2, -2), 12, 12)
         if locked or hidden:
@@ -441,9 +458,9 @@ class WorkspaceLayoutTile(QFrame):
             badge_text = " / ".join(badges)
             badge_rect = QRect(self.width() - 112, self.height() - 30, 100, 22)
             painter.setPen(Qt.NoPen)
-            painter.setBrush(QColor("#111827"))
+            painter.setBrush(QColor(DARK_CHIP))
             painter.drawRoundedRect(badge_rect, 8, 8)
-            painter.setPen(QColor("#ffffff"))
+            painter.setPen(QColor(WHITE))
             painter.drawText(badge_rect, Qt.AlignCenter, badge_text)
         if selected:
             painter.setPen(Qt.NoPen)
@@ -462,7 +479,9 @@ class WorkspaceLayoutTile(QFrame):
                 active = handle == active_handle
                 size = 14 if active else 10
                 offset = 2 if active else 0
-                painter.setBrush(QColor("#db2777") if active else QColor("#2563eb"))
+                painter.setBrush(
+                    QColor(ACCENT_GROUP) if active else QColor(ACCENT_TEAL)
+                )
                 painter.drawRoundedRect(
                     QRect(x - offset, y - offset, size, size),
                     5,

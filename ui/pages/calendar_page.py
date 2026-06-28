@@ -37,20 +37,16 @@ from ui.foundation import (
     InfoLevel,
     FilterBar,
     MaskDialogBase,
-    PageHeader,
     StatCard,
     StrongBodyLabel,
     SubtitleLabel,
-    create_header_card,
     create_info_badge,
     create_pill_button,
     create_button,
     create_card,
     create_combo_box,
-    create_pivot,
     create_scroll_area,
     create_search_edit,
-    divider,
     fluent_icon,
     setup_dialog_shell,
     show_message,
@@ -59,7 +55,7 @@ from utils.logger import logger
 
 
 APPOINTMENT_FIELDS = [
-    ("interpol_appointment_date", "Interpol", "#7C3AED"),
+    ("interpol_appointment_date", "Interpol", "#7A6EEC"),
     ("biometric_appointment_date", "Biometric", "#D97706"),
     ("pickup_appointment_date", "Pickup", "#059669"),
 ]
@@ -86,8 +82,13 @@ BUCKET_INFO_LEVELS = {
 SUMMARY_COLORS = {
     "overdue": "#DC2626",
     "today": "#D97706",
-    "this_week": "#2563EB",
+    "this_week": "#0EA5AC",
     "total": "#059669",
+}
+APPOINTMENT_TYPE_TONES = {
+    "Interpol": "interpol",
+    "Biometric": "biometric",
+    "Pickup": "pickup",
 }
 
 CALENDAR_MODE_WEEK = "week"
@@ -141,8 +142,10 @@ class CalendarDaySummaryDialog(MaskDialogBase):
         self.surface.setLayout(layout)
 
         header = QWidget()
+        header.setObjectName("CalendarDaySummaryHeader")
+        header.setAttribute(Qt.WA_StyledBackground, True)
         header_layout = QVBoxLayout()
-        header_layout.setContentsMargins(24, 22, 24, 14)
+        header_layout.setContentsMargins(20, 18, 20, 14)
         header_layout.setSpacing(6)
         header.setLayout(header_layout)
 
@@ -160,7 +163,7 @@ class CalendarDaySummaryDialog(MaskDialogBase):
         body.setObjectName("DialogBody")
         body.setAttribute(Qt.WA_StyledBackground, True)
         body_layout = QVBoxLayout()
-        body_layout.setContentsMargins(24, 20, 24, 20)
+        body_layout.setContentsMargins(20, 18, 20, 20)
         body_layout.setSpacing(12)
         body.setLayout(body_layout)
 
@@ -184,6 +187,8 @@ class CalendarDaySummaryDialog(MaskDialogBase):
         else:
             empty = QLabel("No appointments")
             empty.setObjectName("CalendarNoAppointmentsLabel")
+            empty.setAlignment(Qt.AlignCenter)
+            empty.setWordWrap(True)
             body_layout.addWidget(empty)
 
         tasks_title = QLabel("Tasks")
@@ -200,7 +205,9 @@ class CalendarDaySummaryDialog(MaskDialogBase):
                 )
         else:
             empty = QLabel("No tasks planned.")
-            empty.setObjectName("MutedText")
+            empty.setObjectName("CalendarNoTasksLabel")
+            empty.setAlignment(Qt.AlignCenter)
+            empty.setWordWrap(True)
             body_layout.addWidget(empty)
 
         footer = DialogFooter()
@@ -264,6 +271,10 @@ def appointment_info_level(appointment):
     return BUCKET_INFO_LEVELS[appointment.bucket]
 
 
+def appointment_type_tone(appointment_type):
+    return APPOINTMENT_TYPE_TONES.get(appointment_type, "task")
+
+
 def week_start_for(value):
     return value - timedelta(days=value.weekday())
 
@@ -307,7 +318,7 @@ BUCKET_TONES = {
 SUMMARY_COLORS = {
     "overdue": "#DC2626",
     "today": "#D97706",
-    "this_week": "#2563EB",
+    "this_week": "#0EA5AC",
     "total": "#059669",
 }
 
@@ -395,62 +406,70 @@ class CalendarPage(QWidget):
         self.setLayout(outer)
 
         self._count_label = QLabel("")
-        self._count_label.setObjectName("MutedText")
+        self._count_label.setObjectName("CalendarCountLabel")
 
-        header = PageHeader(
-            "Appointments Calendar",
-            "Scheduled Interpol, biometric, and pickup citas.",
-            [self._count_label],
-        )
-        outer.addWidget(header)
-        outer.addWidget(divider())
-
-        self._build_top_tabs()
-        outer.addWidget(self.tab_bar)
+        outer.addWidget(self._build_top_bar())
 
         self.tab_stack = QStackedWidget()
         self.tab_stack.setObjectName("CalendarTabStack")
-        outer.addWidget(self.tab_stack, stretch=1)
+
+        workspace = QFrame()
+        workspace.setObjectName("CalendarWorkspace")
+        workspace.setAttribute(Qt.WA_StyledBackground, True)
+        workspace_layout = QVBoxLayout()
+        workspace_layout.setContentsMargins(12, 12, 24, 24)
+        workspace_layout.setSpacing(0)
+        workspace.setLayout(workspace_layout)
+        workspace_layout.addWidget(self.tab_stack)
+        outer.addWidget(workspace, stretch=1)
 
         self._build_calendar_tab()
         self._build_history_tab()
         self._select_tab(TAB_CALENDAR)
 
+    def _build_top_bar(self):
+        frame = QFrame()
+        frame.setObjectName("CalendarTopBar")
+        frame.setAttribute(Qt.WA_StyledBackground, True)
+
+        layout = QVBoxLayout()
+        layout.setContentsMargins(12, 10, 16, 10)
+        layout.setSpacing(10)
+        frame.setLayout(layout)
+
+        title_row = QHBoxLayout()
+        title_row.setContentsMargins(0, 0, 0, 0)
+        title_row.setSpacing(12)
+
+        title_stack = QVBoxLayout()
+        title_stack.setContentsMargins(0, 0, 0, 0)
+        title_stack.setSpacing(2)
+        title = QLabel("Appointments Calendar")
+        title.setObjectName("CalendarTitle")
+        subtitle = QLabel("Scheduled Interpol, biometric, and pickup citas.")
+        subtitle.setObjectName("CalendarSubtitle")
+        title_stack.addWidget(title)
+        title_stack.addWidget(subtitle)
+
+        title_row.addLayout(title_stack, stretch=1)
+        title_row.addWidget(self._count_label, alignment=Qt.AlignRight)
+        layout.addLayout(title_row)
+
+        self._build_top_tabs()
+        layout.addWidget(self.tab_bar)
+        return frame
+
     def _build_top_tabs(self):
         self.tab_buttons = {}
         self.tab_button_group = QButtonGroup(self)
-        self.tab_control = create_pivot()
-
-        if self.tab_control is not None:
-            self.tab_bar = QFrame()
-            self.tab_bar.setObjectName("CalendarTopTabs")
-            layout = QHBoxLayout()
-            layout.setContentsMargins(32, 8, 32, 8)
-            layout.setSpacing(0)
-            self.tab_bar.setLayout(layout)
-
-            self.tab_control.setObjectName("CalendarPivot")
-            self.tab_control.currentItemChanged.connect(self._select_tab)
-            layout.addWidget(self.tab_control)
-            layout.addStretch()
-
-            self.tab_control.addItem(
-                TAB_CALENDAR,
-                "Calendar",
-                icon=fluent_icon("CALENDAR"),
-            )
-            self.tab_control.addItem(
-                TAB_HISTORY,
-                "History",
-                icon=fluent_icon("HISTORY"),
-            )
-            return
+        self.tab_control = None
 
         self.tab_bar = QFrame()
         self.tab_bar.setObjectName("CalendarTopTabs")
+        self.tab_bar.setAttribute(Qt.WA_StyledBackground, True)
 
         layout = QHBoxLayout()
-        layout.setContentsMargins(32, 10, 32, 10)
+        layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(8)
         self.tab_bar.setLayout(layout)
 
@@ -463,7 +482,7 @@ class CalendarPage(QWidget):
             button = QPushButton(title)
             button.setObjectName("CalendarTabButton")
             button.setCheckable(True)
-            button.setFixedHeight(32)
+            button.setFixedHeight(35)
             button.clicked.connect(
                 lambda checked=False, tab_key=key:
                 self._select_tab(tab_key)
@@ -488,7 +507,7 @@ class CalendarPage(QWidget):
         content = QWidget()
         content.setObjectName("PageSurface")
         self.calendar_layout = QVBoxLayout()
-        self.calendar_layout.setContentsMargins(32, 24, 32, 24)
+        self.calendar_layout.setContentsMargins(20, 18, 20, 20)
         self.calendar_layout.setSpacing(18)
         content.setLayout(self.calendar_layout)
 
@@ -513,7 +532,7 @@ class CalendarPage(QWidget):
         content = QWidget()
         content.setObjectName("PageSurface")
         self.history_layout = QVBoxLayout()
-        self.history_layout.setContentsMargins(32, 24, 32, 24)
+        self.history_layout.setContentsMargins(20, 18, 20, 20)
         self.history_layout.setSpacing(18)
         content.setLayout(self.history_layout)
 
@@ -672,6 +691,13 @@ class CalendarPage(QWidget):
                 self.tab_control.setCurrentItem(key)
         elif key in self.tab_buttons:
             self.tab_buttons[key].setChecked(True)
+        self._refresh_tab_buttons()
+
+    def _refresh_tab_buttons(self):
+        for tab_key, button in self.tab_buttons.items():
+            button.setProperty("active", tab_key == self._selected_tab)
+            button.style().unpolish(button)
+            button.style().polish(button)
 
     def _render_calendar(self):
         self._clear_layout(self.calendar_layout)
@@ -784,7 +810,7 @@ class CalendarPage(QWidget):
                 counts["this_week"] += 1
 
         row = QHBoxLayout()
-        row.setSpacing(16)
+        row.setSpacing(10)
 
         cards = [
             ("overdue", counts["overdue"], "Overdue"),
@@ -1122,12 +1148,10 @@ class CalendarPage(QWidget):
 
         bar = QFrame()
         bar.setObjectName("CalendarAppointmentChipAccent")
+        bar.setProperty(
+            "tone", "group-task" if task.get("is_group_task") else "task"
+        )
         bar.setFixedWidth(4)
-        palette = bar.palette()
-        task_color = "#7C3AED" if task.get("is_group_task") else "#2563EB"
-        palette.setColor(QPalette.Window, QColor(task_color))
-        bar.setPalette(palette)
-        bar.setAutoFillBackground(True)
         layout.addWidget(bar)
 
         button = create_button(text, "subtle", fixed_height=26)
@@ -1402,25 +1426,47 @@ class CalendarPage(QWidget):
         return row
 
     def _make_history_list_card(self, appointments):
-        card = create_header_card(
-            appointments[0].full_name,
-            object_name="CalendarHistoryFocusCard",
-        )
+        card = create_card(object_name="CalendarHistoryFocusCard")
         card.setObjectName("CalendarHistoryFocusCard")
 
-        header = card.headerLayout
-        header.addStretch()
-        header.addWidget(
+        card_layout = QVBoxLayout()
+        card_layout.setContentsMargins(0, 0, 0, 0)
+        card_layout.setSpacing(0)
+        card.setLayout(card_layout)
+
+        header = QFrame()
+        header.setObjectName("CalendarHistoryFocusHeader")
+        header_layout = QHBoxLayout()
+        header_layout.setContentsMargins(18, 14, 18, 10)
+        header_layout.setSpacing(10)
+        header.setLayout(header_layout)
+
+        title_stack = QVBoxLayout()
+        title_stack.setContentsMargins(0, 0, 0, 0)
+        title_stack.setSpacing(2)
+
+        title = QLabel(appointments[0].full_name)
+        title.setObjectName("CalendarHistoryFocusTitle")
+        title_stack.addWidget(title)
+
+        header_layout.addLayout(title_stack, stretch=1)
+        header_layout.addStretch()
+        header_layout.addWidget(
             create_info_badge(
                 f"{len(appointments)} appointment"
                 f"{'s' if len(appointments) != 1 else ''}",
                 level=appointment_info_level(appointments[0]),
             )
         )
+        card_layout.addWidget(header)
 
-        body_layout = card.viewLayout
+        body = QWidget()
+        body_layout = QVBoxLayout()
         body_layout.setContentsMargins(0, 0, 0, 0)
         body_layout.setSpacing(0)
+        body.setLayout(body_layout)
+        card.viewLayout = body_layout
+        card_layout.addWidget(body)
 
         content = QWidget()
         content.setObjectName("CalendarHistoryFocusList")
@@ -1434,7 +1480,7 @@ class CalendarPage(QWidget):
             appointments[0].current_stage or "No current stage"
         )
         subtitle.setObjectName("CalendarHistoryFocusMeta")
-        subtitle.setContentsMargins(18, 0, 18, 10)
+        subtitle.setContentsMargins(18, 10, 18, 10)
         list_layout.addWidget(subtitle)
 
         for index, appointment in enumerate(appointments):
@@ -1470,15 +1516,8 @@ class CalendarPage(QWidget):
 
         type_badge = QLabel(appointment.type)
         type_badge.setObjectName("CalendarTypeBadge")
-        type_badge.setStyleSheet(
-            "QLabel#CalendarTypeBadge {"
-            f"background-color: {appointment.color};"
-            "color: white;"
-            "border-radius: 999px;"
-            "padding: 3px 10px;"
-            "font-size: 11px;"
-            "font-weight: 700;"
-            "}"
+        type_badge.setProperty(
+            "tone", appointment_type_tone(appointment.type)
         )
         type_badge.setAlignment(Qt.AlignCenter)
         top_line.addWidget(type_badge)
@@ -1676,15 +1715,8 @@ class CalendarPage(QWidget):
 
         type_badge = QLabel(appointment.type)
         type_badge.setObjectName("CalendarTypeBadge")
-        type_badge.setStyleSheet(
-            "QLabel#CalendarTypeBadge {"
-            f"background-color: {appointment.color};"
-            "color: white;"
-            "border-radius: 10px;"
-            "padding: 3px 10px;"
-            "font-size: 11px;"
-            "font-weight: 700;"
-            "}"
+        type_badge.setProperty(
+            "tone", appointment_type_tone(appointment.type)
         )
         type_badge.setFixedWidth(86)
         type_badge.setAlignment(Qt.AlignCenter)
@@ -1749,26 +1781,17 @@ class CalendarPage(QWidget):
 
         bar = QFrame()
         bar.setObjectName("CalendarTypeBar")
+        bar.setProperty(
+            "tone", "group-task" if task.get("is_group_task") else "task"
+        )
         bar.setFixedWidth(4)
         bar.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
-        palette = bar.palette()
-        task_color = "#7C3AED" if task.get("is_group_task") else "#2563EB"
-        palette.setColor(QPalette.Window, QColor(task_color))
-        bar.setPalette(palette)
-        bar.setAutoFillBackground(True)
         layout.addWidget(bar)
 
         type_badge = QLabel("Task")
         type_badge.setObjectName("CalendarTypeBadge")
-        type_badge.setStyleSheet(
-            "QLabel#CalendarTypeBadge {"
-            f"background-color: {task_color};"
-            "color: white;"
-            "border-radius: 10px;"
-            "padding: 3px 10px;"
-            "font-size: 11px;"
-            "font-weight: 700;"
-            "}"
+        type_badge.setProperty(
+            "tone", "group-task" if task.get("is_group_task") else "task"
         )
         type_badge.setFixedWidth(86)
         type_badge.setAlignment(Qt.AlignCenter)
@@ -1986,7 +2009,7 @@ class CalendarPage(QWidget):
         card.setObjectName("CalendarEmptyState")
 
         layout = QVBoxLayout()
-        layout.setContentsMargins(24, 30, 24, 30)
+        layout.setContentsMargins(20, 18, 20, 20)
         layout.setSpacing(6)
         card.setLayout(layout)
 

@@ -17,7 +17,6 @@ from PySide6.QtWidgets import (
 )
 
 from ui.foundation import (
-    PageHeader,
     create_button,
     create_check_box,
     create_combo_box,
@@ -25,7 +24,6 @@ from ui.foundation import (
     create_line_edit,
     create_list_widget,
     create_scroll_area,
-    divider,
     show_message,
 )
 from PySide6.QtCore import QDate, Qt, QTime
@@ -82,13 +80,15 @@ class SettingsPage(QWidget):
         outer.setSpacing(0)
         self.setLayout(outer)
 
-        self.header = PageHeader(
-            tr("settings_title"),
-            tr("settings_subtitle"),
-        )
-        outer.addWidget(self.header)
+        outer.addWidget(self._build_top_bar())
 
-        outer.addWidget(divider())
+        workspace = QWidget()
+        workspace.setObjectName("SettingsWorkspace")
+        workspace.setAttribute(Qt.WA_StyledBackground, True)
+        workspace_layout = QVBoxLayout()
+        workspace_layout.setContentsMargins(12, 12, 24, 24)
+        workspace_layout.setSpacing(0)
+        workspace.setLayout(workspace_layout)
 
         self.tabs = QTabWidget()
         self.tabs.setObjectName("SettingsTabs")
@@ -99,7 +99,54 @@ class SettingsPage(QWidget):
             tr("settings_tab_notifications"),
         )
         self.tabs.addTab(self._build_transfer_tab(), tr("settings_tab_transfer"))
-        outer.addWidget(self.tabs, stretch=1)
+        workspace_layout.addWidget(self.tabs, stretch=1)
+        outer.addWidget(workspace, stretch=1)
+
+    def _build_top_bar(self):
+        top_bar = QFrame()
+        top_bar.setObjectName("SettingsTopBar")
+        top_bar.setAttribute(Qt.WA_StyledBackground, True)
+
+        layout = QVBoxLayout()
+        layout.setContentsMargins(12, 10, 16, 10)
+        layout.setSpacing(10)
+        top_bar.setLayout(layout)
+
+        tabs = QFrame()
+        tabs.setObjectName("SettingsTopTabStrip")
+        tabs.setAttribute(Qt.WA_StyledBackground, True)
+        tabs_layout = QHBoxLayout()
+        tabs_layout.setContentsMargins(0, 0, 0, 0)
+        tabs_layout.setSpacing(18)
+        tabs.setLayout(tabs_layout)
+
+        for text, active in [
+            ("Main", True),
+            ("Notifications", False),
+            ("Workspaces", False),
+            ("Calendar", False),
+            ("Analytics", False),
+            ("Missionaries", False),
+        ]:
+            label = QLabel(text)
+            label.setObjectName("SettingsTopTab")
+            label.setProperty("active", active)
+            tabs_layout.addWidget(label)
+        tabs_layout.addStretch()
+        layout.addWidget(tabs)
+
+        title_stack = QVBoxLayout()
+        title_stack.setContentsMargins(0, 0, 0, 0)
+        title_stack.setSpacing(3)
+        self.settings_title_label = QLabel(tr("settings_title"))
+        self.settings_title_label.setObjectName("SettingsTitle")
+        self.settings_subtitle_label = QLabel(tr("settings_subtitle"))
+        self.settings_subtitle_label.setObjectName("SettingsSubtitle")
+        title_stack.addWidget(self.settings_title_label)
+        title_stack.addWidget(self.settings_subtitle_label)
+        layout.addLayout(title_stack)
+
+        return top_bar
 
     def _build_tab_scroll(self, content_widget, *, full_width=False):
         tab = QWidget()
@@ -135,8 +182,8 @@ class SettingsPage(QWidget):
         else:
             content.setMaximumWidth(1180)
         content_layout = QVBoxLayout()
-        content_layout.setContentsMargins(32, 24, 32, 32)
-        content_layout.setSpacing(16)
+        content_layout.setContentsMargins(16, 16, 16, 20)
+        content_layout.setSpacing(12)
         content.setLayout(content_layout)
         return content, content_layout
 
@@ -1531,8 +1578,8 @@ class SettingsPage(QWidget):
         )
 
     def retranslate_ui(self):
-        self.header.set_title(tr("settings_title"))
-        self.header.set_subtitle(tr("settings_subtitle"))
+        self.settings_title_label.setText(tr("settings_title"))
+        self.settings_subtitle_label.setText(tr("settings_subtitle"))
         self.tabs.setTabText(0, tr("settings_tab_general"))
         self.tabs.setTabText(1, tr("settings_tab_notifications"))
         self.tabs.setTabText(2, tr("settings_tab_transfer"))
