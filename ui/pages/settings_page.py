@@ -108,8 +108,8 @@ class SettingsPage(QWidget):
         top_bar.setAttribute(Qt.WA_StyledBackground, True)
 
         layout = QVBoxLayout()
-        layout.setContentsMargins(12, 10, 16, 10)
-        layout.setSpacing(10)
+        layout.setContentsMargins(12, 10, 16, 0)
+        layout.setSpacing(0)
         top_bar.setLayout(layout)
 
         tabs = QFrame()
@@ -117,34 +117,34 @@ class SettingsPage(QWidget):
         tabs.setAttribute(Qt.WA_StyledBackground, True)
         tabs_layout = QHBoxLayout()
         tabs_layout.setContentsMargins(0, 0, 0, 0)
-        tabs_layout.setSpacing(18)
+        tabs_layout.setSpacing(0)
         tabs.setLayout(tabs_layout)
 
-        for text, active in [
-            ("Main", True),
-            ("Notifications", False),
-            ("Workspaces", False),
-            ("Calendar", False),
-            ("Analytics", False),
-            ("Missionaries", False),
+        self.settings_top_tab_labels = {}
+        for key, active in [
+            ("settings_top_tab_main", True),
+            ("settings_top_tab_notifications", False),
+            ("settings_top_tab_workspaces", False),
+            ("settings_top_tab_calendar", False),
+            ("settings_top_tab_analytics", False),
+            ("settings_top_tab_missionaries", False),
         ]:
-            label = QLabel(text)
+            label = QLabel(tr(key))
             label.setObjectName("SettingsTopTab")
             label.setProperty("active", active)
+            label.setFixedHeight(30)
+            label.setAlignment(Qt.AlignCenter)
             tabs_layout.addWidget(label)
+            self.settings_top_tab_labels[key] = label
         tabs_layout.addStretch()
         layout.addWidget(tabs)
 
-        title_stack = QVBoxLayout()
-        title_stack.setContentsMargins(0, 0, 0, 0)
-        title_stack.setSpacing(3)
-        self.settings_title_label = QLabel(tr("settings_title"))
+        self.settings_title_label = QLabel(tr("settings_title"), top_bar)
         self.settings_title_label.setObjectName("SettingsTitle")
-        self.settings_subtitle_label = QLabel(tr("settings_subtitle"))
+        self.settings_title_label.hide()
+        self.settings_subtitle_label = QLabel(tr("settings_subtitle"), top_bar)
         self.settings_subtitle_label.setObjectName("SettingsSubtitle")
-        title_stack.addWidget(self.settings_title_label)
-        title_stack.addWidget(self.settings_subtitle_label)
-        layout.addLayout(title_stack)
+        self.settings_subtitle_label.hide()
 
         return top_bar
 
@@ -1580,6 +1580,8 @@ class SettingsPage(QWidget):
     def retranslate_ui(self):
         self.settings_title_label.setText(tr("settings_title"))
         self.settings_subtitle_label.setText(tr("settings_subtitle"))
+        for key, label in self.settings_top_tab_labels.items():
+            label.setText(tr(key))
         self.tabs.setTabText(0, tr("settings_tab_general"))
         self.tabs.setTabText(1, tr("settings_tab_notifications"))
         self.tabs.setTabText(2, tr("settings_tab_transfer"))

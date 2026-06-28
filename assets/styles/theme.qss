@@ -46,13 +46,14 @@ QFrame#MissionariesTabStrip {
     background-color: transparent;
     min-height: 30px;
     max-height: 30px;
+    border-bottom: 1px solid #D9D9D9;
 }
 
 QLabel#MissionariesTopTab {
     color: #707070;
-    font-size: 16px;
+    font-size: 12px;
     font-weight: 400;
-    padding: 0px 8px 7px 8px;
+    padding: 0px 9px 7px 9px;
     border-bottom: 1px solid transparent;
 }
 
@@ -63,14 +64,14 @@ QLabel#MissionariesTopTab[active="true"] {
 
 QLabel#MissionariesTitle {
     color: #18181B;
-    font-size: 18px;
+    font-size: 15px;
     font-weight: 700;
     background: transparent;
 }
 
 QLabel#MissionariesSubtitle {
     color: #71717A;
-    font-size: 12px;
+    font-size: 11px;
     background: transparent;
 }
 
@@ -92,7 +93,7 @@ QFrame#MissionariesTableSurface {
 }
 
 QFrame#MissionariesTableHeader {
-    background-color: #FFFFFF;
+    background-color: #FBFBFC;
     border-bottom: 1px solid #ECECEC;
     border-top-left-radius: 7px;
     border-top-right-radius: 7px;
@@ -149,13 +150,14 @@ QFrame#AlertWorkspaceTabStrip {
     background-color: transparent;
     min-height: 30px;
     max-height: 30px;
+    border-bottom: 1px solid #D9D9D9;
 }
 
 QLabel#AlertWorkspaceTopTab {
     color: #707070;
-    font-size: 16px;
+    font-size: 12px;
     font-weight: 400;
-    padding: 0px 8px 7px 8px;
+    padding: 0px 9px 7px 9px;
     border-bottom: 1px solid transparent;
 }
 
@@ -166,14 +168,14 @@ QLabel#AlertWorkspaceTopTab[active="true"] {
 
 QLabel#AlertWorkspaceTitle {
     color: #18181B;
-    font-size: 18px;
+    font-size: 15px;
     font-weight: 700;
     background: transparent;
 }
 
 QLabel#AlertWorkspaceSubtitle {
     color: #71717A;
-    font-size: 12px;
+    font-size: 11px;
     background: transparent;
 }
 
@@ -193,7 +195,7 @@ QFrame#AlertMissionaryRow:hover {
 QLabel#AlertStepNumber {
     color: #0EA5AC;
     border: 1px solid #9BE3E6;
-    border-radius: 8px;
+    border-radius: 7px;
     background-color: #EFFCFC;
     font-weight: 700;
 }
@@ -241,7 +243,7 @@ QLabel#AlertFactValue[tone="neutral"] {
 QLabel#AlertWorkspaceChip {
     color: #71717A;
     border: 1px solid #71717A;
-    border-radius: 8px;
+    border-radius: 7px;
     padding: 3px 8px;
     background-color: #FFFFFF;
     font-size: 11px;
@@ -282,13 +284,14 @@ QFrame#SettingsTopTabStrip {
     background-color: transparent;
     min-height: 30px;
     max-height: 30px;
+    border-bottom: 1px solid #D9D9D9;
 }
 
 QLabel#SettingsTopTab {
     color: #707070;
-    font-size: 16px;
+    font-size: 12px;
     font-weight: 400;
-    padding: 0px 8px 7px 8px;
+    padding: 0px 9px 7px 9px;
     border-bottom: 1px solid transparent;
 }
 
@@ -390,9 +393,9 @@ QWidget#MissionaryDetailPage QLabel#SourceBadge[source_kind="auto"] {
 }
 
 QWidget#MissionaryDetailPage QLabel#SummaryBadge {
-    color: #475569;
-    background: rgba(148, 163, 184, 0.10);
-    border: 1px solid rgba(148, 163, 184, 0.18);
+    color: #52525B;
+    background: #F4F4F5;
+    border: 1px solid #E4E4E7;
     border-radius: 7px;
     padding: 3px 8px;
     font-size: 10px;
@@ -408,9 +411,9 @@ QWidget#MissionaryDetailPage QLabel#SummaryBadge[tone="primary"] {
 }
 
 QWidget#MissionaryDetailPage QLabel#SummaryBadge[tone="subtle"] {
-    color: #475569;
-    background: rgba(148, 163, 184, 0.10);
-    border-color: rgba(148, 163, 184, 0.18);
+    color: #52525B;
+    background: #F4F4F5;
+    border-color: #E4E4E7;
 }
 
 QWidget#MissionaryDetailPage QDateEdit#MissionaryDetailDatePicker,
@@ -422,7 +425,7 @@ QWidget#MissionaryDetailPage QPushButton#MissionaryDetailDatePicker {
 QWidget#MissionaryDetailPage QDateEdit#MissionaryDetailDatePicker[state="empty"],
 QWidget#MissionaryDetailPage QDateTimeEdit#MissionaryDetailDatePicker[state="empty"] {
     color: transparent;
-    background-color: #FCFCFD;
+    background-color: #FBFBFC;
 }
 
 QWidget#MissionaryDetailPage QDateEdit#MissionaryDetailDatePicker[state="empty"] QLineEdit,
@@ -744,13 +747,14 @@ QFrame#DashboardTabStrip {
     background-color: transparent;
     min-height: 30px;
     max-height: 30px;
+    border-bottom: 1px solid #D9D9D9;
 }
 
 QLabel#DashboardTopTab {
     color: #707070;
-    font-size: 16px;
+    font-size: 12px;
     font-weight: 400;
-    padding: 0px 8px 7px 8px;
+    padding: 0px 9px 7px 9px;
     border-bottom: 1px solid transparent;
 }
 
@@ -761,14 +765,14 @@ QLabel#DashboardTopTab[active="true"] {
 
 QLabel#DashboardTitle {
     color: #18181B;
-    font-size: 18px;
+    font-size: 15px;
     font-weight: 700;
     background: transparent;
 }
 
 QLabel#DashboardSubtitle {
     color: #71717A;
-    font-size: 12px;
+    font-size: 11px;
     background: transparent;
 }
 
@@ -857,7 +861,7 @@ QLabel#DigestMetricValue[tone="success"] {
 QLabel#DigestChip {
     color: #71717A;
     border: 1px solid #71717A;
-    border-radius: 8px;
+    border-radius: 7px;
     padding: 3px 8px;
     background-color: #FFFFFF;
     font-size: 11px;
@@ -1080,6 +1084,27 @@ QFrame#ReportsTopBar {
     border-bottom: 1px solid #ECECEC;
 }
 
+QFrame#ReportsNavigationPillList {
+    background-color: transparent;
+    border: none;
+}
+
+QLabel#ReportsNavigationPill {
+    color: #242424;
+    background-color: transparent;
+    border: 1px solid transparent;
+    border-radius: 7px;
+    padding: 5px 9px;
+    font-size: 12px;
+    font-weight: 500;
+}
+
+QLabel#ReportsNavigationPill[active="true"] {
+    background-color: #F1F1F6;
+    border-color: #F1F1F6;
+    color: #111111;
+}
+
 QLabel#ReportsTitle {
     color: #18181B;
     font-size: 15px;
@@ -1128,7 +1153,7 @@ QLabel#StageBadge {
     font-size: 11px;
     font-weight: 600;
     padding: 2px 10px;
-    border-radius: 10px;
+    border-radius: 7px;
     border: 1px solid #9BE3E6;
 }
 
@@ -1144,7 +1169,7 @@ QLabel#SuccessIcon {
     font-weight: 700;
     background: transparent;
     border: 1px solid #A7F3D0;
-    border-radius: 8px;
+    border-radius: 7px;
     padding: 1px 6px;
 }
 
@@ -1175,14 +1200,14 @@ QLabel#WarningBadge {
     font-size: 11px;
     font-weight: 600;
     padding: 3px 10px;
-    border-radius: 10px;
+    border-radius: 7px;
     border: 1px solid #FCD34D;
 }
 
 QFrame#WarningBanner {
     background-color: #FEF3C7;
     border: 1px solid #FCD34D;
-    border-radius: 8px;
+    border-radius: 7px;
 }
 
 QLabel#WarningBannerText {
@@ -1274,7 +1299,7 @@ QTextEdit#DocumentNotesEditor,
 QPlainTextEdit#DocumentNotesEditor {
     background-color: #FFFFFF;
     border: 1px solid #D4D4D8;
-    border-radius: 8px;
+    border-radius: 7px;
     padding: 12px;
     font-size: 13px;
     color: #18181B;
@@ -1294,7 +1319,7 @@ QListWidget#TimelineList {
 QListWidget#TimelineList::item {
     background-color: #FFFFFF;
     border: 1px solid #E4E4E7;
-    border-radius: 8px;
+    border-radius: 7px;
     padding: 8px;
     margin-bottom: 6px;
 }
@@ -1323,7 +1348,7 @@ QLabel#AlertBadge {
     font-size: 11px;
     font-weight: 600;
     padding: 3px 10px;
-    border-radius: 10px;
+    border-radius: 7px;
 }
 
 QLabel#AlertBadge[tone="danger"] {
@@ -1377,18 +1402,18 @@ QLabel#CalendarWeekdayHeader {
 
 QFrame#CalendarDayCell {
     background-color: #FFFFFF;
-    border: 1px solid #ECEEF2;
-    border-radius: 10px;
+    border: 1px solid #ECECEC;
+    border-radius: 7px;
     min-height: 132px;
 }
 
 QFrame#CalendarDayCell[outsideMonth="true"] {
-    background-color: #F8F9FB;
-    border-color: #F1F2F4;
+    background-color: #FBFBFC;
+    border-color: #F1F1F1;
 }
 
 QFrame#CalendarDayCell[today="true"] {
-    background-color: #F8FBFF;
+    background-color: #EFFCFC;
     border: 1px solid #9BE3E6;
 }
 
@@ -1402,7 +1427,7 @@ QLabel#CalendarDayNumber {
 QLabel#CalendarDayNumber[today="true"] {
     color: #FFFFFF;
     background-color: #0EA5AC;
-    border-radius: 10px;
+    border-radius: 7px;
     padding: 1px 7px;
 }
 
@@ -1416,9 +1441,9 @@ QLabel#CalendarDayCount {
 }
 
 QFrame#CalendarAppointmentChip {
-    background-color: #FCFCFD;
-    border: 1px solid #E5E7EB;
-    border-radius: 8px;
+    background-color: #FBFBFC;
+    border: 1px solid #ECECEC;
+    border-radius: 7px;
 }
 
 QFrame#CalendarAppointmentChip:hover {
@@ -1427,9 +1452,9 @@ QFrame#CalendarAppointmentChip:hover {
 }
 
 QFrame#CalendarTaskChip {
-    background-color: #FCFCFD;
+    background-color: #FBFBFC;
     border: 1px solid #D6F2EE;
-    border-radius: 8px;
+    border-radius: 7px;
 }
 
 QFrame#CalendarTaskChip[done="true"] {
@@ -1458,7 +1483,7 @@ QFrame#CalendarTypeBar[tone="group-task"] {
 
 QLabel#CalendarTypeBadge {
     color: #FFFFFF;
-    border-radius: 8px;
+    border-radius: 7px;
     padding: 3px 10px;
     font-size: 11px;
     font-weight: 700;
@@ -1532,7 +1557,7 @@ QLabel#CalendarHistoryDateFilter {
     background-color: #EFFCFC;
     color: #0F5F64;
     border: 1px solid #9BE3E6;
-    border-radius: 10px;
+    border-radius: 7px;
     padding: 3px 10px;
     font-size: 11px;
     font-weight: 700;
@@ -1619,31 +1644,34 @@ QLabel#OfficeWorkSubtitle {
 
 QFrame#OfficeWorkTopTabStrip {
     background-color: #FFFFFF;
-    border: none;
+    border-bottom: 1px solid #D9D9D9;
+    min-height: 30px;
+    max-height: 30px;
 }
 
 QPushButton#OfficeWorkTopTab {
     background-color: transparent;
-    color: #52525B;
+    color: #707070;
     border: none;
-    border-bottom: 2px solid transparent;
+    border-bottom: 1px solid transparent;
     border-radius: 0px;
-    padding: 0px 2px 7px 2px;
-    margin-right: 18px;
-    font-size: 13px;
-    font-weight: 600;
-    min-height: 28px;
+    padding: 0px 9px 7px 9px;
+    margin: 0px;
+    font-size: 12px;
+    font-weight: 400;
+    min-height: 30px;
+    max-height: 30px;
 }
 
 QPushButton#OfficeWorkTopTab:hover {
-    color: #18181B;
-    border-bottom-color: #DADADF;
+    color: #242424;
+    border-bottom-color: #D9D9D9;
 }
 
 QPushButton#OfficeWorkTopTab:checked,
 QPushButton#OfficeWorkTopTab[active="true"] {
-    color: #18181B;
-    border-bottom-color: #18181B;
+    color: #242424;
+    border-bottom-color: #242424;
 }
 
 QFrame#OfficeWorkWorkspace {
@@ -1709,7 +1737,7 @@ QLabel#OfficeWorkSectionCount {
     color: #52525B;
     background-color: #F4F4F5;
     border: 1px solid #E4E4E7;
-    border-radius: 8px;
+    border-radius: 7px;
     padding: 1px 7px;
     font-size: 11px;
     font-weight: 700;
@@ -1771,7 +1799,7 @@ QLabel#CalendarDueText[tone="success"] {
 QLabel#CalendarSectionCount {
     background-color: #FFFFFF;
     border: 1px solid #E4E4E7;
-    border-radius: 10px;
+    border-radius: 7px;
     padding: 2px 8px;
     font-size: 11px;
     font-weight: 700;
@@ -1781,7 +1809,7 @@ QFrame#CalendarDayCard,
 QWidget#CalendarDayCard {
     background-color: #FFFFFF;
     border: 1px solid #E4E4E7;
-    border-radius: 8px;
+    border-radius: 7px;
 }
 
 QFrame#CalendarDayHeader {
@@ -2015,7 +2043,7 @@ QPushButton[text="Skip (no OCR data)"]:hover {
 QListWidget {
     background-color: #FFFFFF;
     border: 1px solid #E4E4E7;
-    border-radius: 8px;
+    border-radius: 7px;
     outline: 0;
     padding: 2px;
 }
@@ -2044,7 +2072,7 @@ QListWidget::item:selected {
 
 QTabWidget::pane {
     border: 1px solid #E4E4E7;
-    border-radius: 8px;
+    border-radius: 7px;
     background-color: #FFFFFF;
     top: -1px;
 }
@@ -2187,21 +2215,21 @@ QWidget#SettingsTabPage QComboBox:focus,
 QWidget#SettingsTabPage QDateEdit:focus,
 QWidget#SettingsTabPage QTimeEdit:focus,
 QWidget#SettingsTabPage QSpinBox:focus {
-    border: 1px solid #0F6CBD;
+    border: 1px solid #0EA5AC;
 }
 
 QPushButton#SettingsHelpButton {
     background-color: #FFFFFF;
-    color: #0F6CBD;
+    color: #0F5F64;
     border: 1px solid #D1D1D1;
-    border-radius: 12px;
+    border-radius: 7px;
     font-weight: 700;
     padding: 0px;
 }
 
 QPushButton#SettingsHelpButton:hover {
-    background-color: #EBF3FC;
-    border-color: #0F6CBD;
+    background-color: #EFFCFC;
+    border-color: #0EA5AC;
 }
 
 
@@ -2330,7 +2358,7 @@ QCalendarWidget {
     background-color: #FFFFFF;
     color: #18181B;
     border: 1px solid #D4D4D8;
-    border-radius: 8px;
+    border-radius: 7px;
 }
 
 QCalendarWidget QWidget {
@@ -2493,7 +2521,7 @@ QSlider::handle:horizontal {
     width: 16px;
     height: 16px;
     margin: -6px 0;
-    border-radius: 8px;
+    border-radius: 7px;
 }
 
 QSlider::sub-page:horizontal {
@@ -2509,7 +2537,7 @@ QSlider::sub-page:horizontal {
 QMessageBox,
 QMessageBox#AppMessageBox {
     background-color: #FFFFFF;
-    border-radius: 12px;
+    border-radius: 7px;
 }
 
 QMessageBox QLabel,
@@ -2657,7 +2685,7 @@ QWidget#UploadWorkspaceSurface QLabel#UploadZoomBadge,
 QDialog#UploadWorkspaceSurface QLabel#UploadZoomBadge {
     background-color: #F4F4F5;
     border: 1px solid #E4E4E7;
-    border-radius: 10px;
+    border-radius: 7px;
     color: #52525B;
     font-size: 11px;
     font-weight: 700;
@@ -3242,7 +3270,7 @@ QLabel#CalendarCountLabel {
     color: #52525B;
     background-color: #F4F4F5;
     border: 1px solid #E4E4E7;
-    border-radius: 8px;
+    border-radius: 7px;
     padding: 3px 9px;
     font-size: 11px;
     font-weight: 700;
@@ -3256,32 +3284,36 @@ QWidget#CalendarPage QWidget#PageSurface {
 
 QFrame#CalendarTopTabs {
     background-color: #FFFFFF;
-    border: none;
+    border-bottom: 1px solid #D9D9D9;
+    min-height: 30px;
+    max-height: 30px;
 }
 
 QPushButton#CalendarTabButton {
     background-color: transparent;
-    color: #52525B;
+    color: #707070;
     border: none;
-    border-bottom: 2px solid transparent;
+    border-bottom: 1px solid transparent;
     border-radius: 0px;
-    padding: 0px 2px 7px 2px;
-    margin-right: 18px;
-    font-size: 13px;
-    font-weight: 600;
+    padding: 0px 9px 7px 9px;
+    margin: 0px;
+    font-size: 12px;
+    font-weight: 400;
+    min-height: 30px;
+    max-height: 30px;
 }
 
 QPushButton#CalendarTabButton:hover {
     background-color: transparent;
-    color: #18181B;
-    border-bottom-color: #DADADF;
+    color: #242424;
+    border-bottom-color: #D9D9D9;
 }
 
 QPushButton#CalendarTabButton:checked,
 QPushButton#CalendarTabButton[active="true"] {
     background-color: transparent;
-    color: #18181B;
-    border-bottom-color: #18181B;
+    color: #242424;
+    border-bottom-color: #242424;
 }
 
 QPushButton#CalendarModeButton {
@@ -3319,7 +3351,7 @@ QFrame#CalendarGridCard,
 QWidget#CalendarGridCard {
     background-color: #FBFBFC;
     border: 1px solid #ECECEC;
-    border-radius: 8px;
+    border-radius: 7px;
 }
 
 /* ==========================================
@@ -3387,13 +3419,13 @@ QSplitter#WorkspaceBuilderSplitter {
 QFrame#WorkspaceLeftRail,
 QFrame#WorkspaceInspector,
 QFrame#WorkspaceToolbar {
-    background-color: #FFFFFF;
+    background-color: #FBFBFC;
     border: 1px solid #ECECEC;
     border-radius: 7px;
 }
 
 QFrame#WorkspaceCanvasCard {
-    background-color: #FFFFFF;
+    background-color: #FBFBFC;
     border: none;
 }
 
@@ -3414,7 +3446,7 @@ QLabel#WorkspaceShortcutHint {
 QLabel#WorkspaceSelectionMetrics {
     background-color: #18181B;
     color: #FFFFFF;
-    border-radius: 8px;
+    border-radius: 7px;
     padding: 4px 9px;
     font-size: 11px;
     font-weight: 700;
@@ -3456,7 +3488,7 @@ QLabel#WorkspaceTileSizeChip {
     background-color: #F4F4F5;
     color: #52525B;
     border: 1px solid #E4E4E7;
-    border-radius: 8px;
+    border-radius: 7px;
     padding: 2px 8px;
     font-weight: 700;
 }

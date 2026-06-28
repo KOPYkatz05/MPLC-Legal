@@ -79,14 +79,35 @@ class ReportsPage(QWidget):
         frame.setAttribute(Qt.WA_StyledBackground, True)
 
         layout = QVBoxLayout()
-        layout.setContentsMargins(12, 10, 16, 10)
-        layout.setSpacing(2)
+        layout.setContentsMargins(12, 10, 16, 12)
+        layout.setSpacing(8)
         frame.setLayout(layout)
 
-        title = QLabel("Reports & Statistics")
+        pill_strip = QFrame()
+        pill_strip.setObjectName("ReportsNavigationPillList")
+        pill_layout = QHBoxLayout()
+        pill_layout.setContentsMargins(0, 0, 0, 0)
+        pill_layout.setSpacing(8)
+        pill_strip.setLayout(pill_layout)
+
+        for label, active in (
+            ("Mission", True),
+            ("Process", False),
+            ("Documents", False),
+        ):
+            pill = QLabel(label)
+            pill.setObjectName("ReportsNavigationPill")
+            pill.setProperty("active", active)
+            pill.setAlignment(Qt.AlignCenter)
+            pill_layout.addWidget(pill)
+
+        pill_layout.addStretch()
+
+        title = QLabel("Analytics")
         title.setObjectName("ReportsTitle")
         subtitle = QLabel("Operational metrics for workflow health.")
         subtitle.setObjectName("ReportsSubtitle")
+        layout.addWidget(pill_strip)
         layout.addWidget(title)
         layout.addWidget(subtitle)
         return frame

@@ -219,8 +219,8 @@ class DashboardPage(QWidget):
         header_bar = QFrame()
         header_bar.setObjectName("DashboardTopBar")
         header_layout = QVBoxLayout()
-        header_layout.setContentsMargins(12, 10, 16, 10)
-        header_layout.setSpacing(10)
+        header_layout.setContentsMargins(12, 10, 16, 12)
+        header_layout.setSpacing(8)
         header_bar.setLayout(header_layout)
 
         header_layout.addWidget(self._build_dashboard_tabs())
@@ -298,7 +298,7 @@ class DashboardPage(QWidget):
 
         layout = QHBoxLayout()
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(18)
+        layout.setSpacing(0)
         strip.setLayout(layout)
 
         for text, active in [
@@ -309,6 +309,8 @@ class DashboardPage(QWidget):
             label = QLabel(text)
             label.setObjectName("DashboardTopTab")
             label.setProperty("active", active)
+            label.setFixedHeight(30)
+            label.setAlignment(Qt.AlignCenter)
             layout.addWidget(label)
 
         layout.addStretch()

@@ -433,8 +433,8 @@ class CalendarPage(QWidget):
         frame.setAttribute(Qt.WA_StyledBackground, True)
 
         layout = QVBoxLayout()
-        layout.setContentsMargins(12, 10, 16, 10)
-        layout.setSpacing(10)
+        layout.setContentsMargins(12, 10, 16, 12)
+        layout.setSpacing(8)
         frame.setLayout(layout)
 
         title_row = QHBoxLayout()
@@ -470,7 +470,7 @@ class CalendarPage(QWidget):
 
         layout = QHBoxLayout()
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(8)
+        layout.setSpacing(0)
         self.tab_bar.setLayout(layout)
 
         self.tab_button_group.setExclusive(True)
@@ -482,7 +482,7 @@ class CalendarPage(QWidget):
             button = QPushButton(title)
             button.setObjectName("CalendarTabButton")
             button.setCheckable(True)
-            button.setFixedHeight(35)
+            button.setFixedHeight(30)
             button.clicked.connect(
                 lambda checked=False, tab_key=key:
                 self._select_tab(tab_key)

@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 
-from PySide6.QtCore import QSize, Qt, Signal
-from PySide6.QtGui import QColor, QPalette
+from PySide6.QtCore import QPointF, QRectF, QSize, Qt, Signal
+from PySide6.QtGui import QColor, QIcon, QPainter, QPalette, QPen, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QButtonGroup,
@@ -218,7 +218,10 @@ class AppShell(QWidget):
         self.menu_button.setObjectName("SidebarMenuButton")
         self.menu_button.setFixedSize(55, 55)
         self.menu_button.setToolTip(app_title)
-        self.menu_button.setText("Menu")
+        self.menu_button.setAccessibleName(app_title)
+        self.menu_button.setToolButtonStyle(Qt.ToolButtonIconOnly)
+        self.menu_button.setIcon(self._line_icon("menu"))
+        self.menu_button.setIconSize(QSize(20, 20))
         self.menu_button.setAutoRaise(True)
         self.sidebar_layout.addWidget(self.menu_button)
         self.sidebar_layout.addWidget(self._nav_separator())
@@ -244,6 +247,8 @@ class AppShell(QWidget):
         button.setObjectName("SidebarNavButton")
         button.setFixedSize(55, 55)
         button.setToolTip(title)
+        button.setAccessibleName(title)
+        button.setToolButtonStyle(Qt.ToolButtonIconOnly)
         button.setAutoRaise(True)
         button.setText(self._fallback_icon_text(key, title))
         icon = self._nav_icon(key)
@@ -283,7 +288,85 @@ class AppShell(QWidget):
                     continue
             if icon is not None:
                 return icon
-        return None
+        return self._line_icon(key)
+
+    @staticmethod
+    def _line_icon(key):
+        icon_key = "list" if key == "office_work" else key
+        pixmap = QPixmap(24, 24)
+        pixmap.fill(Qt.transparent)
+
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        pen = QPen(QColor("#242424"), 1.8)
+        pen.setCapStyle(Qt.RoundCap)
+        pen.setJoinStyle(Qt.RoundJoin)
+        painter.setPen(pen)
+        painter.setBrush(Qt.NoBrush)
+
+        if icon_key == "menu":
+            for y in (7, 12, 17):
+                painter.drawLine(QPointF(7, y), QPointF(17, y))
+        elif icon_key == "dashboard":
+            for rect in (
+                QRectF(6, 6, 4.8, 4.8),
+                QRectF(13.2, 6, 4.8, 4.8),
+                QRectF(6, 13.2, 4.8, 4.8),
+                QRectF(13.2, 13.2, 4.8, 4.8),
+            ):
+                painter.drawRoundedRect(rect, 1.2, 1.2)
+        elif icon_key == "missionaries":
+            painter.drawEllipse(QPointF(10, 8), 2.4, 2.4)
+            painter.drawEllipse(QPointF(16, 9), 2.0, 2.0)
+            painter.drawArc(QRectF(6.5, 12, 7, 6), 20 * 16, 140 * 16)
+            painter.drawArc(QRectF(12.5, 13, 6, 5), 20 * 16, 140 * 16)
+        elif icon_key == "list":
+            for y in (7, 12, 17):
+                painter.drawPoint(QPointF(6.5, y))
+                painter.drawLine(QPointF(10, y), QPointF(18, y))
+        elif icon_key == "appointments":
+            painter.drawRoundedRect(QRectF(6, 7, 12, 11), 1.6, 1.6)
+            painter.drawLine(QPointF(6, 10), QPointF(18, 10))
+            painter.drawLine(QPointF(9, 5.5), QPointF(9, 8))
+            painter.drawLine(QPointF(15, 5.5), QPointF(15, 8))
+        elif icon_key == "workspaces":
+            painter.drawPolygon(
+                [
+                    QPointF(12, 5.5),
+                    QPointF(18, 9),
+                    QPointF(18, 15.5),
+                    QPointF(12, 19),
+                    QPointF(6, 15.5),
+                    QPointF(6, 9),
+                ]
+            )
+            painter.drawLine(QPointF(12, 12), QPointF(12, 19))
+            painter.drawLine(QPointF(6.5, 9.2), QPointF(12, 12))
+            painter.drawLine(QPointF(17.5, 9.2), QPointF(12, 12))
+        elif icon_key == "reports":
+            painter.drawLine(QPointF(7, 18), QPointF(17, 18))
+            painter.drawLine(QPointF(8, 16), QPointF(8, 12))
+            painter.drawLine(QPointF(12, 16), QPointF(12, 7))
+            painter.drawLine(QPointF(16, 16), QPointF(16, 10))
+        elif icon_key == "trash":
+            painter.drawLine(QPointF(8, 8), QPointF(16, 8))
+            painter.drawLine(QPointF(10, 6), QPointF(14, 6))
+            painter.drawRoundedRect(QRectF(8.5, 9, 7, 9), 1.4, 1.4)
+        elif icon_key == "settings":
+            painter.drawEllipse(QPointF(12, 12), 5.2, 5.2)
+            painter.drawEllipse(QPointF(12, 12), 1.8, 1.8)
+            for x1, y1, x2, y2 in (
+                (12, 5, 12, 7),
+                (12, 17, 12, 19),
+                (5, 12, 7, 12),
+                (17, 12, 19, 12),
+            ):
+                painter.drawLine(QPointF(x1, y1), QPointF(x2, y2))
+        else:
+            painter.drawEllipse(QPointF(12, 12), 5.5, 5.5)
+
+        painter.end()
+        return QIcon(pixmap)
 
     @staticmethod
     def _fallback_icon_text(key, title):

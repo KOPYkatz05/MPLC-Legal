@@ -119,8 +119,8 @@ class OfficeWorkPage(QWidget):
         frame.setObjectName("OfficeWorkTopBar")
         frame.setAttribute(Qt.WA_StyledBackground, True)
         layout = QVBoxLayout()
-        layout.setContentsMargins(12, 10, 16, 10)
-        layout.setSpacing(10)
+        layout.setContentsMargins(12, 10, 16, 12)
+        layout.setSpacing(8)
         frame.setLayout(layout)
 
         top_row = QHBoxLayout()
@@ -161,7 +161,7 @@ class OfficeWorkPage(QWidget):
         self.tab_bar.setAttribute(Qt.WA_StyledBackground, True)
         layout = QHBoxLayout()
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(8)
+        layout.setSpacing(0)
         self.tab_bar.setLayout(layout)
 
         self.tab_control = None
@@ -172,6 +172,7 @@ class OfficeWorkPage(QWidget):
             button = QPushButton(title)
             button.setObjectName("OfficeWorkTopTab")
             button.setCheckable(True)
+            button.setFixedHeight(30)
             button.clicked.connect(
                 lambda checked=False, route_key=key:
                 self._select_tab(route_key)

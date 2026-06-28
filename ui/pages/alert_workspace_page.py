@@ -102,8 +102,8 @@ class AlertWorkspacePage(QWidget):
         top_bar.setAttribute(Qt.WA_StyledBackground, True)
 
         layout = QVBoxLayout()
-        layout.setContentsMargins(12, 10, 16, 10)
-        layout.setSpacing(10)
+        layout.setContentsMargins(12, 10, 16, 12)
+        layout.setSpacing(8)
         top_bar.setLayout(layout)
 
         tabs = QFrame()
@@ -111,7 +111,7 @@ class AlertWorkspacePage(QWidget):
         tabs.setAttribute(Qt.WA_StyledBackground, True)
         tabs_layout = QHBoxLayout()
         tabs_layout.setContentsMargins(0, 0, 0, 0)
-        tabs_layout.setSpacing(18)
+        tabs_layout.setSpacing(0)
         tabs.setLayout(tabs_layout)
 
         for text, active in [
@@ -122,6 +122,8 @@ class AlertWorkspacePage(QWidget):
             label = QLabel(text)
             label.setObjectName("AlertWorkspaceTopTab")
             label.setProperty("active", active)
+            label.setFixedHeight(30)
+            label.setAlignment(Qt.AlignCenter)
             tabs_layout.addWidget(label)
         tabs_layout.addStretch()
         layout.addWidget(tabs)

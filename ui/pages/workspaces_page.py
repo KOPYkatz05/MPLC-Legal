@@ -298,7 +298,7 @@ class WorkspacesPage(QWidget):
         top.setAttribute(Qt.WA_StyledBackground, True)
         top_layout = QHBoxLayout()
         top_layout.setContentsMargins(0, 0, 0, 0)
-        top_layout.setSpacing(12)
+        top_layout.setSpacing(8)
         top.setLayout(top_layout)
         title_stack = QVBoxLayout()
         title_stack.setContentsMargins(0, 0, 0, 0)
@@ -312,14 +312,18 @@ class WorkspacesPage(QWidget):
         top_layout.addLayout(title_stack, stretch=1)
 
         self.workspace_name_input = create_line_edit("Workspace name", "WorkspaceNameInput")
+        self.workspace_name_input.setFixedHeight(30)
+        self.workspace_name_input.setMaximumWidth(280)
         self.workspace_name_input.textChanged.connect(self._update_workspace_name)
         top_layout.addWidget(self.workspace_name_input)
         self.workspace_size_combo = create_combo_box()
+        self.workspace_size_combo.setFixedHeight(30)
         for label, value in (("Medium", "medium"), ("Large", "large"), ("Wide", "wide")):
             self.workspace_size_combo.addItem(label, value)
         self.workspace_size_combo.currentIndexChanged.connect(self._update_workspace_size)
         top_layout.addWidget(self.workspace_size_combo)
         self.workspace_save_btn = create_button(tr("workspace_save"), "primary")
+        self.workspace_save_btn.setFixedHeight(30)
         self.workspace_save_btn.clicked.connect(self._save_current_workspace)
         top_layout.addWidget(self.workspace_save_btn)
         root.addWidget(top)
@@ -383,8 +387,8 @@ class WorkspacesPage(QWidget):
         toolbar_frame.setObjectName("WorkspaceToolbar")
         toolbar_frame.setAttribute(Qt.WA_StyledBackground, True)
         toolbar = QHBoxLayout()
-        toolbar.setContentsMargins(10, 8, 10, 8)
-        toolbar.setSpacing(6)
+        toolbar.setContentsMargins(10, 7, 10, 7)
+        toolbar.setSpacing(4)
         toolbar_frame.setLayout(toolbar)
         self.undo_btn = create_button("Undo", "secondary")
         self.redo_btn = create_button("Redo", "secondary")
@@ -396,6 +400,7 @@ class WorkspacesPage(QWidget):
         self.clear_canvas_btn = create_button("Clear", "danger")
         self.add_selected_btn = create_button(tr("workspace_add_block"), "secondary")
         self.block_add_combo = create_combo_box()
+        self.block_add_combo.setFixedHeight(30)
         for block_type in BLOCK_LABELS:
             self.block_add_combo.addItem(self._block_label(block_type), block_type)
         self.undo_btn.clicked.connect(self._undo)
@@ -407,6 +412,18 @@ class WorkspacesPage(QWidget):
         self.paste_btn.clicked.connect(self._paste_block)
         self.clear_canvas_btn.clicked.connect(self._clear_canvas)
         self.add_selected_btn.clicked.connect(self._add_workspace_block)
+        for button in (
+            self.undo_btn,
+            self.redo_btn,
+            self.zoom_out_btn,
+            self.zoom_reset_btn,
+            self.zoom_in_btn,
+            self.copy_btn,
+            self.paste_btn,
+            self.clear_canvas_btn,
+            self.add_selected_btn,
+        ):
+            button.setFixedHeight(30)
         toolbar.addWidget(self.undo_btn)
         toolbar.addWidget(self.redo_btn)
         toolbar.addWidget(self.zoom_out_btn)
