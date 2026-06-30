@@ -454,6 +454,23 @@ QWidget#MissionaryDetailPage QFrame[layout_editing="true"]:hover {
     background-color: #F5FBFC;
 }
 
+QWidget#MissionaryDetailPage QFrame#MissionaryDetailLayoutEditBanner {
+    background-color: #EEF9FA;
+    border-top: 1px solid #BDE7EA;
+    border-bottom: 1px solid #BDE7EA;
+}
+
+QWidget#MissionaryDetailPage QLabel#MissionaryDetailLayoutEditBannerTitle {
+    color: #0F5F64;
+    font-size: 13px;
+    font-weight: 700;
+}
+
+QWidget#MissionaryDetailPage QLabel#MissionaryDetailLayoutEditBannerHint {
+    color: #3F5F63;
+    font-size: 12px;
+}
+
 QScrollArea {
     border: none;
     background-color: transparent;

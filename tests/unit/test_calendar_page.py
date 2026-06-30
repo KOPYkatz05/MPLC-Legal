@@ -17,6 +17,7 @@ from ui.pages.calendar_page import (
     visible_range_for_mode,
     week_start_for,
 )
+from utils.i18n import get_i18n
 
 
 def _appointment(
@@ -310,6 +311,33 @@ def test_calendar_shows_tasks_planned_on_work_date(monkeypatch, qapp):
         page.close()
 
 
+def test_calendar_task_chip_uses_active_language(monkeypatch, qapp):
+    i18n = get_i18n()
+    original_language = i18n.get_language()
+    i18n.set_language("es")
+    task = _task(
+        due_date=date(2026, 6, 20),
+        work_date=date(2026, 6, 10),
+    )
+    page = _build_page(monkeypatch, qapp, [], tasks=[task])
+
+    try:
+        page._anchor_date = date(2026, 6, 9)
+        page._render_calendar()
+
+        task_button = page.findChild(
+            calendar_page.QWidget,
+            "CalendarTaskChipButton",
+        )
+
+        assert task_button is not None
+        assert task_button.text().startswith("Tarea - ")
+        assert task_button.toolTip().startswith("Tarea: ")
+    finally:
+        page.close()
+        i18n.set_language(original_language)
+
+
 def test_calendar_drop_updates_work_date_only(monkeypatch, qapp):
     page = _build_page(monkeypatch, qapp, [], tasks=[_task()])
     calls = []
@@ -503,6 +531,108 @@ def test_empty_day_dialog_shows_no_appointments(monkeypatch, qapp):
             dialog.close()
     finally:
         page.close()
+
+
+def test_calendar_chrome_uses_active_language(monkeypatch, qapp):
+    i18n = get_i18n()
+    original_language = i18n.get_language()
+    i18n.set_language("es")
+
+    page = _build_page(monkeypatch, qapp, [_appointment()])
+
+    try:
+        labels = {
+            label.text()
+            for label in page.findChildren(calendar_page.QLabel)
+            if label.text()
+        }
+        buttons = {
+            button.text()
+            for button in page.findChildren(calendar_page.QPushButton)
+            if button.text()
+        }
+
+        assert "Calendario de citas" in labels
+        assert "1 citas programadas" in labels
+        assert "Calendario" in buttons
+        assert "Historial" in buttons
+        assert "Hoy" in buttons
+        assert "Agregar tarea" in buttons
+        assert (
+            page.calendar_search_edit.placeholderText()
+            == "Buscar calendario"
+        )
+        assert (
+            page.history_search_edit.placeholderText()
+            == "Buscar misionero"
+        )
+        assert page.calendar_type_combo.itemText(0) == "Todos los tipos"
+        assert page.calendar_type_combo.itemData(0) == "All Types"
+    finally:
+        page.close()
+        i18n.set_language(original_language)
+
+
+def test_day_summary_dialog_uses_active_language(monkeypatch, qapp):
+    i18n = get_i18n()
+    original_language = i18n.get_language()
+    i18n.set_language("es")
+
+    page = _build_page(monkeypatch, qapp, [])
+
+    try:
+        dialog = calendar_page.CalendarDaySummaryDialog(
+            page,
+            date(2026, 6, 12),
+            [],
+            [],
+        )
+        try:
+            labels = {
+                label.text()
+                for label in dialog.findChildren(calendar_page.QLabel)
+                if label.text()
+            }
+            buttons = {
+                button.text()
+                for button in dialog.findChildren(calendar_page.QPushButton)
+                if button.text()
+            }
+
+            assert "Citas y tareas planificadas para este dia." in labels
+            assert "Citas" in labels
+            assert "No hay citas" in labels
+            assert "No hay tareas planificadas." in labels
+            assert "Cerrar" in buttons
+            assert "Agregar tarea" in buttons
+        finally:
+            dialog.close()
+    finally:
+        page.close()
+        i18n.set_language(original_language)
+
+
+def test_calendar_history_empty_state_uses_active_language(monkeypatch, qapp):
+    i18n = get_i18n()
+    original_language = i18n.get_language()
+    i18n.set_language("es")
+
+    page = _build_page(monkeypatch, qapp, [])
+
+    try:
+        page._select_tab(TAB_HISTORY)
+
+        labels = {
+            label.text()
+            for label in page.findChildren(calendar_page.QLabel)
+            if label.text()
+        }
+
+        assert "Todavia no hay historial de citas." in labels
+        assert "Ajuste los filtros o agregue fechas de citas." in labels
+    finally:
+        page.close()
+        i18n.set_language(original_language)
 
 
 def test_appointment_chip_opens_missionary_detail(monkeypatch, qapp):

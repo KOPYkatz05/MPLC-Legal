@@ -1,6 +1,15 @@
 from copy import deepcopy
 from uuid import uuid4
-from PySide6.QtCore import QMimeData, QPoint, QRect, Qt, Signal
+from PySide6.QtCore import (
+    QEasingCurve,
+    QMimeData,
+    QPoint,
+    QParallelAnimationGroup,
+    QPropertyAnimation,
+    QRect,
+    Qt,
+    Signal,
+)
 from PySide6.QtGui import QColor, QDrag, QPainter, QPen, QBrush
 from PySide6.QtWidgets import (
     QFrame,
@@ -39,6 +48,9 @@ SELECTION_MUTED = "#A1A1AA"
 DARK_CHIP = "#18181B"
 WHITE = "#FFFFFF"
 HIDDEN_OVERLAY = QColor(251, 251, 252, 180)
+WORKSPACE_PREVIEW_ANIMATION_MS = 110
+WORKSPACE_COMMIT_ANIMATION_MS = 170
+WORKSPACE_REBOUND_ANIMATION_MS = 240
 
 
 def _event_position(event):
@@ -72,7 +84,7 @@ class WorkspacePaletteButton(QFrame):
         title.setObjectName("StrongText")
         title.setWordWrap(True)
         title.setAttribute(Qt.WA_TransparentForMouseEvents, True)
-        hint = QLabel("Click to add or drag to canvas", self)
+        hint = QLabel(tr("workspace_palette_hint"), self)
         hint.setObjectName("MutedText")
         hint.setAttribute(Qt.WA_TransparentForMouseEvents, True)
         layout.addWidget(title)
@@ -298,6 +310,7 @@ class WorkspaceLayoutTile(QFrame):
         self._start_group_layouts = {}
         self._mode = None
         self._hover_handle = None
+        self._drag_moved = False
         self.setObjectName("WorkspaceLayoutTile")
         self.setMouseTracking(True)
         self.setCursor(Qt.OpenHandCursor)
@@ -314,19 +327,39 @@ class WorkspaceLayoutTile(QFrame):
         title.setWordWrap(True)
         title.setAttribute(Qt.WA_TransparentForMouseEvents, True)
         top.addWidget(title, stretch=1)
-        for text, callback in (
-            ("Edit", lambda: editor.request_edit(block.get("id"))),
-            ("Copy", lambda: editor.duplicate_block(block.get("id"))),
-            ("Front", lambda: editor.move_block_layer(block.get("id"), 1)),
-            ("Back", lambda: editor.move_block_layer(block.get("id"), -1)),
-            ("Del", lambda: editor.delete_block(block.get("id"))),
+        for text, action_key, callback in (
+            (
+                tr("workspace_edit"),
+                "edit",
+                lambda: editor.request_edit(block.get("id")),
+            ),
+            (
+                tr("workspace_copy"),
+                "copy",
+                lambda: editor.duplicate_block(block.get("id")),
+            ),
+            (
+                tr("workspace_to_front_short"),
+                "front",
+                lambda: editor.move_block_layer(block.get("id"), 1),
+            ),
+            (
+                tr("workspace_to_back_short"),
+                "back",
+                lambda: editor.move_block_layer(block.get("id"), -1),
+            ),
+            (
+                tr("workspace_delete_short"),
+                "delete",
+                lambda: editor.delete_block(block.get("id")),
+            ),
         ):
             button = QPushButton(text, self)
             button.setObjectName("WorkspaceTileEditButton")
             button.setFixedHeight(24)
             button.clicked.connect(callback)
             top.addWidget(button)
-            is_structure_action = text in {"Copy", "Del"}
+            is_structure_action = action_key in {"copy", "delete"}
             button.setVisible(
                 block.get("id") == editor.selected_block_id
                 and (
@@ -372,7 +405,10 @@ class WorkspaceLayoutTile(QFrame):
     def preview_lines(self):
         block_type = self.block.get("type")
         if self.block.get("visible") is False:
-            return [("Hidden on runtime workspace", "strong"), ("Use Layers to show it again", "line")]
+            return [
+                (tr("workspace_hidden_runtime"), "strong"),
+                (tr("workspace_hidden_show_again"), "line"),
+            ]
         if block_type == "personal_info":
             fields = self.block.get("fields") or ["full_name", "nationality", "passport_number"]
             return [(field.replace("_", " ").title(), "line") for field in fields[:4]]
@@ -459,9 +495,9 @@ class WorkspaceLayoutTile(QFrame):
         if locked or hidden:
             badges = []
             if locked:
-                badges.append("Locked")
+                badges.append(tr("workspace_locked_badge"))
             if hidden:
-                badges.append("Hidden")
+                badges.append(tr("workspace_hidden_badge"))
             badge_text = " / ".join(badges)
             badge_rect = QRect(self.width() - 112, self.height() - 30, 100, 22)
             painter.setPen(Qt.NoPen)
@@ -501,7 +537,9 @@ class WorkspaceLayoutTile(QFrame):
             additive = bool(event.modifiers() & Qt.ControlModifier)
             self.editor.select_block_for_drag(block_id, additive=additive)
             if self.block.get("locked"):
-                self.editor._set_interaction_state(verb="Locked block")
+                self.editor._set_interaction_state(
+                    verb=tr("workspace_locked_block")
+                )
                 event.accept()
                 return
             self._drag_start = _event_position(event)
@@ -513,6 +551,7 @@ class WorkspaceLayoutTile(QFrame):
                 if selected.get("id") and not selected.get("locked")
             }
             self._mode = self.resize_handle(self._drag_start) or "move"
+            self._drag_moved = False
             self.editor.begin_interaction()
             self.setCursor(self.cursor_for_handle(self._mode) if self._mode != "move" else Qt.ClosedHandCursor)
             event.accept()
@@ -528,6 +567,8 @@ class WorkspaceLayoutTile(QFrame):
             self.setCursor(self.cursor_for_handle(handle))
             return
         delta = _event_global_position(event) - self._drag_start_global
+        if delta.manhattanLength() > 3:
+            self._drag_moved = True
         if self._mode != "move":
             col_delta = round(delta.x() / max(1, self.editor.cell_width()))
             row_delta = round(delta.y() / max(1, self.editor.row_height))
@@ -577,11 +618,15 @@ class WorkspaceLayoutTile(QFrame):
 
     def mouseReleaseEvent(self, event):
         if self._mode:
-            self.editor.commit_interaction()
+            if self._drag_moved:
+                self.editor.commit_interaction()
+            else:
+                self.editor.cancel_interaction()
             self.editor.clear_placement_guide()
             self._mode = None
             self._start_layout = None
             self._start_group_layouts = {}
+            self._drag_moved = False
             self._hover_handle = self.resize_handle(_event_position(event))
             self.setCursor(Qt.OpenHandCursor)
             self.update()
@@ -615,10 +660,13 @@ class WorkspaceLayoutEditor(QWidget):
         self._interaction_snapshot = None
         self._clipboard_block = None
         self._clipboard_blocks = []
+        self._tile_animation_group = None
+        self._tile_animation_duration = WORKSPACE_PREVIEW_ANIMATION_MS
+        self._tile_animation_easing = QEasingCurve.OutCubic
         self.placement_guide_layout = None
         self.placement_guide_status = "clear"
         self.alignment_guides = {"vertical": [], "horizontal": []}
-        self.interaction_hint = "Ready"
+        self.interaction_hint = tr("workspace_ready")
         self.allow_structure_changes = True
 
         root = QVBoxLayout()
@@ -879,8 +927,10 @@ class WorkspaceLayoutEditor(QWidget):
         block_id=None,
         adjusted=False,
         snapped=False,
-        verb="Ready",
+        verb=None,
     ):
+        if verb is None:
+            verb = tr("workspace_ready")
         self.alignment_guides = (
             self.calculate_alignment_guides(layout, block_id=block_id)
             if layout
@@ -936,7 +986,7 @@ class WorkspaceLayoutEditor(QWidget):
             return
         self.placement_guide_layout = None
         self.placement_guide_status = "clear"
-        self._set_interaction_state(verb="Ready")
+        self._set_interaction_state(verb=tr("workspace_ready"))
         self.surface.update()
 
     def _structure_changes_blocked(self):
@@ -978,7 +1028,10 @@ class WorkspaceLayoutEditor(QWidget):
             duplicate = deepcopy(source)
             fresh = new_block(duplicate.get("type", "personal_info"))
             duplicate["id"] = fresh["id"]
-            duplicate["title"] = f"{duplicate.get('title', tr('workspace_title'))} Copy"
+            duplicate["title"] = tr(
+                "workspace_copy_name",
+                title=duplicate.get("title", tr("workspace_title")),
+            )
             group_id = duplicate.get("group_id")
             if group_id:
                 group_map.setdefault(group_id, uuid4().hex)
@@ -1054,7 +1107,7 @@ class WorkspaceLayoutEditor(QWidget):
             return
         editable_ids = set(self.unlocked_selected_ids())
         if not editable_ids:
-            self._set_interaction_state(verb="Locked block")
+            self._set_interaction_state(verb=tr("workspace_locked_block"))
             return
         self._push_undo()
         updated = []
@@ -1124,7 +1177,7 @@ class WorkspaceLayoutEditor(QWidget):
             return
         editable_ids = set(self.unlocked_selected_ids())
         if not editable_ids:
-            self._set_interaction_state(verb="Locked block")
+            self._set_interaction_state(verb=tr("workspace_locked_block"))
             return
         self._push_undo()
         updated = []
@@ -1182,7 +1235,10 @@ class WorkspaceLayoutEditor(QWidget):
                 block_id=anchor_id,
                 verb=f"Move {len(moved_ids)} blocks",
             )
-        self.refresh_tile_geometries()
+        self.refresh_tile_geometries(
+            duration=WORKSPACE_PREVIEW_ANIMATION_MS,
+            easing=QEasingCurve.OutCubic,
+        )
 
     def delete_block(self, block_id=None):
         target_id = block_id or self.selected_block_id
@@ -1192,7 +1248,7 @@ class WorkspaceLayoutEditor(QWidget):
             self._structure_changes_blocked()
             return
         if self.is_block_locked(target_id):
-            self._set_interaction_state(verb="Locked block")
+            self._set_interaction_state(verb=tr("workspace_locked_block"))
             return
         self._push_undo()
         self.workspace["blocks"] = [
@@ -1230,7 +1286,7 @@ class WorkspaceLayoutEditor(QWidget):
             return
         target_id = block_id or self.selected_block_id
         if self.is_block_locked(target_id):
-            self._set_interaction_state(verb="Locked block")
+            self._set_interaction_state(verb=tr("workspace_locked_block"))
             return
         blocks = self.workspace.get("blocks", []) if self.workspace else []
         index = next((i for i, block in enumerate(blocks) if block.get("id") == target_id), -1)
@@ -1255,7 +1311,7 @@ class WorkspaceLayoutEditor(QWidget):
             if not self.is_block_locked(block_id)
         ]
         if not selected_ids:
-            self._set_interaction_state(verb="Locked block")
+            self._set_interaction_state(verb=tr("workspace_locked_block"))
             return
         selected_set = set(selected_ids)
         blocks = list(self.workspace.get("blocks", []))
@@ -1300,7 +1356,7 @@ class WorkspaceLayoutEditor(QWidget):
         if not block:
             return
         if block.get("locked"):
-            self._set_interaction_state(verb="Locked block")
+            self._set_interaction_state(verb=tr("workspace_locked_block"))
             return
         layout = validate_block_layout(block)
         self.update_selected_layout(
@@ -1316,7 +1372,7 @@ class WorkspaceLayoutEditor(QWidget):
             return
         editable_ids = set(self.unlocked_selected_ids())
         if not editable_ids:
-            self._set_interaction_state(verb="Locked block")
+            self._set_interaction_state(verb=tr("workspace_locked_block"))
             return
         self._push_undo()
         self.workspace["blocks"] = [
@@ -1369,13 +1425,29 @@ class WorkspaceLayoutEditor(QWidget):
             self._interaction_snapshot = None
             self.layoutChanged.emit()
         self._sync_source()
-        self.render()
+        self.refresh_tile_geometries(
+            duration=WORKSPACE_COMMIT_ANIMATION_MS,
+            easing=QEasingCurve.OutCubic,
+        )
+
+    def cancel_interaction(self):
+        if self._interaction_snapshot is None or not self.workspace:
+            return False
+        self.workspace["blocks"] = self._interaction_snapshot
+        self._interaction_snapshot = None
+        self._sync_source()
+        self.clear_placement_guide()
+        self.refresh_tile_geometries(
+            duration=WORKSPACE_REBOUND_ANIMATION_MS,
+            easing=QEasingCurve.OutBack,
+        )
+        return True
 
     def preview_layout(self, block_id, **changes):
         if not self.workspace or not block_id:
             return
         if self.is_block_locked(block_id):
-            self._set_interaction_state(verb="Locked block")
+            self._set_interaction_state(verb=tr("workspace_locked_block"))
             return
         block = self._block(block_id)
         if not block:
@@ -1390,10 +1462,16 @@ class WorkspaceLayoutEditor(QWidget):
             layout,
         )
         self._sync_source()
-        self.refresh_tile_geometries()
+        self.refresh_tile_geometries(
+            duration=WORKSPACE_PREVIEW_ANIMATION_MS,
+            easing=QEasingCurve.OutCubic,
+        )
 
     def keyPressEvent(self, event):
         if event.key() == Qt.Key_Escape:
+            if self.cancel_interaction():
+                event.accept()
+                return
             self.select_block(None)
             return
         if event.key() == Qt.Key_Delete and self.workspace and self.selected_block_id:
@@ -1462,7 +1540,7 @@ class WorkspaceLayoutEditor(QWidget):
         self.placement_guide_layout = None
         self.placement_guide_status = "clear"
         self.alignment_guides = {"vertical": [], "horizontal": []}
-        self.interaction_hint = "Ready"
+        self.interaction_hint = tr("workspace_ready")
         self._undo_stack.clear()
         self._redo_stack.clear()
         self._interaction_snapshot = None
@@ -1569,7 +1647,7 @@ class WorkspaceLayoutEditor(QWidget):
         if not self.workspace or not block_id:
             return
         if self.is_block_locked(block_id):
-            self._set_interaction_state(verb="Locked block")
+            self._set_interaction_state(verb=tr("workspace_locked_block"))
             return
         self._push_undo()
         pos = self.surface.mapFromGlobal(global_pos)
@@ -1595,7 +1673,7 @@ class WorkspaceLayoutEditor(QWidget):
         if not self.workspace or not self.selected_block_id:
             return
         if self.is_block_locked(self.selected_block_id):
-            self._set_interaction_state(verb="Locked block")
+            self._set_interaction_state(verb=tr("workspace_locked_block"))
             return
         block = self._block(self.selected_block_id)
         if not block:
@@ -1654,7 +1732,11 @@ class WorkspaceLayoutEditor(QWidget):
         self.surface.setMinimumHeight(max(560, (max_row + 2) * self.row_height + 56))
         self.surface.update()
 
-    def refresh_tile_geometries(self):
+    def refresh_tile_geometries(
+        self,
+        duration=WORKSPACE_PREVIEW_ANIMATION_MS,
+        easing=QEasingCurve.OutCubic,
+    ):
         """Move existing tiles during pointer interactions without recreating them."""
         if not self.workspace:
             self.surface.update()
@@ -1671,6 +1753,7 @@ class WorkspaceLayoutEditor(QWidget):
             self.render()
             return
         max_row = 0
+        geometry_updates = []
         for block in self.workspace.get("blocks", []):
             block_id = block.get("id")
             layout = validate_block_layout(block)
@@ -1681,10 +1764,54 @@ class WorkspaceLayoutEditor(QWidget):
                 return
             tile.block = block
             tile.setProperty("selected", block_id in self.selected_block_ids)
-            tile.setGeometry(self.layout_to_rect(layout))
+            geometry_updates.append((tile, self.layout_to_rect(layout)))
             tile.update()
+        self._set_tile_geometries(geometry_updates, duration, easing)
         self.surface.setMinimumHeight(max(560, (max_row + 2) * self.row_height + 56))
         self.surface.update()
+
+    def _set_tile_geometries(self, updates, duration, easing):
+        if duration <= 0:
+            for tile, rect in updates:
+                tile.setGeometry(rect)
+            return
+        immediate = []
+        animated = []
+        for tile, rect in updates:
+            if tile.geometry() == rect:
+                continue
+            if not tile.isVisible():
+                immediate.append((tile, rect))
+            else:
+                animated.append((tile, rect))
+        for tile, rect in immediate:
+            tile.setGeometry(rect)
+        self._animate_tiles(animated, duration, easing)
+
+    def _animate_tiles(self, updates, duration, easing):
+        changes = [
+            (tile, rect)
+            for tile, rect in updates
+            if tile.geometry() != rect
+        ]
+        if not changes:
+            return
+        group = self._tile_animation_group
+        if group is not None:
+            group.stop()
+        group = QParallelAnimationGroup(self)
+        self._tile_animation_group = group
+        for tile, rect in changes:
+            animation = QPropertyAnimation(tile, b"geometry", group)
+            animation.setDuration(duration)
+            animation.setEasingCurve(easing)
+            animation.setStartValue(tile.geometry())
+            animation.setEndValue(rect)
+            group.addAnimation(animation)
+        group.finished.connect(
+            lambda: setattr(self, "_tile_animation_group", None)
+        )
+        group.start()
 
     def refresh_tile_selection_state(self):
         for tile in self.surface.findChildren(
@@ -1728,7 +1855,7 @@ class WorkspaceLayoutEditor(QWidget):
         if not selected:
             return {
                 "count": 0,
-                "text": "No selection",
+                "text": tr("workspace_no_selection"),
             }
         layouts = [validate_block_layout(block) for block in selected]
         left = min(layout["col"] for layout in layouts)
@@ -1751,7 +1878,14 @@ class WorkspaceLayoutEditor(QWidget):
         if source is not None:
             source["blocks"] = self.workspace.get("blocks", [])
 
+    def _stop_tile_animation(self):
+        group = self._tile_animation_group
+        if group is not None:
+            group.stop()
+            self._tile_animation_group = None
+
     def _clear_grid(self):
+        self._stop_tile_animation()
         for child in self.surface.findChildren(QWidget, options=Qt.FindDirectChildrenOnly):
             if child is self.surface._rubber_band:
                 continue

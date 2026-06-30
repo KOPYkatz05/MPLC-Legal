@@ -21,14 +21,15 @@ from ui.foundation import (
     create_scroll_area,
     setup_dialog_shell,
 )
+from utils.i18n import tr
 
 
 TYPE_LABELS = {
-    "appointment_due": "Appointments",
-    "secretary_task": "Tasks",
-    "transfer_reminder": "Transfers",
-    "document_expiration": "Expirations",
-    "missing_document": "Missing Documents",
+    "appointment_due": "startup_alerts_type_appointments",
+    "secretary_task": "startup_alerts_type_tasks",
+    "transfer_reminder": "startup_alerts_type_transfers",
+    "document_expiration": "startup_alerts_type_expirations",
+    "missing_document": "startup_alerts_type_missing_documents",
 }
 
 TYPE_ORDER = (
@@ -56,20 +57,20 @@ def summarize_startup_alerts(alerts):
 
     parts = []
     if critical:
-        parts.append(f"{critical} critical")
+        parts.append(tr("startup_alerts_count_critical", count=critical))
     if overdue:
-        parts.append(f"{overdue} overdue")
+        parts.append(tr("startup_alerts_count_overdue", count=overdue))
     if due_today:
-        parts.append(f"{due_today} due today")
+        parts.append(tr("startup_alerts_count_due_today", count=due_today))
     if warning and not critical:
-        parts.append(f"{warning} important")
+        parts.append(tr("startup_alerts_count_important", count=warning))
 
     by_type = []
     for item_type in TYPE_ORDER:
         count = counts.get(item_type, 0)
         if count:
-            label = TYPE_LABELS[item_type].lower()
-            by_type.append(f"{count} {label}")
+            label = tr(TYPE_LABELS[item_type]).lower()
+            by_type.append(tr("startup_alerts_type_count", count=count, label=label))
 
     return {
         "total": len(alerts),
@@ -77,7 +78,7 @@ def summarize_startup_alerts(alerts):
         "warning": warning,
         "overdue": overdue,
         "due_today": due_today,
-        "headline": ", ".join(parts) if parts else "Review when you can",
+        "headline": ", ".join(parts) if parts else tr("startup_alerts_review_when_ready"),
         "by_type": ", ".join(by_type),
     }
 
@@ -89,7 +90,7 @@ def group_startup_alerts(alerts):
     return [
         {
             "type": item_type,
-            "title": TYPE_LABELS.get(item_type, "Other"),
+            "title": tr(TYPE_LABELS.get(item_type, "startup_alerts_type_other")),
             "items": groups[item_type],
         }
         for item_type in TYPE_ORDER
@@ -109,7 +110,7 @@ class StartupAlertsDialog(MaskDialogBase):
         self.alerts = sorted(list(alerts or []), key=notification_sort_key)
         self.summary = summarize_startup_alerts(self.alerts)
 
-        self.setWindowTitle("Mission Legal needs attention")
+        self.setWindowTitle(tr("startup_alerts_title"))
         self.surface = setup_dialog_shell(
             self,
             surface_width=820,
@@ -136,8 +137,7 @@ class StartupAlertsDialog(MaskDialogBase):
 
     def _build_header(self):
         count_badge = QLabel(
-            f"{self.summary['total']} item"
-            f"{'s' if self.summary['total'] != 1 else ''}"
+            tr("startup_alerts_item_count", count=self.summary["total"])
         )
         count_badge.setObjectName("WarningBadge")
         count_badge.setAlignment(Qt.AlignCenter)
@@ -155,11 +155,10 @@ class StartupAlertsDialog(MaskDialogBase):
         title_stack.setContentsMargins(0, 0, 0, 0)
         title_stack.setSpacing(4)
 
-        title = QLabel("Mission Legal needs attention")
+        title = QLabel(tr("startup_alerts_title"))
         title.setObjectName("StartupAlertsDialogTitle")
         subtitle = QLabel(
-            "Start with the first item, then scan each section by person, "
-            "action, and due date."
+            tr("startup_alerts_subtitle")
         )
         subtitle.setObjectName("StartupAlertsDialogSubtitle")
         subtitle.setWordWrap(True)
@@ -231,7 +230,9 @@ class StartupAlertsDialog(MaskDialogBase):
         headline.setObjectName("PanelTitle")
         headline.setWordWrap(True)
 
-        detail = QLabel(self.summary["by_type"] or "No startup alerts.")
+        detail = QLabel(
+            self.summary["by_type"] or tr("startup_alerts_none")
+        )
         detail.setObjectName("MutedText")
         detail.setWordWrap(True)
 
@@ -253,7 +254,7 @@ class StartupAlertsDialog(MaskDialogBase):
         layout.setSpacing(14)
         card.setLayout(layout)
 
-        label = QLabel("Start here")
+        label = QLabel(tr("startup_alerts_start_here"))
         label.setObjectName("WarningBadge")
         label.setAlignment(Qt.AlignCenter)
         label.setFixedWidth(92)
@@ -262,7 +263,7 @@ class StartupAlertsDialog(MaskDialogBase):
         text_stack.setContentsMargins(0, 0, 0, 0)
         text_stack.setSpacing(3)
 
-        title = QLabel(item.get("title") or "Review item")
+        title = QLabel(item.get("title") or tr("startup_alerts_review_item"))
         title.setObjectName("StrongText")
         title.setWordWrap(True)
 
@@ -311,7 +312,13 @@ class StartupAlertsDialog(MaskDialogBase):
 
         hidden_count = len(group["items"]) - 12
         if hidden_count > 0:
-            more = QLabel(f"+ {hidden_count} more in {group['title']}")
+            more = QLabel(
+                tr(
+                    "startup_alerts_more_in_group",
+                    count=hidden_count,
+                    group=group["title"],
+                )
+            )
             more.setObjectName("MutedText")
             layout.addWidget(more)
 
@@ -337,7 +344,11 @@ class StartupAlertsDialog(MaskDialogBase):
         text_stack.setContentsMargins(0, 0, 0, 0)
         text_stack.setSpacing(3)
 
-        who = QLabel(item.get("who") or item.get("missionary_name") or "Office")
+        who = QLabel(
+            item.get("who")
+            or item.get("missionary_name")
+            or tr("dashboard_office")
+        )
         who.setObjectName("StrongText")
         who.setWordWrap(True)
         who.setTextInteractionFlags(Qt.TextSelectableByMouse)
@@ -360,11 +371,11 @@ class StartupAlertsDialog(MaskDialogBase):
         footer = DialogFooter()
         footer.setObjectName("StartupAlertsDialogFooter")
 
-        note = QLabel("Dashboard shows the full queue after this dialog closes.")
+        note = QLabel(tr("startup_alerts_footer_note"))
         note.setObjectName("SubtleText")
         note.setWordWrap(True)
 
-        dismiss_btn = create_button("Done", "primary")
+        dismiss_btn = create_button(tr("common_done"), "primary")
         dismiss_btn.clicked.connect(self.accept)
 
         footer.layout().insertWidget(0, note, stretch=1)
@@ -374,7 +385,7 @@ class StartupAlertsDialog(MaskDialogBase):
 
     @staticmethod
     def _row_action(item):
-        action = item.get("action") or item.get("title") or "Review item"
+        action = item.get("action") or item.get("title") or tr("startup_alerts_review_item")
         field = item.get("field_label")
         if field and field not in action:
             action = f"{field}: {action}"
@@ -385,13 +396,20 @@ class StartupAlertsDialog(MaskDialogBase):
 
         count = item.get("missionary_count") or 0
         if count > 1:
-            action = f"{action} | {count} missionaries"
+            action = (
+                f"{action} | "
+                f"{tr('dashboard_missionaries_count', count=count)}"
+            )
 
         return action
 
     @staticmethod
     def _row_meta(item):
-        parts = [item.get("who") or item.get("missionary_name") or "Office"]
+        parts = [
+            item.get("who")
+            or item.get("missionary_name")
+            or tr("dashboard_office")
+        ]
         detail = item.get("detail")
         if detail:
             parts.append(detail)
@@ -413,12 +431,12 @@ class StartupAlertsDialog(MaskDialogBase):
     def _badge_text(item):
         days = item.get("days")
         if days is None:
-            return (item.get("severity") or "Open").title()
+            return tr("dashboard_open") if not item.get("severity") else str(item.get("severity")).title()
         if days < 0:
-            return f"{abs(days)}d overdue"
+            return tr("startup_alerts_badge_overdue", days=abs(days))
         if days == 0:
-            return "Today"
-        return f"{days}d left"
+            return tr("startup_alerts_badge_today")
+        return tr("startup_alerts_badge_left", days=days)
 
     @staticmethod
     def _urgency(item):

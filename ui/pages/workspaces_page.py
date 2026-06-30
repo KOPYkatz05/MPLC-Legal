@@ -865,11 +865,11 @@ class WorkspacesPage(QWidget):
                 title = block.get("title") or self._block_label(block.get("type"))
                 markers = []
                 if block.get("locked"):
-                    markers.append("Locked")
+                    markers.append(tr("workspace_locked_badge"))
                 if block.get("visible") is False:
-                    markers.append("Hidden")
+                    markers.append(tr("workspace_hidden_badge"))
                 if block.get("group_id"):
-                    markers.append("Grouped")
+                    markers.append(tr("workspace_grouped_badge"))
                 marker_text = f" [{' / '.join(markers)}]" if markers else ""
                 item = QListWidgetItem(
                     f"{title}{marker_text}  ({layout['col_span']}x{layout['row_span']} at {layout['col']},{layout['row']})"
@@ -921,7 +921,7 @@ class WorkspacesPage(QWidget):
             "interaction_hint",
             tr("workspace_ready"),
         )
-        if hint == "Ready":
+        if hint == tr("workspace_ready"):
             hint = tr("workspace_shortcut_hint")
         self.shortcut_hint_label.setText(hint)
 
@@ -946,6 +946,18 @@ class WorkspacesPage(QWidget):
     def _delete_workspace(self):
         workspace = self._current_workspace()
         if not workspace:
+            return
+        confirm = show_message(
+            self,
+            tr("workspace_delete_confirm_title"),
+            tr(
+                "workspace_delete_confirm_message",
+                name=workspace.get("name") or tr("workspace_title"),
+            ),
+            kind="question",
+            buttons="yes_no",
+        )
+        if confirm not in {1, 16384}:
             return
         self.workspace_service.delete_workspace(workspace["id"])
         self._load_workspaces()
@@ -982,6 +994,19 @@ class WorkspacesPage(QWidget):
             self._populate_block_options()
 
     def _remove_workspace_block(self):
+        selected_count = len(
+            getattr(self.workspace_layout_editor, "selected_block_ids", [])
+        )
+        if selected_count:
+            confirm = show_message(
+                self,
+                tr("workspace_remove_block_confirm_title"),
+                tr("workspace_remove_block_confirm_message", count=selected_count),
+                kind="question",
+                buttons="yes_no",
+            )
+            if confirm not in {1, 16384}:
+                return
         self.workspace_layout_editor.delete_selected()
         self._populate_block_options()
 
@@ -1022,6 +1047,18 @@ class WorkspacesPage(QWidget):
             self._populate_block_options()
 
     def _clear_canvas(self):
+        workspace = self._current_workspace()
+        block_count = len(workspace.get("blocks", [])) if workspace else 0
+        if block_count:
+            confirm = show_message(
+                self,
+                tr("workspace_clear_canvas_confirm_title"),
+                tr("workspace_clear_canvas_confirm_message", count=block_count),
+                kind="question",
+                buttons="yes_no",
+            )
+            if confirm not in {1, 16384}:
+                return
         self.workspace_layout_editor.clear_blocks()
         self._populate_block_options()
 

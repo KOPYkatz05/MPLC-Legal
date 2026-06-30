@@ -173,6 +173,38 @@ def test_missionary_detail_layout_dialog_uses_workspace_editor(qapp):
     assert editor.workspace["blocks"]
 
 
+def test_missionary_detail_layout_edit_mode_shows_status_banner(qapp):
+    _ = qapp
+    page = MissionaryDetailPage(
+        SimpleNamespace(workspace_service=MemoryWorkspaceService())
+    )
+    layout = MissionaryDetailLayoutService.default_layout()
+    page.detail_layout_service = SimpleNamespace(get_layout=lambda: layout)
+    page.show()
+    qapp.processEvents()
+
+    try:
+        assert page.layout_edit_banner.isVisible() is False
+
+        page._edit_layout()
+
+        assert page.layout_edit_banner.isVisible() is True
+        assert page.layout_edit_banner_title.text() == "Editing layout"
+        assert "Drag or resize" in page.layout_edit_banner_hint.text()
+        assert page.edit_layout_button.isVisible() is False
+        assert page.save_layout_button.isVisible() is True
+        assert page.actions_button.isVisible() is False
+        assert page.delete_button.isVisible() is False
+
+        page._cancel_layout_edit()
+
+        assert page.layout_edit_banner.isVisible() is False
+        assert page.edit_layout_button.isVisible() is True
+        assert page.actions_button.isVisible() is True
+    finally:
+        page.close()
+
+
 def test_missionary_detail_layout_dialog_reset_restores_default(qapp):
     _ = qapp
     layout = MissionaryDetailLayoutService.default_layout()
@@ -353,6 +385,7 @@ def test_missionary_detail_layout_edit_uses_free_card_geometry(qapp):
     page = MissionaryDetailPage.__new__(MissionaryDetailPage)
     page._layout_editing = True
     page._layout_edit_payload = layout
+    page._layout_preview_payload = None
     page._layout_drag_state = None
     page.detail_layout_service = SimpleNamespace(get_layout=lambda: layout)
 
@@ -371,6 +404,12 @@ def test_missionary_detail_layout_edit_uses_free_card_geometry(qapp):
 
     MissionaryDetailPage._apply_overview_layout(page)
 
+    original_overview_x = overview.geometry().x()
+    original_overview_y = overview.geometry().y()
+
+    page._layout_drag_state = {
+        "base_payload": deepcopy(layout),
+    }
     assert MissionaryDetailPage._preview_free_layout(
         page,
         "overview",
@@ -381,15 +420,91 @@ def test_missionary_detail_layout_edit_uses_free_card_geometry(qapp):
         page,
         "overview",
     )
+    preview_overview_block = MissionaryDetailPage._layout_block_for_section(
+        page,
+        "overview",
+        page._layout_preview_payload,
+    )
     documents_block = MissionaryDetailPage._layout_block_for_section(
         page,
         "documents",
+        page._layout_preview_payload,
     )
-    assert overview_block["free_layout"]["x"] == documents.geometry().x()
-    assert overview_block["free_layout"]["width"] == documents.geometry().width()
+    assert overview_block["free_layout"]["x"] == original_overview_x
+    assert overview_block["free_layout"]["y"] == original_overview_y
+    assert preview_overview_block["free_layout"]["x"] == documents.geometry().x()
+    assert (
+        preview_overview_block["free_layout"]["width"]
+        == documents.geometry().width()
+    )
     assert (
         documents_block["free_layout"]["y"]
         >= overview.geometry().bottom() + 1
+    )
+
+
+def test_missionary_detail_layout_preview_commits_or_rebounds(qapp):
+    _ = qapp
+    layout = MissionaryDetailLayoutService.default_layout()
+    page = MissionaryDetailPage.__new__(MissionaryDetailPage)
+    page._layout_editing = True
+    page._layout_edit_payload = layout
+    page._layout_preview_payload = None
+    page._layout_drag_state = None
+    page.detail_layout_service = SimpleNamespace(get_layout=lambda: layout)
+
+    overview_canvas = QWidget()
+    overview = QLabel("Overview")
+    documents = QLabel("Documents")
+    page.overview_layout_canvas = overview_canvas
+    page._overview_sections = {
+        "overview": overview,
+        "documents": documents,
+    }
+    page.details_layout_canvas = QWidget()
+    page._details_sections = {}
+
+    MissionaryDetailPage._apply_overview_layout(page)
+    original_rect = overview.geometry()
+    target_rect = documents.geometry()
+    page._layout_drag_state = {
+        "base_payload": deepcopy(layout),
+    }
+
+    assert MissionaryDetailPage._preview_free_layout(
+        page,
+        "overview",
+        target_rect,
+    )
+    MissionaryDetailPage._rebound_layout_preview(page)
+
+    assert page._layout_preview_payload is None
+    assert overview.geometry() == original_rect
+    assert (
+        MissionaryDetailPage._layout_block_for_section(
+            page,
+            "overview",
+        )["free_layout"]["x"]
+        == original_rect.x()
+    )
+
+    page._layout_drag_state = {
+        "base_payload": deepcopy(layout),
+    }
+    assert MissionaryDetailPage._preview_free_layout(
+        page,
+        "overview",
+        target_rect,
+    )
+    MissionaryDetailPage._commit_layout_preview(page)
+
+    assert page._layout_preview_payload is None
+    assert (
+        MissionaryDetailPage._layout_block_for_section(
+            page,
+            "overview",
+        )["free_layout"]["x"]
+        == target_rect.x()
     )
 
 
@@ -603,6 +718,24 @@ def test_workspace_layout_editor_preview_keeps_active_tile_alive(qapp):
     expected_rect = editor.layout_to_rect(editor._block(block["id"])["layout"])
     assert active_tile in refreshed_tiles
     assert active_tile.geometry() == expected_rect
+
+
+def test_workspace_layout_editor_cancel_rebounds_preview(qapp):
+    _ = qapp
+    workspace = new_workspace("Cancel Preview")
+    editor = WorkspaceLayoutEditor(lambda block_type: block_type)
+    editor.set_workspace(workspace)
+    block = editor.add_block_at("documents", row=0, col=0)
+    original_layout = deepcopy(block["layout"])
+
+    editor.begin_interaction()
+    editor.preview_layout(block["id"], row=3, col=4)
+    assert workspace["blocks"][0]["layout"]["row"] == 3
+    assert workspace["blocks"][0]["layout"]["col"] == 4
+
+    assert editor.cancel_interaction()
+    assert workspace["blocks"][0]["layout"] == original_layout
+    assert editor._interaction_snapshot is None
 
 
 def test_workspace_layout_editor_group_preview_keeps_tiles_alive(qapp):
@@ -1274,6 +1407,79 @@ def test_workspace_layout_editor_clear_and_deselect(qapp):
     assert editor.selected_block_id is None
 
 
+def test_workspaces_page_confirms_destructive_workspace_actions(monkeypatch, qapp):
+    _ = qapp
+    service = MemoryWorkspaceService()
+    main_window = SimpleNamespace(
+        settings_service=SettingsService(),
+        workspace_service=service,
+    )
+    page = WorkspacesPage(main_window)
+    prompts = []
+
+    def fake_message(parent, title, content, **kwargs):
+        prompts.append((title, content, kwargs))
+        return 0
+
+    monkeypatch.setattr(
+        "ui.pages.workspaces_page.show_message",
+        fake_message,
+    )
+
+    try:
+        page._new_workspace()
+        workspace_id = page._current_workspace()["id"]
+        block = page.workspace_layout_editor.add_block_at("notes")
+        page.workspace_layout_editor.set_selected_block(block["id"])
+
+        page._remove_workspace_block()
+        assert len(page._current_workspace()["blocks"]) == 1
+        assert prompts[-1][0] == "Remove Block?"
+
+        page._clear_canvas()
+        assert len(page._current_workspace()["blocks"]) == 1
+        assert prompts[-1][0] == "Clear Canvas?"
+
+        page._delete_workspace()
+        assert service.get_workspace(workspace_id) is not None
+        assert prompts[-1][0] == "Delete Workspace?"
+    finally:
+        page.close()
+
+
+def test_workspaces_page_confirmed_destructive_actions_apply(monkeypatch, qapp):
+    _ = qapp
+    service = MemoryWorkspaceService()
+    main_window = SimpleNamespace(
+        settings_service=SettingsService(),
+        workspace_service=service,
+    )
+    page = WorkspacesPage(main_window)
+
+    monkeypatch.setattr(
+        "ui.pages.workspaces_page.show_message",
+        lambda *args, **kwargs: 1,
+    )
+
+    try:
+        page._new_workspace()
+        workspace_id = page._current_workspace()["id"]
+        first = page.workspace_layout_editor.add_block_at("notes")
+        page.workspace_layout_editor.add_block_at("documents")
+        page.workspace_layout_editor.set_selected_block(first["id"])
+
+        page._remove_workspace_block()
+        assert len(page._current_workspace()["blocks"]) == 1
+
+        page._clear_canvas()
+        assert page._current_workspace()["blocks"] == []
+
+        page._delete_workspace()
+        assert service.get_workspace(workspace_id) is None
+    finally:
+        page.close()
+
+
 def test_workspace_layout_editor_zoom_controls(qapp):
     _ = qapp
     workspace = new_workspace("Zoom")
@@ -1498,6 +1704,56 @@ def test_workspace_layout_tile_preview_lines(qapp):
     lines = tile.preview_lines()
 
     assert ("https://example.org", "strong") in lines
+
+
+def test_workspace_layout_editor_inner_chrome_uses_active_language(qapp):
+    _ = qapp
+    i18n = get_i18n()
+    original_language = i18n.get_language()
+    try:
+        i18n.set_language("es")
+        palette = WorkspacePaletteButton("documents", "Documentos")
+        palette_texts = _widget_texts(palette)
+        assert "Haga clic para agregar o arrastre al lienzo" in palette_texts
+
+        workspace = new_workspace("Lienzo")
+        editor = WorkspaceLayoutEditor(lambda block_type: block_type)
+        editor.set_workspace(workspace)
+        block = editor.add_block_at("documents")
+        editor.set_selected_block(block["id"])
+        tile = WorkspaceLayoutTile(block, "Documentos", editor)
+        buttons = {
+            button.text()
+            for button in tile.findChildren(QPushButton)
+            if button.text()
+        }
+        assert {"Editar", "Copiar", "Frente", "Fondo", "Borrar"}.issubset(
+            buttons
+        )
+
+        hidden = dict(block)
+        hidden["visible"] = False
+        hidden_tile = WorkspaceLayoutTile(hidden, "Documentos", editor)
+        assert (
+            "Oculto en el espacio de trabajo",
+            "strong",
+        ) in hidden_tile.preview_lines()
+
+        duplicate = editor.duplicate_block(block["id"])
+        assert duplicate["title"].endswith(" copia")
+
+        editor.selected_block_ids = []
+        assert editor.selection_summary()["text"] == "Sin selección"
+
+        editor.set_selected_block(block["id"])
+        editor.toggle_selected_locked()
+        editor.update_selected_layout(col=6)
+        assert editor.interaction_hint == "Bloque bloqueado"
+    finally:
+        i18n.set_language(original_language)
+        for widget_name in ("palette", "tile", "hidden_tile"):
+            if widget_name in locals():
+                locals()[widget_name].close()
 
 
 def test_workspace_block_properties_dialog_updates_web_url(qapp):
