@@ -444,6 +444,16 @@ QWidget#MissionaryDetailPage QLabel#DateEmptyOverlay {
     background: transparent;
 }
 
+QWidget#MissionaryDetailPage QFrame[layout_editing="true"] {
+    border: 1px dashed #0EA5AC;
+    background-color: #FBFEFE;
+}
+
+QWidget#MissionaryDetailPage QFrame[layout_editing="true"]:hover {
+    border-color: #0F5F64;
+    background-color: #F5FBFC;
+}
+
 QScrollArea {
     border: none;
     background-color: transparent;

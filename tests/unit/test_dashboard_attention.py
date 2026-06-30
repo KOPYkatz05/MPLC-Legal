@@ -2,6 +2,7 @@ from datetime import date, timedelta
 from types import SimpleNamespace
 
 import pytest
+from PySide6.QtWidgets import QLabel, QPushButton
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
@@ -15,6 +16,7 @@ from services import notification_feed_service as feed_module
 from services.dashboard_service import DashboardService
 from ui.pages import dashboard_page
 from ui.pages.dashboard_page import DashboardPage
+from utils.i18n import get_i18n
 
 
 @pytest.fixture()
@@ -345,6 +347,122 @@ def test_dashboard_attention_task_routes_to_alert_workspace(qapp):
     )
 
     assert opened == [(55, "dashboard")]
+
+
+def test_dashboard_attention_action_labels_are_specific():
+    i18n = get_i18n()
+    original_language = i18n.get_language()
+
+    try:
+        i18n.set_language("en")
+        assert (
+            DashboardPage._attention_action_label(
+                {
+                    "type": "secretary_task",
+                    "task_id": 55,
+                    "target": "office_work",
+                }
+            )
+            == "Review Task"
+        )
+        assert (
+            DashboardPage._attention_action_label(
+                {"type": "missing_document", "missionary_id": 42}
+            )
+            == "Open Missionary"
+        )
+        assert (
+            DashboardPage._attention_action_label({"target": "appointments"})
+            == "Open Calendar"
+        )
+
+        i18n.set_language("es")
+        assert (
+            DashboardPage._attention_action_label(
+                {
+                    "type": "secretary_task",
+                    "task_id": 55,
+                    "target": "office_work",
+                }
+            )
+            == "Revisar tarea"
+        )
+        assert (
+            DashboardPage._attention_action_label(
+                {"type": "missing_document", "missionary_id": 42}
+            )
+            == "Abrir misionero"
+        )
+        assert (
+            DashboardPage._attention_action_label({"target": "appointments"})
+            == "Abrir calendario"
+        )
+    finally:
+        i18n.set_language(original_language)
+
+
+def test_dashboard_chrome_uses_active_language(monkeypatch, qapp):
+    _ = qapp
+    i18n = get_i18n()
+    original_language = i18n.get_language()
+    monkeypatch.setattr(
+        dashboard_page,
+        "DashboardService",
+        lambda: SimpleNamespace(),
+    )
+    monkeypatch.setattr(
+        dashboard_page,
+        "DailyDigestService",
+        lambda: SimpleNamespace(),
+    )
+    monkeypatch.setattr(DashboardPage, "load_data", lambda self: None)
+
+    try:
+        i18n.set_language("es")
+        page = DashboardPage()
+
+        labels = {
+            label.text()
+            for label in page.findChildren(QLabel)
+            if label.text()
+        }
+        buttons = {
+            button.text()
+            for button in page.findChildren(QPushButton)
+            if button.text()
+        }
+
+        assert "Panel de control" in labels
+        assert "Cargando el trabajo de hoy..." in labels
+        assert {"Misión", "Proceso", "Enlace"}.issubset(labels)
+        assert "Actualizar" in buttons
+    finally:
+        i18n.set_language(original_language)
+        if "page" in locals():
+            page.close()
+
+
+def test_dashboard_summary_helpers_follow_active_language():
+    i18n = get_i18n()
+    original_language = i18n.get_language()
+
+    try:
+        i18n.set_language("es")
+        assert DashboardPage._digest_total_text(0) == (
+            "No hay acciones que necesiten atención hoy."
+        )
+        assert DashboardPage._digest_total_text(3) == (
+            "3 acciones necesitan atención hoy."
+        )
+        assert DashboardPage._recommended_summary_text(
+            [
+                {"days": -1},
+                {"days": 0},
+                {"days": 8},
+            ]
+        ) == "1 vencido(s) | 1 vence(n) hoy | 1 próximo(s)"
+    finally:
+        i18n.set_language(original_language)
 
 
 def test_dashboard_digest_task_routes_to_alert_workspace(qapp):

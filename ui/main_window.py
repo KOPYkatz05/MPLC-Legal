@@ -22,6 +22,7 @@ from ui.pages.calendar_page import CalendarPage
 from ui.pages.dashboard_page import DashboardPage
 from ui.pages.missionaries_page import MissionariesPage
 from ui.pages.missionary_detail_page import MissionaryDetailPage
+from ui.pages.missionary_workspace_page import MissionaryWorkspacePage
 from ui.pages.office_work_page import OfficeWorkPage
 from ui.pages.reports_page import ReportsPage
 from ui.pages.settings_page import SettingsPage
@@ -156,6 +157,7 @@ class MainWindow(QMainWindow):
         )
         self.missionaries_page = MissionariesPage(self)
         self.detail_page = MissionaryDetailPage(self)
+        self.missionary_workspace_page = MissionaryWorkspacePage(self)
         self.alert_workspace_page = AlertWorkspacePage(self)
         self.office_work_page = OfficeWorkPage(self)
         self.calendar_page = CalendarPage(self)
@@ -202,6 +204,8 @@ class MainWindow(QMainWindow):
         self.stackedWidget.addWidget(self.detail_page)
         self.alert_workspace_page.setObjectName("AlertWorkspacePage")
         self.stackedWidget.addWidget(self.alert_workspace_page)
+        self.missionary_workspace_page.setObjectName("MissionaryWorkspacePage")
+        self.stackedWidget.addWidget(self.missionary_workspace_page)
 
         for widget, key, icon_name, _stack_index in [
             (self.office_work_page, "office_work", "EDIT", 3),
@@ -245,6 +249,7 @@ class MainWindow(QMainWindow):
             self.trash_page,
             self.workspaces_page,
             self.settings_page,
+            self.missionary_workspace_page,
         ]:
             self.stack.addWidget(widget)
 
@@ -314,6 +319,8 @@ class MainWindow(QMainWindow):
             self.missionaries_page.retranslate_ui()
         if hasattr(self.detail_page, "retranslate_ui"):
             self.detail_page.retranslate_ui()
+        if hasattr(self.missionary_workspace_page, "retranslate_ui"):
+            self.missionary_workspace_page.retranslate_ui()
 
     def go_to_calendar(self):
         self.set_current_key("appointments")
@@ -380,6 +387,24 @@ class MainWindow(QMainWindow):
                 "Failed to open alert workspace for task ID %s",
                 task_id,
             )
+            return False
+
+    def open_missionary_workspace(self, missionary, workspace):
+        try:
+            self.missionary_workspace_page.load_workspace(missionary, workspace)
+            self.stack.setCurrentWidget(self.missionary_workspace_page)
+
+            if (
+                FLUENT_AVAILABLE
+                and hasattr(self, "navigationInterface")
+                and "missionaries" in self._nav_widgets
+            ):
+                widget = self._nav_widgets["missionaries"]
+                self.navigationInterface.setCurrentItem(widget.objectName())
+
+            return True
+        except Exception:
+            logger.exception("Failed to open missionary workspace")
             return False
 
     def show_content_loading_overlay(self, message="Reading document..."):

@@ -14,6 +14,7 @@ import fitz
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
     QButtonGroup,
+    QDialog,
     QGridLayout,
     QWidget,
     QVBoxLayout,
@@ -27,7 +28,7 @@ from PySide6.QtWidgets import (
     QSizePolicy,
 )
 
-from PySide6.QtCore import Qt, QSize, QDate
+from PySide6.QtCore import Qt, QSize, QDate, QEvent, QRect
 
 from services.workflow_service import WorkflowService
 from services.document_service import DocumentService
@@ -39,6 +40,7 @@ from services.document_image_export_service import (
     DocumentImageExportService,
 )
 from services.thumbnail_service import ThumbnailService
+from services.missionary_detail_layout_service import MissionaryDetailLayoutService
 from ui.dialogs.ocr_data_view_dialog import OcrDataViewDialog
 from ui.dialogs.stage_advance_dialog import StageAdvanceDialog
 from ui.dialogs.upload_session_dialog import UploadSessionDialog
@@ -77,6 +79,11 @@ from utils.language_helper import ui_text as tr
 from utils.logger import logger
 from services.workflow_validator import WorkflowValidator
 from services.workspace_service import WorkspaceService
+from services.workspace_layout import (
+    WORKSPACE_GRID_COLUMNS,
+    validate_block_layout,
+)
+from ui.widgets.workspace_layout_editor import WorkspaceLayoutEditor
 from ui.widgets.missionary_block_widgets import (
     build_document_card,
     build_empty_state_card,
@@ -88,6 +95,133 @@ from ui.widgets.missionary_block_widgets import (
 DATE_PLACEHOLDER = QDate(1900, 1, 1)
 DATE_EDIT_MAX_WIDTH = 300
 OVERVIEW_CONTENT_SPACING = 16
+DETAIL_LAYOUT_CANVAS_WIDTH = 1180
+DETAIL_LAYOUT_GRID_CELL_WIDTH = DETAIL_LAYOUT_CANVAS_WIDTH / WORKSPACE_GRID_COLUMNS
+DETAIL_LAYOUT_GRID_ROW_HEIGHT = 150
+DETAIL_LAYOUT_MIN_CARD_WIDTH = 220
+DETAIL_LAYOUT_MIN_CARD_HEIGHT = 120
+DETAIL_LAYOUT_RESIZE_MARGIN = 14
+DETAIL_LAYOUT_CANVAS_PADDING = 8
+
+
+DETAIL_LAYOUT_LABELS = {
+    "overview": "missionary_detail_tab_overview",
+    "workflow": "missionary_detail_workflow_stages",
+    "open_tasks": "missionary_detail_open_tasks",
+    "documents": "missionary_detail_documents",
+    "missing_documents": "missionary_detail_missing_documents",
+    "details_summary": "missionary_detail_at_a_glance",
+    "details_identity": "missionary_detail_identity",
+    "details_credentials": "missionary_detail_credentials",
+    "details_legal_timeline": "missionary_detail_legal_timeline",
+    "details_residency": "missionary_detail_residency_timeline",
+}
+
+DETAIL_LAYOUT_TABS = {
+    "overview": "missionary_detail_tab_overview",
+    "details": "missionary_detail_tab_details",
+}
+
+
+class MissionaryDetailLayoutDialog(QDialog):
+    def __init__(self, layout_payload, parent=None):
+        super().__init__(parent)
+        self.setObjectName("MissionaryDetailLayoutDialog")
+        self.setWindowTitle(tr("missionary_detail_edit_layout"))
+        self.resize(980, 700)
+        self.layout_payload = json.loads(json.dumps(layout_payload or {}))
+
+        root = QVBoxLayout()
+        root.setContentsMargins(16, 14, 16, 16)
+        root.setSpacing(12)
+        self.setLayout(root)
+
+        title = SubtitleLabel(tr("missionary_detail_edit_layout"))
+        title.setObjectName("MissionaryDetailLayoutTitle")
+        root.addWidget(title)
+
+        helper = QLabel(tr("missionary_detail_edit_layout_hint"))
+        helper.setObjectName("MutedText")
+        helper.setWordWrap(True)
+        root.addWidget(helper)
+
+        self.current_layout_tab = "overview"
+        self.tab_combo = create_combo_box("MissionaryDetailLayoutTabCombo")
+        for tab_key, label_key in DETAIL_LAYOUT_TABS.items():
+            self.tab_combo.addItem(tr(label_key), tab_key)
+        self.tab_combo.currentIndexChanged.connect(self._switch_layout_tab)
+        root.addWidget(self.tab_combo)
+
+        self.editor = WorkspaceLayoutEditor(self._block_label)
+        self.editor.setObjectName("MissionaryDetailLayoutEditor")
+        self.editor.allow_structure_changes = False
+        self.editor.set_workspace(self._layout_for_tab(self.current_layout_tab))
+        self.editor.select_block(None)
+        root.addWidget(self.editor, stretch=1)
+
+        footer = DialogFooter()
+        reset_btn = create_button(tr("missionary_detail_reset_layout"), "secondary")
+        cancel_btn = create_button(tr("missionary_detail_cancel"), "secondary")
+        save_btn = create_button(tr("settings_save"), "primary")
+        reset_btn.clicked.connect(self._reset_to_default)
+        cancel_btn.clicked.connect(self.reject)
+        save_btn.clicked.connect(self.accept)
+        footer.add_action(reset_btn)
+        footer.add_action(cancel_btn)
+        footer.add_action(save_btn)
+        root.addWidget(footer)
+
+    @staticmethod
+    def _block_label(block_type):
+        return tr(DETAIL_LAYOUT_LABELS.get(block_type, block_type))
+
+    def updated_layout(self):
+        self._store_current_tab()
+        return self.layout_payload
+
+    def _reset_to_default(self):
+        self.layout_payload = MissionaryDetailLayoutService.default_layout()
+        self.editor.set_workspace(self._layout_for_tab(self.current_layout_tab))
+        self.editor.select_block(None)
+
+    def _layout_for_tab(self, tab_key):
+        return {
+            "id": f"missionary_detail_{tab_key}",
+            "name": tr(
+                DETAIL_LAYOUT_TABS.get(
+                    tab_key,
+                    "missionary_detail_edit_layout",
+                )
+            ),
+            "blocks": [
+                json.loads(json.dumps(block))
+                for block in self.layout_payload.get("blocks", [])
+                if block.get("tab", "overview") == tab_key
+            ],
+        }
+
+    def _store_current_tab(self):
+        current = self.editor.workspace or {"blocks": []}
+        current_blocks = []
+        for block in current.get("blocks", []):
+            next_block = json.loads(json.dumps(block))
+            next_block["tab"] = self.current_layout_tab
+            current_blocks.append(next_block)
+        self.layout_payload["blocks"] = [
+            block
+            for block in self.layout_payload.get("blocks", [])
+            if block.get("tab", "overview") != self.current_layout_tab
+        ] + current_blocks
+
+    def _switch_layout_tab(self, *args):
+        _ = args
+        next_tab = self.tab_combo.currentData() or "overview"
+        if next_tab == self.current_layout_tab:
+            return
+        self._store_current_tab()
+        self.current_layout_tab = next_tab
+        self.editor.set_workspace(self._layout_for_tab(next_tab))
+        self.editor.select_block(None)
 WORKFLOW_LIST_MIN_HEIGHT = 220
 DOCUMENTS_LIST_MIN_HEIGHT = 340
 MISSING_LIST_MIN_HEIGHT = 260
@@ -330,6 +464,7 @@ class MissionaryDetailPage(QWidget):
             if main_window
             else None
         ) or WorkspaceService()
+        self.detail_layout_service = MissionaryDetailLayoutService()
 
         self.thumb_service = ThumbnailService()
 
@@ -344,6 +479,11 @@ class MissionaryDetailPage(QWidget):
         self._date_empty_on_load = set()
         self._residency_timeline_labels = {}
         self._translated_labels = []
+        self._layout_editing = False
+        self._layout_edit_payload = None
+        self._layout_drag_state = None
+        self._layout_drag_targets = set()
+        self._layout_drag_accepts = {}
 
         self.setup_ui()
 
@@ -694,6 +834,33 @@ class MissionaryDetailPage(QWidget):
             self._advance_stage
         )
 
+        self.edit_layout_button = create_button(
+            tr("missionary_detail_edit_layout"),
+            "secondary",
+        )
+        self.edit_layout_button.clicked.connect(self._edit_layout)
+
+        self.save_layout_button = create_button(
+            tr("settings_save"),
+            "primary",
+        )
+        self.save_layout_button.clicked.connect(self._save_layout_edit)
+        self.save_layout_button.setVisible(False)
+
+        self.cancel_layout_button = create_button(
+            tr("missionary_detail_cancel"),
+            "secondary",
+        )
+        self.cancel_layout_button.clicked.connect(self._cancel_layout_edit)
+        self.cancel_layout_button.setVisible(False)
+
+        self.reset_layout_button = create_button(
+            tr("missionary_detail_reset_layout"),
+            "secondary",
+        )
+        self.reset_layout_button.clicked.connect(self._reset_layout_edit)
+        self.reset_layout_button.setVisible(False)
+
         self.actions_button = create_button(
             tr("missionary_detail_actions"),
             "secondary",
@@ -731,6 +898,14 @@ class MissionaryDetailPage(QWidget):
         )
 
         header_layout.addWidget(self.advance_button)
+
+        header_layout.addWidget(self.edit_layout_button)
+
+        header_layout.addWidget(self.reset_layout_button)
+
+        header_layout.addWidget(self.cancel_layout_button)
+
+        header_layout.addWidget(self.save_layout_button)
 
         header_layout.addWidget(self.actions_button)
 
@@ -891,30 +1066,444 @@ class MissionaryDetailPage(QWidget):
 
         content.setLayout(content_layout)
 
-        content_layout.addWidget(
-            self._build_summary_section()
+        self.overview_layout_canvas = QWidget()
+        self.overview_layout_canvas.setObjectName("MissionaryDetailLayoutCanvas")
+        self.overview_layout_canvas.setMinimumWidth(DETAIL_LAYOUT_CANVAS_WIDTH)
+        content_layout.addWidget(self.overview_layout_canvas)
+
+        self._overview_sections = {
+            "overview": self._build_summary_section(),
+            "workflow": self._build_workflow_section(),
+            "open_tasks": self._build_open_tasks_section(),
+            "documents": self._build_documents_overview_section(),
+            "missing_documents": self._build_missing_documents_overview_section(),
+        }
+        self._apply_overview_layout()
+
+        content_layout.addStretch()
+
+        scroll.setWidget(content)
+
+        tab_layout.addWidget(scroll)
+
+    def _apply_overview_layout(self):
+        self._apply_layout_to_canvas(
+            self.overview_layout_canvas,
+            self._overview_sections,
+            "overview",
         )
 
-        content_layout.addWidget(
-            self._build_workflow_section()
+    def _apply_details_layout(self):
+        self._apply_layout_to_canvas(
+            self.details_layout_canvas,
+            self._details_sections,
+            "details",
         )
 
-        content_layout.addWidget(
-            self._build_open_tasks_section()
+    def _apply_layout_to_canvas(self, canvas, sections, tab_key):
+        layout_payload = (
+            getattr(self, "_layout_edit_payload", None)
+            if getattr(self, "_layout_editing", False)
+            and getattr(self, "_layout_edit_payload", None)
+            else self.detail_layout_service.get_layout()
         )
+        max_bottom = 0
+        used_sections = set()
+        for block in layout_payload.get("blocks", []):
+            if block.get("visible") is False:
+                continue
+            if block.get("tab", "overview") != tab_key:
+                continue
+            section_key = block.get("type") or block.get("id")
+            section = sections.get(section_key)
+            if section is None:
+                continue
+            self._mark_layout_section(section, section_key, tab_key)
+            rect = self._free_rect_for_block(block)
+            max_bottom = max(max_bottom, rect.bottom())
+            used_sections.add(section_key)
+            section.setParent(canvas)
+            section.setGeometry(rect)
+            section.show()
 
-        # ---- Documents section ----
+        next_y = max_bottom + OVERVIEW_CONTENT_SPACING
+        for section_key, section in sections.items():
+            if section_key in used_sections:
+                continue
+            self._mark_layout_section(section, section_key, tab_key)
+            rect = QRect(
+                DETAIL_LAYOUT_CANVAS_PADDING,
+                max(DETAIL_LAYOUT_CANVAS_PADDING, next_y),
+                DETAIL_LAYOUT_CANVAS_WIDTH - (DETAIL_LAYOUT_CANVAS_PADDING * 2),
+                DETAIL_LAYOUT_GRID_ROW_HEIGHT,
+            )
+            section.setParent(canvas)
+            section.setGeometry(rect)
+            section.show()
+            next_y = rect.bottom() + OVERVIEW_CONTENT_SPACING
+            max_bottom = max(max_bottom, rect.bottom())
+
+        canvas.setMinimumHeight(
+            max(max_bottom + DETAIL_LAYOUT_CANVAS_PADDING, 320)
+        )
+        self._refresh_layout_drag_targets()
+
+    def _free_rect_for_block(self, block):
+        free_layout = block.get("free_layout")
+        if isinstance(free_layout, dict):
+            rect = QRect(
+                self._as_int(
+                    free_layout.get("x"),
+                    DETAIL_LAYOUT_CANVAS_PADDING,
+                ),
+                self._as_int(
+                    free_layout.get("y"),
+                    DETAIL_LAYOUT_CANVAS_PADDING,
+                ),
+                self._as_int(
+                    free_layout.get("width"),
+                    DETAIL_LAYOUT_MIN_CARD_WIDTH,
+                ),
+                self._as_int(
+                    free_layout.get("height"),
+                    DETAIL_LAYOUT_MIN_CARD_HEIGHT,
+                ),
+            )
+            return self._bounded_free_rect(rect)
+
+        layout = validate_block_layout(block)
+        rect = QRect(
+            int(layout["col"] * DETAIL_LAYOUT_GRID_CELL_WIDTH)
+            + DETAIL_LAYOUT_CANVAS_PADDING,
+            int(layout["row"] * DETAIL_LAYOUT_GRID_ROW_HEIGHT)
+            + DETAIL_LAYOUT_CANVAS_PADDING,
+            int(
+                layout["col_span"] * DETAIL_LAYOUT_GRID_CELL_WIDTH
+                - OVERVIEW_CONTENT_SPACING
+            ),
+            int(
+                layout["row_span"] * DETAIL_LAYOUT_GRID_ROW_HEIGHT
+                - OVERVIEW_CONTENT_SPACING
+            ),
+        )
+        rect = self._bounded_free_rect(rect)
+        block["free_layout"] = self._free_layout_from_rect(rect)
+        return rect
+
+    def _bounded_free_rect(self, rect):
+        width = max(DETAIL_LAYOUT_MIN_CARD_WIDTH, int(rect.width()))
+        height = max(DETAIL_LAYOUT_MIN_CARD_HEIGHT, int(rect.height()))
+        max_x = max(
+            DETAIL_LAYOUT_CANVAS_PADDING,
+            DETAIL_LAYOUT_CANVAS_WIDTH - width - DETAIL_LAYOUT_CANVAS_PADDING,
+        )
+        x = max(DETAIL_LAYOUT_CANVAS_PADDING, min(int(rect.x()), max_x))
+        y = max(DETAIL_LAYOUT_CANVAS_PADDING, int(rect.y()))
+        return QRect(x, y, width, height)
+
+    def _free_layout_from_rect(self, rect):
+        return {
+            "x": int(rect.x()),
+            "y": int(rect.y()),
+            "width": int(rect.width()),
+            "height": int(rect.height()),
+        }
+
+    def _as_int(self, value, default):
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return default
+
+    def _mark_layout_section(self, section, section_key, tab_key):
+        section.setProperty("detail_layout_section_key", section_key)
+        section.setProperty("detail_layout_tab_key", tab_key)
+        section.setProperty(
+            "layout_editing",
+            getattr(self, "_layout_editing", False),
+        )
+        self._refresh_widget_style(section)
+
+    def _refresh_widget_style(self, widget):
+        if widget is None:
+            return
+        widget.style().unpolish(widget)
+        widget.style().polish(widget)
+        widget.update()
+
+    def _all_layout_sections(self):
+        sections = {}
+        for attr_name in ("_overview_sections", "_details_sections"):
+            sections.update(getattr(self, attr_name, {}) or {})
+        return sections
+
+    def _refresh_layout_drag_targets(self):
+        if not hasattr(self, "_layout_drag_targets"):
+            return
+        for widget in list(self._layout_drag_targets):
+            try:
+                widget.removeEventFilter(self)
+                widget.setAcceptDrops(
+                    self._layout_drag_accepts.get(widget, False)
+                )
+                widget.unsetCursor()
+            except RuntimeError:
+                pass
+        self._layout_drag_targets.clear()
+        self._layout_drag_accepts.clear()
+
+        for section in self._all_layout_sections().values():
+            section.setProperty("layout_editing", self._layout_editing)
+            self._refresh_widget_style(section)
+
+        if not self._layout_editing:
+            return
+
+        for section in self._all_layout_sections().values():
+            widgets = [section] + section.findChildren(QWidget)
+            for widget in widgets:
+                self._layout_drag_targets.add(widget)
+                widget.installEventFilter(self)
+                widget.setCursor(Qt.OpenHandCursor)
+
+    def _layout_section_key_for_widget(self, widget):
+        cursor = widget
+        while cursor is not None:
+            section_key = cursor.property("detail_layout_section_key")
+            if section_key:
+                return section_key
+            cursor = cursor.parentWidget()
+        return None
+
+    def _layout_tab_key_for_section(self, section_key):
+        for block in (self._layout_edit_payload or {}).get("blocks", []):
+            if (block.get("type") or block.get("id")) == section_key:
+                return block.get("tab", "overview")
+        return "overview"
+
+    def _event_global_pos(self, event):
+        if hasattr(event, "globalPosition"):
+            return event.globalPosition().toPoint()
+        return event.globalPos()
+
+    def _event_local_pos_for_section(self, obj, event, section):
+        pos = event.position().toPoint() if hasattr(event, "position") else event.pos()
+        return obj.mapTo(section, pos)
+
+    def _layout_resize_handle(self, section, pos):
+        margin = DETAIL_LAYOUT_RESIZE_MARGIN
+        left = pos.x() <= margin
+        right = pos.x() >= section.width() - margin
+        top = pos.y() <= margin
+        bottom = pos.y() >= section.height() - margin
+        if top and left:
+            return "nw"
+        if top and right:
+            return "ne"
+        if bottom and left:
+            return "sw"
+        if bottom and right:
+            return "se"
+        if left:
+            return "w"
+        if right:
+            return "e"
+        if top:
+            return "n"
+        if bottom:
+            return "s"
+        return None
+
+    def _cursor_for_layout_handle(self, handle):
+        if handle in {"nw", "se"}:
+            return Qt.SizeFDiagCursor
+        if handle in {"ne", "sw"}:
+            return Qt.SizeBDiagCursor
+        if handle in {"e", "w"}:
+            return Qt.SizeHorCursor
+        if handle in {"n", "s"}:
+            return Qt.SizeVerCursor
+        return Qt.OpenHandCursor
+
+    def eventFilter(self, obj, event):
+        if (
+            not getattr(self, "_layout_editing", False)
+            or obj not in getattr(self, "_layout_drag_targets", set())
+        ):
+            return super().eventFilter(obj, event)
+
+        section_key = self._layout_section_key_for_widget(obj)
+        if not section_key:
+            return super().eventFilter(obj, event)
+        section = self._all_layout_sections().get(section_key)
+        if section is None:
+            return super().eventFilter(obj, event)
+
+        event_type = event.type()
+        if event_type == QEvent.MouseButtonPress:
+            if event.button() == Qt.LeftButton:
+                local_pos = self._event_local_pos_for_section(
+                    obj,
+                    event,
+                    section,
+                )
+                handle = self._layout_resize_handle(section, local_pos)
+                self._layout_drag_state = {
+                    "key": section_key,
+                    "mode": handle or "move",
+                    "global_pos": self._event_global_pos(event),
+                    "start_rect": QRect(section.geometry()),
+                }
+                section.raise_()
+                obj.setCursor(
+                    self._cursor_for_layout_handle(self._layout_drag_state["mode"])
+                )
+                event.accept()
+                return True
+            return False
+
+        if event_type == QEvent.MouseMove:
+            if self._layout_drag_state and event.buttons() & Qt.LeftButton:
+                next_rect = self._layout_rect_for_drag(event)
+                if next_rect is not None:
+                    self._preview_free_layout(
+                        self._layout_drag_state["key"],
+                        next_rect,
+                    )
+                    event.accept()
+                    return True
+            local_pos = self._event_local_pos_for_section(obj, event, section)
+            handle = self._layout_resize_handle(section, local_pos)
+            obj.setCursor(self._cursor_for_layout_handle(handle))
+            return False
+
+        if event_type == QEvent.MouseButtonRelease:
+            if self._layout_drag_state:
+                self._layout_drag_state = None
+                return True
+            return False
+
+        return super().eventFilter(obj, event)
+
+    def _layout_rect_for_drag(self, event):
+        state = self._layout_drag_state
+        if not state:
+            return None
+        delta = self._event_global_pos(event) - state["global_pos"]
+        rect = QRect(state["start_rect"])
+        mode = state["mode"]
+        if mode == "move":
+            rect.moveTo(rect.x() + delta.x(), rect.y() + delta.y())
+            return self._bounded_free_rect(rect)
+
+        if "e" in mode:
+            rect.setRight(rect.right() + delta.x())
+        if "s" in mode:
+            rect.setBottom(rect.bottom() + delta.y())
+        if "w" in mode:
+            rect.setLeft(rect.left() + delta.x())
+        if "n" in mode:
+            rect.setTop(rect.top() + delta.y())
+        if rect.width() < DETAIL_LAYOUT_MIN_CARD_WIDTH:
+            if "w" in mode:
+                rect.setLeft(rect.right() - DETAIL_LAYOUT_MIN_CARD_WIDTH)
+            else:
+                rect.setWidth(DETAIL_LAYOUT_MIN_CARD_WIDTH)
+        if rect.height() < DETAIL_LAYOUT_MIN_CARD_HEIGHT:
+            if "n" in mode:
+                rect.setTop(rect.bottom() - DETAIL_LAYOUT_MIN_CARD_HEIGHT)
+            else:
+                rect.setHeight(DETAIL_LAYOUT_MIN_CARD_HEIGHT)
+        return self._bounded_free_rect(rect)
+
+    def _preview_free_layout(self, section_key, rect):
+        block = self._layout_block_for_section(section_key)
+        if block is None:
+            return False
+        rect = self._bounded_free_rect(rect)
+        block["free_layout"] = self._free_layout_from_rect(rect)
+        self._push_overlapping_free_layouts(
+            block.get("tab", "overview"),
+            section_key,
+        )
+        self._apply_current_detail_layouts()
+        return True
+
+    def _layout_block_for_section(self, section_key):
+        for block in self._layout_edit_payload.get("blocks", []):
+            if (block.get("type") or block.get("id")) == section_key:
+                return block
+        return None
+
+    def _push_overlapping_free_layouts(self, tab_key, moving_section_key):
+        if not self._layout_edit_payload:
+            return
+        tab_blocks = [
+            block
+            for block in self._layout_edit_payload.get("blocks", [])
+            if block.get("tab", "overview") == tab_key
+        ]
+        rects = {
+            (block.get("type") or block.get("id")): self._free_rect_for_block(block)
+            for block in tab_blocks
+        }
+        moving_rect = rects.get(moving_section_key)
+        if moving_rect is None:
+            return
+
+        displaced = []
+        for block in tab_blocks:
+            section_key = block.get("type") or block.get("id")
+            if section_key == moving_section_key:
+                continue
+            rect = rects.get(section_key)
+            if rect is None:
+                continue
+            overlaps_x = not (
+                rect.right() < moving_rect.left()
+                or moving_rect.right() < rect.left()
+            )
+            if overlaps_x and rect.intersects(moving_rect):
+                displaced.append((rect.y(), section_key, block, rect))
+
+        next_y = moving_rect.bottom() + OVERVIEW_CONTENT_SPACING
+        for _, _, block, rect in sorted(displaced):
+            rect.moveTop(next_y)
+            bounded = self._bounded_free_rect(rect)
+            block["free_layout"] = self._free_layout_from_rect(bounded)
+            next_y = bounded.bottom() + OVERVIEW_CONTENT_SPACING
+
+    def _apply_current_detail_layouts(self):
+        if hasattr(self, "overview_layout_canvas"):
+            self._apply_overview_layout()
+        if hasattr(self, "details_layout_canvas"):
+            self._apply_details_layout()
+
+    def _clear_grid_items(self, grid):
+        while grid.count():
+            item = grid.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.setParent(None)
+
+    def _build_documents_overview_section(self):
+        section = create_card()
+        layout = QVBoxLayout()
+        layout.setContentsMargins(22, 18, 22, 18)
+        layout.setSpacing(10)
+        section.setLayout(layout)
+
         self.documents_section_title = SectionTitle(
             tr("missionary_detail_documents")
         )
-        content_layout.addWidget(self.documents_section_title)
+        layout.addWidget(self.documents_section_title)
 
         self.docs_helper = QLabel(
             tr("missionary_detail_documents_hint")
         )
         self.docs_helper.setObjectName("MutedText")
         self.docs_helper.setWordWrap(True)
-        content_layout.addWidget(self.docs_helper)
+        layout.addWidget(self.docs_helper)
 
         self.upload_button = create_button(
             tr("missionary_detail_upload_document"),
@@ -936,50 +1525,48 @@ class MissionaryDetailPage(QWidget):
         button_row.setSpacing(8)
         button_row.addWidget(self.upload_button)
         button_row.addStretch()
-
-        content_layout.addLayout(button_row)
+        layout.addLayout(button_row)
 
         self.documents_list = create_list_widget()
         self.documents_list.setIconSize(
             QSize(60, 75)
         )
-
         self.documents_list.setSpacing(8)
-
         self.documents_list.setMinimumHeight(
             DOCUMENTS_LIST_MIN_HEIGHT
         )
         tune_fluent_scrollable(self.documents_list)
         _set_scroll_step(self.documents_list)
-
         self.documents_list.setContextMenuPolicy(
             Qt.CustomContextMenu
         )
-
         self.documents_list.customContextMenuRequested.connect(
             self._show_doc_context_menu
         )
-
         self.documents_list.itemDoubleClicked.connect(
             self._open_document_viewer
         )
+        layout.addWidget(self.documents_list, stretch=1)
+        return section
 
-        content_layout.addWidget(
-            self.documents_list
-        )
+    def _build_missing_documents_overview_section(self):
+        section = create_card()
+        layout = QVBoxLayout()
+        layout.setContentsMargins(22, 18, 22, 18)
+        layout.setSpacing(10)
+        section.setLayout(layout)
 
-        # ---- Missing documents section ----
         self.missing_documents_section_title = SectionTitle(
             tr("missionary_detail_missing_documents")
         )
-        content_layout.addWidget(self.missing_documents_section_title)
+        layout.addWidget(self.missing_documents_section_title)
 
         self.missing_helper = QLabel(
             tr("missionary_detail_missing_documents_hint")
         )
         self.missing_helper.setObjectName("MutedText")
         self.missing_helper.setWordWrap(True)
-        content_layout.addWidget(self.missing_helper)
+        layout.addWidget(self.missing_helper)
 
         self.missing_documents_list = create_list_widget()
         self.missing_documents_list.setSpacing(8)
@@ -988,16 +1575,8 @@ class MissionaryDetailPage(QWidget):
         )
         tune_fluent_scrollable(self.missing_documents_list)
         _set_scroll_step(self.missing_documents_list)
-
-        content_layout.addWidget(
-            self.missing_documents_list
-        )
-
-        content_layout.addStretch()
-
-        scroll.setWidget(content)
-
-        tab_layout.addWidget(scroll)
+        layout.addWidget(self.missing_documents_list, stretch=1)
+        return section
 
     def _build_summary_section(self):
         card = create_card()
@@ -1395,8 +1974,6 @@ class MissionaryDetailPage(QWidget):
             )
         self.summary_chip_grid.setColumnStretch(len(summary_chips), 1)
 
-        content_layout.addWidget(summary_card)
-
         self.nationality_label = self._build_value_label()
         self.passport_label = self._build_value_label()
         self.carnet_number_input = create_line_edit(field_label("carnet_number"))
@@ -1570,33 +2147,21 @@ class MissionaryDetailPage(QWidget):
                 idx % 2,
             )
 
-        columns = QWidget()
-        columns_layout = QHBoxLayout()
-        columns_layout.setContentsMargins(0, 0, 0, 0)
-        columns_layout.setSpacing(16)
-        columns.setLayout(columns_layout)
+        residency_card = self._build_residency_timeline_card()
 
-        left_column = QWidget()
-        left_layout = QVBoxLayout()
-        left_layout.setContentsMargins(0, 0, 0, 0)
-        left_layout.setSpacing(14)
-        left_column.setLayout(left_layout)
-        left_layout.addWidget(identity_card)
-        left_layout.addStretch()
+        self.details_layout_canvas = QWidget()
+        self.details_layout_canvas.setObjectName("MissionaryDetailLayoutCanvas")
+        self.details_layout_canvas.setMinimumWidth(DETAIL_LAYOUT_CANVAS_WIDTH)
+        content_layout.addWidget(self.details_layout_canvas)
 
-        right_column = QWidget()
-        right_layout = QVBoxLayout()
-        right_layout.setContentsMargins(0, 0, 0, 0)
-        right_layout.setSpacing(14)
-        right_column.setLayout(right_layout)
-        right_layout.addWidget(timeline_card)
-        right_layout.addWidget(credentials_card)
-        right_layout.addWidget(self._build_residency_timeline_card())
-        right_layout.addStretch()
-
-        columns_layout.addWidget(left_column, 1)
-        columns_layout.addWidget(right_column, 1)
-        content_layout.addWidget(columns)
+        self._details_sections = {
+            "details_summary": summary_card,
+            "details_identity": identity_card,
+            "details_legal_timeline": timeline_card,
+            "details_credentials": credentials_card,
+            "details_residency": residency_card,
+        }
+        self._apply_details_layout()
 
         self.save_dates_btn = create_button(tr("save_details"), "primary")
         self.save_dates_btn.setFixedWidth(160)
@@ -2164,6 +2729,14 @@ class MissionaryDetailPage(QWidget):
 
         if hasattr(self, "advance_button"):
             self.advance_button.setText(tr("missionary_detail_advance_stage"))
+        if hasattr(self, "edit_layout_button"):
+            self.edit_layout_button.setText(tr("missionary_detail_edit_layout"))
+        if hasattr(self, "save_layout_button"):
+            self.save_layout_button.setText(tr("settings_save"))
+        if hasattr(self, "cancel_layout_button"):
+            self.cancel_layout_button.setText(tr("missionary_detail_cancel"))
+        if hasattr(self, "reset_layout_button"):
+            self.reset_layout_button.setText(tr("missionary_detail_reset_layout"))
         if hasattr(self, "actions_button"):
             self.actions_button.setText(tr("missionary_detail_actions"))
         if hasattr(self, "print_interpol_packet_action"):
@@ -2353,6 +2926,59 @@ class MissionaryDetailPage(QWidget):
         if action == print_interpol_action:
             self._print_interpol_packet()
 
+    def _edit_layout(self, checked=False):
+        _ = checked
+        if self._layout_editing:
+            return
+        self._layout_edit_payload = json.loads(
+            json.dumps(self.detail_layout_service.get_layout())
+        )
+        self._layout_editing = True
+        self._set_layout_edit_controls_visible(True)
+        self._apply_current_detail_layouts()
+
+    def _save_layout_edit(self, checked=False):
+        _ = checked
+        if not self._layout_editing or not self._layout_edit_payload:
+            return
+        self.detail_layout_service.save_layout(self._layout_edit_payload)
+        self._finish_layout_editing()
+        show_message(
+            self,
+            tr("missionary_detail_edit_layout"),
+            tr("missionary_detail_layout_saved"),
+        )
+
+    def _cancel_layout_edit(self, checked=False):
+        _ = checked
+        if not self._layout_editing:
+            return
+        self._finish_layout_editing()
+
+    def _reset_layout_edit(self, checked=False):
+        _ = checked
+        if not self._layout_editing:
+            return
+        self._layout_edit_payload = MissionaryDetailLayoutService.default_layout()
+        self._apply_current_detail_layouts()
+
+    def _finish_layout_editing(self):
+        self._layout_editing = False
+        self._layout_edit_payload = None
+        self._layout_drag_state = None
+        self._set_layout_edit_controls_visible(False)
+        self._apply_current_detail_layouts()
+        self._refresh_layout_drag_targets()
+
+    def _set_layout_edit_controls_visible(self, editing):
+        self.edit_layout_button.setVisible(not editing)
+        self.save_layout_button.setVisible(editing)
+        self.cancel_layout_button.setVisible(editing)
+        self.reset_layout_button.setVisible(editing)
+        self.actions_button.setVisible(not editing)
+        self.advance_button.setVisible(not editing)
+        self.delete_button.setVisible(not editing)
+
     def refresh_workspace_actions(self):
         if not hasattr(self, "workspace_menu"):
             return
@@ -2385,6 +3011,10 @@ class MissionaryDetailPage(QWidget):
         workspace = self.workspace_service.get_workspace(workspace_id)
         if not workspace:
             return
+        opener = getattr(self.main_window, "open_missionary_workspace", None)
+        if callable(opener) and opener(self.current_missionary, workspace):
+            return
+
         from ui.dialogs.missionary_workspace_dialog import (
             MissionaryWorkspaceDialog,
         )

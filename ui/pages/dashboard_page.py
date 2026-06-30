@@ -27,6 +27,7 @@ from ui.foundation import (
 from ui.foundation.fluent import SimpleCardWidget
 
 from utils.constants import WORKFLOW_STAGES
+from utils.i18n import tr
 
 from utils.logger import logger
 
@@ -229,20 +230,20 @@ class DashboardPage(QWidget):
         command_row.setContentsMargins(0, 0, 0, 0)
         command_row.setSpacing(12)
 
-        title = QLabel("Mission Control")
-        title.setObjectName("DashboardTitle")
+        self.dashboard_title = QLabel(tr("dashboard_title"))
+        self.dashboard_title.setObjectName("DashboardTitle")
 
-        self.dashboard_subtitle = QLabel("Loading today's work...")
+        self.dashboard_subtitle = QLabel(tr("dashboard_loading"))
         self.dashboard_subtitle.setObjectName("DashboardSubtitle")
 
         title_stack = QVBoxLayout()
         title_stack.setContentsMargins(0, 0, 0, 0)
         title_stack.setSpacing(3)
-        title_stack.addWidget(title)
+        title_stack.addWidget(self.dashboard_title)
         title_stack.addWidget(self.dashboard_subtitle)
 
         self.refresh_btn = create_button(
-            "Refresh",
+            tr("common_refresh"),
             "secondary",
         )
 
@@ -302,9 +303,9 @@ class DashboardPage(QWidget):
         strip.setLayout(layout)
 
         for text, active in [
-            ("Mission", True),
-            ("Process", False),
-            ("Link", False),
+            (tr("dashboard_tab_mission"), True),
+            (tr("dashboard_tab_process"), False),
+            (tr("dashboard_tab_link"), False),
         ]:
             label = QLabel(text)
             label.setObjectName("DashboardTopTab")
@@ -419,11 +420,11 @@ class DashboardPage(QWidget):
         )
         parts = []
         if overdue_count:
-            parts.append(f"{overdue_count} overdue")
+            parts.append(tr("dashboard_alert_overdue", count=overdue_count))
         if urgent_count:
-            parts.append(f"{urgent_count} due within 7 days")
+            parts.append(tr("dashboard_alert_due_week", count=urgent_count))
         if not parts:
-            parts.append("due within 30 days")
+            parts.append(tr("dashboard_alert_due_month"))
 
         banner = QFrame()
         banner.setObjectName("DashboardAlertBanner")
@@ -448,8 +449,10 @@ class DashboardPage(QWidget):
         text_stack.setSpacing(2)
 
         title = QLabel(
-            f"{len(self.startup_alerts)} item"
-            f"{'s' if len(self.startup_alerts) != 1 else ''} need attention"
+            tr(
+                "dashboard_alert_banner_title",
+                count=len(self.startup_alerts),
+            )
         )
         title.setObjectName("StrongText")
 
@@ -460,7 +463,7 @@ class DashboardPage(QWidget):
         text_stack.addWidget(title)
         text_stack.addWidget(detail)
 
-        button = create_button("Review alerts", "primary")
+        button = create_button(tr("dashboard_review_alerts"), "primary")
         button.clicked.connect(self.startup_alerts_requested.emit)
 
         layout.addWidget(accent)
@@ -487,7 +490,7 @@ class DashboardPage(QWidget):
         self._set_dashboard_subtitle_from_digest(digest)
 
         target_layout.addWidget(
-            SectionHeader("Today")
+            SectionHeader(tr("dashboard_today"))
         )
 
         card = SimpleCardWidget()
@@ -505,11 +508,11 @@ class DashboardPage(QWidget):
         actions.setSpacing(8)
         actions.addStretch()
 
-        refresh = create_button("Refresh", "secondary")
+        refresh = create_button(tr("common_refresh"), "secondary")
         refresh.clicked.connect(self.load_data)
         actions.addWidget(refresh)
 
-        copy = create_button("Copy Summary", "primary")
+        copy = create_button(tr("dashboard_copy_summary"), "primary")
         copy.clicked.connect(
             lambda checked=False, text=digest.get("text", ""):
             self._copy_daily_digest(text)
@@ -535,10 +538,10 @@ class DashboardPage(QWidget):
             total = 0
 
         if total == 0:
-            return "No actions need attention today."
+            return tr("dashboard_no_actions_today")
         if total == 1:
-            return "1 action needs attention today."
-        return f"{total} actions need attention today."
+            return tr("dashboard_one_action_today")
+        return tr("dashboard_many_actions_today", count=total)
 
     @staticmethod
     def _flatten_digest_items(digest):
@@ -555,10 +558,10 @@ class DashboardPage(QWidget):
         row.setSpacing(10)
 
         for key, label, color in [
-            ("critical", "Critical", "#DC2626"),
-            ("overdue", "Overdue", "#D97706"),
-            ("due_today", "Due Today", "#0EA5AC"),
-            ("total", "Total Open", "#71717A"),
+            ("critical", tr("dashboard_metric_critical"), "#DC2626"),
+            ("overdue", tr("dashboard_metric_overdue"), "#D97706"),
+            ("due_today", tr("dashboard_metric_due_today"), "#0EA5AC"),
+            ("total", tr("dashboard_metric_total_open"), "#71717A"),
         ]:
             row.addWidget(
                 self._make_digest_metric_tile(summary.get(key, 0), label, color)
@@ -574,7 +577,7 @@ class DashboardPage(QWidget):
         if not self._flatten_digest_items(digest):
             return
 
-        intro = QLabel("Mission Queue")
+        intro = QLabel(tr("dashboard_mission_queue"))
         intro.setObjectName("SectionHeader")
         layout.addWidget(intro)
 
@@ -603,14 +606,14 @@ class DashboardPage(QWidget):
         text_stack.setContentsMargins(0, 0, 0, 0)
         text_stack.setSpacing(5)
 
-        label = QLabel("Start Here")
+        label = QLabel(tr("dashboard_start_here"))
         label.setObjectName("SectionHeader")
         text_stack.addWidget(label)
 
         if not items:
-            title = QLabel("All clear for today's due work.")
+            title = QLabel(tr("dashboard_all_clear_title"))
             title.setObjectName("StrongText")
-            detail = QLabel("Refresh later or copy the summary for your records.")
+            detail = QLabel(tr("dashboard_all_clear_detail"))
             detail.setObjectName("MutedText")
             detail.setWordWrap(True)
             text_stack.addWidget(title)
@@ -629,14 +632,18 @@ class DashboardPage(QWidget):
             ),
         )
 
-        title = QLabel(first_item.get("action", "Review due work"))
+        title = QLabel(
+            first_item.get("action") or tr("dashboard_review_due_work")
+        )
         title.setObjectName("PanelTitle")
         title.setWordWrap(True)
 
-        detail_parts = [first_item.get("who", "Office")]
+        detail_parts = [first_item.get("who") or tr("dashboard_office")]
         count = first_item.get("missionary_count") or 0
         if count > 1:
-            detail_parts.append(f"{count} missionaries affected")
+            detail_parts.append(
+                tr("dashboard_missionaries_affected", count=count)
+            )
         if first_item.get("timing"):
             detail_parts.append(first_item["timing"])
 
@@ -645,11 +652,15 @@ class DashboardPage(QWidget):
         detail.setWordWrap(True)
 
         chip = self._make_digest_chip(
-            first_item.get("timing", "Open"),
+            first_item.get("timing") or tr("dashboard_open"),
             self._attention_color(first_item.get("severity")),
         )
 
-        review_btn = create_button("Review", "primary", fixed_height=30)
+        review_btn = create_button(
+            tr("dashboard_review"),
+            "primary",
+            fixed_height=30,
+        )
         review_btn.clicked.connect(
             lambda checked=False, payload=first_item:
             self._open_digest_item(payload)
@@ -679,10 +690,15 @@ class DashboardPage(QWidget):
         header.setContentsMargins(0, 0, 0, 0)
         header.setSpacing(10)
 
-        title = QLabel(f"{group.get('title', 'Work')} Mission")
+        title = QLabel(
+            tr(
+                "dashboard_group_title",
+                title=group.get("title") or tr("dashboard_work"),
+            )
+        )
         title.setObjectName("StrongText")
         count = self._make_digest_chip(
-            f"{group.get('count', 0)} open",
+            tr("dashboard_open_count", count=group.get("count", 0)),
             "#71717A",
         )
 
@@ -704,14 +720,17 @@ class DashboardPage(QWidget):
             text_stack.setContentsMargins(0, 0, 0, 0)
             text_stack.setSpacing(2)
 
-            who = QLabel(item.get("who", "Office"))
+            who = QLabel(item.get("who") or tr("dashboard_office"))
             who.setObjectName("StrongText")
             who.setWordWrap(True)
 
-            action_text = item.get("action", "Task")
+            action_text = item.get("action") or tr("dashboard_task")
             item_count = item.get("missionary_count") or 0
             if item_count > 1:
-                action_text = f"{action_text} ({item_count} missionaries)"
+                action_text = (
+                    f"{action_text} "
+                    f"({tr('dashboard_missionaries_count', count=item_count)})"
+                )
 
             action = QLabel(action_text)
             action.setObjectName("RowText")
@@ -721,11 +740,15 @@ class DashboardPage(QWidget):
             text_stack.addWidget(action)
 
             timing = self._make_digest_chip(
-                item.get("timing", "Open"),
+                item.get("timing") or tr("dashboard_open"),
                 self._attention_color(item.get("severity")),
             )
 
-            open_btn = create_button("Open", "subtle", fixed_height=28)
+            open_btn = create_button(
+                tr("dashboard_action_open"),
+                "subtle",
+                fixed_height=28,
+            )
             open_btn.clicked.connect(
                 lambda checked=False, payload=item:
                 self._open_digest_item(payload)
@@ -770,7 +793,7 @@ class DashboardPage(QWidget):
 
     @staticmethod
     def _make_digest_chip(text, color):
-        chip = QLabel(str(text or "Open"))
+        chip = QLabel(str(text or tr("dashboard_open")))
         chip.setObjectName("DigestChip")
         chip.setAlignment(Qt.AlignCenter)
         chip.setProperty("tone", _tone_from_color(color))
@@ -804,21 +827,21 @@ class DashboardPage(QWidget):
         QApplication.clipboard().setText(text or "")
         show_message(
             self,
-            "Daily Digest",
-            "Digest copied to clipboard.",
+            tr("dashboard_daily_digest"),
+            tr("dashboard_digest_copied"),
         )
 
     def _build_attention_section(self, attention_items, target_layout=None):
         target_layout = target_layout or self.content_layout
         target_layout.addWidget(
-            SectionHeader("Needs Attention")
+            SectionHeader(tr("dashboard_needs_attention"))
         )
 
         card = ListCard()
         card.setObjectName("NeedsAttentionCard")
 
         if not attention_items:
-            card.add_empty("No urgent items need attention.")
+            card.add_empty(tr("dashboard_no_urgent_items"))
             target_layout.addWidget(card)
             return
 
@@ -847,13 +870,13 @@ class DashboardPage(QWidget):
             )
             if item.get("type") == "appointment_due":
                 row.add_button(
-                    "Complete",
+                    tr("dashboard_complete"),
                     lambda checked=False, payload=item:
                     self._complete_attention_appointment(payload),
                     variant="success",
                 )
                 row.add_button(
-                    "Missed",
+                    tr("dashboard_missed"),
                     lambda checked=False, payload=item:
                     self._miss_attention_appointment(payload),
                     variant="danger",
@@ -871,7 +894,7 @@ class DashboardPage(QWidget):
     def _build_recommended_section(self, tasks, target_layout=None):
         target_layout = target_layout or self.content_layout
         target_layout.addWidget(
-            SectionHeader("Recommended This Week")
+            SectionHeader(tr("dashboard_recommended_this_week"))
         )
 
         card = SimpleCardWidget()
@@ -894,7 +917,7 @@ class DashboardPage(QWidget):
         title_stack.setContentsMargins(0, 0, 0, 0)
         title_stack.setSpacing(2)
 
-        title = QLabel("Weekly Mission Plan")
+        title = QLabel(tr("dashboard_weekly_mission_plan"))
         title.setObjectName("PanelTitle")
 
         subtitle = QLabel(self._recommended_summary_text(tasks))
@@ -917,7 +940,7 @@ class DashboardPage(QWidget):
         self._add_recommended_focus(layout, lead_task)
 
         if len(tasks) > 1:
-            queue_label = QLabel("This Week Queue")
+            queue_label = QLabel(tr("dashboard_this_week_queue"))
             queue_label.setObjectName("SectionHeader")
             layout.addWidget(queue_label)
 
@@ -925,7 +948,12 @@ class DashboardPage(QWidget):
             layout.addWidget(self._make_recommended_row(task))
 
         if len(tasks) > 10:
-            more = QLabel(f"+ {len(tasks) - 10} more recommendations this week")
+            more = QLabel(
+                tr(
+                    "dashboard_more_recommendations",
+                    count=len(tasks) - 10,
+                )
+            )
             more.setObjectName("MutedText")
             layout.addWidget(more)
 
@@ -951,10 +979,10 @@ class DashboardPage(QWidget):
         text_stack.setContentsMargins(0, 0, 0, 0)
         text_stack.setSpacing(3)
 
-        title = QLabel("No recommended process work this week.")
+        title = QLabel(tr("dashboard_no_recommended_title"))
         title.setObjectName("StrongText")
 
-        detail = QLabel("The automated queue is clear. Nice and quiet.")
+        detail = QLabel(tr("dashboard_no_recommended_detail"))
         detail.setObjectName("MutedText")
         detail.setWordWrap(True)
 
@@ -985,10 +1013,10 @@ class DashboardPage(QWidget):
         text_stack.setContentsMargins(0, 0, 0, 0)
         text_stack.setSpacing(5)
 
-        label = QLabel("Next Best Move")
+        label = QLabel(tr("dashboard_next_best_move"))
         label.setObjectName("SectionHeader")
 
-        title = QLabel(task.get("title", "Recommended task"))
+        title = QLabel(task.get("title") or tr("dashboard_recommended_task"))
         title.setObjectName("PanelTitle")
         title.setWordWrap(True)
 
@@ -1002,7 +1030,7 @@ class DashboardPage(QWidget):
             text_stack.addWidget(detail)
 
         chip = self._make_digest_chip(
-            task.get("timing", "Open"),
+            task.get("timing") or tr("dashboard_open"),
             self._attention_color(task.get("severity")),
         )
 
@@ -1048,7 +1076,7 @@ class DashboardPage(QWidget):
         text_stack.setContentsMargins(0, 0, 0, 0)
         text_stack.setSpacing(2)
 
-        title = QLabel(task.get("title", "Recommended task"))
+        title = QLabel(task.get("title") or tr("dashboard_recommended_task"))
         title.setObjectName("StrongText")
         title.setWordWrap(True)
 
@@ -1061,7 +1089,7 @@ class DashboardPage(QWidget):
             text_stack.addWidget(detail)
 
         chip = self._make_digest_chip(
-            task.get("timing", "Open"),
+            task.get("timing") or tr("dashboard_open"),
             self._attention_color(task.get("severity")),
         )
 
@@ -1104,12 +1132,12 @@ class DashboardPage(QWidget):
 
         parts = []
         if overdue:
-            parts.append(f"{overdue} overdue")
+            parts.append(tr("dashboard_summary_overdue", count=overdue))
         if today:
-            parts.append(f"{today} due today")
+            parts.append(tr("dashboard_summary_due_today", count=today))
         if upcoming:
-            parts.append(f"{upcoming} upcoming")
-        return " | ".join(parts) if parts else "No dated recommendations"
+            parts.append(tr("dashboard_summary_upcoming", count=upcoming))
+        return " | ".join(parts) if parts else tr("dashboard_no_dated_recommendations")
 
     @staticmethod
     def _recommended_tone(task):
@@ -1140,12 +1168,16 @@ class DashboardPage(QWidget):
 
     @staticmethod
     def _attention_action_label(item):
+        if item.get("type") == "secretary_task" and item.get("task_id"):
+            return tr("dashboard_action_review_task")
+        if item.get("missionary_id"):
+            return tr("dashboard_action_open_missionary")
         target = item.get("target")
         if target == "office_work":
-            return "Office Work"
+            return tr("dashboard_action_office_work")
         if target == "appointments":
-            return "Appointments"
-        return "Open"
+            return tr("dashboard_action_open_calendar")
+        return tr("dashboard_action_open")
 
     def _open_attention_item(self, item):
         if not item:
@@ -1191,8 +1223,8 @@ class DashboardPage(QWidget):
             logger.exception("Failed to complete appointment from dashboard")
             show_message(
                 self,
-                "Appointment Error",
-                "Could not mark the appointment complete.",
+                tr("dashboard_appointment_error"),
+                tr("dashboard_appointment_complete_failed"),
                 kind="critical",
             )
 
@@ -1203,10 +1235,9 @@ class DashboardPage(QWidget):
 
         confirm = show_message(
             self,
-            "Mark Appointment Missed?",
+            tr("dashboard_mark_missed_title"),
             (
-                "This will mark the appointment as missed, remove it from "
-                "Needs Attention, and create the follow-up task."
+                tr("dashboard_mark_missed_message")
             ),
             kind="question",
             buttons="yes_no",
@@ -1221,8 +1252,8 @@ class DashboardPage(QWidget):
             logger.exception("Failed to mark appointment missed from dashboard")
             show_message(
                 self,
-                "Appointment Error",
-                "Could not mark the appointment missed.",
+                tr("dashboard_appointment_error"),
+                tr("dashboard_appointment_missed_failed"),
                 kind="critical",
             )
 
@@ -1257,7 +1288,7 @@ class DashboardPage(QWidget):
         # Total card
         total_card = StatCard(
             data["total"],
-            "Active Missionaries",
+            tr("dashboard_active_missionaries"),
             color="#0EA5AC",
         )
 
@@ -1294,24 +1325,24 @@ class DashboardPage(QWidget):
     def _build_expiring_section(self, expiring, target_layout=None):
         target_layout = target_layout or self.content_layout
         target_layout.addWidget(
-            SectionHeader("Expiring Within 60 Days")
+            SectionHeader(tr("dashboard_expiring_soon"))
         )
 
         card = ListCard()
 
         card.add_widget(
             ColumnHeaderRow([
-                ("Missionary", 3),
-                ("Document", 3),
-                ("Expiry Date", 2),
-                ("Days Remaining", 2),
+                (tr("missionary_label"), 3),
+                (tr("dashboard_document"), 3),
+                (tr("dashboard_expiry_date"), 2),
+                (tr("dashboard_days_remaining"), 2),
                 ("", 1),
             ])
         )
 
         if not expiring:
             card.add_empty(
-                "No documents expiring within 60 days."
+                tr("dashboard_no_expiring_documents")
             )
 
         else:
@@ -1320,19 +1351,19 @@ class DashboardPage(QWidget):
 
                 if days < 0:
                     day_color = "#DC2626"
-                    urgency = "Expired"
+                    urgency = tr("dashboard_expired")
 
                 elif days <= 14:
                     day_color = "#DC2626"
-                    urgency = f"{days} days"
+                    urgency = tr("dashboard_days_count", count=days)
 
                 elif days <= 30:
                     day_color = "#D97706"
-                    urgency = f"{days} days"
+                    urgency = tr("dashboard_days_count", count=days)
 
                 else:
                     day_color = "#059669"
-                    urgency = f"{days} days"
+                    urgency = tr("dashboard_days_count", count=days)
 
                 row = TableRow(alternate=(i % 2 == 1))
                 row.set_click_data(item)
@@ -1366,7 +1397,7 @@ class DashboardPage(QWidget):
                 )
 
                 row.add_button(
-                    "Open",
+                    tr("dashboard_action_open"),
                     lambda checked=False, missionary_id=item.get("missionary_id"):
                     self._open_missionary(missionary_id),
                 )
@@ -1382,23 +1413,22 @@ class DashboardPage(QWidget):
     def _build_missing_section(self, missing_docs, target_layout=None):
         target_layout = target_layout or self.content_layout
         target_layout.addWidget(
-            SectionHeader("Missing Required Documents")
+            SectionHeader(tr("dashboard_missing_required_documents"))
         )
 
         card = ListCard()
 
         card.add_widget(
             ColumnHeaderRow([
-                ("Missionary", 2),
-                ("Missing Documents", 5),
+                (tr("missionary_label"), 2),
+                (tr("dashboard_missing_documents"), 5),
                 ("", 1),
             ])
         )
 
         if not missing_docs:
             card.add_empty(
-                "All missionaries have their "
-                "required documents."
+                tr("dashboard_no_missing_documents")
             )
 
         else:
@@ -1436,7 +1466,7 @@ class DashboardPage(QWidget):
                 )
 
                 row.add_button(
-                    "Open",
+                    tr("dashboard_action_open"),
                     lambda checked=False, missionary_id=item.get("missionary_id"):
                     self._open_missionary(missionary_id),
                 )

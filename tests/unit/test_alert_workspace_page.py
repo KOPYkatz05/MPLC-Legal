@@ -1,7 +1,10 @@
 from types import SimpleNamespace
 
+from PySide6.QtWidgets import QPushButton
+
 from ui.pages import alert_workspace_page
 from ui.pages.alert_workspace_page import AlertWorkspacePage
+from utils.i18n import get_i18n
 
 
 class FakeWorkspaceService:
@@ -72,6 +75,41 @@ def test_alert_workspace_renders_task_context(qapp):
         page.close()
 
 
+def test_alert_workspace_chrome_uses_active_language(qapp):
+    _ = qapp
+    i18n = get_i18n()
+    original_language = i18n.get_language()
+    try:
+        i18n.set_language("es")
+        page = AlertWorkspacePage(service=FakeWorkspaceService())
+        page.load_task(12, return_key="office_work")
+
+        texts = {
+            label.text()
+            for label in page.findChildren(alert_workspace_page.QLabel)
+            if label.text()
+        }
+        buttons = {
+            button.text()
+            for button in page.findChildren(QPushButton)
+            if button.text()
+        }
+
+        assert page.back_btn.text() == "Volver"
+        assert "Editar tarea" in buttons
+        assert "Marcar hecha" in buttons
+        assert "Trabajo de oficina / Espacio de alerta" in texts
+        assert "Vista rápida" in texts
+        assert "Por qué aparece esta alerta" in texts
+        assert "Próximos pasos recomendados" in texts
+        assert "Detalles de origen" in texts
+        assert "Misioneros afectados (1)" in texts
+    finally:
+        i18n.set_language(original_language)
+        if "page" in locals():
+            page.close()
+
+
 def test_alert_workspace_mark_done_confirms_and_reloads(monkeypatch, qapp):
     _ = qapp
     service = FakeWorkspaceService()
@@ -99,6 +137,34 @@ def test_alert_workspace_mark_done_confirms_and_reloads(monkeypatch, qapp):
         assert service.calls == 2
     finally:
         page.close()
+
+
+def test_alert_workspace_mark_done_confirmation_is_translated(monkeypatch, qapp):
+    _ = qapp
+    i18n = get_i18n()
+    original_language = i18n.get_language()
+    service = FakeWorkspaceService()
+    prompts = []
+
+    def fake_show_message(*args, **kwargs):
+        prompts.append((args, kwargs))
+        return 16384
+
+    monkeypatch.setattr(alert_workspace_page, "show_message", fake_show_message)
+    try:
+        i18n.set_language("es")
+        page = AlertWorkspacePage(service=service)
+        page.load_task(12)
+        page._mark_done()
+
+        assert prompts
+        assert prompts[0][0][1] == "¿Marcar tarea hecha?"
+        assert "registros estén resueltos" in prompts[0][0][2]
+        assert service.completed == [12]
+    finally:
+        i18n.set_language(original_language)
+        if "page" in locals():
+            page.close()
 
 
 def test_alert_workspace_edit_task_reloads(monkeypatch, qapp):

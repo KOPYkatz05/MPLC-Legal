@@ -60,7 +60,7 @@ class WorkspaceBlockPropertiesDialog(QDialog):
     def __init__(self, block, parent=None):
         super().__init__(parent)
         self.block = deepcopy(block or {})
-        self.setWindowTitle("Edit block properties")
+        self.setWindowTitle(tr("workspace_properties_title"))
         self.resize(520, 540)
         self.setObjectName("WorkspacePropertiesDialog")
 
@@ -77,10 +77,10 @@ class WorkspaceBlockPropertiesDialog(QDialog):
         header_layout.setSpacing(4)
         header.setLayout(header_layout)
 
-        title = QLabel("Edit Properties")
+        title = QLabel(tr("workspace_properties_title"))
         title.setObjectName("WorkspacePropertiesTitle")
         header_layout.addWidget(title)
-        helper = QLabel("Adjust what this block shows. Layout and size can still be changed directly on the canvas.")
+        helper = QLabel(tr("workspace_properties_hint"))
         helper.setObjectName("WorkspacePropertiesSubtitle")
         helper.setWordWrap(True)
         header_layout.addWidget(helper)
@@ -98,9 +98,12 @@ class WorkspaceBlockPropertiesDialog(QDialog):
         form.setSpacing(10)
         body_layout.addLayout(form, stretch=1)
 
-        self.title_input = create_line_edit("Block title", "WorkspaceBlockTitleDialogInput")
+        self.title_input = create_line_edit(
+            tr("workspace_block_title"),
+            "WorkspaceBlockTitleDialogInput",
+        )
         self.title_input.setText(self.block.get("title", ""))
-        form.addRow("Title", self.title_input)
+        form.addRow(tr("workspace_properties_title_field"), self.title_input)
 
         layout_data = validate_block_layout(self.block)
         self.row_spin = QSpinBox()
@@ -127,11 +130,11 @@ class WorkspaceBlockPropertiesDialog(QDialog):
             stack.addWidget(QLabel(label))
             stack.addWidget(widget)
             layout_row.addLayout(stack)
-        form.addRow("Canvas", layout_row)
+        form.addRow(tr("workspace_properties_canvas"), layout_row)
 
-        self.fields_input = create_plain_text_edit("Fields")
+        self.fields_input = create_plain_text_edit(tr("workspace_block_fields"))
         self.fields_input.setPlainText("\n".join(self.block.get("fields", [])))
-        form.addRow("Fields", self.fields_input)
+        form.addRow(tr("workspace_block_fields"), self.fields_input)
 
         self.document_combo = create_combo_box()
         self.document_combo.addItem(tr("workspace_first_available_document"), "")
@@ -139,13 +142,16 @@ class WorkspaceBlockPropertiesDialog(QDialog):
             self.document_combo.addItem(config.get("label", document_type), document_type)
         doc_idx = self.document_combo.findData(self.block.get("document_type", ""))
         self.document_combo.setCurrentIndex(max(doc_idx, 0))
-        form.addRow("Document", self.document_combo)
+        form.addRow(tr("workspace_properties_document"), self.document_combo)
 
-        self.web_url_input = create_line_edit("Website URL", "WorkspaceWebUrlDialogInput")
+        self.web_url_input = create_line_edit(
+            tr("workspace_block_web_url"),
+            "WorkspaceWebUrlDialogInput",
+        )
         self.web_url_input.setText(self.block.get("web_url", ""))
-        form.addRow("Website", self.web_url_input)
+        form.addRow(tr("workspace_properties_website"), self.web_url_input)
 
-        self.links_input = create_plain_text_edit("Links")
+        self.links_input = create_plain_text_edit(tr("workspace_properties_links"))
         links = (self.block.get("settings") or {}).get("links", [])
         self.links_input.setPlainText(
             "\n".join(
@@ -154,12 +160,12 @@ class WorkspaceBlockPropertiesDialog(QDialog):
                 if isinstance(link, dict)
             )
         )
-        form.addRow("Links", self.links_input)
+        form.addRow(tr("workspace_properties_links"), self.links_input)
 
-        self.actions_input = create_plain_text_edit("Actions")
+        self.actions_input = create_plain_text_edit(tr("workspace_properties_actions"))
         actions = (self.block.get("settings") or {}).get("actions", [])
         self.actions_input.setPlainText("\n".join(actions))
-        form.addRow("Actions", self.actions_input)
+        form.addRow(tr("workspace_properties_actions"), self.actions_input)
 
         block_type = self.block.get("type")
         for widget, visible in (
@@ -175,8 +181,8 @@ class WorkspaceBlockPropertiesDialog(QDialog):
                 widget.setVisible(visible)
 
         footer = DialogFooter()
-        cancel_btn = create_button("Cancel", "secondary")
-        apply_btn = create_button("Apply", "primary")
+        cancel_btn = create_button(tr("missionary_detail_cancel"), "secondary")
+        apply_btn = create_button(tr("workspace_apply"), "primary")
         cancel_btn.clicked.connect(self.reject)
         apply_btn.clicked.connect(self.accept)
         footer.add_action(cancel_btn)
@@ -303,22 +309,31 @@ class WorkspacesPage(QWidget):
         title_stack = QVBoxLayout()
         title_stack.setContentsMargins(0, 0, 0, 0)
         title_stack.setSpacing(2)
-        title = QLabel("Workspace Builder")
+        self.workspace_page_title = QLabel(tr("workspace_builder_title"))
+        title = self.workspace_page_title
         title.setObjectName("WorkspacePageTitle")
-        subtitle = QLabel("Design missionary workspaces on a free canvas. Drag, resize, and edit blocks like a modern editor.")
+        self.workspace_page_subtitle = QLabel(tr("workspace_builder_subtitle"))
+        subtitle = self.workspace_page_subtitle
         subtitle.setObjectName("WorkspacePageSubtitle")
         title_stack.addWidget(title)
         title_stack.addWidget(subtitle)
         top_layout.addLayout(title_stack, stretch=1)
 
-        self.workspace_name_input = create_line_edit("Workspace name", "WorkspaceNameInput")
+        self.workspace_name_input = create_line_edit(
+            tr("workspace_name_placeholder"),
+            "WorkspaceNameInput",
+        )
         self.workspace_name_input.setFixedHeight(30)
         self.workspace_name_input.setMaximumWidth(280)
         self.workspace_name_input.textChanged.connect(self._update_workspace_name)
         top_layout.addWidget(self.workspace_name_input)
         self.workspace_size_combo = create_combo_box()
         self.workspace_size_combo.setFixedHeight(30)
-        for label, value in (("Medium", "medium"), ("Large", "large"), ("Wide", "wide")):
+        for label, value in (
+            (tr("workspace_size_medium"), "medium"),
+            (tr("workspace_size_large"), "large"),
+            (tr("workspace_size_wide"), "wide"),
+        ):
             self.workspace_size_combo.addItem(label, value)
         self.workspace_size_combo.currentIndexChanged.connect(self._update_workspace_size)
         top_layout.addWidget(self.workspace_size_combo)
@@ -359,10 +374,11 @@ class WorkspacesPage(QWidget):
         self.workspaces_list.currentItemChanged.connect(self._workspace_selection_changed)
         left_layout.addWidget(self.workspaces_list, stretch=1)
 
-        palette_label = QLabel("Blocks")
+        self.palette_label = QLabel(tr("workspace_blocks"))
+        palette_label = self.palette_label
         palette_label.setObjectName("WorkspacePanelTitle")
         left_layout.addWidget(palette_label)
-        self.palette_search = create_search_edit("Search blocks")
+        self.palette_search = create_search_edit(tr("workspace_search_blocks"))
         self.palette_search.textChanged.connect(self._refresh_palette)
         left_layout.addWidget(self.palette_search)
         palette_scroll = create_scroll_area("WorkspacePaletteScroll", transparent=True)
@@ -390,14 +406,14 @@ class WorkspacesPage(QWidget):
         toolbar.setContentsMargins(10, 7, 10, 7)
         toolbar.setSpacing(4)
         toolbar_frame.setLayout(toolbar)
-        self.undo_btn = create_button("Undo", "secondary")
-        self.redo_btn = create_button("Redo", "secondary")
+        self.undo_btn = create_button(tr("workspace_undo"), "secondary")
+        self.redo_btn = create_button(tr("workspace_redo"), "secondary")
         self.zoom_out_btn = create_button("-", "secondary")
         self.zoom_reset_btn = create_button("100%", "secondary")
         self.zoom_in_btn = create_button("+", "secondary")
-        self.copy_btn = create_button("Copy", "secondary")
-        self.paste_btn = create_button("Paste", "secondary")
-        self.clear_canvas_btn = create_button("Clear", "danger")
+        self.copy_btn = create_button(tr("workspace_copy"), "secondary")
+        self.paste_btn = create_button(tr("workspace_paste"), "secondary")
+        self.clear_canvas_btn = create_button(tr("workspace_clear_canvas"), "danger")
         self.add_selected_btn = create_button(tr("workspace_add_block"), "secondary")
         self.block_add_combo = create_combo_box()
         self.block_add_combo.setFixedHeight(30)
@@ -439,10 +455,10 @@ class WorkspacesPage(QWidget):
 
         status_row = QHBoxLayout()
         status_row.setContentsMargins(0, 0, 0, 0)
-        self.selection_metrics_label = QLabel("No selection")
+        self.selection_metrics_label = QLabel(tr("workspace_no_selection"))
         self.selection_metrics_label.setObjectName("WorkspaceSelectionMetrics")
         self.shortcut_hint_label = QLabel(
-            "Ctrl+click multi-select | Ctrl+G group | Ctrl+L lock | Ctrl+H hide"
+            tr("workspace_shortcut_hint")
         )
         self.shortcut_hint_label.setObjectName("WorkspaceShortcutHint")
         status_row.addWidget(self.selection_metrics_label)
@@ -474,14 +490,16 @@ class WorkspacesPage(QWidget):
         inspector.setLayout(inspector_layout)
         inspector.setMinimumWidth(260)
         inspector.setMaximumWidth(360)
-        inspector_title = QLabel("Inspector")
+        self.inspector_title = QLabel(tr("workspace_inspector"))
+        inspector_title = self.inspector_title
         inspector_title.setObjectName("WorkspacePanelTitle")
         inspector_layout.addWidget(inspector_title)
-        self.selected_block_label = QLabel("Select a block")
+        self.selected_block_label = QLabel(tr("workspace_select_block"))
         self.selected_block_label.setWordWrap(True)
         inspector_layout.addWidget(self.selected_block_label)
 
-        layers_label = QLabel("Layers")
+        self.layers_label = QLabel(tr("workspace_layers"))
+        layers_label = self.layers_label
         layers_label.setObjectName("WorkspacePanelTitle")
         inspector_layout.addWidget(layers_label)
         self.layers_list = create_list_widget("WorkspaceLayersList")
@@ -489,7 +507,10 @@ class WorkspacesPage(QWidget):
         self.layers_list.currentItemChanged.connect(self._layer_selection_changed)
         inspector_layout.addWidget(self.layers_list, stretch=1)
 
-        self.block_title_input = create_line_edit("Block title", "WorkspaceBlockTitleInput")
+        self.block_title_input = create_line_edit(
+            tr("workspace_block_title"),
+            "WorkspaceBlockTitleInput",
+        )
         self.block_title_input.textChanged.connect(self._update_block_title)
         inspector_layout.addWidget(self.block_title_input)
         form = QFormLayout()
@@ -499,38 +520,41 @@ class WorkspacesPage(QWidget):
         self.block_row_span_spin = QSpinBox()
         self.block_row_span_spin.setRange(1, 8)
         self.block_row_span_spin.valueChanged.connect(self._update_block_row_span)
-        form.addRow("Columns", self.block_col_span_spin)
-        form.addRow("Rows", self.block_row_span_spin)
+        form.addRow(tr("workspace_block_columns"), self.block_col_span_spin)
+        form.addRow(tr("workspace_block_rows"), self.block_row_span_spin)
         inspector_layout.addLayout(form)
-        self.edit_properties_btn = create_button("Edit Properties", "primary")
+        self.edit_properties_btn = create_button(
+            tr("workspace_properties_title"),
+            "primary",
+        )
         self.edit_properties_btn.clicked.connect(lambda: self._edit_block_properties(self._current_block_id()))
-        self.duplicate_block_btn = create_button("Duplicate", "secondary")
+        self.duplicate_block_btn = create_button(tr("workspace_duplicate"), "secondary")
         self.duplicate_block_btn.clicked.connect(self._duplicate_selected_block)
-        self.lock_block_btn = create_button("Lock", "secondary")
+        self.lock_block_btn = create_button(tr("workspace_lock"), "secondary")
         self.lock_block_btn.clicked.connect(self._toggle_selected_locked)
-        self.visibility_block_btn = create_button("Hide", "secondary")
+        self.visibility_block_btn = create_button(tr("workspace_hide"), "secondary")
         self.visibility_block_btn.clicked.connect(self._toggle_selected_visible)
-        self.group_block_btn = create_button("Group", "secondary")
+        self.group_block_btn = create_button(tr("workspace_group"), "secondary")
         self.group_block_btn.clicked.connect(self._group_selected_blocks)
-        self.ungroup_block_btn = create_button("Ungroup", "secondary")
+        self.ungroup_block_btn = create_button(tr("workspace_ungroup"), "secondary")
         self.ungroup_block_btn.clicked.connect(self._ungroup_selected_blocks)
-        self.bring_forward_btn = create_button("Bring Forward", "secondary")
+        self.bring_forward_btn = create_button(tr("workspace_bring_forward"), "secondary")
         self.bring_forward_btn.clicked.connect(lambda: self._move_selected_layer(1))
-        self.send_backward_btn = create_button("Send Backward", "secondary")
+        self.send_backward_btn = create_button(tr("workspace_send_backward"), "secondary")
         self.send_backward_btn.clicked.connect(lambda: self._move_selected_layer(-1))
-        self.bring_to_front_btn = create_button("To Front", "secondary")
+        self.bring_to_front_btn = create_button(tr("workspace_to_front"), "secondary")
         self.bring_to_front_btn.clicked.connect(lambda: self._move_selected_layer(1, to_edge=True))
-        self.send_to_back_btn = create_button("To Back", "secondary")
+        self.send_to_back_btn = create_button(tr("workspace_to_back"), "secondary")
         self.send_to_back_btn.clicked.connect(lambda: self._move_selected_layer(-1, to_edge=True))
         align_row = QHBoxLayout()
         align_row.setContentsMargins(0, 0, 0, 0)
-        self.align_left_btn = create_button("Left", "secondary")
-        self.align_center_btn = create_button("Center", "secondary")
-        self.align_right_btn = create_button("Right", "secondary")
-        self.align_top_btn = create_button("Top", "secondary")
-        self.fit_width_btn = create_button("Fit", "secondary")
-        self.distribute_h_btn = create_button("Space H", "secondary")
-        self.distribute_v_btn = create_button("Space V", "secondary")
+        self.align_left_btn = create_button(tr("workspace_align_left"), "secondary")
+        self.align_center_btn = create_button(tr("workspace_align_center"), "secondary")
+        self.align_right_btn = create_button(tr("workspace_align_right"), "secondary")
+        self.align_top_btn = create_button(tr("workspace_align_top"), "secondary")
+        self.fit_width_btn = create_button(tr("workspace_fit_width"), "secondary")
+        self.distribute_h_btn = create_button(tr("workspace_space_h"), "secondary")
+        self.distribute_v_btn = create_button(tr("workspace_space_v"), "secondary")
         for button, edge in (
             (self.align_left_btn, "left"),
             (self.align_center_btn, "center"),
@@ -572,7 +596,9 @@ class WorkspacesPage(QWidget):
         self.field_remove_btn = create_button(tr("workspace_remove_field"), "secondary")
         self.workspace_preview_title = QLabel(tr("workspace_preview_title"))
         self.workspace_preview_grid = QVBoxLayout()
-        self.workspace_preview_grid.addWidget(QLabel("Canvas preview is the live editor surface."))
+        self.workspace_preview_grid.addWidget(
+            QLabel(tr("workspace_canvas_preview_live"))
+        )
         self.block_web_url_input = create_line_edit(
             tr("workspace_block_web_url"),
             "WorkspaceBlockWebUrlInput",
@@ -628,7 +654,7 @@ class WorkspacesPage(QWidget):
                 self.palette_body_layout.addWidget(palette)
                 shown += 1
         if shown == 0:
-            empty = QLabel("No blocks match your search")
+            empty = QLabel(tr("workspace_no_blocks_match"))
             empty.setObjectName("MutedText")
             empty.setWordWrap(True)
             self.palette_body_layout.addWidget(empty)
@@ -638,7 +664,40 @@ class WorkspacesPage(QWidget):
         self._load_workspaces()
 
     def retranslate_ui(self):
+        self.workspace_page_title.setText(tr("workspace_builder_title"))
+        self.workspace_page_subtitle.setText(tr("workspace_builder_subtitle"))
+        self.workspace_name_input.setPlaceholderText(tr("workspace_name_placeholder"))
         self.workspace_save_btn.setText(tr("workspace_save"))
+        self.workspace_new_btn.setText(tr("workspace_new"))
+        self.workspace_duplicate_btn.setText(tr("workspace_duplicate"))
+        self.workspace_delete_btn.setText(tr("workspace_delete"))
+        self.palette_label.setText(tr("workspace_blocks"))
+        self.palette_search.setPlaceholderText(tr("workspace_search_blocks"))
+        self.undo_btn.setText(tr("workspace_undo"))
+        self.redo_btn.setText(tr("workspace_redo"))
+        self.copy_btn.setText(tr("workspace_copy"))
+        self.paste_btn.setText(tr("workspace_paste"))
+        self.clear_canvas_btn.setText(tr("workspace_clear_canvas"))
+        self.add_selected_btn.setText(tr("workspace_add_block"))
+        self.inspector_title.setText(tr("workspace_inspector"))
+        self.layers_label.setText(tr("workspace_layers"))
+        self.edit_properties_btn.setText(tr("workspace_properties_title"))
+        self.duplicate_block_btn.setText(tr("workspace_duplicate"))
+        self.group_block_btn.setText(tr("workspace_group"))
+        self.ungroup_block_btn.setText(tr("workspace_ungroup"))
+        self.bring_forward_btn.setText(tr("workspace_bring_forward"))
+        self.send_backward_btn.setText(tr("workspace_send_backward"))
+        self.bring_to_front_btn.setText(tr("workspace_to_front"))
+        self.send_to_back_btn.setText(tr("workspace_to_back"))
+        self.align_left_btn.setText(tr("workspace_align_left"))
+        self.align_center_btn.setText(tr("workspace_align_center"))
+        self.align_right_btn.setText(tr("workspace_align_right"))
+        self.align_top_btn.setText(tr("workspace_align_top"))
+        self.fit_width_btn.setText(tr("workspace_fit_width"))
+        self.distribute_h_btn.setText(tr("workspace_space_h"))
+        self.distribute_v_btn.setText(tr("workspace_space_v"))
+        self.remove_block_btn.setText(tr("workspace_remove_block"))
+        self._populate_block_options()
 
     def _load_workspaces(self):
         self._workspaces = self.workspace_service.list_workspaces()
@@ -732,13 +791,15 @@ class WorkspacesPage(QWidget):
         ):
             widget.setEnabled(enabled)
         if not block:
-            self.selected_block_label.setText("Select a block")
+            self.selected_block_label.setText(tr("workspace_select_block"))
             self.block_title_input.clear()
             return
         selected_count = len(self.workspace_layout_editor.selected_block_ids)
         label = self._block_label(block.get("type"))
         self.selected_block_label.setText(
-            f"{selected_count} blocks selected" if selected_count > 1 else label
+            tr("workspace_blocks_selected", count=selected_count)
+            if selected_count > 1
+            else label
         )
         selected_blocks = self.workspace_layout_editor._selected_blocks()
         all_locked = bool(selected_blocks) and all(
@@ -749,8 +810,12 @@ class WorkspacesPage(QWidget):
         )
         any_locked = any(bool(selected.get("locked")) for selected in selected_blocks)
         any_grouped = any(selected.get("group_id") for selected in selected_blocks)
-        self.lock_block_btn.setText("Unlock" if all_locked else "Lock")
-        self.visibility_block_btn.setText("Show" if all_hidden else "Hide")
+        self.lock_block_btn.setText(
+            tr("workspace_unlock") if all_locked else tr("workspace_lock")
+        )
+        self.visibility_block_btn.setText(
+            tr("workspace_show") if all_hidden else tr("workspace_hide")
+        )
         self.group_block_btn.setEnabled(enabled and selected_count > 1)
         self.ungroup_block_btn.setEnabled(enabled and any_grouped)
         for widget in (
@@ -848,10 +913,16 @@ class WorkspacesPage(QWidget):
         if not hasattr(self, "selection_metrics_label"):
             return
         summary = self.workspace_layout_editor.selection_summary()
-        self.selection_metrics_label.setText(summary.get("text", "No selection"))
-        hint = getattr(self.workspace_layout_editor, "interaction_hint", "Ready")
+        self.selection_metrics_label.setText(
+            summary.get("text") or tr("workspace_no_selection")
+        )
+        hint = getattr(
+            self.workspace_layout_editor,
+            "interaction_hint",
+            tr("workspace_ready"),
+        )
         if hint == "Ready":
-            hint = "Ctrl+click multi-select | Ctrl+G group | Ctrl+L lock | Ctrl+H hide"
+            hint = tr("workspace_shortcut_hint")
         self.shortcut_hint_label.setText(hint)
 
     def _workspace_layout_changed(self):

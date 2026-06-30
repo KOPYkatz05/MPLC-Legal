@@ -4,7 +4,7 @@ from types import SimpleNamespace
 from pathlib import Path
 from uuid import uuid4
 
-from PySide6.QtWidgets import QWidget
+from PySide6.QtWidgets import QLabel, QPushButton, QWidget
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
@@ -21,6 +21,7 @@ from services.upload_pipeline import UploadPipelineResult
 from ui.dialogs import upload_session_dialog
 from ui.pages import missionary_detail_page as detail_module
 from utils.constants import DOCUMENTS
+from utils.i18n import get_i18n
 
 
 def _build_upload_dialog(qapp):
@@ -29,6 +30,57 @@ def _build_upload_dialog(qapp):
     missionary = SimpleNamespace(id=42, full_name="Test Missionary")
     dialog = UploadSessionDialog(missionary, parent=parent)
     return dialog, parent
+
+
+def test_upload_drop_zone_uses_active_language(qapp):
+    i18n = get_i18n()
+    original_language = i18n.get_language()
+    try:
+        i18n.set_language("en")
+        dialog, parent = _build_upload_dialog(qapp)
+        labels = {
+            label.text()
+            for label in dialog.findChildren(QLabel)
+        }
+        buttons = {
+            button.text()
+            for button in dialog.findChildren(QPushButton)
+        }
+        browse_button = next(
+            button
+            for button in dialog.findChildren(QPushButton)
+            if button.text() == "Browse"
+        )
+
+        assert "Drop files or folders here, or browse" in labels
+        assert "No files selected yet." in labels
+        assert "Browse" in buttons
+        assert [action.text() for action in browse_button.menu().actions()] == [
+            "Files...",
+            "Folder...",
+        ]
+
+        dialog.deleteLater()
+        parent.deleteLater()
+
+        i18n.set_language("es")
+        dialog, parent = _build_upload_dialog(qapp)
+        labels = {
+            label.text()
+            for label in dialog.findChildren(QLabel)
+        }
+        buttons = {
+            button.text()
+            for button in dialog.findChildren(QPushButton)
+        }
+
+        assert "Arrastre archivos o carpetas aquí, o busque" in labels
+        assert "Todavía no hay archivos seleccionados." in labels
+        assert "Buscar" in buttons
+        dialog.deleteLater()
+        parent.deleteLater()
+    finally:
+        i18n.set_language(original_language)
 
 
 def _quiet_after_save_ui(dialog, monkeypatch):

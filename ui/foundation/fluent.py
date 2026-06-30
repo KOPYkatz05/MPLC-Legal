@@ -24,6 +24,8 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
+from utils.i18n import tr
+
 try:
     from qfluentwidgets import (
         BodyLabel,
@@ -487,6 +489,8 @@ def _exec_fallback_message_box(parent, title, content, kind, buttons):
     if kind == "question" or buttons == "yes_no":
         box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
         box.setDefaultButton(QMessageBox.Yes)
+        box.button(QMessageBox.Yes).setText(tr("common_yes"))
+        box.button(QMessageBox.No).setText(tr("common_no"))
         _style_dialog_button(box.button(QMessageBox.Yes), "primary")
         _style_dialog_button(box.button(QMessageBox.No), "secondary")
     else:
@@ -992,8 +996,8 @@ def show_message(parent, title, content, kind="information", buttons=None):
         if kind in {"information", "warning"} and buttons is None:
             box.hideCancelButton()
         if buttons == "yes_no":
-            box.yesButton.setText("Yes")
-            box.cancelButton.setText("No")
+            box.yesButton.setText(tr("common_yes"))
+            box.cancelButton.setText(tr("common_no"))
             _style_dialog_button(box.yesButton, "primary")
             _style_dialog_button(box.cancelButton, "secondary")
         elif hasattr(box, "yesButton"):

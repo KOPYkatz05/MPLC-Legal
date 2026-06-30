@@ -1,6 +1,8 @@
 import json
+from pathlib import Path
 
 from services.workspace_layout import normalize_workspace_layout
+from services.missionary_detail_layout_service import MissionaryDetailLayoutService
 from services.workspace_service import WorkspaceService, new_block, new_workspace
 
 
@@ -59,6 +61,78 @@ def test_workspace_file_uses_versioned_payload(tmp_path):
     payload = json.loads(path.read_text(encoding="utf-8"))
     assert payload["version"] == 1
     assert len(payload["workspaces"]) == 1
+
+
+def test_missionary_detail_layout_file_saves_ui_layout_without_database():
+    test_dir = Path("test_upload_tmp") / "missionary_detail_layout_service"
+    path = test_dir / "layout.json"
+    temp_path = path.with_suffix(".tmp")
+    try:
+        service = MissionaryDetailLayoutService(path)
+        layout = service.get_layout()
+        layout["blocks"][0]["layout"] = {
+            "row": 4,
+            "col": 0,
+            "row_span": 2,
+            "col_span": 12,
+        }
+
+        saved = service.save_layout(layout)
+        reloaded = MissionaryDetailLayoutService(path).get_layout()
+        payload = json.loads(path.read_text(encoding="utf-8"))
+
+        assert payload["version"] == 1
+        assert saved["blocks"][0]["layout"] == {
+            "row": 4,
+            "col": 0,
+            "row_span": 2,
+            "col_span": 12,
+        }
+        assert reloaded["blocks"][0]["layout"] == saved["blocks"][0]["layout"]
+    finally:
+        for target in (path, temp_path):
+            try:
+                target.unlink(missing_ok=True)
+            except PermissionError:
+                pass
+        try:
+            if test_dir.exists():
+                test_dir.rmdir()
+        except (OSError, PermissionError):
+            pass
+
+
+def test_missionary_detail_layout_restores_required_sections():
+    layout = {
+        "blocks": [
+            {
+                "id": "overview",
+                "type": "overview",
+                "layout": {
+                    "row": 3,
+                    "col": 0,
+                    "row_span": 1,
+                    "col_span": 12,
+                },
+            }
+        ]
+    }
+
+    normalized = MissionaryDetailLayoutService._normalize_layout(layout)
+    section_types = {block["type"] for block in normalized["blocks"]}
+
+    assert {
+        "overview",
+        "workflow",
+        "open_tasks",
+        "documents",
+        "missing_documents",
+        "details_summary",
+        "details_identity",
+        "details_credentials",
+        "details_legal_timeline",
+        "details_residency",
+    }.issubset(section_types)
 
 
 def test_workspace_layout_fields_survive_save_load_and_duplicate(tmp_path):
@@ -124,6 +198,49 @@ def test_phase_one_blocks_are_auto_packed_without_overlap():
     assert layouts[0] == {"row": 0, "col": 0, "row_span": 2, "col_span": 6}
     assert layouts[1] == {"row": 0, "col": 6, "row_span": 2, "col_span": 6}
     assert layouts[2] == {"row": 2, "col": 0, "row_span": 1, "col_span": 12}
+
+
+def test_missionary_detail_layout_normalizes_tabs_independently():
+    normalized = MissionaryDetailLayoutService._normalize_layout(
+        {
+            "blocks": [
+                {
+                    "id": "overview",
+                    "type": "overview",
+                    "tab": "overview",
+                    "layout": {
+                        "row": 0,
+                        "col": 0,
+                        "row_span": 1,
+                        "col_span": 12,
+                    },
+                },
+                {
+                    "id": "details_summary",
+                    "type": "details_summary",
+                    "tab": "details",
+                    "layout": {
+                        "row": 0,
+                        "col": 0,
+                        "row_span": 1,
+                        "col_span": 12,
+                    },
+                },
+            ]
+        }
+    )
+
+    overview = next(
+        block for block in normalized["blocks"] if block["type"] == "overview"
+    )
+    details = next(
+        block
+        for block in normalized["blocks"]
+        if block["type"] == "details_summary"
+    )
+
+    assert overview["layout"]["row"] == 0
+    assert details["layout"]["row"] == 0
 
 
 def test_web_viewer_block_defaults_to_full_tall_layout():

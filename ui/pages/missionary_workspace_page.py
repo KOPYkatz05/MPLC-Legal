@@ -1,0 +1,344 @@
+from pathlib import Path
+
+from PySide6.QtCore import Qt, QUrl
+from PySide6.QtGui import QDesktopServices
+from PySide6.QtWidgets import (
+    QFrame,
+    QGridLayout,
+    QHBoxLayout,
+    QLabel,
+    QVBoxLayout,
+    QWidget,
+)
+
+from services.document_service import DocumentService
+from services.secretary_work_service import SecretaryWorkService
+from services.workflow_service import WorkflowService
+from services.workflow_validator import WorkflowValidator
+from services.workspace_layout import (
+    WORKSPACE_GRID_COLUMNS,
+    normalize_workspace_layout,
+    validate_block_layout,
+)
+from ui.dialogs.document_viewer_dialog import DocumentViewerDialog
+from ui.dialogs.missionary_workspace_dialog import (
+    MissionaryWorkspaceContext,
+    WorkspaceBlockFactory,
+    clear_layout,
+    document_label,
+)
+from ui.dialogs.office_work_dialogs import TaskDialog
+from ui.foundation import (
+    SubtitleLabel,
+    create_button,
+    create_scroll_area,
+    show_message,
+    tune_fluent_scrollable,
+)
+from utils.i18n import tr
+from utils.logger import logger
+
+
+class MissionaryWorkspacePage(QWidget):
+    def __init__(self, main_window=None):
+        super().__init__()
+        self.setObjectName("MissionaryWorkspacePage")
+        self.main_window = main_window
+        self.is_full_screen_workspace = True
+        self.missionary = None
+        self.workspace = {}
+        self.context = None
+        self.document_service = DocumentService()
+        self.workflow_service = WorkflowService()
+        self.secretary_work_service = SecretaryWorkService()
+        self.workflow_validator = WorkflowValidator()
+        self._build_ui()
+
+    def _build_ui(self):
+        root = QVBoxLayout()
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+        self.setLayout(root)
+
+        header = QFrame()
+        header.setObjectName("MissionaryWorkspacePageHeader")
+        header.setAttribute(Qt.WA_StyledBackground, True)
+        header_layout = QHBoxLayout()
+        header_layout.setContentsMargins(18, 16, 18, 12)
+        header_layout.setSpacing(12)
+        header.setLayout(header_layout)
+
+        self.back_btn = create_button(tr("common_back"), "secondary")
+        self.back_btn.clicked.connect(self.go_back)
+        header_layout.addWidget(self.back_btn)
+
+        title_stack = QVBoxLayout()
+        title_stack.setContentsMargins(0, 0, 0, 0)
+        title_stack.setSpacing(4)
+        self.title_label = SubtitleLabel(tr("workspace_title"))
+        self.title_label.setObjectName("MissionaryWorkspacePageTitle")
+        self.subtitle_label = QLabel("")
+        self.subtitle_label.setObjectName("MissionaryWorkspacePageSubtitle")
+        title_stack.addWidget(self.title_label)
+        title_stack.addWidget(self.subtitle_label)
+        header_layout.addLayout(title_stack, stretch=1)
+
+        self.refresh_btn = create_button(tr("common_refresh"), "secondary")
+        self.refresh_btn.clicked.connect(self.refresh_context)
+        header_layout.addWidget(self.refresh_btn)
+        root.addWidget(header)
+
+        self.scroll = create_scroll_area(
+            "MissionaryWorkspacePageScroll",
+            transparent=True,
+            single_direction=True,
+        )
+        tune_fluent_scrollable(self.scroll)
+        content = QWidget()
+        content.setObjectName("MissionaryWorkspacePageBody")
+        content.setAttribute(Qt.WA_StyledBackground, True)
+        self.grid = QGridLayout()
+        self.grid.setContentsMargins(18, 16, 18, 18)
+        self.grid.setHorizontalSpacing(12)
+        self.grid.setVerticalSpacing(12)
+        content.setLayout(self.grid)
+        self.scroll.setWidget(content)
+        root.addWidget(self.scroll, stretch=1)
+
+    def load_workspace(self, missionary, workspace):
+        self.missionary = missionary
+        self.workspace = normalize_workspace_layout(workspace or {})
+        self.context = MissionaryWorkspaceContext.load(missionary)
+        self.title_label.setText(self.workspace.get("name") or tr("workspace_title"))
+        self.subtitle_label.setText(getattr(missionary, "full_name", ""))
+        self._render_blocks()
+
+    def retranslate_ui(self):
+        self.back_btn.setText(tr("common_back"))
+        self.refresh_btn.setText(tr("common_refresh"))
+        if self.workspace:
+            self.title_label.setText(
+                self.workspace.get("name") or tr("workspace_title")
+            )
+        else:
+            self.title_label.setText(tr("workspace_title"))
+
+    def _render_blocks(self):
+        clear_layout(self.grid)
+        if not self.missionary or self.context is None:
+            empty = QLabel(tr("workspace_no_workspaces"))
+            empty.setObjectName("MutedText")
+            self.grid.addWidget(empty, 0, 0, 1, WORKSPACE_GRID_COLUMNS)
+            return
+
+        factory = WorkspaceBlockFactory(self)
+        max_row = 0
+        for col in range(WORKSPACE_GRID_COLUMNS):
+            self.grid.setColumnStretch(col, 1)
+        for block in self.workspace.get("blocks", []):
+            if block.get("visible") is False:
+                continue
+            widget = factory.build(block)
+            layout = validate_block_layout(block)
+            max_row = max(max_row, layout["row"] + layout["row_span"])
+            self.grid.addWidget(
+                widget,
+                layout["row"],
+                layout["col"],
+                layout["row_span"],
+                layout["col_span"],
+            )
+        self.grid.setRowStretch(max_row + 1, 1)
+
+    def go_back(self):
+        if self.main_window is not None and hasattr(self.main_window, "stack"):
+            detail_page = getattr(self.main_window, "detail_page", None)
+            if detail_page is not None:
+                self.main_window.stack.setCurrentWidget(detail_page)
+
+    def refresh_context(self):
+        if self.missionary is None:
+            return
+        self.context = MissionaryWorkspaceContext.load(self.missionary)
+        self._render_blocks()
+        detail_page = getattr(self.main_window, "detail_page", None)
+        if detail_page is not None and hasattr(detail_page, "load_missionary"):
+            detail_page.load_missionary(self.missionary)
+
+    def document_data(self, doc):
+        return {
+            "id": doc.id,
+            "document_type": doc.document_type,
+            "label": document_label(doc.document_type),
+            "file_path": doc.file_path,
+            "file_name": doc.file_name,
+            "notes": doc.notes or "",
+            "ocr_raw_data": getattr(doc, "ocr_raw_data", None),
+            "ocr_confirmed_data": getattr(doc, "ocr_confirmed_data", None),
+        }
+
+    def find_document(self, document_type=None):
+        documents = self.context.documents if self.context else []
+        if document_type:
+            documents = [doc for doc in documents if doc.document_type == document_type]
+        if not documents:
+            return None
+        return sorted(
+            documents,
+            key=lambda doc: getattr(doc, "uploaded_at", None) or 0,
+            reverse=True,
+        )[0]
+
+    @staticmethod
+    def normalized_web_url(value):
+        url = (value or "").strip()
+        if not url or url == "https://":
+            return ""
+        if "://" not in url:
+            url = f"https://{url}"
+        return url
+
+    def open_web_url(self, url):
+        normalized = self.normalized_web_url(url)
+        if normalized:
+            QDesktopServices.openUrl(QUrl(normalized))
+
+    def upload_document(self):
+        try:
+            from ui.dialogs.upload_session_dialog import UploadSessionDialog
+
+            dialog = UploadSessionDialog(self.missionary, parent=self)
+            dialog.exec()
+            saved_any = getattr(dialog, "saved_any", None)
+            if callable(saved_any) and saved_any():
+                self.refresh_context()
+        except Exception:
+            logger.exception("Failed to upload document from workspace page")
+            show_message(
+                self,
+                tr("missionary_detail_upload_document"),
+                tr("workspace_action_failed"),
+                kind="warning",
+            )
+
+    def open_folder_path(self):
+        folder_path = getattr(self.missionary, "folder_path", None)
+        if not folder_path:
+            show_message(
+                self,
+                tr("missionary_detail_open_folder"),
+                tr("missionary_detail_open_folder_missing"),
+                kind="warning",
+            )
+            return
+        path = Path(folder_path)
+        if not path.exists():
+            show_message(
+                self,
+                tr("missionary_detail_open_folder"),
+                tr(
+                    "missionary_detail_folder_not_found",
+                    folder_path=folder_path,
+                ),
+                kind="warning",
+            )
+            return
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(path)))
+
+    def update_current_workflow(self):
+        current_stage = getattr(self.missionary, "current_stage", None)
+        workflow = None
+        for candidate in self.context.workflows if self.context else []:
+            if getattr(candidate, "stage_name", None) == current_stage:
+                workflow = candidate
+                break
+        if workflow is None and self.context and self.context.workflows:
+            workflow = self.context.workflows[0]
+        if workflow is None:
+            show_message(
+                self,
+                tr("workspace_block_workflow"),
+                tr("missionary_detail_no_workflow_stages"),
+                kind="info",
+            )
+            return
+        self.change_workflow_status(workflow)
+
+    def open_document_viewer(self, doc):
+        file_path = getattr(doc, "file_path", None)
+        if not file_path or not Path(file_path).exists():
+            show_message(
+                self,
+                tr("missionary_detail_file_not_found_title"),
+                tr("missionary_detail_cannot_open_document"),
+                kind="warning",
+            )
+            return
+        DocumentViewerDialog(file_path, parent=self).exec()
+
+    def open_document_notes(self, doc):
+        from ui.pages.missionary_detail_page import DocumentNotesDialog
+
+        dialog = DocumentNotesDialog(
+            self.document_data(doc),
+            self.document_service,
+            parent=self,
+        )
+        if dialog.exec():
+            self.refresh_context()
+
+    def open_document_file(self, doc):
+        from ui.pages.missionary_detail_page import open_document_with_default_app
+
+        file_path = getattr(doc, "file_path", None)
+        if not file_path or not Path(file_path).exists():
+            show_message(
+                self,
+                tr("missionary_detail_file_not_found_title"),
+                tr("missionary_detail_cannot_open_file", file_path=file_path or ""),
+                kind="warning",
+            )
+            return
+        open_document_with_default_app(file_path)
+
+    def change_workflow_status(self, workflow):
+        from ui.pages.missionary_detail_page import WorkflowStatusDialog
+
+        dialog = WorkflowStatusDialog(parent=self)
+        if dialog.exec():
+            self.workflow_service.update_workflow_status(
+                workflow.id,
+                dialog.selected_status(),
+            )
+            self.refresh_context()
+
+    def add_task(self):
+        dialog = TaskDialog(
+            self.secretary_work_service,
+            defaults={"missionary_id": self.missionary.id},
+            parent=self,
+        )
+        if dialog.exec():
+            self.refresh_context()
+
+    def edit_task(self, task):
+        dialog = TaskDialog(
+            self.secretary_work_service,
+            task=task,
+            parent=self,
+        )
+        if dialog.exec():
+            self.refresh_context()
+
+    def complete_task(self, task):
+        try:
+            self.secretary_work_service.complete_task(task["id"])
+            self.refresh_context()
+        except Exception:
+            logger.exception("Failed to complete workspace task")
+            show_message(
+                self,
+                tr("workspace_block_tasks"),
+                tr("workspace_action_failed"),
+                kind="warning",
+            )

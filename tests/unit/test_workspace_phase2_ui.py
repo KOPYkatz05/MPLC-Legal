@@ -4,17 +4,28 @@ from types import SimpleNamespace
 from PySide6.QtCore import QEvent, QPoint, QRect, Qt
 from PySide6.QtGui import QKeyEvent
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QLabel, QPushButton
+from PySide6.QtWidgets import QApplication, QGridLayout, QLabel, QPushButton, QWidget
 
 from services.settings_service import SettingsService
 from services.workspace_service import new_block, new_workspace
-from ui.dialogs.missionary_workspace_dialog import WorkspaceBlockFactory
+from ui.dialogs import missionary_workspace_dialog as workspace_dialog_module
+from ui.dialogs.missionary_workspace_dialog import (
+    MissionaryWorkspaceDialog,
+    WorkspaceBlockFactory,
+)
+from services.missionary_detail_layout_service import MissionaryDetailLayoutService
+from ui.pages.missionary_detail_page import (
+    MissionaryDetailLayoutDialog,
+    MissionaryDetailPage,
+)
+from ui.pages.missionary_workspace_page import MissionaryWorkspacePage
 from ui.pages.workspaces_page import WorkspacesPage, WorkspaceBlockPropertiesDialog
 from ui.widgets.workspace_layout_editor import (
     WorkspaceLayoutEditor,
     WorkspaceLayoutTile,
     WorkspacePaletteButton,
 )
+from utils.i18n import get_i18n
 
 
 class MemoryWorkspaceService:
@@ -33,6 +44,12 @@ class MemoryWorkspaceService:
         ]
         self.items.append(saved)
         return deepcopy(saved)
+
+    def get_workspace(self, workspace_id):
+        for item in self.items:
+            if item.get("id") == workspace_id:
+                return deepcopy(item)
+        return None
 
     def duplicate_workspace(self, workspace_id):
         return None
@@ -103,6 +120,34 @@ class FakeWorkspaceDialog:
         self.actions.append("update_workflow")
 
 
+class FakeSignal:
+    def __init__(self):
+        self.callbacks = []
+
+    def connect(self, callback):
+        self.callbacks.append(callback)
+
+    def emit(self, *args):
+        for callback in list(self.callbacks):
+            callback(*args)
+
+
+class FakeWebEngineView(QWidget):
+    created = []
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.loadStarted = FakeSignal()
+        self.loadFinished = FakeSignal()
+        self.loaded_url = None
+        FakeWebEngineView.created.append(self)
+
+    def setUrl(self, url):
+        self.loaded_url = url
+        self.loadStarted.emit()
+        self.loadFinished.emit(True)
+
+
 def test_workspace_layout_editor_updates_source_layout(qapp):
     _ = qapp
     workspace = new_workspace("Grid")
@@ -115,6 +160,237 @@ def test_workspace_layout_editor_updates_source_layout(qapp):
 
     assert workspace["blocks"][0]["layout"]["col_span"] == 12
     assert workspace["blocks"][0]["layout"]["row_span"] == 3
+
+
+def test_missionary_detail_layout_dialog_uses_workspace_editor(qapp):
+    _ = qapp
+    dialog = MissionaryDetailLayoutDialog(
+        MissionaryDetailLayoutService.default_layout()
+    )
+
+    editor = dialog.findChild(WorkspaceLayoutEditor, "MissionaryDetailLayoutEditor")
+    assert editor is not None
+    assert editor.workspace["blocks"]
+
+
+def test_missionary_detail_layout_dialog_reset_restores_default(qapp):
+    _ = qapp
+    layout = MissionaryDetailLayoutService.default_layout()
+    layout["blocks"] = [layout["blocks"][0]]
+    dialog = MissionaryDetailLayoutDialog(layout)
+
+    dialog._reset_to_default()
+    section_types = {
+        block["type"]
+        for block in dialog.updated_layout()["blocks"]
+    }
+
+    assert {
+        "overview",
+        "workflow",
+        "open_tasks",
+        "documents",
+        "missing_documents",
+        "details_summary",
+        "details_identity",
+        "details_credentials",
+        "details_legal_timeline",
+        "details_residency",
+    }.issubset(section_types)
+
+
+def test_missionary_detail_layout_dialog_switches_between_tab_canvases(qapp):
+    _ = qapp
+    dialog = MissionaryDetailLayoutDialog(
+        MissionaryDetailLayoutService.default_layout()
+    )
+    editor = dialog.findChild(WorkspaceLayoutEditor, "MissionaryDetailLayoutEditor")
+
+    overview_types = {
+        block["type"]
+        for block in editor.workspace["blocks"]
+    }
+    dialog.tab_combo.setCurrentIndex(dialog.tab_combo.findData("details"))
+    details_types = {
+        block["type"]
+        for block in editor.workspace["blocks"]
+    }
+
+    assert "overview" in overview_types
+    assert "details_summary" not in overview_types
+    assert "details_summary" in details_types
+    assert "overview" not in details_types
+
+
+def test_missionary_detail_layout_dialog_keeps_fixed_sections(qapp):
+    _ = qapp
+    dialog = MissionaryDetailLayoutDialog(
+        MissionaryDetailLayoutService.default_layout()
+    )
+    editor = dialog.findChild(WorkspaceLayoutEditor, "MissionaryDetailLayoutEditor")
+    first_id = editor.workspace["blocks"][0]["id"]
+
+    editor.set_selected_block(first_id)
+    editor.delete_selected()
+    editor.duplicate_block(first_id)
+
+    section_types = [block["type"] for block in editor.workspace["blocks"]]
+    assert len(section_types) == len(set(section_types))
+    assert first_id in {block["id"] for block in editor.workspace["blocks"]}
+
+
+def test_workspace_layout_editor_allows_structure_changes_by_default(qapp):
+    _ = qapp
+    workspace = new_workspace("Flexible")
+    editor = WorkspaceLayoutEditor(lambda block_type: block_type)
+    editor.set_workspace(workspace)
+    block = editor.add_block_at("documents")
+
+    duplicate = editor.duplicate_block(block["id"])
+    editor.delete_block(block["id"])
+
+    assert duplicate is not None
+    assert block["id"] not in {item["id"] for item in workspace["blocks"]}
+
+
+def test_missionary_detail_overview_uses_saved_layout(qapp):
+    _ = qapp
+    canvas = QWidget()
+    overview = QLabel("Overview")
+    documents = QLabel("Documents")
+
+    page = MissionaryDetailPage.__new__(MissionaryDetailPage)
+    page.overview_layout_canvas = canvas
+    page._overview_sections = {
+        "overview": overview,
+        "documents": documents,
+    }
+    page.detail_layout_service = SimpleNamespace(
+        get_layout=lambda: {
+            "blocks": [
+                {
+                    "id": "documents",
+                    "type": "documents",
+                    "layout": {
+                        "row": 0,
+                        "col": 0,
+                        "row_span": 1,
+                        "col_span": 12,
+                    },
+                },
+                {
+                    "id": "overview",
+                    "type": "overview",
+                    "layout": {
+                        "row": 1,
+                        "col": 0,
+                        "row_span": 1,
+                        "col_span": 6,
+                    },
+                },
+            ]
+        }
+    )
+
+    MissionaryDetailPage._apply_overview_layout(page)
+
+    assert documents.parentWidget() is canvas
+    assert overview.parentWidget() is canvas
+    assert documents.geometry().y() < overview.geometry().y()
+
+
+def test_missionary_detail_details_tab_uses_saved_layout(qapp):
+    _ = qapp
+    canvas = QWidget()
+    summary = QLabel("Summary")
+    credentials = QLabel("Credentials")
+
+    page = MissionaryDetailPage.__new__(MissionaryDetailPage)
+    page.details_layout_canvas = canvas
+    page._details_sections = {
+        "details_summary": summary,
+        "details_credentials": credentials,
+    }
+    page.detail_layout_service = SimpleNamespace(
+        get_layout=lambda: {
+            "blocks": [
+                {
+                    "id": "details_credentials",
+                    "type": "details_credentials",
+                    "tab": "details",
+                    "layout": {
+                        "row": 0,
+                        "col": 0,
+                        "row_span": 1,
+                        "col_span": 12,
+                    },
+                },
+                {
+                    "id": "details_summary",
+                    "type": "details_summary",
+                    "tab": "details",
+                    "layout": {
+                        "row": 1,
+                        "col": 0,
+                        "row_span": 1,
+                        "col_span": 6,
+                    },
+                },
+            ]
+        }
+    )
+
+    MissionaryDetailPage._apply_details_layout(page)
+
+    assert credentials.parentWidget() is canvas
+    assert summary.parentWidget() is canvas
+    assert credentials.geometry().y() < summary.geometry().y()
+
+
+def test_missionary_detail_layout_edit_uses_free_card_geometry(qapp):
+    _ = qapp
+    layout = MissionaryDetailLayoutService.default_layout()
+    page = MissionaryDetailPage.__new__(MissionaryDetailPage)
+    page._layout_editing = True
+    page._layout_edit_payload = layout
+    page._layout_drag_state = None
+    page.detail_layout_service = SimpleNamespace(get_layout=lambda: layout)
+
+    overview_canvas = QWidget()
+    overview = QLabel("Overview")
+    documents = QLabel("Documents")
+    page.overview_layout_canvas = overview_canvas
+    page._overview_sections = {
+        "overview": overview,
+        "documents": documents,
+    }
+
+    details_canvas = QWidget()
+    page.details_layout_canvas = details_canvas
+    page._details_sections = {}
+
+    MissionaryDetailPage._apply_overview_layout(page)
+
+    assert MissionaryDetailPage._preview_free_layout(
+        page,
+        "overview",
+        documents.geometry(),
+    )
+
+    overview_block = MissionaryDetailPage._layout_block_for_section(
+        page,
+        "overview",
+    )
+    documents_block = MissionaryDetailPage._layout_block_for_section(
+        page,
+        "documents",
+    )
+    assert overview_block["free_layout"]["x"] == documents.geometry().x()
+    assert overview_block["free_layout"]["width"] == documents.geometry().width()
+    assert (
+        documents_block["free_layout"]["y"]
+        >= overview.geometry().bottom() + 1
+    )
 
 
 def test_workspace_layout_editor_modern_actions(qapp):
@@ -882,6 +1158,47 @@ def test_workspaces_page_layer_lock_visibility_controls(qapp):
     )
 
 
+def test_workspaces_page_chrome_uses_active_language(qapp):
+    _ = qapp
+    i18n = get_i18n()
+    original_language = i18n.get_language()
+    service = MemoryWorkspaceService()
+    main_window = SimpleNamespace(
+        settings_service=SimpleNamespace(),
+        workspace_service=service,
+    )
+
+    try:
+        i18n.set_language("es")
+        page = WorkspacesPage(main_window)
+
+        labels = {
+            label.text()
+            for label in page.findChildren(QLabel)
+            if label.text()
+        }
+        buttons = {
+            button.text()
+            for button in page.findChildren(QPushButton)
+            if button.text()
+        }
+
+        assert "Constructor de espacios" in labels
+        assert "Bloques" in labels
+        assert "Inspector" in labels
+        assert "Capas" in labels
+        assert "Deshacer" in buttons
+        assert "Rehacer" in buttons
+        assert "Copiar" in buttons
+        assert "Limpiar" in buttons
+        assert page.workspace_name_input.placeholderText() == "Nombre del espacio"
+        assert page.palette_search.placeholderText() == "Buscar bloques"
+    finally:
+        i18n.set_language(original_language)
+        if "page" in locals():
+            page.close()
+
+
 def test_workspaces_page_group_controls(qapp):
     _ = qapp
     service = MemoryWorkspaceService()
@@ -1198,6 +1515,38 @@ def test_workspace_block_properties_dialog_updates_web_url(qapp):
     assert updated["layout"]["row"] == 2
 
 
+def test_workspace_block_properties_dialog_uses_active_language(qapp):
+    _ = qapp
+    i18n = get_i18n()
+    original_language = i18n.get_language()
+    try:
+        i18n.set_language("es")
+        dialog = WorkspaceBlockPropertiesDialog(new_block("web_viewer"))
+
+        labels = {
+            label.text()
+            for label in dialog.findChildren(QLabel)
+            if label.text()
+        }
+        buttons = {
+            button.text()
+            for button in dialog.findChildren(QPushButton)
+            if button.text()
+        }
+
+        assert dialog.windowTitle() == "Editar propiedades"
+        assert "Editar propiedades" in labels
+        assert "Sitio web" in labels
+        assert "Aplicar" in buttons
+        assert "Cancelar" in buttons
+        assert dialog.title_input.placeholderText() == "Titulo del bloque"
+        assert dialog.web_url_input.placeholderText() == "URL del sitio web"
+    finally:
+        i18n.set_language(original_language)
+        if "dialog" in locals():
+            dialog.close()
+
+
 def test_runtime_status_summary_block_renders_metrics(qapp):
     _ = qapp
     factory = WorkspaceBlockFactory(FakeWorkspaceDialog())
@@ -1260,3 +1609,149 @@ def test_runtime_link_list_opens_configured_url(qapp):
 
     assert "Migraciones" in _widget_texts(widget)
     assert dialog.opened_urls == ["https://example.org"]
+
+
+def test_runtime_web_viewer_loads_after_layout_and_uses_full_screen_size(
+    monkeypatch,
+    qapp,
+):
+    monkeypatch.setattr(
+        workspace_dialog_module,
+        "QWebEngineView",
+        FakeWebEngineView,
+    )
+    FakeWebEngineView.created = []
+
+    dialog = FakeWorkspaceDialog()
+    dialog.is_full_screen_workspace = True
+    factory = WorkspaceBlockFactory(dialog)
+    widget = factory.build(
+        {
+            "type": "web_viewer",
+            "title": "Portal",
+            "web_url": "https://example.org",
+        }
+    )
+
+    qapp.processEvents()
+    QTest.qWait(1)
+
+    web_view = FakeWebEngineView.created[0]
+    assert web_view.minimumHeight() == 520
+    assert web_view.loaded_url.toString() == "https://example.org"
+    assert "Portal" in _widget_texts(widget)
+
+
+def test_missionary_detail_opens_workspace_as_full_screen_when_available():
+    workspace = new_workspace("Portal View")
+    service = MemoryWorkspaceService()
+    service.save_workspace(workspace)
+    missionary = SimpleNamespace(id=7, full_name="Test Missionary")
+    opened = []
+
+    page = MissionaryDetailPage.__new__(MissionaryDetailPage)
+    page.current_missionary = missionary
+    page.workspace_service = service
+    page.main_window = SimpleNamespace(
+        open_missionary_workspace=lambda selected, selected_workspace: opened.append(
+            (selected, selected_workspace)
+        )
+        or True
+    )
+
+    MissionaryDetailPage._open_workspace(page, workspace["id"])
+
+    assert opened == [(missionary, workspace)]
+
+
+def test_missionary_workspace_page_renders_workspace_blocks(monkeypatch, qapp):
+    _ = qapp
+    workspace = new_workspace("Portal View")
+    workspace["blocks"].append(
+        {
+            "id": "web",
+            "type": "web_viewer",
+            "title": "Portal",
+            "web_url": "https://example.org",
+            "layout": {"row": 0, "col": 0, "row_span": 2, "col_span": 12},
+        }
+    )
+    missionary = SimpleNamespace(id=7, full_name="Test Missionary")
+    context = SimpleNamespace(
+        missionary=missionary,
+        documents=[],
+        workflows=[],
+        tasks=[],
+        residency_rows=[],
+        missing_groups=[],
+    )
+    monkeypatch.setattr(
+        "ui.pages.missionary_workspace_page.MissionaryWorkspaceContext.load",
+        lambda selected: context,
+    )
+    monkeypatch.setattr(
+        "ui.dialogs.missionary_workspace_dialog.QWebEngineView",
+        None,
+    )
+
+    page = MissionaryWorkspacePage()
+    page.load_workspace(missionary, workspace)
+
+    assert page.title_label.text() == "Portal View"
+    assert page.subtitle_label.text() == "Test Missionary"
+    assert "Portal" in _widget_texts(page)
+
+
+def test_missionary_workspace_page_retranslates_screen_actions(qapp):
+    _ = qapp
+    i18n = get_i18n()
+    original_language = i18n.get_language()
+    page = MissionaryWorkspacePage()
+    try:
+        i18n.set_language("en")
+        page.retranslate_ui()
+        assert page.back_btn.text() == "Back"
+        assert page.refresh_btn.text() == "Refresh"
+
+        i18n.set_language("es")
+        page.retranslate_ui()
+        assert page.back_btn.text() == "Volver"
+        assert page.refresh_btn.text() == "Actualizar"
+    finally:
+        i18n.set_language(original_language)
+
+
+def test_missionary_workspace_dialog_uses_close_action(monkeypatch, qapp):
+    _ = qapp
+    i18n = get_i18n()
+    original_language = i18n.get_language()
+    missionary = SimpleNamespace(id=7, full_name="Test Missionary")
+    context = SimpleNamespace(
+        missionary=missionary,
+        documents=[],
+        workflows=[],
+        tasks=[],
+        residency_rows=[],
+        missing_groups=[],
+    )
+    monkeypatch.setattr(
+        "ui.dialogs.missionary_workspace_dialog.MissionaryWorkspaceContext.load",
+        lambda selected: context,
+    )
+    host = QWidget()
+    host.resize(1000, 700)
+    try:
+        i18n.set_language("en")
+        dialog = MissionaryWorkspaceDialog(
+            missionary,
+            {"name": "Portal View", "blocks": []},
+            parent=host,
+        )
+        button_texts = {
+            button.text()
+            for button in dialog.findChildren(QPushButton)
+        }
+        assert "Close" in button_texts
+        assert "Cancel" not in button_texts
+    finally:
+        i18n.set_language(original_language)

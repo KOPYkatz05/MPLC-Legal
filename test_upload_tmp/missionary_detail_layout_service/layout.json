@@ -1,0 +1,129 @@
+{
+  "version": 1,
+  "layout": {
+    "id": "missionary_detail",
+    "name": "Missionary Detail",
+    "blocks": [
+      {
+        "id": "overview",
+        "tab": "overview",
+        "type": "overview",
+        "title": "Overview",
+        "layout": {
+          "row": 4,
+          "col": 0,
+          "row_span": 2,
+          "col_span": 12
+        }
+      },
+      {
+        "id": "workflow",
+        "tab": "overview",
+        "type": "workflow",
+        "title": "Workflow",
+        "layout": {
+          "row": 0,
+          "col": 6,
+          "row_span": 2,
+          "col_span": 6
+        }
+      },
+      {
+        "id": "open_tasks",
+        "tab": "overview",
+        "type": "open_tasks",
+        "title": "Open Tasks",
+        "layout": {
+          "row": 2,
+          "col": 0,
+          "row_span": 2,
+          "col_span": 6
+        }
+      },
+      {
+        "id": "documents",
+        "tab": "overview",
+        "type": "documents",
+        "title": "Documents",
+        "layout": {
+          "row": 6,
+          "col": 0,
+          "row_span": 3,
+          "col_span": 6
+        }
+      },
+      {
+        "id": "missing_documents",
+        "tab": "overview",
+        "type": "missing_documents",
+        "title": "Missing Documents",
+        "layout": {
+          "row": 9,
+          "col": 0,
+          "row_span": 2,
+          "col_span": 12
+        }
+      },
+      {
+        "id": "details_summary",
+        "tab": "details",
+        "type": "details_summary",
+        "title": "At a Glance",
+        "layout": {
+          "row": 0,
+          "col": 0,
+          "row_span": 1,
+          "col_span": 12
+        }
+      },
+      {
+        "id": "details_identity",
+        "tab": "details",
+        "type": "details_identity",
+        "title": "Identity",
+        "layout": {
+          "row": 1,
+          "col": 0,
+          "row_span": 2,
+          "col_span": 6
+        }
+      },
+      {
+        "id": "details_legal_timeline",
+        "tab": "details",
+        "type": "details_legal_timeline",
+        "title": "Legal Timeline",
+        "layout": {
+          "row": 1,
+          "col": 6,
+          "row_span": 2,
+          "col_span": 6
+        }
+      },
+      {
+        "id": "details_credentials",
+        "tab": "details",
+        "type": "details_credentials",
+        "title": "Credentials",
+        "layout": {
+          "row": 3,
+          "col": 0,
+          "row_span": 1,
+          "col_span": 6
+        }
+      },
+      {
+        "id": "details_residency",
+        "tab": "details",
+        "type": "details_residency",
+        "title": "Residency Timeline",
+        "layout": {
+          "row": 3,
+          "col": 6,
+          "row_span": 2,
+          "col_span": 6
+        }
+      }
+    ]
+  }
+}

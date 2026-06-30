@@ -16,6 +16,7 @@ from ui.foundation import (
     create_scroll_area,
     show_message,
 )
+from utils.i18n import tr
 
 
 PRIORITY_COLORS = {
@@ -39,10 +40,10 @@ def _tone_from_color(color):
     return TONE_COLORS.get(str(color or "").upper(), "strong")
 
 STATUS_LABELS = {
-    "OPEN": "To Do",
-    "WAITING": "Waiting",
-    "DONE": "Done",
-    "ARCHIVED": "Archived",
+    "OPEN": "alert_workspace_status_open",
+    "WAITING": "alert_workspace_status_waiting",
+    "DONE": "alert_workspace_status_done",
+    "ARCHIVED": "alert_workspace_status_archived",
 }
 
 
@@ -76,11 +77,11 @@ class AlertWorkspacePage(QWidget):
         outer.setSpacing(0)
         self.setLayout(outer)
 
-        self.back_btn = create_button("Back", "secondary")
+        self.back_btn = create_button(tr("common_back"), "secondary")
         self.back_btn.clicked.connect(self._go_back)
-        self.edit_btn = create_button("Edit Task", "secondary")
+        self.edit_btn = create_button(tr("alert_workspace_edit_task"), "secondary")
         self.edit_btn.clicked.connect(self._edit_task)
-        self.done_btn = create_button("Mark Done", "primary")
+        self.done_btn = create_button(tr("alert_workspace_mark_done"), "primary")
         self.done_btn.clicked.connect(self._mark_done)
 
         outer.addWidget(self._build_top_bar())
@@ -115,9 +116,9 @@ class AlertWorkspacePage(QWidget):
         tabs.setLayout(tabs_layout)
 
         for text, active in [
-            ("Brief", True),
-            ("People", False),
-            ("Evidence", False),
+            (tr("alert_workspace_tab_brief"), True),
+            (tr("alert_workspace_tab_people"), False),
+            (tr("alert_workspace_tab_evidence"), False),
         ]:
             label = QLabel(text)
             label.setObjectName("AlertWorkspaceTopTab")
@@ -136,9 +137,11 @@ class AlertWorkspacePage(QWidget):
         title_stack.setContentsMargins(0, 0, 0, 0)
         title_stack.setSpacing(3)
 
-        self.title_label = QLabel("Alert Workspace")
+        self.title_label = QLabel(tr("alert_workspace_title"))
         self.title_label.setObjectName("AlertWorkspaceTitle")
-        self.subtitle_label = QLabel("Mission Control / Alert Workspace")
+        self.subtitle_label = QLabel(
+            tr("alert_workspace_breadcrumb_mission_control")
+        )
         self.subtitle_label.setObjectName("AlertWorkspaceSubtitle")
         self.header = _HeaderCompat(self.title_label, self.subtitle_label)
 
@@ -169,7 +172,7 @@ class AlertWorkspacePage(QWidget):
     def _render_workspace(self):
         self._clear_layout(self.content_layout)
 
-        title = self.workspace.get("title", "Alert Workspace")
+        title = self.workspace.get("title", tr("alert_workspace_title"))
         self.title_label.setText(title)
         self.subtitle_label.setText(self._breadcrumb_text())
 
@@ -204,7 +207,7 @@ class AlertWorkspacePage(QWidget):
 
     def _render_error(self, message):
         self._clear_layout(self.content_layout)
-        self.title_label.setText("Alert Workspace")
+        self.title_label.setText(tr("alert_workspace_title"))
         self.subtitle_label.setText(self._breadcrumb_text())
         self.done_btn.setVisible(False)
         self.edit_btn.setVisible(False)
@@ -215,9 +218,9 @@ class AlertWorkspacePage(QWidget):
         layout.setSpacing(8)
         card.setLayout(layout)
 
-        title = QLabel("Task not found")
+        title = QLabel(tr("alert_workspace_task_not_found"))
         title.setObjectName("PanelTitle")
-        detail = QLabel(message or "This task is no longer available.")
+        detail = QLabel(message or tr("alert_workspace_task_unavailable"))
         detail.setObjectName("MutedText")
         detail.setWordWrap(True)
 
@@ -233,11 +236,14 @@ class AlertWorkspacePage(QWidget):
         layout.setSpacing(14)
         card.setLayout(layout)
 
-        eyebrow = QLabel("At a glance")
+        eyebrow = QLabel(tr("alert_workspace_at_a_glance"))
         eyebrow.setObjectName("SectionHeader")
         layout.addWidget(eyebrow)
 
-        brief = QLabel(self.workspace.get("brief_text") or "This task needs review.")
+        brief = QLabel(
+            self.workspace.get("brief_text")
+            or tr("alert_workspace_needs_review")
+        )
         brief.setObjectName("PanelTitle")
         brief.setWordWrap(True)
         layout.addWidget(brief)
@@ -250,7 +256,11 @@ class AlertWorkspacePage(QWidget):
             facts.addWidget(self._fact_tile(fact))
         facts.addStretch()
 
-        office_btn = create_button("Open in Office Work", "subtle", fixed_height=28)
+        office_btn = create_button(
+            tr("alert_workspace_open_office_work"),
+            "subtle",
+            fixed_height=28,
+        )
         office_btn.clicked.connect(self._open_in_office_work)
         facts.addWidget(office_btn)
 
@@ -264,9 +274,12 @@ class AlertWorkspacePage(QWidget):
         layout.setSpacing(8)
         card.setLayout(layout)
 
-        title = QLabel("Why this alert is showing")
+        title = QLabel(tr("alert_workspace_why_title"))
         title.setObjectName("PanelTitle")
-        text = QLabel(self.workspace.get("why_text", "Review this task."))
+        text = QLabel(
+            self.workspace.get("why_text")
+            or tr("alert_workspace_review_task")
+        )
         text.setObjectName("RowText")
         text.setWordWrap(True)
 
@@ -291,7 +304,7 @@ class AlertWorkspacePage(QWidget):
         layout.setSpacing(8)
         card.setLayout(layout)
 
-        title = QLabel("Recommended next steps")
+        title = QLabel(tr("alert_workspace_steps_title"))
         title.setObjectName("PanelTitle")
         layout.addWidget(title)
 
@@ -325,13 +338,13 @@ class AlertWorkspacePage(QWidget):
         layout.setSpacing(10)
         card.setLayout(layout)
 
-        title = QLabel("Source details")
+        title = QLabel(tr("alert_workspace_source_title"))
         title.setObjectName("PanelTitle")
         layout.addWidget(title)
 
         evidence = self.workspace.get("evidence") or []
         if not evidence:
-            empty = QLabel("No automation source details are attached.")
+            empty = QLabel(tr("alert_workspace_no_source_details"))
             empty.setObjectName("MutedText")
             layout.addWidget(empty)
             return card
@@ -360,12 +373,14 @@ class AlertWorkspacePage(QWidget):
 
         missionaries = self.workspace.get("affected_missionaries") or []
 
-        title = QLabel(f"Affected missionaries ({len(missionaries)})")
+        title = QLabel(
+            tr("alert_workspace_affected_missionaries", count=len(missionaries))
+        )
         title.setObjectName("PanelTitle")
         layout.addWidget(title)
 
         if not missionaries:
-            empty = QLabel("No missionaries are linked to this task.")
+            empty = QLabel(tr("alert_workspace_no_missionaries"))
             empty.setObjectName("MutedText")
             empty.setWordWrap(True)
             layout.addWidget(empty)
@@ -389,18 +404,31 @@ class AlertWorkspacePage(QWidget):
         text_stack.setContentsMargins(0, 0, 0, 0)
         text_stack.setSpacing(3)
 
-        name = QLabel(missionary.get("name", "Missionary"))
+        name = QLabel(missionary.get("name", tr("missionary_label")))
         name.setObjectName("StrongText")
         name.setWordWrap(True)
 
-        meta = QLabel(missionary.get("issue_summary") or "Review record")
+        meta = QLabel(
+            missionary.get("issue_summary")
+            or tr("alert_workspace_review_record")
+        )
         meta.setObjectName("MutedText")
         meta.setWordWrap(True)
         dates = QLabel(
             "  |  ".join([
-                f"Stage: {missionary.get('current_stage') or 'No stage'}",
-                f"Residency: {missionary.get('residency_expiration_text')}",
-                f"Prorroga: {missionary.get('prorroga_expiration_text')}",
+                tr(
+                    "alert_workspace_stage_meta",
+                    value=missionary.get("current_stage")
+                    or tr("alert_workspace_no_stage"),
+                ),
+                tr(
+                    "alert_workspace_residency_meta",
+                    value=missionary.get("residency_expiration_text"),
+                ),
+                tr(
+                    "alert_workspace_prorroga_meta",
+                    value=missionary.get("prorroga_expiration_text"),
+                ),
             ])
         )
         dates.setObjectName("MiniMutedText")
@@ -410,7 +438,7 @@ class AlertWorkspacePage(QWidget):
         text_stack.addWidget(meta)
         text_stack.addWidget(dates)
 
-        open_btn = create_button("Open", "subtle", fixed_height=28)
+        open_btn = create_button(tr("dashboard_action_open"), "subtle", fixed_height=28)
         open_btn.clicked.connect(
             lambda _=None, missionary_id=missionary.get("id"):
             self._open_missionary(missionary_id)
@@ -421,8 +449,9 @@ class AlertWorkspacePage(QWidget):
         return row
 
     def _breadcrumb_text(self):
-        prefix = "Office Work" if self.return_key == "office_work" else "Mission Control"
-        return f"{prefix} / Alert Workspace"
+        if self.return_key == "office_work":
+            return tr("alert_workspace_breadcrumb_office_work")
+        return tr("alert_workspace_breadcrumb_mission_control")
 
     @staticmethod
     def _fact_tile(fact):
@@ -473,8 +502,8 @@ class AlertWorkspacePage(QWidget):
             return
         response = show_message(
             self,
-            "Mark Task Done?",
-            "Mark this alert task done once the records are resolved?",
+            tr("alert_workspace_mark_done_title"),
+            tr("alert_workspace_mark_done_message"),
             kind="question",
             buttons="yes_no",
         )

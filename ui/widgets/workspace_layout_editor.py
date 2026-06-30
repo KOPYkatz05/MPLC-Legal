@@ -326,7 +326,14 @@ class WorkspaceLayoutTile(QFrame):
             button.setFixedHeight(24)
             button.clicked.connect(callback)
             top.addWidget(button)
-            button.setVisible(block.get("id") == editor.selected_block_id)
+            is_structure_action = text in {"Copy", "Del"}
+            button.setVisible(
+                block.get("id") == editor.selected_block_id
+                and (
+                    editor.allow_structure_changes
+                    or not is_structure_action
+                )
+            )
         layout.addLayout(top)
 
         summary = QLabel(label, self)
@@ -612,6 +619,7 @@ class WorkspaceLayoutEditor(QWidget):
         self.placement_guide_status = "clear"
         self.alignment_guides = {"vertical": [], "horizontal": []}
         self.interaction_hint = "Ready"
+        self.allow_structure_changes = True
 
         root = QVBoxLayout()
         root.setContentsMargins(0, 0, 0, 0)
@@ -931,8 +939,15 @@ class WorkspaceLayoutEditor(QWidget):
         self._set_interaction_state(verb="Ready")
         self.surface.update()
 
+    def _structure_changes_blocked(self):
+        self._set_interaction_state(verb=tr("workspace_fixed_sections"))
+        return True
+
     def add_block_at(self, block_type, row=0, col=0):
         if not self.workspace:
+            return None
+        if not self.allow_structure_changes:
+            self._structure_changes_blocked()
             return None
         self._push_undo()
         block = new_block(block_type)
@@ -998,6 +1013,9 @@ class WorkspaceLayoutEditor(QWidget):
     def duplicate_block(self, block_id=None):
         if not self.workspace:
             return None
+        if not self.allow_structure_changes:
+            self._structure_changes_blocked()
+            return None
         if block_id is None and len(self.selected_block_ids) > 1:
             source_blocks = self._selected_blocks()
         else:
@@ -1009,6 +1027,9 @@ class WorkspaceLayoutEditor(QWidget):
         return self._append_duplicates(self._duplicate_payloads(source_blocks))
 
     def copy_selected(self):
+        if not self.allow_structure_changes:
+            self._structure_changes_blocked()
+            return False
         selected = self._selected_blocks()
         if not selected:
             return False
@@ -1018,6 +1039,9 @@ class WorkspaceLayoutEditor(QWidget):
 
     def paste_copied(self):
         if not self.workspace or not (self._clipboard_blocks or self._clipboard_block):
+            return None
+        if not self.allow_structure_changes:
+            self._structure_changes_blocked()
             return None
         self._push_undo()
         source_blocks = self._clipboard_blocks or [self._clipboard_block]
@@ -1164,6 +1188,9 @@ class WorkspaceLayoutEditor(QWidget):
         target_id = block_id or self.selected_block_id
         if not self.workspace or not target_id:
             return
+        if not self.allow_structure_changes:
+            self._structure_changes_blocked()
+            return
         if self.is_block_locked(target_id):
             self._set_interaction_state(verb="Locked block")
             return
@@ -1283,6 +1310,9 @@ class WorkspaceLayoutEditor(QWidget):
 
     def delete_selected(self):
         if not self.workspace or not self.selected_block_ids:
+            return
+        if not self.allow_structure_changes:
+            self._structure_changes_blocked()
             return
         editable_ids = set(self.unlocked_selected_ids())
         if not editable_ids:

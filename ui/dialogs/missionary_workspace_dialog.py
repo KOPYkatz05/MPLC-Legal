@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QUrl
+from PySide6.QtCore import Qt, QTimer, QUrl
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QFrame,
@@ -455,8 +455,27 @@ class WorkspaceBlockFactory:
 
         web_view = QWebEngineView(card)
         web_view.setObjectName("WorkspaceWebViewer")
-        web_view.setUrl(QUrl(url))
+        web_view.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        web_view.setMinimumHeight(
+            520 if getattr(self.dialog, "is_full_screen_workspace", False) else 320
+        )
+        status_label = QLabel(tr("workspace_web_loading"))
+        status_label.setObjectName("WorkspaceWebStatus")
+        status_label.setWordWrap(True)
+        status_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        if hasattr(web_view, "loadStarted"):
+            web_view.loadStarted.connect(
+                lambda: status_label.setText(tr("workspace_web_loading"))
+            )
+        if hasattr(web_view, "loadFinished"):
+            web_view.loadFinished.connect(
+                lambda ok: status_label.setText(
+                    "" if ok else tr("workspace_web_load_failed")
+                )
+            )
+        QTimer.singleShot(0, lambda: web_view.setUrl(QUrl.fromUserInput(url)))
         layout.addWidget(web_view, stretch=1)
+        layout.addWidget(status_label)
 
         open_btn = create_button(tr("workspace_open_website"), "secondary", fixed_height=28)
         open_btn.clicked.connect(lambda checked=False: self.dialog.open_web_url(url))
@@ -855,7 +874,7 @@ class MissionaryWorkspaceDialog(MaskDialogBase):
         title_stack.addWidget(title)
         title_stack.addWidget(subtitle)
         header_layout.addLayout(title_stack, stretch=1)
-        close_btn = create_button(tr("missionary_detail_cancel"), "secondary")
+        close_btn = create_button(tr("common_close"), "secondary")
         close_btn.clicked.connect(self.accept)
         header_layout.addWidget(close_btn)
         root.addWidget(header)
