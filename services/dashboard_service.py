@@ -19,7 +19,7 @@ from services.notification_feed_service import (
 from utils.logger import logger
 
 
-VISIBLE_TASK_STATUSES = ("OPEN", "WAITING")
+VISIBLE_TASK_STATUSES = ("OPEN", "READY", "WAITING")
 
 
 class DashboardService:

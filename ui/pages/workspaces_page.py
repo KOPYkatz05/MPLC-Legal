@@ -1,6 +1,6 @@
 from copy import deepcopy
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QEvent, QPoint, Qt
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QDialog,
@@ -22,6 +22,7 @@ from services.workspace_service import WorkspaceService, new_workspace
 from ui.foundation import (
     DialogFooter,
     create_button,
+    create_check_box,
     create_combo_box,
     create_line_edit,
     create_list_widget,
@@ -411,6 +412,18 @@ class WorkspacesPage(QWidget):
         self.zoom_out_btn = create_button("-", "secondary")
         self.zoom_reset_btn = create_button("100%", "secondary")
         self.zoom_in_btn = create_button("+", "secondary")
+        self.zoom_fit_btn = create_button(tr("workspace_zoom_fit"), "secondary")
+        self.grid_toggle = create_check_box(
+            tr("workspace_show_grid"),
+            "WorkspaceGridToggle",
+        )
+        self.grid_toggle.setChecked(True)
+        self.grid_size_spin = QSpinBox()
+        self.grid_size_spin.setObjectName("WorkspaceGridSizeSpin")
+        self.grid_size_spin.setRange(56, 180)
+        self.grid_size_spin.setSingleStep(8)
+        self.grid_size_spin.setValue(96)
+        self.grid_size_spin.setSuffix(f" {tr('workspace_grid_px')}")
         self.copy_btn = create_button(tr("workspace_copy"), "secondary")
         self.paste_btn = create_button(tr("workspace_paste"), "secondary")
         self.clear_canvas_btn = create_button(tr("workspace_clear_canvas"), "danger")
@@ -424,6 +437,9 @@ class WorkspacesPage(QWidget):
         self.zoom_out_btn.clicked.connect(self._zoom_out)
         self.zoom_reset_btn.clicked.connect(self._zoom_reset)
         self.zoom_in_btn.clicked.connect(self._zoom_in)
+        self.zoom_fit_btn.clicked.connect(self._zoom_fit)
+        self.grid_toggle.toggled.connect(self._toggle_workspace_grid)
+        self.grid_size_spin.valueChanged.connect(self._update_workspace_grid_size)
         self.copy_btn.clicked.connect(self._copy_selected_block)
         self.paste_btn.clicked.connect(self._paste_block)
         self.clear_canvas_btn.clicked.connect(self._clear_canvas)
@@ -434,6 +450,7 @@ class WorkspacesPage(QWidget):
             self.zoom_out_btn,
             self.zoom_reset_btn,
             self.zoom_in_btn,
+            self.zoom_fit_btn,
             self.copy_btn,
             self.paste_btn,
             self.clear_canvas_btn,
@@ -445,6 +462,9 @@ class WorkspacesPage(QWidget):
         toolbar.addWidget(self.zoom_out_btn)
         toolbar.addWidget(self.zoom_reset_btn)
         toolbar.addWidget(self.zoom_in_btn)
+        toolbar.addWidget(self.zoom_fit_btn)
+        toolbar.addWidget(self.grid_toggle)
+        toolbar.addWidget(self.grid_size_spin)
         toolbar.addWidget(self.copy_btn)
         toolbar.addWidget(self.paste_btn)
         toolbar.addWidget(self.clear_canvas_btn)
@@ -467,6 +487,10 @@ class WorkspacesPage(QWidget):
         center_layout.addLayout(status_row)
 
         canvas_scroll = create_scroll_area("WorkspaceCanvasScroll", transparent=True)
+        self.canvas_scroll = canvas_scroll
+        self._canvas_pan_active = False
+        self._canvas_pan_last_pos = QPoint()
+        canvas_scroll.viewport().installEventFilter(self)
         canvas_shell = QWidget()
         canvas_shell_layout = QVBoxLayout()
         canvas_shell_layout.setContentsMargins(0, 0, 0, 0)
@@ -481,9 +505,10 @@ class WorkspacesPage(QWidget):
         center_layout.addWidget(canvas_scroll, stretch=1)
         splitter.addWidget(center)
 
-        inspector = QFrame()
+        inspector = QFrame(self)
         inspector.setObjectName("WorkspaceInspector")
         inspector.setAttribute(Qt.WA_StyledBackground, True)
+        inspector.setVisible(False)
         inspector_layout = QVBoxLayout()
         inspector_layout.setContentsMargins(12, 12, 12, 12)
         inspector_layout.setSpacing(10)
@@ -583,8 +608,8 @@ class WorkspacesPage(QWidget):
         inspector_layout.addLayout(align_row)
         inspector_layout.addWidget(self.remove_block_btn)
         inspector_layout.addStretch()
-        splitter.addWidget(inspector)
-        splitter.setSizes([280, 900, 300])
+        self.inspector_panel = inspector
+        splitter.setSizes([280, 1200])
 
         self.block_remove_btn = self.remove_block_btn
         self.block_add_btn = self.add_selected_btn
@@ -675,6 +700,9 @@ class WorkspacesPage(QWidget):
         self.palette_search.setPlaceholderText(tr("workspace_search_blocks"))
         self.undo_btn.setText(tr("workspace_undo"))
         self.redo_btn.setText(tr("workspace_redo"))
+        self.zoom_fit_btn.setText(tr("workspace_zoom_fit"))
+        self.grid_toggle.setText(tr("workspace_show_grid"))
+        self.grid_size_spin.setSuffix(f" {tr('workspace_grid_px')}")
         self.copy_btn.setText(tr("workspace_copy"))
         self.paste_btn.setText(tr("workspace_paste"))
         self.clear_canvas_btn.setText(tr("workspace_clear_canvas"))
@@ -1135,6 +1163,71 @@ class WorkspacesPage(QWidget):
     def _zoom_reset(self):
         self.workspace_layout_editor.reset_zoom()
         self.zoom_reset_btn.setText("100%")
+
+    def _zoom_fit(self):
+        viewport_width = max(1, self.canvas_scroll.viewport().width() - 36)
+        target_zoom = viewport_width / 920
+        self.workspace_layout_editor.set_zoom(target_zoom)
+        self.zoom_reset_btn.setText(f"{round(self.workspace_layout_editor.zoom * 100)}%")
+
+    def _toggle_workspace_grid(self, checked):
+        self.workspace_layout_editor.set_grid_visible(checked)
+
+    def _update_workspace_grid_size(self, value):
+        self.workspace_layout_editor.set_grid_size(value)
+
+    def eventFilter(self, watched, event):
+        if (
+            hasattr(self, "canvas_scroll")
+            and watched == self.canvas_scroll.viewport()
+        ):
+            if self._handle_canvas_viewport_event(event):
+                return True
+        return super().eventFilter(watched, event)
+
+    def _handle_canvas_viewport_event(self, event):
+        event_type = event.type()
+        if event_type == QEvent.Type.Wheel and event.modifiers() & Qt.ControlModifier:
+            delta = event.angleDelta().y() or event.angleDelta().x()
+            if delta:
+                if delta > 0:
+                    self._zoom_in()
+                else:
+                    self._zoom_out()
+                event.accept()
+                return True
+        if event_type == QEvent.Type.MouseButtonPress and event.button() == Qt.MiddleButton:
+            self._canvas_pan_active = True
+            self._canvas_pan_last_pos = (
+                event.position().toPoint()
+                if hasattr(event, "position")
+                else event.pos()
+            )
+            self.canvas_scroll.viewport().setCursor(Qt.ClosedHandCursor)
+            event.accept()
+            return True
+        if event_type == QEvent.Type.MouseMove and self._canvas_pan_active:
+            pos = event.position().toPoint() if hasattr(event, "position") else event.pos()
+            delta = pos - self._canvas_pan_last_pos
+            self.canvas_scroll.horizontalScrollBar().setValue(
+                self.canvas_scroll.horizontalScrollBar().value() - delta.x()
+            )
+            self.canvas_scroll.verticalScrollBar().setValue(
+                self.canvas_scroll.verticalScrollBar().value() - delta.y()
+            )
+            self._canvas_pan_last_pos = pos
+            event.accept()
+            return True
+        if (
+            event_type == QEvent.Type.MouseButtonRelease
+            and event.button() == Qt.MiddleButton
+            and self._canvas_pan_active
+        ):
+            self._canvas_pan_active = False
+            self.canvas_scroll.viewport().unsetCursor()
+            event.accept()
+            return True
+        return False
 
     def _save_current_workspace(self):
         workspace = self._current_workspace()

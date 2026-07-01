@@ -9,7 +9,7 @@ from services.notification_feed_service import NotificationFeedService
 from utils.logger import logger
 
 
-VISIBLE_TASK_STATUSES = ("OPEN", "WAITING")
+VISIBLE_TASK_STATUSES = ("OPEN", "READY", "WAITING")
 PRIORITY_RANK = {
     "CRITICAL": 0,
     "IMPORTANT": 1,

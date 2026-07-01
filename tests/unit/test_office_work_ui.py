@@ -14,12 +14,15 @@ class FakeSecretaryWorkService:
         self.completed_tasks = []
         self.archived_tasks = []
         self.deleted_tasks = []
+        self.ready_tasks = []
+        self.reopened_tasks = []
         self.completed_projects = []
         self.archived_projects = []
 
     def summary(self):
         return {
             "open": 1,
+            "ready": 1,
             "overdue": 1,
             "due_today": 0,
             "waiting": 0,
@@ -50,11 +53,22 @@ class FakeSecretaryWorkService:
                     "is_group_task": False,
                     "appointment_field": None,
                     "appointment_label": "",
+                    "task_type": "DOCUMENT",
+                    "task_type_label": "Document",
+                    "related_stage": "INTERPOL",
+                    "related_document_type": "PASSPORT",
+                    "related_document_label": "Passport",
+                    "automation_source": "process_automation",
+                    "automation_key": "test:auto",
+                    "automation_status_reason": "",
                     "waiting_reason": None,
                     "waiting_reason_label": "",
+                    "waiting_follow_up_date": None,
+                    "waiting_follow_up_label": "",
                 }
             ],
             "today": [],
+            "ready_to_review": [],
             "this_week": [],
             "later": [],
             "no_due_date": [],
@@ -98,6 +112,12 @@ class FakeSecretaryWorkService:
 
     def complete_task(self, task_id):
         self.completed_tasks.append(task_id)
+
+    def mark_task_ready(self, task_id):
+        self.ready_tasks.append(task_id)
+
+    def reopen_task(self, task_id):
+        self.reopened_tasks.append(task_id)
 
     def archive_task(self, task_id):
         self.archived_tasks.append(task_id)
@@ -170,6 +190,47 @@ def test_task_dialog_accepts_due_date_defaults(qapp):
         assert dialog.no_due_date_check.isChecked() is False
         assert dialog._payload()["due_date"] == target
         assert dialog.windowTitle() == "Add Task"
+    finally:
+        dialog.close()
+
+
+def test_task_dialog_payload_includes_classification_fields(qapp):
+    _ = qapp
+    dialog = TaskDialog(FakeSecretaryWorkService())
+
+    try:
+        dialog.title_input.setText("Classified task")
+        dialog._set_combo_data(dialog.task_type_combo, "DOCUMENT")
+        dialog._set_combo_data(dialog.related_stage_combo, "INTERPOL")
+        dialog._set_combo_data(dialog.related_document_combo, "PASSPORT")
+
+        payload = dialog._payload()
+
+        assert payload["task_type"] == "DOCUMENT"
+        assert payload["related_stage"] == "INTERPOL"
+        assert payload["related_document_type"] == "PASSPORT"
+    finally:
+        dialog.close()
+
+
+def test_task_dialog_payload_includes_waiting_follow_up_date(qapp):
+    _ = qapp
+    target = date(2026, 6, 18)
+    dialog = TaskDialog(FakeSecretaryWorkService())
+
+    try:
+        dialog.title_input.setText("Waiting task")
+        dialog._set_combo_data(dialog.status_combo, "WAITING")
+        dialog._set_combo_data(dialog.waiting_reason_combo, "DOCUMENT")
+        dialog.waiting_follow_up_input.setDate(
+            office_work_dialogs._qdate_from_date(target)
+        )
+        dialog.no_waiting_follow_up_check.setChecked(False)
+
+        payload = dialog._payload()
+
+        assert payload["waiting_reason"] == "DOCUMENT"
+        assert payload["waiting_follow_up_date"] == target
     finally:
         dialog.close()
 
@@ -253,6 +314,38 @@ def test_office_work_task_archive_and_delete_actions(monkeypatch, qapp):
 
         assert service.archived_tasks == [1]
         assert service.deleted_tasks == [1]
+    finally:
+        page.close()
+
+
+def test_office_work_ready_transition_actions(qapp):
+    _ = qapp
+    service = FakeSecretaryWorkService()
+    page = OfficeWorkPage(service=service)
+
+    try:
+        page._mark_task_ready(1)
+        page._reopen_task(2)
+
+        assert service.ready_tasks == [1]
+        assert service.reopened_tasks == [2]
+    finally:
+        page.close()
+
+
+def test_office_work_task_presets_drive_existing_filters(qapp):
+    _ = qapp
+    page = OfficeWorkPage(service=FakeSecretaryWorkService())
+
+    try:
+        page._apply_task_preset("ready")
+        assert page.task_status_filter.currentData() == "READY"
+
+        page._apply_task_preset("appointments")
+        assert page.task_type_filter.currentData() == "APPOINTMENT"
+
+        page._apply_task_preset("critical")
+        assert page.task_priority_filter.currentData() == "CRITICAL"
     finally:
         page.close()
 

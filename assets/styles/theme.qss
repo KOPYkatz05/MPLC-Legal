@@ -3503,12 +3503,12 @@ QWidget#WorkspaceLayoutTile {
     border-radius: 7px;
 }
 
-QPushButton#WorkspaceTileEditButton {
-    background-color: #18181B;
-    color: #FFFFFF;
-    border: 1px solid #18181B;
-    border-radius: 7px;
-    padding: 2px 10px;
+QFrame#WorkspaceLayoutTile QFrame#FluentCard,
+QFrame#WorkspaceLayoutTile QWidget#FluentCard,
+QFrame#WorkspaceLayoutTile QFrame#WorkspaceTileLivePreview,
+QFrame#WorkspaceLayoutTile QWidget#WorkspaceTileLivePreview {
+    border: none;
+    background-color: #FFFFFF;
 }
 
 QLabel#WorkspaceTileSizeChip {
@@ -3527,6 +3527,48 @@ QLabel#WorkspaceTilePreviewLine {
     border: 1px solid #ECECEC;
     border-radius: 6px;
     padding: 3px 7px;
+}
+
+QMenu#WorkspaceTileContextMenu {
+    background-color: #FFFFFF;
+    color: #18181B;
+    border: 1px solid #DADADF;
+    border-radius: 7px;
+    padding: 6px;
+}
+
+QMenu#WorkspaceTileContextMenu::item {
+    padding: 7px 28px 7px 12px;
+    border-radius: 6px;
+    min-width: 140px;
+}
+
+QMenu#WorkspaceTileContextMenu::item:selected {
+    background-color: #F4F4F5;
+    color: #18181B;
+}
+
+QMenu#WorkspaceTileContextMenu::item:disabled {
+    color: #A1A1AA;
+}
+
+QListWidget#WorkspaceSwapBlockList {
+    background-color: #FFFFFF;
+    color: #18181B;
+    border: none;
+    outline: none;
+}
+
+QListWidget#WorkspaceSwapBlockList::item {
+    min-height: 28px;
+    padding: 4px 9px;
+    border-radius: 6px;
+}
+
+QListWidget#WorkspaceSwapBlockList::item:hover,
+QListWidget#WorkspaceSwapBlockList::item:selected {
+    background-color: #F4F4F5;
+    color: #18181B;
 }
 
 QLabel#WorkspaceTilePreviewStrong {

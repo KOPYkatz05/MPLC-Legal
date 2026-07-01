@@ -6,6 +6,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import sessionmaker
 
 from database.db import Base
+from database.models.document import Document
 from database.models.missionary import Missionary
 from database.models.secretary_work import (
     MissionaryGroup,
@@ -80,6 +81,119 @@ def test_create_update_complete_and_archive_task(secretary_service):
 
     archived = secretary_service.archive_task(task["id"])
     assert archived["status"] == "ARCHIVED"
+
+
+def test_ready_status_is_visible_grouped_and_counted(secretary_service, monkeypatch):
+    class FakeDate(date):
+        @classmethod
+        def today(cls):
+            return cls(2026, 6, 10)
+
+    monkeypatch.setattr(service_module, "date", FakeDate)
+
+    ready = secretary_service.create_task(
+        "Review complete packet",
+        status="READY",
+        due_date=FakeDate.today() - timedelta(days=1),
+    )
+    secretary_service.create_task("Normal task")
+
+    visible = secretary_service.list_tasks()
+    grouped = secretary_service.grouped_tasks()
+    summary = secretary_service.summary()
+
+    assert ready["status"] == "READY"
+    assert {task["status"] for task in visible} == {"OPEN", "READY"}
+    assert [task["title"] for task in grouped["ready_to_review"]] == [
+        "Review complete packet"
+    ]
+    assert grouped["overdue"] == []
+    assert summary["ready"] == 1
+    assert summary["open"] == 1
+    assert summary["overdue"] == 1
+
+
+def test_task_classification_fields_round_trip_and_filter(secretary_service):
+    target = secretary_service.create_task(
+        "Upload Prorroga approval",
+        status="READY",
+        task_type="DOCUMENT",
+        related_stage="PRORROGA",
+        related_document_type="APROBACION_DE_PRORROGA",
+    )
+    secretary_service.create_task("General follow-up")
+
+    by_type = secretary_service.list_tasks(task_type="DOCUMENT")
+    by_search = secretary_service.list_tasks(search="prorroga approval")
+
+    assert target["task_type"] == "DOCUMENT"
+    assert target["task_type_label"] == "Document"
+    assert target["related_stage"] == "PRORROGA"
+    assert target["related_document_type"] == "APROBACION_DE_PRORROGA"
+    assert target["related_document_label"]
+    assert [task["id"] for task in by_type] == [target["id"]]
+    assert [task["id"] for task in by_search] == [target["id"]]
+
+
+def test_appointment_filter_includes_legacy_appointment_tasks(secretary_service):
+    target = secretary_service.create_task(
+        "Prepare appointment packet",
+        appointment_field="interpol_appointment_date",
+    )
+    secretary_service.create_task("Document task", task_type="DOCUMENT")
+
+    results = secretary_service.list_tasks(task_type="APPOINTMENT")
+
+    assert [task["id"] for task in results] == [target["id"]]
+
+
+def test_automatic_task_preserves_completed_task(secretary_service):
+    created = secretary_service.create_or_update_automatic_task(
+        automation_key="auto:ready-preserve",
+        automation_source="test",
+        title="Original title",
+        task_type="DOCUMENT",
+        related_stage="INTERPOL",
+    )
+    secretary_service.complete_task(created["id"])
+
+    skipped = secretary_service.create_or_update_automatic_task(
+        automation_key="auto:ready-preserve",
+        automation_source="test",
+        title="Changed title",
+        task_type="APPOINTMENT",
+        related_stage="PRORROGA",
+    )
+
+    assert skipped["automation_result"] == "skipped"
+    assert skipped["title"] == "Original title"
+    assert skipped["status"] == "DONE"
+    assert skipped["task_type"] == "DOCUMENT"
+    assert skipped["related_stage"] == "INTERPOL"
+
+
+def test_automatic_task_update_keeps_classification_when_omitted(secretary_service):
+    created = secretary_service.create_or_update_automatic_task(
+        automation_key="auto:classification-preserve",
+        automation_source="test",
+        title="Original title",
+        task_type="DOCUMENT",
+        related_stage="INTERPOL",
+        related_document_type="PASSPORT",
+    )
+
+    updated = secretary_service.create_or_update_automatic_task(
+        automation_key="auto:classification-preserve",
+        automation_source="test",
+        title="Updated title",
+    )
+
+    assert updated["automation_result"] == "updated"
+    assert updated["title"] == "Updated title"
+    assert created["task_type"] == "DOCUMENT"
+    assert updated["task_type"] == "DOCUMENT"
+    assert updated["related_stage"] == "INTERPOL"
+    assert updated["related_document_type"] == "PASSPORT"
 
 
 def test_task_workspace_includes_grouped_prorroga_context(secretary_service):
@@ -170,6 +284,107 @@ def test_task_workspace_uses_manual_task_fallback(secretary_service):
     )
 
 
+def test_ready_workspace_uses_related_document_and_stage(secretary_service):
+    session = service_module.SessionLocal()
+    try:
+        first = Missionary(
+            missionary_code="ready-one",
+            full_name="Ready One",
+            status="ACTIVE",
+            current_stage="PRORROGA",
+        )
+        second = Missionary(
+            missionary_code="ready-two",
+            full_name="Ready Two",
+            status="ACTIVE",
+            current_stage="INTERPOL",
+        )
+        session.add_all([first, second])
+        session.flush()
+        session.add(
+            Document(
+                missionary_id=first.id,
+                document_type="APROBACION_DE_PRORROGA",
+                workflow_stage="PRORROGA",
+                verified=True,
+                file_name="approval.pdf",
+                file_path="approval.pdf",
+                status="ACTIVE",
+            )
+        )
+        session.commit()
+        first_id = first.id
+        second_id = second.id
+    finally:
+        session.close()
+
+    task = secretary_service.create_task(
+        "Review Prorroga approval",
+        status="READY",
+        task_type="DOCUMENT",
+        related_stage="PRORROGA",
+        related_document_type="APROBACION_DE_PRORROGA",
+        missionary_ids=[first_id, second_id],
+    )
+
+    workspace = secretary_service.get_task_workspace(task["id"])
+
+    assert workspace["brief_text"].startswith("Ready to review:")
+    assert workspace["brief_text"].endswith("1/2 uploaded.")
+    assert workspace["classification"]["document_uploaded_count"] == 1
+    assert workspace["classification"]["document_missing_count"] == 1
+    assert workspace["classification"]["stage_match_count"] == 1
+    assert workspace["classification"]["stage_mismatch_count"] == 1
+    assert any(
+        fact["label"] == "Document"
+        and fact["value"].endswith("1/2 uploaded")
+        for fact in workspace["key_facts"]
+    )
+    assert any(
+        person["name"] == "Ready One"
+        and person["related_document_uploaded"] is True
+        and person["related_stage_matches"] is True
+        for person in workspace["affected_missionaries"]
+    )
+    assert any(
+        person["name"] == "Ready Two"
+        and person["related_document_uploaded"] is False
+        and person["related_stage_matches"] is False
+        for person in workspace["affected_missionaries"]
+    )
+    assert workspace["recommended_steps"][0] == (
+        "Review the ready task and confirm the linked records."
+    )
+    assert any(
+        "move the task to Waiting" in step
+        for step in workspace["recommended_steps"]
+    )
+
+
+def test_waiting_workspace_surfaces_follow_up_date(secretary_service):
+    task = secretary_service.create_task(
+        "Waiting on missionary",
+        status="WAITING",
+        waiting_reason="MISSIONARY",
+        waiting_follow_up_date=date(2026, 6, 18),
+    )
+
+    workspace = secretary_service.get_task_workspace(task["id"])
+
+    assert "Follow up Jun 18, 2026" in workspace["why_points"]
+    assert any(
+        fact["label"] == "Follow-up"
+        and fact["value"] == "Follow up Jun 18, 2026"
+        for fact in workspace["key_facts"]
+    )
+    assert workspace["recommended_steps"] == [
+        "Check what this task is waiting on.",
+        "Use the waiting follow-up date: Follow up Jun 18, 2026.",
+        "Update the waiting reason or notes if the situation changed.",
+        "Mark Ready when the needed pieces are available.",
+    ]
+
+
 def test_task_workspace_missing_task_raises(secretary_service):
     with pytest.raises(SecretaryWorkError):
         secretary_service.get_task_workspace(999)
@@ -183,17 +398,41 @@ def test_waiting_task_requires_reason_and_clears_when_reopened(secretary_service
         "Waiting task",
         status="WAITING",
         waiting_reason="DOCUMENT",
+        waiting_follow_up_date=date(2026, 6, 18),
     )
 
     assert task["status"] == "WAITING"
     assert task["waiting_reason"] == "DOCUMENT"
     assert task["waiting_reason_label"] == "Waiting on document"
+    assert task["waiting_follow_up_date"] == date(2026, 6, 18)
+    assert task["waiting_follow_up_label"] == "Follow up Jun 18, 2026"
 
     reopened = secretary_service.update_task(task["id"], status="OPEN")
 
     assert reopened["status"] == "OPEN"
     assert reopened["waiting_reason"] is None
     assert reopened["waiting_reason_label"] == ""
+    assert reopened["waiting_follow_up_date"] is None
+    assert reopened["waiting_follow_up_label"] == ""
+
+
+def test_ready_and_needs_work_transitions_clear_waiting_reason(secretary_service):
+    task = secretary_service.create_task(
+        "Waiting on packet",
+        status="WAITING",
+        waiting_reason="DOCUMENT",
+        waiting_follow_up_date=date(2026, 6, 18),
+    )
+
+    ready = secretary_service.mark_task_ready(task["id"])
+    reopened = secretary_service.reopen_task(task["id"])
+
+    assert ready["status"] == "READY"
+    assert ready["waiting_reason"] is None
+    assert ready["waiting_follow_up_date"] is None
+    assert reopened["status"] == "OPEN"
+    assert reopened["waiting_reason"] is None
+    assert reopened["waiting_follow_up_date"] is None
 
 
 def test_create_update_complete_and_archive_project(secretary_service):
@@ -507,9 +746,13 @@ def test_secretary_task_waiting_reason_migration(monkeypatch):
     assert "group_id" in columns
     assert "group_scope_label" in columns
     assert "work_date" in columns
+    assert "task_type" in columns
+    assert "related_stage" in columns
+    assert "related_document_type" in columns
     assert "automation_key" in columns
     assert "automation_source" in columns
     assert "automation_status_reason" in columns
+    assert "waiting_follow_up_date" in columns
     assert "group_type" in group_columns
     assert "automation_key" in group_columns
     assert "missionary_groups" in group_tables

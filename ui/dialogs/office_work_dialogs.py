@@ -11,9 +11,11 @@ from PySide6.QtWidgets import (
 )
 
 from services.secretary_work_service import (
+    TASK_TYPE_LABELS,
     WAITING_REASON_LABELS,
     SecretaryWorkError,
 )
+from database.models.secretary_work import PRIORITIES, TASK_STATUSES, TASK_TYPES
 from ui.foundation import (
     DialogFooter,
     FLUENT_AVAILABLE,
@@ -29,11 +31,10 @@ from ui.foundation import (
     setup_dialog_shell,
     show_message,
 )
+from utils.constants import DOCUMENTS, WORKFLOW_STAGES
 
 
-TASK_STATUSES = ["OPEN", "WAITING", "DONE", "ARCHIVED"]
 PROJECT_STATUSES = ["ACTIVE", "WAITING", "DONE", "ARCHIVED"]
-PRIORITIES = ["LOW", "NORMAL", "IMPORTANT", "CRITICAL"]
 APPOINTMENT_FIELDS = [
     ("None", None),
     ("Interpol", "interpol_appointment_date"),
@@ -42,6 +43,7 @@ APPOINTMENT_FIELDS = [
 ]
 TASK_STATUS_LABELS = {
     "OPEN": "To Do",
+    "READY": "Ready",
     "WAITING": "Waiting",
     "DONE": "Done",
     "ARCHIVED": "Archived",
@@ -284,7 +286,7 @@ class TaskDialog(_OfficeWorkDialogBase):
         self.no_work_date_check.setChecked(self.task.get("work_date") is None)
         self.no_work_date_check.toggled.connect(self.work_date_input.setDisabled)
         self.work_date_input.setDisabled(self.no_work_date_check.isChecked())
-        self.body_layout.addWidget(self._field("Work Date", self.work_date_input))
+        self.body_layout.addWidget(self._field("Do On", self.work_date_input))
         self.body_layout.addWidget(self.no_work_date_check)
 
         self.due_date_input = create_date_picker()
@@ -293,7 +295,9 @@ class TaskDialog(_OfficeWorkDialogBase):
         self.no_due_date_check.setChecked(self.task.get("due_date") is None)
         self.no_due_date_check.toggled.connect(self.due_date_input.setDisabled)
         self.due_date_input.setDisabled(self.no_due_date_check.isChecked())
-        self.body_layout.addWidget(self._field("Due Date", self.due_date_input))
+        self.body_layout.addWidget(
+            self._field("Must Be Done By", self.due_date_input)
+        )
         self.body_layout.addWidget(self.no_due_date_check)
 
         self.project_combo = create_combo_box()
@@ -336,7 +340,7 @@ class TaskDialog(_OfficeWorkDialogBase):
             self.missionary_picker.set_selected_ids(
                 self._group_members_by_id.get(self.task.get("group_id"), [])
             )
-        self.body_layout.addWidget(self._field("Missionary Scope", self.missionary_picker))
+        self.body_layout.addWidget(self._field("Applies To", self.missionary_picker))
 
         self.appointment_combo = create_combo_box()
         for label, field in APPOINTMENT_FIELDS:
@@ -344,6 +348,41 @@ class TaskDialog(_OfficeWorkDialogBase):
         self._set_combo_data(
             self.appointment_combo,
             self.task.get("appointment_field"),
+        )
+
+        self.task_type_combo = create_combo_box()
+        for task_type in TASK_TYPES:
+            self.task_type_combo.addItem(
+                TASK_TYPE_LABELS.get(task_type, task_type.title()),
+                task_type,
+            )
+        self._set_combo_data(
+            self.task_type_combo,
+            self.task.get("task_type", "CUSTOM"),
+        )
+
+        self.related_stage_combo = create_combo_box()
+        self.related_stage_combo.addItem("No related stage", None)
+        for stage in WORKFLOW_STAGES:
+            self.related_stage_combo.addItem(stage.title(), stage)
+        self._set_combo_data(
+            self.related_stage_combo,
+            self.task.get("related_stage"),
+        )
+
+        self.related_document_combo = create_combo_box()
+        self.related_document_combo.addItem("No related document", None)
+        for document_type, definition in sorted(
+            DOCUMENTS.items(),
+            key=lambda item: item[1].get("label", item[0]),
+        ):
+            self.related_document_combo.addItem(
+                definition.get("label", document_type),
+                document_type,
+            )
+        self._set_combo_data(
+            self.related_document_combo,
+            self.task.get("related_document_type"),
         )
 
         self.details_button = create_button(
@@ -368,6 +407,13 @@ class TaskDialog(_OfficeWorkDialogBase):
         details_layout.addWidget(
             self._field("Appointment Link", self.appointment_combo)
         )
+        details_layout.addWidget(self._field("Task Type", self.task_type_combo))
+        details_layout.addWidget(
+            self._field("Related Stage", self.related_stage_combo)
+        )
+        details_layout.addWidget(
+            self._field("Related Document", self.related_document_combo)
+        )
         details_layout.addWidget(self._field("Status", self.status_combo))
 
         self.waiting_reason_combo = create_combo_box()
@@ -383,6 +429,27 @@ class TaskDialog(_OfficeWorkDialogBase):
             self.waiting_reason_combo,
         )
         details_layout.addWidget(self.waiting_reason_field)
+
+        self.waiting_follow_up_input = create_date_picker()
+        self.waiting_follow_up_input.setDate(
+            _qdate_from_date(self.task.get("waiting_follow_up_date"))
+        )
+        self.no_waiting_follow_up_check = create_check_box("No follow-up date")
+        self.no_waiting_follow_up_check.setChecked(
+            self.task.get("waiting_follow_up_date") is None
+        )
+        self.no_waiting_follow_up_check.toggled.connect(
+            self.waiting_follow_up_input.setDisabled
+        )
+        self.waiting_follow_up_input.setDisabled(
+            self.no_waiting_follow_up_check.isChecked()
+        )
+        self.waiting_follow_up_field = self._field(
+            "Follow Up On",
+            self.waiting_follow_up_input,
+        )
+        details_layout.addWidget(self.waiting_follow_up_field)
+        details_layout.addWidget(self.no_waiting_follow_up_check)
 
         self.body_layout.addWidget(self.details_widget)
         self.details_widget.setVisible(False)
@@ -413,7 +480,15 @@ class TaskDialog(_OfficeWorkDialogBase):
             "missionary_ids": missionary_ids,
             "group_id": self.group_combo.currentData(),
             "appointment_field": self.appointment_combo.currentData(),
+            "task_type": self.task_type_combo.currentData(),
+            "related_stage": self.related_stage_combo.currentData(),
+            "related_document_type": self.related_document_combo.currentData(),
             "waiting_reason": self.waiting_reason_combo.currentData(),
+            "waiting_follow_up_date": (
+                None
+                if self.no_waiting_follow_up_check.isChecked()
+                else _date_from_picker(self.waiting_follow_up_input)
+            ),
         }
 
     def _save(self):
@@ -454,6 +529,8 @@ class TaskDialog(_OfficeWorkDialogBase):
     def _sync_waiting_reason_visibility(self):
         is_waiting = self.status_combo.currentData() == "WAITING"
         self.waiting_reason_field.setVisible(is_waiting)
+        self.waiting_follow_up_field.setVisible(is_waiting)
+        self.no_waiting_follow_up_check.setVisible(is_waiting)
 
     def _group_changed(self):
         group_id = self.group_combo.currentData()

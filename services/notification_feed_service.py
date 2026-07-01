@@ -17,7 +17,7 @@ EXPIRY_FIELDS = [
     ("residency_expiration", "Residency Expiration"),
     ("passport_expiration", "Passport Expiration"),
 ]
-VISIBLE_TASK_STATUSES = ("OPEN", "WAITING")
+VISIBLE_TASK_STATUSES = ("OPEN", "READY", "WAITING")
 AUTOMATION_SOURCE = "process_automation"
 
 

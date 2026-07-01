@@ -41,6 +41,7 @@ def _tone_from_color(color):
 
 STATUS_LABELS = {
     "OPEN": "alert_workspace_status_open",
+    "READY": "alert_workspace_status_ready",
     "WAITING": "alert_workspace_status_waiting",
     "DONE": "alert_workspace_status_done",
     "ARCHIVED": "alert_workspace_status_archived",
@@ -81,6 +82,13 @@ class AlertWorkspacePage(QWidget):
         self.back_btn.clicked.connect(self._go_back)
         self.edit_btn = create_button(tr("alert_workspace_edit_task"), "secondary")
         self.edit_btn.clicked.connect(self._edit_task)
+        self.ready_btn = create_button(tr("alert_workspace_mark_ready"), "secondary")
+        self.ready_btn.clicked.connect(self._mark_ready)
+        self.needs_work_btn = create_button(
+            tr("alert_workspace_needs_work"),
+            "secondary",
+        )
+        self.needs_work_btn.clicked.connect(self._mark_needs_work)
         self.done_btn = create_button(tr("alert_workspace_mark_done"), "primary")
         self.done_btn.clicked.connect(self._mark_done)
 
@@ -152,6 +160,8 @@ class AlertWorkspacePage(QWidget):
         command_row.addStretch()
         command_row.addWidget(self.back_btn)
         command_row.addWidget(self.edit_btn)
+        command_row.addWidget(self.ready_btn)
+        command_row.addWidget(self.needs_work_btn)
         command_row.addWidget(self.done_btn)
 
         layout.addLayout(command_row)
@@ -179,6 +189,8 @@ class AlertWorkspacePage(QWidget):
         status = self.workspace.get("status", "")
         self.done_btn.setVisible(status not in {"DONE", "ARCHIVED"})
         self.edit_btn.setVisible(status != "ARCHIVED")
+        self.ready_btn.setVisible(status in {"OPEN", "WAITING"})
+        self.needs_work_btn.setVisible(status == "READY")
 
         self.content_layout.addWidget(self._build_summary_card())
 
@@ -211,6 +223,8 @@ class AlertWorkspacePage(QWidget):
         self.subtitle_label.setText(self._breadcrumb_text())
         self.done_btn.setVisible(False)
         self.edit_btn.setVisible(False)
+        self.ready_btn.setVisible(False)
+        self.needs_work_btn.setVisible(False)
 
         card = create_card(object_name="AlertWorkspaceErrorCard")
         layout = QVBoxLayout()
@@ -511,6 +525,20 @@ class AlertWorkspacePage(QWidget):
             return
 
         self.service.complete_task(self.task_id)
+        self._refresh_related_pages()
+        self.load_task(self.task_id, self.return_key)
+
+    def _mark_ready(self):
+        if self.task_id is None:
+            return
+        self.service.mark_task_ready(self.task_id)
+        self._refresh_related_pages()
+        self.load_task(self.task_id, self.return_key)
+
+    def _mark_needs_work(self):
+        if self.task_id is None:
+            return
+        self.service.reopen_task(self.task_id)
         self._refresh_related_pages()
         self.load_task(self.task_id, self.return_key)
 

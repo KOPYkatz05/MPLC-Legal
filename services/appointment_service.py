@@ -321,6 +321,7 @@ class AppointmentService:
             priority="IMPORTANT",
             missionary_id=missionary.id,
             appointment_field=appointment.appointment_field,
+            task_type="APPOINTMENT",
         )
 
     def _appointment_snapshot(self, appointment, missionary):

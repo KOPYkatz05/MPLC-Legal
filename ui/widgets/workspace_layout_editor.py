@@ -1,4 +1,5 @@
 from copy import deepcopy
+from types import SimpleNamespace
 from uuid import uuid4
 from PySide6.QtCore import (
     QEasingCurve,
@@ -15,11 +16,14 @@ from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
-    QPushButton,
+    QListWidget,
+    QListWidgetItem,
+    QMenu,
     QRubberBand,
     QSizePolicy,
     QVBoxLayout,
     QWidget,
+    QWidgetAction,
 )
 
 from services.workspace_service import new_block
@@ -29,6 +33,10 @@ from services.workspace_layout import (
     normalize_workspace_layout,
     update_block_layout,
     validate_block_layout,
+)
+from ui.dialogs.missionary_workspace_dialog import (
+    MissionaryWorkspaceContext,
+    WorkspaceBlockFactory,
 )
 from utils.language_helper import ui_text as tr
 
@@ -61,6 +69,109 @@ def _event_global_position(event):
     if hasattr(event, "globalPosition"):
         return event.globalPosition().toPoint()
     return event.globalPos()
+
+
+class WorkspaceEditorPreviewHost:
+    preview_mode = True
+    is_full_screen_workspace = True
+
+    def __init__(self):
+        missionary = SimpleNamespace(
+            id=0,
+            full_name=tr("workspace_preview_missionary_name"),
+            missionary_code="M-000",
+            nationality=tr("workspace_preview_nationality"),
+            passport_number="A0000000",
+            carnet_number="",
+            current_stage="INTERPOL",
+            notes=tr("workspace_preview_notes"),
+            folder_path=tr("workspace_preview_folder"),
+            phone="",
+            email="",
+            emergency_contact="",
+            date_of_birth=None,
+            arrival_date=None,
+            visa_expiration=None,
+            passport_expiration=None,
+            residency_expiration=None,
+            prorroga_expiration=None,
+            carnet_issue_date=None,
+            interpol_appointment_date=None,
+            biometric_appointment_date=None,
+            pickup_appointment_date=None,
+        )
+        workflow = SimpleNamespace(
+            stage_name="INTERPOL",
+            status="IN PROGRESS",
+            notes=tr("workspace_preview_workflow_note"),
+        )
+        self.context = MissionaryWorkspaceContext(
+            missionary=missionary,
+            documents=[],
+            workflows=[workflow],
+            tasks=[
+                {
+                    "id": 0,
+                    "title": tr("workspace_preview_task_title"),
+                    "priority": "Normal",
+                    "status": "OPEN",
+                }
+            ],
+            residency_rows=[],
+            missing_groups=[
+                (
+                    "INTERPOL",
+                    ["PASSPORT", "PHOTO"],
+                    True,
+                )
+            ],
+        )
+
+    def normalized_web_url(self, url):
+        return (url or "").strip()
+
+    def find_document(self, document_type=None):
+        _ = document_type
+        return None
+
+    def open_document_viewer(self, *args):
+        _ = args
+
+    def open_document_notes(self, *args):
+        _ = args
+
+    def open_document_file(self, *args):
+        _ = args
+
+    def open_web_url(self, *args):
+        _ = args
+
+    def change_workflow_status(self, *args):
+        _ = args
+
+    def upload_document(self, *args):
+        _ = args
+
+    def add_task(self, *args):
+        _ = args
+
+    def complete_task(self, *args):
+        _ = args
+
+    def edit_task(self, *args):
+        _ = args
+
+    def open_folder_path(self, *args):
+        _ = args
+
+    def update_current_workflow(self, *args):
+        _ = args
+
+
+def _make_mouse_transparent(widget):
+    widget.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+    for child in widget.findChildren(QWidget):
+        child.setAttribute(Qt.WA_TransparentForMouseEvents, True)
 
 
 class WorkspacePaletteButton(QFrame):
@@ -140,18 +251,19 @@ class WorkspaceCanvasSurface(QFrame):
         painter.fillRect(self.rect(), QColor(CANVAS_OUTER))
         painter.fillRect(rect, QColor(CANVAS_SURFACE))
 
-        minor_pen = QPen(QColor(GRID_MINOR))
-        major_pen = QPen(QColor(GRID_MAJOR))
         cell_width = self.editor.cell_width()
-        for col in range(WORKSPACE_GRID_COLUMNS + 1):
-            x = int(rect.left() + col * cell_width)
-            painter.setPen(major_pen if col in (0, WORKSPACE_GRID_COLUMNS) else minor_pen)
-            painter.drawLine(x, rect.top(), x, rect.bottom())
-        rows = max(10, int(rect.height() / self.editor.row_height) + 1)
-        for row in range(rows + 1):
-            y = rect.top() + row * self.editor.row_height
-            painter.setPen(major_pen if row == 0 else minor_pen)
-            painter.drawLine(rect.left(), y, rect.right(), y)
+        if self.editor.grid_visible:
+            minor_pen = QPen(QColor(GRID_MINOR))
+            major_pen = QPen(QColor(GRID_MAJOR))
+            for col in range(WORKSPACE_GRID_COLUMNS + 1):
+                x = int(rect.left() + col * cell_width)
+                painter.setPen(major_pen if col in (0, WORKSPACE_GRID_COLUMNS) else minor_pen)
+                painter.drawLine(x, rect.top(), x, rect.bottom())
+            rows = max(10, int(rect.height() / self.editor.row_height) + 1)
+            for row in range(rows + 1):
+                y = rect.top() + row * self.editor.row_height
+                painter.setPen(major_pen if row == 0 else minor_pen)
+                painter.drawLine(rect.left(), y, rect.right(), y)
 
         painter.setPen(QPen(QColor(GRID_EDGE), 2))
         painter.drawRect(rect.adjusted(0, 0, -1, -1))
@@ -316,72 +428,14 @@ class WorkspaceLayoutTile(QFrame):
         self.setCursor(Qt.OpenHandCursor)
 
         layout = QVBoxLayout()
-        layout.setContentsMargins(14, 12, 14, 12)
-        layout.setSpacing(5)
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(6)
         self.setLayout(layout)
 
-        top = QHBoxLayout()
-        top.setContentsMargins(0, 0, 0, 0)
-        title = QLabel(block.get("title") or tr("workspace_title"), self)
-        title.setObjectName("WorkspaceTileTitle")
-        title.setWordWrap(True)
-        title.setAttribute(Qt.WA_TransparentForMouseEvents, True)
-        top.addWidget(title, stretch=1)
-        for text, action_key, callback in (
-            (
-                tr("workspace_edit"),
-                "edit",
-                lambda: editor.request_edit(block.get("id")),
-            ),
-            (
-                tr("workspace_copy"),
-                "copy",
-                lambda: editor.duplicate_block(block.get("id")),
-            ),
-            (
-                tr("workspace_to_front_short"),
-                "front",
-                lambda: editor.move_block_layer(block.get("id"), 1),
-            ),
-            (
-                tr("workspace_to_back_short"),
-                "back",
-                lambda: editor.move_block_layer(block.get("id"), -1),
-            ),
-            (
-                tr("workspace_delete_short"),
-                "delete",
-                lambda: editor.delete_block(block.get("id")),
-            ),
-        ):
-            button = QPushButton(text, self)
-            button.setObjectName("WorkspaceTileEditButton")
-            button.setFixedHeight(24)
-            button.clicked.connect(callback)
-            top.addWidget(button)
-            is_structure_action = action_key in {"copy", "delete"}
-            button.setVisible(
-                block.get("id") == editor.selected_block_id
-                and (
-                    editor.allow_structure_changes
-                    or not is_structure_action
-                )
-            )
-        layout.addLayout(top)
-
-        summary = QLabel(label, self)
-        summary.setObjectName("MutedText")
-        summary.setWordWrap(True)
-        summary.setAttribute(Qt.WA_TransparentForMouseEvents, True)
-        layout.addWidget(summary)
-
-        preview = QWidget(self)
-        preview.setAttribute(Qt.WA_TransparentForMouseEvents, True)
-        preview_layout = QVBoxLayout()
-        preview_layout.setContentsMargins(0, 4, 0, 0)
-        preview_layout.setSpacing(4)
-        preview.setLayout(preview_layout)
-        self._add_preview_lines(preview_layout)
+        preview = editor.build_block_preview(block)
+        preview.setParent(self)
+        preview.setObjectName("WorkspaceTileLivePreview")
+        _make_mouse_transparent(preview)
         layout.addWidget(preview, stretch=1)
 
         chip = QLabel(
@@ -391,6 +445,84 @@ class WorkspaceLayoutTile(QFrame):
         chip.setObjectName("WorkspaceTileSizeChip")
         chip.setAttribute(Qt.WA_TransparentForMouseEvents, True)
         layout.addWidget(chip, alignment=Qt.AlignLeft)
+
+    def contextMenuEvent(self, event):
+        menu = self._build_context_menu()
+        menu.exec(event.globalPos())
+        event.accept()
+
+    def _build_context_menu(self):
+        block_id = self.block.get("id")
+        menu = QMenu(self)
+        menu.setObjectName("WorkspaceTileContextMenu")
+
+        select_action = menu.addAction(tr("workspace_context_select"))
+        select_action.triggered.connect(
+            lambda checked=False: self.editor.select_block(block_id)
+        )
+
+        delete_action = menu.addAction(tr("workspace_delete"))
+        delete_action.setEnabled(
+            self.editor.allow_structure_changes
+            and not self.editor.is_block_locked(block_id)
+        )
+        delete_action.triggered.connect(
+            lambda checked=False: self.editor.delete_block(block_id)
+        )
+
+        edit_action = menu.addAction(tr("workspace_edit_properties"))
+        edit_action.triggered.connect(
+            lambda checked=False: self.editor.request_edit(block_id)
+        )
+
+        swap_menu = QMenu(tr("workspace_context_swap"), menu)
+        swap_menu.setObjectName("WorkspaceTileContextMenu")
+        self._populate_swap_menu(swap_menu, block_id)
+        menu.addMenu(swap_menu)
+        return menu
+
+    def _populate_swap_menu(self, menu, block_id):
+        candidates = [
+            block
+            for block in (self.editor.workspace or {}).get("blocks", [])
+            if block.get("id") and block.get("id") != block_id
+        ]
+        if not candidates:
+            empty_action = menu.addAction(tr("workspace_context_swap_empty"))
+            empty_action.setEnabled(False)
+            return
+
+        list_widget = QListWidget(menu)
+        list_widget.setObjectName("WorkspaceSwapBlockList")
+        list_widget.setMinimumWidth(260)
+        visible_rows = min(7, max(1, len(candidates)))
+        list_widget.setFixedHeight(min(220, visible_rows * 34 + 8))
+        for candidate in candidates:
+            item = QListWidgetItem(
+                candidate.get("title")
+                or self.editor.block_label_for_type(candidate.get("type"))
+            )
+            item.setData(Qt.UserRole, candidate.get("id"))
+            if (
+                self.editor.is_block_locked(block_id)
+                or self.editor.is_block_locked(candidate.get("id"))
+            ):
+                item.setFlags(item.flags() & ~Qt.ItemIsEnabled)
+            list_widget.addItem(item)
+        list_widget.itemClicked.connect(
+            lambda item: self._swap_with_item(menu, block_id, item)
+        )
+
+        action = QWidgetAction(menu)
+        action.setDefaultWidget(list_widget)
+        menu.addAction(action)
+
+    def _swap_with_item(self, menu, block_id, item):
+        target_id = item.data(Qt.UserRole)
+        if not target_id:
+            return
+        self.editor.swap_block_layouts(block_id, target_id)
+        menu.close()
 
     def _add_preview_lines(self, layout):
         parent = layout.parentWidget()
@@ -655,6 +787,9 @@ class WorkspaceLayoutEditor(QWidget):
         self.selected_block_ids = []
         self.zoom = 1.0
         self.base_row_height = 96
+        self.grid_visible = True
+        self._preview_host = WorkspaceEditorPreviewHost()
+        self._preview_factory = WorkspaceBlockFactory(self._preview_host)
         self._undo_stack = []
         self._redo_stack = []
         self._interaction_snapshot = None
@@ -694,6 +829,42 @@ class WorkspaceLayoutEditor(QWidget):
         self.zoom = max(0.6, min(1.6, float(value)))
         self.surface.setMinimumWidth(int(920 * self.zoom))
         self.render()
+
+    def set_grid_visible(self, visible):
+        self.grid_visible = bool(visible)
+        self.surface.update()
+
+    def set_grid_size(self, value):
+        try:
+            size = int(value)
+        except (TypeError, ValueError):
+            size = self.base_row_height
+        self.base_row_height = max(56, min(180, size))
+        self.render()
+
+    def build_block_preview(self, block):
+        try:
+            preview = self._preview_factory.build(block)
+        except Exception:
+            preview = QFrame()
+            preview.setObjectName("WorkspaceTilePreviewFallback")
+            layout = QVBoxLayout()
+            layout.setContentsMargins(12, 10, 12, 10)
+            preview.setLayout(layout)
+            title = QLabel(
+                block.get("title")
+                or self.block_label_for_type(block.get("type"))
+            )
+            title.setObjectName("WorkspaceTileTitle")
+            title.setWordWrap(True)
+            layout.addWidget(title)
+            detail = QLabel(self.block_label_for_type(block.get("type")))
+            detail.setObjectName("MutedText")
+            detail.setWordWrap(True)
+            layout.addWidget(detail)
+            layout.addStretch()
+        preview.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        return preview
 
     def zoom_in(self):
         self.set_zoom(self.zoom + 0.1)
@@ -1020,6 +1191,39 @@ class WorkspaceLayoutEditor(QWidget):
 
     def request_edit(self, block_id):
         self.editRequested.emit(block_id or "")
+
+    def swap_block_layouts(self, source_id, target_id):
+        if (
+            not self.workspace
+            or not source_id
+            or not target_id
+            or source_id == target_id
+        ):
+            return False
+        if self.is_block_locked(source_id) or self.is_block_locked(target_id):
+            self._set_interaction_state(verb=tr("workspace_locked_block"))
+            return False
+
+        source = self._block(source_id)
+        target = self._block(target_id)
+        if source is None or target is None:
+            return False
+
+        self._push_undo()
+        source_layout = validate_block_layout(source)
+        target_layout = validate_block_layout(target)
+        source["layout"] = target_layout
+        target["layout"] = source_layout
+        self.selected_block_id = source_id
+        self.selected_block_ids = [source_id]
+        self._sync_source()
+        self.blockSelected.emit(source_id)
+        self.layoutChanged.emit()
+        self.refresh_tile_geometries(
+            duration=WORKSPACE_COMMIT_ANIMATION_MS,
+            easing=QEasingCurve.OutCubic,
+        )
+        return True
 
     def _duplicate_payloads(self, source_blocks):
         group_map = {}
@@ -1819,12 +2023,9 @@ class WorkspaceLayoutEditor(QWidget):
             options=Qt.FindDirectChildrenOnly,
         ):
             selected = tile.block.get("id") in self.selected_block_ids
-            active = tile.block.get("id") == self.selected_block_id
             tile.setProperty("selected", selected)
             tile.style().unpolish(tile)
             tile.style().polish(tile)
-            for button in tile.findChildren(QPushButton, "WorkspaceTileEditButton"):
-                button.setVisible(active)
             tile.update()
         self.surface.update()
 

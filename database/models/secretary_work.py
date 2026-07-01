@@ -11,9 +11,20 @@ from sqlalchemy.sql import func
 from database.db import Base
 
 
-TASK_STATUSES = ("OPEN", "WAITING", "DONE", "ARCHIVED")
+TASK_STATUSES = ("OPEN", "READY", "WAITING", "DONE", "ARCHIVED")
 PROJECT_STATUSES = ("ACTIVE", "WAITING", "DONE", "ARCHIVED")
 PRIORITIES = ("LOW", "NORMAL", "IMPORTANT", "CRITICAL")
+TASK_TYPES = (
+    "DOCUMENT",
+    "PAYMENT",
+    "APPOINTMENT",
+    "FOLLOW_UP",
+    "LEGAL_REVIEW",
+    "SUBMISSION",
+    "STAGE_ADVANCE",
+    "GVM_UPDATE",
+    "CUSTOM",
+)
 WAITING_REASONS = (
     "MISSIONARY",
     "GOVERNMENT_SITE",
@@ -217,6 +228,20 @@ class SecretaryTask(Base):
         String,
     )
 
+    task_type = Column(
+        String,
+        default="CUSTOM",
+        nullable=False,
+    )
+
+    related_stage = Column(
+        String,
+    )
+
+    related_document_type = Column(
+        String,
+    )
+
     automation_key = Column(
         String,
     )
@@ -231,6 +256,10 @@ class SecretaryTask(Base):
 
     waiting_reason = Column(
         String,
+    )
+
+    waiting_follow_up_date = Column(
+        Date,
     )
 
     created_at = Column(

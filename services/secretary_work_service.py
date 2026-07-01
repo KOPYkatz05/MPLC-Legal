@@ -1,11 +1,13 @@
 from datetime import date, datetime, timedelta
 
 from database.db import SessionLocal
+from database.models.document import Document
 from database.models.missionary import Missionary
 from database.models.secretary_work import (
     PRIORITIES,
     PROJECT_STATUSES,
     TASK_STATUSES,
+    TASK_TYPES,
     WAITING_REASONS,
     MissionaryGroup,
     MissionaryGroupMember,
@@ -13,14 +15,16 @@ from database.models.secretary_work import (
     SecretaryTask,
     SecretaryTaskMissionary,
 )
+from utils.constants import DOCUMENTS, WORKFLOW_STAGES
 from utils.logger import logger
 
 
-VISIBLE_TASK_STATUSES = ("OPEN", "WAITING")
+VISIBLE_TASK_STATUSES = ("OPEN", "READY", "WAITING")
 VISIBLE_PROJECT_STATUSES = ("ACTIVE", "WAITING")
 TASK_GROUPS = [
     ("overdue", "Overdue"),
     ("today", "Today"),
+    ("ready_to_review", "Ready to Review"),
     ("this_week", "This Week"),
     ("later", "Later"),
     ("no_due_date", "No Due Date"),
@@ -38,6 +42,17 @@ WAITING_REASON_LABELS = {
     "DOCUMENT": "Waiting on document",
     "APPOINTMENT_DATE": "Waiting on appointment date",
     "OTHER": "Other waiting reason",
+}
+TASK_TYPE_LABELS = {
+    "DOCUMENT": "Document",
+    "PAYMENT": "Payment",
+    "APPOINTMENT": "Appointment",
+    "FOLLOW_UP": "Follow-up",
+    "LEGAL_REVIEW": "Legal Review",
+    "SUBMISSION": "Submission",
+    "STAGE_ADVANCE": "Stage Advance",
+    "GVM_UPDATE": "GVM Update",
+    "CUSTOM": "Custom",
 }
 TEMPORARY_GROUP_TYPE = "TEMPORARY_AUTOMATION"
 
@@ -75,6 +90,42 @@ def _normalize_waiting_reason(status, waiting_reason):
     if not reason:
         raise SecretaryWorkError("Waiting reason is required.")
     return reason
+
+
+def _normalize_waiting_follow_up_date(status, waiting_follow_up_date):
+    if status != "WAITING":
+        return None
+    return waiting_follow_up_date
+
+
+def _normalize_task_type(task_type):
+    return _normalize_choice(task_type, TASK_TYPES, "CUSTOM")
+
+
+def _normalize_related_stage(related_stage):
+    stage = _clean_text(related_stage).upper()
+    if not stage:
+        return None
+    if stage not in WORKFLOW_STAGES:
+        raise SecretaryWorkError(f"Unsupported related stage: {stage}")
+    return stage
+
+
+def _normalize_related_document_type(related_document_type):
+    document_type = _clean_text(related_document_type).upper()
+    if not document_type:
+        return None
+    if document_type not in DOCUMENTS:
+        raise SecretaryWorkError(
+            f"Unsupported related document type: {document_type}"
+        )
+    return document_type
+
+
+def document_label(document_type):
+    if not document_type:
+        return ""
+    return DOCUMENTS.get(document_type, {}).get("label", document_type)
 
 
 def _unique_ids(values):
@@ -250,9 +301,13 @@ class SecretaryWorkService:
         missionary_ids=None,
         group_id=None,
         appointment_field=None,
+        task_type="CUSTOM",
+        related_stage=None,
+        related_document_type=None,
         automation_key=None,
         automation_source=None,
         waiting_reason=None,
+        waiting_follow_up_date=None,
     ):
         title = _clean_text(title)
         if not title:
@@ -279,11 +334,20 @@ class SecretaryWorkService:
                 group_id=group_id,
                 group_scope_label=group_label,
                 appointment_field=_clean_text(appointment_field) or None,
+                task_type=_normalize_task_type(task_type),
+                related_stage=_normalize_related_stage(related_stage),
+                related_document_type=_normalize_related_document_type(
+                    related_document_type,
+                ),
                 automation_key=_clean_text(automation_key) or None,
                 automation_source=_clean_text(automation_source) or None,
                 waiting_reason=_normalize_waiting_reason(
                     normalized_status,
                     waiting_reason,
+                ),
+                waiting_follow_up_date=_normalize_waiting_follow_up_date(
+                    normalized_status,
+                    waiting_follow_up_date,
                 ),
             )
             session.add(task)
@@ -324,6 +388,14 @@ class SecretaryWorkService:
                     task.status,
                     updates.get("waiting_reason", task.waiting_reason),
                 )
+            if "waiting_follow_up_date" in updates or "status" in updates:
+                task.waiting_follow_up_date = _normalize_waiting_follow_up_date(
+                    task.status,
+                    updates.get(
+                        "waiting_follow_up_date",
+                        task.waiting_follow_up_date,
+                    ),
+                )
             if "priority" in updates:
                 task.priority = _normalize_choice(
                     updates["priority"],
@@ -362,6 +434,16 @@ class SecretaryWorkService:
                 task.appointment_field = _clean_text(
                     updates["appointment_field"]
                 ) or None
+            if "task_type" in updates:
+                task.task_type = _normalize_task_type(updates["task_type"])
+            if "related_stage" in updates:
+                task.related_stage = _normalize_related_stage(
+                    updates["related_stage"]
+                )
+            if "related_document_type" in updates:
+                task.related_document_type = _normalize_related_document_type(
+                    updates["related_document_type"]
+                )
             if "automation_key" in updates:
                 task.automation_key = _clean_text(
                     updates["automation_key"]
@@ -378,7 +460,7 @@ class SecretaryWorkService:
             task.updated_at = _now()
             if task.status in {"DONE", "ARCHIVED"} and task.completed_at is None:
                 task.completed_at = _now()
-            elif task.status in {"OPEN", "WAITING"}:
+            elif task.status in VISIBLE_TASK_STATUSES:
                 task.completed_at = None
 
             session.commit()
@@ -395,6 +477,12 @@ class SecretaryWorkService:
         snapshot = self.update_task(task_id, status="DONE")
         self._cleanup_completed_temporary_group(task_id)
         return self._snapshot_for_task_id(task_id)
+
+    def mark_task_ready(self, task_id):
+        return self.update_task(task_id, status="READY")
+
+    def reopen_task(self, task_id):
+        return self.update_task(task_id, status="OPEN")
 
     def archive_task(self, task_id):
         snapshot = self.update_task(task_id, status="ARCHIVED")
@@ -434,36 +522,46 @@ class SecretaryWorkService:
                 else None
             )
             affected = self._workspace_missionaries(task, session, today)
+            classification = self._workspace_classification_context(
+                snapshot,
+                affected,
+            )
             workspace = dict(snapshot)
             workspace.update({
                 "days": days,
                 "timing": self._workspace_timing(days),
                 "due_date_text": self._format_workspace_date(task.due_date),
                 "work_date_text": self._format_workspace_date(task.work_date),
+                "classification": classification,
                 "brief_text": self._workspace_brief_text(
                     snapshot,
                     affected,
                     days,
+                    classification,
                 ),
                 "why_text": self._workspace_why_text(
                     snapshot,
                     affected,
                     days,
+                    classification,
                 ),
                 "why_points": self._workspace_why_points(
                     snapshot,
                     affected,
                     days,
+                    classification,
                 ),
                 "key_facts": self._workspace_key_facts(
                     snapshot,
                     affected,
                     days,
+                    classification,
                 ),
                 "evidence": self._workspace_evidence(snapshot),
                 "affected_missionaries": affected,
                 "recommended_steps": self._workspace_recommended_steps(
-                    snapshot
+                    snapshot,
+                    classification,
                 ),
             })
             return workspace
@@ -525,7 +623,11 @@ class SecretaryWorkService:
         missionary_ids=None,
         group_id=None,
         appointment_field=None,
+        task_type=None,
+        related_stage=None,
+        related_document_type=None,
         waiting_reason=None,
+        waiting_follow_up_date=None,
     ):
         automation_key = _clean_text(automation_key)
         if not automation_key:
@@ -561,9 +663,13 @@ class SecretaryWorkService:
                 missionary_ids=missionary_ids,
                 group_id=group_id,
                 appointment_field=appointment_field,
+                task_type=task_type or "CUSTOM",
+                related_stage=related_stage,
+                related_document_type=related_document_type,
                 automation_key=automation_key,
                 automation_source=automation_source,
                 waiting_reason=waiting_reason,
+                waiting_follow_up_date=waiting_follow_up_date,
             )
             snapshot["automation_result"] = "created"
             return snapshot
@@ -581,20 +687,29 @@ class SecretaryWorkService:
             explicit_group_id=group_id,
         )
 
-        snapshot = self.update_task(
-            existing_task_id,
-            title=title,
-            description=description,
-            priority=priority,
-            due_date=due_date,
-            work_date=work_date,
-            missionary_id=missionary_id,
-            missionary_ids=missionary_ids,
-            group_id=group_id,
-            appointment_field=appointment_field,
-            automation_source=automation_source,
-            waiting_reason=waiting_reason,
-        )
+        updates = {
+            "title": title,
+            "description": description,
+            "priority": priority,
+            "due_date": due_date,
+            "work_date": work_date,
+            "missionary_id": missionary_id,
+            "missionary_ids": missionary_ids,
+            "group_id": group_id,
+            "appointment_field": appointment_field,
+            "automation_source": automation_source,
+            "waiting_reason": waiting_reason,
+        }
+        if waiting_follow_up_date is not None:
+            updates["waiting_follow_up_date"] = waiting_follow_up_date
+        if task_type is not None:
+            updates["task_type"] = task_type
+        if related_stage is not None:
+            updates["related_stage"] = related_stage
+        if related_document_type is not None:
+            updates["related_document_type"] = related_document_type
+
+        snapshot = self.update_task(existing_task_id, **updates)
         snapshot["automation_result"] = "updated"
         return snapshot
 
@@ -695,6 +810,7 @@ class SecretaryWorkService:
         project_id=None,
         missionary_id=None,
         due_range=None,
+        task_type=None,
         include_done=False,
     ):
         session = SessionLocal()
@@ -706,6 +822,14 @@ class SecretaryWorkService:
                 query = query.filter(SecretaryTask.status == status)
             if priority and priority != "ALL":
                 query = query.filter(SecretaryTask.priority == priority)
+            if task_type and task_type != "ALL":
+                if task_type == "APPOINTMENT":
+                    query = query.filter(
+                        (SecretaryTask.task_type == "APPOINTMENT")
+                        | (SecretaryTask.appointment_field.is_not(None))
+                    )
+                else:
+                    query = query.filter(SecretaryTask.task_type == task_type)
             if project_id:
                 query = query.filter(SecretaryTask.project_id == project_id)
             if missionary_id:
@@ -739,6 +863,10 @@ class SecretaryWorkService:
                     or needle in (task["group_scope_label"] or "").casefold()
                     or needle in task["appointment_label"].casefold()
                     or needle in task["waiting_reason_label"].casefold()
+                    or needle in task["waiting_follow_up_label"].casefold()
+                    or needle in task["task_type_label"].casefold()
+                    or needle in (task["related_stage"] or "").casefold()
+                    or needle in task["related_document_label"].casefold()
                 ]
             if due_range and due_range != "all":
                 snapshots = [
@@ -751,8 +879,15 @@ class SecretaryWorkService:
 
     def grouped_tasks(self, **filters):
         grouped = {key: [] for key, _label in TASK_GROUPS}
+        due_range = filters.get("due_range")
         for task in self.list_tasks(**filters):
-            grouped.setdefault(task["due_group"], []).append(task)
+            group_key = task["due_group"]
+            if (
+                task["status"] == "READY"
+                and due_range in (None, "all")
+            ):
+                group_key = "ready_to_review"
+            grouped.setdefault(group_key, []).append(task)
         return grouped
 
     def list_calendar_tasks(self):
@@ -781,6 +916,7 @@ class SecretaryWorkService:
             today = date.today()
             return {
                 "open": sum(1 for task in tasks if task.status == "OPEN"),
+                "ready": sum(1 for task in tasks if task.status == "READY"),
                 "waiting": sum(1 for task in tasks if task.status == "WAITING"),
                 "overdue": sum(
                     1 for task in tasks
@@ -892,6 +1028,16 @@ class SecretaryWorkService:
             "scope_label": scope_label,
             "is_group_task": len(missionary_ids) > 1,
             "appointment_field": task.appointment_field,
+            "task_type": task.task_type or "CUSTOM",
+            "task_type_label": TASK_TYPE_LABELS.get(
+                task.task_type or "CUSTOM",
+                (task.task_type or "Custom").title(),
+            ),
+            "related_stage": task.related_stage or "",
+            "related_document_type": task.related_document_type,
+            "related_document_label": document_label(
+                task.related_document_type,
+            ),
             "automation_key": task.automation_key,
             "automation_source": task.automation_source,
             "automation_status_reason": task.automation_status_reason or "",
@@ -904,6 +1050,10 @@ class SecretaryWorkService:
                 task.waiting_reason,
                 "",
             ),
+            "waiting_follow_up_date": task.waiting_follow_up_date,
+            "waiting_follow_up_label": self._waiting_follow_up_label(
+                task.waiting_follow_up_date,
+            ),
             "created_at": task.created_at,
             "updated_at": task.updated_at,
             "completed_at": task.completed_at,
@@ -914,6 +1064,12 @@ class SecretaryWorkService:
         if not missionary_ids:
             return []
 
+        document_state = self._related_document_state(
+            session,
+            missionary_ids,
+            task.related_document_type,
+        )
+
         missionaries = (
             session.query(Missionary)
             .filter(Missionary.id.in_(missionary_ids))
@@ -921,12 +1077,56 @@ class SecretaryWorkService:
             .all()
         )
         return [
-            self._workspace_missionary_snapshot(missionary, task, today)
+            self._workspace_missionary_snapshot(
+                missionary,
+                task,
+                today,
+                document_state.get(missionary.id),
+            )
             for missionary in missionaries
         ]
 
-    def _workspace_missionary_snapshot(self, missionary, task, today):
-        flags = self._workspace_missionary_flags(missionary, task, today)
+    def _workspace_missionary_snapshot(
+        self,
+        missionary,
+        task,
+        today,
+        related_document_state=None,
+    ):
+        flags = self._workspace_missionary_flags(
+            missionary,
+            task,
+            today,
+            related_document_state,
+        )
+        related_stage = task.related_stage or ""
+        related_stage_matches = None
+        if related_stage:
+            related_stage_matches = (
+                (missionary.current_stage or "").casefold()
+                == related_stage.casefold()
+            )
+        document_uploaded = None
+        document_verified = None
+        document_status = ""
+        if task.related_document_type:
+            document_uploaded = bool(
+                related_document_state
+                and related_document_state.get("uploaded")
+            )
+            document_verified = bool(
+                related_document_state
+                and related_document_state.get("verified")
+            )
+            label = document_label(task.related_document_type)
+            if document_uploaded:
+                document_status = (
+                    f"{label} uploaded and verified"
+                    if document_verified
+                    else f"{label} uploaded"
+                )
+            else:
+                document_status = f"{label} missing"
         return {
             "id": missionary.id,
             "name": missionary.full_name,
@@ -946,11 +1146,24 @@ class SecretaryWorkService:
             "prorroga_expiration_text": self._format_workspace_date(
                 missionary.prorroga_expiration
             ),
+            "related_stage": related_stage,
+            "related_stage_matches": related_stage_matches,
+            "related_document_type": task.related_document_type,
+            "related_document_label": document_label(task.related_document_type),
+            "related_document_uploaded": document_uploaded,
+            "related_document_verified": document_verified,
+            "related_document_status": document_status,
             "issue_flags": flags,
             "issue_summary": ", ".join(flags) if flags else "Review record",
         }
 
-    def _workspace_missionary_flags(self, missionary, task, today):
+    def _workspace_missionary_flags(
+        self,
+        missionary,
+        task,
+        today,
+        related_document_state=None,
+    ):
         title = (task.title or "").casefold()
         key = (task.automation_key or "").casefold()
         flags = []
@@ -973,10 +1186,111 @@ class SecretaryWorkService:
         if task.appointment_field:
             flags.append("Appointment follow-up")
 
+        if task.related_stage:
+            if (
+                (missionary.current_stage or "").casefold()
+                == task.related_stage.casefold()
+            ):
+                flags.append(f"Stage: {task.related_stage.title()}")
+            else:
+                flags.append(
+                    "Stage mismatch: "
+                    f"{missionary.current_stage or 'Not set'}"
+                )
+
+        if task.related_document_type:
+            label = document_label(task.related_document_type)
+            if related_document_state and related_document_state.get("uploaded"):
+                flags.append(f"{label} uploaded")
+            else:
+                flags.append(f"Missing {label}")
+
         return flags
+
+    @staticmethod
+    def _related_document_state(session, missionary_ids, related_document_type):
+        if not related_document_type or not missionary_ids:
+            return {}
+        rows = (
+            session.query(Document.missionary_id, Document.verified)
+            .filter(
+                Document.missionary_id.in_(missionary_ids),
+                Document.document_type == related_document_type,
+                Document.status == "ACTIVE",
+            )
+            .all()
+        )
+        state = {}
+        for missionary_id, verified in rows:
+            existing = state.setdefault(
+                missionary_id,
+                {"uploaded": False, "verified": False},
+            )
+            existing["uploaded"] = True
+            existing["verified"] = existing["verified"] or bool(verified)
+        return state
+
+    @staticmethod
+    def _workspace_classification_context(snapshot, affected):
+        related_document_label = snapshot.get("related_document_label") or ""
+        related_stage = snapshot.get("related_stage") or ""
+        count = len(affected)
+
+        uploaded_count = sum(
+            1 for item in affected
+            if item.get("related_document_uploaded") is True
+        )
+        missing_count = sum(
+            1 for item in affected
+            if item.get("related_document_uploaded") is False
+        )
+        stage_match_count = sum(
+            1 for item in affected
+            if item.get("related_stage_matches") is True
+        )
+        stage_mismatch_count = sum(
+            1 for item in affected
+            if item.get("related_stage_matches") is False
+        )
+
+        document_summary = ""
+        if related_document_label:
+            if count:
+                document_summary = (
+                    f"{related_document_label}: {uploaded_count}/{count} "
+                    "uploaded"
+                )
+            else:
+                document_summary = related_document_label
+
+        stage_summary = ""
+        if related_stage:
+            if count:
+                stage_summary = (
+                    f"{stage_match_count}/{count} in {related_stage.title()}"
+                )
+            else:
+                stage_summary = related_stage.title()
+
+        return {
+            "task_type": snapshot.get("task_type") or "CUSTOM",
+            "task_type_label": snapshot.get("task_type_label") or "Custom",
+            "related_stage": related_stage,
+            "related_document_label": related_document_label,
+            "document_uploaded_count": uploaded_count,
+            "document_missing_count": missing_count,
+            "stage_match_count": stage_match_count,
+            "stage_mismatch_count": stage_mismatch_count,
+            "document_summary": document_summary,
+            "stage_summary": stage_summary,
+        }
 
     def _workspace_evidence(self, snapshot):
         evidence = [
+            ("Task type", snapshot.get("task_type_label")),
+            ("Related stage", snapshot.get("related_stage")),
+            ("Related document", snapshot.get("related_document_label")),
+            ("Waiting follow-up", snapshot.get("waiting_follow_up_label")),
             ("Automation source", snapshot.get("automation_source")),
             ("Automation key", snapshot.get("automation_key")),
             ("Automation status", snapshot.get("automation_status_reason")),
@@ -992,11 +1306,33 @@ class SecretaryWorkService:
             if value
         ]
 
-    def _workspace_brief_text(self, snapshot, affected, days):
+    @staticmethod
+    def _waiting_follow_up_label(value):
+        if not value:
+            return ""
+        return f"Follow up {value.strftime('%b %d, %Y')}"
+
+    def _workspace_brief_text(
+        self,
+        snapshot,
+        affected,
+        days,
+        classification=None,
+    ):
+        classification = classification or {}
         count = len(affected)
         timing = self._workspace_timing(days).lower()
         title = (snapshot.get("title") or "task").casefold()
         key = (snapshot.get("automation_key") or "").casefold()
+
+        if snapshot.get("status") == "READY":
+            document_summary = classification.get("document_summary")
+            if document_summary:
+                return f"Ready to review: {document_summary}."
+            return (
+                "Ready to review: this task has been marked ready for "
+                "secretary action."
+            )
 
         if "prorroga" in title or "prorroga" in key:
             return (
@@ -1025,12 +1361,32 @@ class SecretaryWorkService:
             return f"This task is {timing}."
         return "This task needs review."
 
-    def _workspace_why_text(self, snapshot, affected, days):
+    def _workspace_why_text(
+        self,
+        snapshot,
+        affected,
+        days,
+        classification=None,
+    ):
+        classification = classification or {}
         title = snapshot.get("title") or "This task"
         description = snapshot.get("description") or ""
         count = len(affected)
         title_key = title.casefold()
         automation_key = (snapshot.get("automation_key") or "").casefold()
+
+        if snapshot.get("status") == "READY":
+            parts = [
+                "This task is marked Ready, so the needed pieces should be "
+                "available and it needs secretary review or action."
+            ]
+            if classification.get("document_summary"):
+                parts.append(classification["document_summary"] + ".")
+            if classification.get("stage_summary"):
+                parts.append(classification["stage_summary"] + ".")
+            if description:
+                parts.append(description)
+            return " ".join(parts)
 
         if "prorroga" in title_key or "prorroga" in automation_key:
             return (
@@ -1082,8 +1438,25 @@ class SecretaryWorkService:
             "the needed work, then mark it done."
         )
 
-    def _workspace_why_points(self, snapshot, affected, days):
+    def _workspace_why_points(
+        self,
+        snapshot,
+        affected,
+        days,
+        classification=None,
+    ):
+        classification = classification or {}
         points = []
+        if snapshot.get("status") == "READY":
+            points.append("Ready to review")
+        if classification.get("task_type_label"):
+            points.append(classification["task_type_label"])
+        if classification.get("document_summary"):
+            points.append(classification["document_summary"])
+        if classification.get("stage_summary"):
+            points.append(classification["stage_summary"])
+        if snapshot.get("waiting_follow_up_label"):
+            points.append(snapshot["waiting_follow_up_label"])
         if days is not None:
             points.append(self._workspace_timing(days))
         if affected:
@@ -1099,7 +1472,14 @@ class SecretaryWorkService:
             points.append("Manual task with notes")
         return points
 
-    def _workspace_key_facts(self, snapshot, affected, days):
+    def _workspace_key_facts(
+        self,
+        snapshot,
+        affected,
+        days,
+        classification=None,
+    ):
+        classification = classification or {}
         facts = [
             {
                 "label": "Due",
@@ -1136,12 +1516,72 @@ class SecretaryWorkService:
                 "value": snapshot["group_scope_label"],
                 "color": "#71717A",
             })
+        if snapshot.get("waiting_follow_up_label"):
+            facts.append({
+                "label": "Follow-up",
+                "value": snapshot["waiting_follow_up_label"],
+                "color": "#D97706",
+            })
+        if classification.get("document_summary"):
+            facts.append({
+                "label": "Document",
+                "value": classification["document_summary"],
+                "color": "#059669"
+                if classification.get("document_missing_count") == 0
+                else "#D97706",
+            })
+        if classification.get("stage_summary"):
+            facts.append({
+                "label": "Stage",
+                "value": classification["stage_summary"],
+                "color": "#059669"
+                if classification.get("stage_mismatch_count") == 0
+                else "#D97706",
+            })
         return facts
 
     @staticmethod
-    def _workspace_recommended_steps(snapshot):
+    def _workspace_recommended_steps(snapshot, classification=None):
+        classification = classification or {}
         title = (snapshot.get("title") or "").casefold()
         key = (snapshot.get("automation_key") or "").casefold()
+        related_document = classification.get("related_document_label")
+        related_stage = classification.get("related_stage")
+
+        if snapshot.get("status") == "WAITING":
+            steps = ["Check what this task is waiting on."]
+            if snapshot.get("waiting_follow_up_label"):
+                steps.append(
+                    f"Use the waiting follow-up date: "
+                    f"{snapshot['waiting_follow_up_label']}."
+                )
+            steps.extend([
+                "Update the waiting reason or notes if the situation changed.",
+                "Mark Ready when the needed pieces are available.",
+            ])
+            return steps
+
+        if snapshot.get("status") == "READY" and (
+            related_document or related_stage
+        ):
+            steps = ["Review the ready task and confirm the linked records."]
+            if related_document:
+                steps.append(
+                    f"Open and verify the {related_document} for each "
+                    "affected missionary."
+                )
+                if classification.get("document_missing_count"):
+                    steps.append(
+                        "If the document is still missing, move the task to "
+                        "Waiting and choose the right waiting reason."
+                    )
+            if related_stage:
+                steps.append(
+                    f"Confirm each affected missionary is in the "
+                    f"{related_stage.title()} stage or update the task scope."
+                )
+            steps.append("Mark this task done after review/action is complete.")
+            return steps
 
         if "prorroga" in title or "prorroga" in key:
             return [

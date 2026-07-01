@@ -4,7 +4,15 @@ from types import SimpleNamespace
 from PySide6.QtCore import QEvent, QPoint, QRect, Qt
 from PySide6.QtGui import QKeyEvent
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QGridLayout, QLabel, QPushButton, QWidget
+from PySide6.QtWidgets import (
+    QApplication,
+    QGridLayout,
+    QLabel,
+    QListWidget,
+    QPushButton,
+    QSplitter,
+    QWidget,
+)
 
 from services.settings_service import SettingsService
 from services.workspace_service import new_block, new_workspace
@@ -528,6 +536,27 @@ def test_workspace_layout_editor_modern_actions(qapp):
     assert workspace["blocks"][0]["id"] == first["id"]
 
 
+def test_workspace_layout_editor_swaps_block_layouts(qapp):
+    _ = qapp
+    workspace = new_workspace("Swap")
+    editor = WorkspaceLayoutEditor(lambda block_type: block_type)
+    editor.set_workspace(workspace)
+    first = editor.add_block_at("documents", row=0, col=0)
+    second = editor.add_block_at("notes", row=3, col=6)
+    first_layout = deepcopy(editor._block(first["id"])["layout"])
+    second_layout = deepcopy(editor._block(second["id"])["layout"])
+
+    assert editor.swap_block_layouts(first["id"], second["id"])
+
+    assert editor._block(first["id"])["layout"] == second_layout
+    assert editor._block(second["id"])["layout"] == first_layout
+    assert editor.selected_block_id == first["id"]
+
+    editor.undo()
+    assert workspace["blocks"][0]["layout"] == first_layout
+    assert workspace["blocks"][1]["layout"] == second_layout
+
+
 def test_workspace_layout_editor_clipboard_and_alignment(qapp):
     _ = qapp
     workspace = new_workspace("Clipboard")
@@ -876,8 +905,12 @@ def test_workspace_layout_tile_text_area_is_draggable(qapp):
         )
         if child.block["id"] == block["id"]
     )
-    title = tile.findChild(QLabel, "WorkspaceTileTitle")
-    title_global = title.mapToGlobal(title.rect().center())
+    preview_label = next(
+        label
+        for label in tile.findChildren(QLabel)
+        if label.text()
+    )
+    title_global = preview_label.mapToGlobal(preview_label.rect().center())
     hit_widget = QApplication.widgetAt(title_global)
 
     assert hit_widget is tile
@@ -893,8 +926,8 @@ def test_workspace_layout_tile_text_area_is_draggable(qapp):
     assert moved_layout["col"] >= 2
 
 
-def test_workspace_layout_tile_edit_buttons_do_not_become_top_level_windows(qapp):
-    workspace = new_workspace("No Floating Buttons")
+def test_workspace_layout_tile_has_no_inline_action_buttons(qapp):
+    workspace = new_workspace("No Inline Buttons")
     editor = WorkspaceLayoutEditor(lambda block_type: block_type)
     editor.resize(1040, 720)
     editor.show()
@@ -907,12 +940,67 @@ def test_workspace_layout_tile_edit_buttons_do_not_become_top_level_windows(qapp
         editor.render()
         qapp.processEvents()
 
-    floating_buttons = [
-        widget
-        for widget in QApplication.topLevelWidgets()
-        if widget.objectName() == "WorkspaceTileEditButton"
+    inline_buttons = [
+        button
+        for tile in editor.surface.findChildren(
+            WorkspaceLayoutTile,
+            options=Qt.FindDirectChildrenOnly,
+        )
+        for button in tile.findChildren(QPushButton)
+        if button.objectName() == "WorkspaceTileEditButton"
     ]
-    assert floating_buttons == []
+    assert inline_buttons == []
+
+
+def test_workspace_layout_tile_context_menu_has_requested_actions(qapp):
+    _ = qapp
+    workspace = new_workspace("Context Menu")
+    editor = WorkspaceLayoutEditor(lambda block_type: block_type)
+    editor.set_workspace(workspace)
+    first = editor.add_block_at("documents", row=0, col=0)
+    second = editor.add_block_at("notes", row=2, col=0)
+    tile = WorkspaceLayoutTile(first, "Documents", editor)
+
+    menu = tile._build_context_menu()
+    action_texts = [
+        action.text()
+        for action in menu.actions()
+        if action.text()
+    ]
+    assert action_texts == [
+        "Select",
+        "Delete",
+        "Edit Properties",
+        "Swap",
+    ]
+
+    swap_menu = menu.actions()[-1].menu()
+    swap_list = swap_menu.findChild(QListWidget, "WorkspaceSwapBlockList")
+    assert swap_list is not None
+    assert swap_list.height() <= 220
+    assert swap_list.count() == 1
+    assert swap_list.item(0).data(Qt.UserRole) == second["id"]
+
+
+def test_workspace_layout_tile_renders_live_block_preview(qapp):
+    _ = qapp
+    workspace = new_workspace("Live Preview")
+    editor = WorkspaceLayoutEditor(lambda block_type: block_type)
+    editor.set_workspace(workspace)
+    block = editor.add_block_at("personal_info", row=0, col=0)
+    tile = WorkspaceLayoutTile(block, "Personal Information", editor)
+
+    texts = _widget_texts(tile)
+
+    assert "Sample Missionary" in texts
+    assert "Full Name" in texts
+    assert not any(
+        row.objectName() in {
+            "WorkspaceTilePreviewStrong",
+            "WorkspaceTilePreviewLine",
+        }
+        for row in tile.findChildren(QLabel)
+    )
 
 
 def test_workspace_palette_label_area_is_draggable_target(qapp):
@@ -1494,6 +1582,46 @@ def test_workspace_layout_editor_zoom_controls(qapp):
     assert editor.zoom == 1.0
 
 
+def test_workspaces_page_grid_controls_update_editor(qapp):
+    _ = qapp
+    service = MemoryWorkspaceService()
+    main_window = SimpleNamespace(
+        settings_service=SettingsService(),
+        workspace_service=service,
+    )
+    page = WorkspacesPage(main_window)
+
+    page.grid_toggle.setChecked(False)
+    assert page.workspace_layout_editor.grid_visible is False
+
+    page.grid_size_spin.setValue(128)
+    assert page.workspace_layout_editor.base_row_height == 128
+
+    page.canvas_scroll.resize(800, 600)
+    page._zoom_fit()
+    assert page.workspace_layout_editor.zoom != 1.0
+    assert page.zoom_reset_btn.text().endswith("%")
+
+
+def test_workspaces_page_uses_canvas_without_visible_inspector(qapp):
+    _ = qapp
+    service = MemoryWorkspaceService()
+    main_window = SimpleNamespace(
+        settings_service=SettingsService(),
+        workspace_service=service,
+    )
+    page = WorkspacesPage(main_window)
+
+    splitters = page.findChildren(QSplitter)
+
+    assert page.inspector_panel.isVisible() is False
+    assert all(
+        splitter.indexOf(page.inspector_panel) == -1
+        for splitter in splitters
+    )
+    assert page.canvas_scroll is not None
+
+
 def test_workspaces_page_renders_editor_and_preview(qapp):
     _ = qapp
     service = MemoryWorkspaceService()
@@ -1722,14 +1850,18 @@ def test_workspace_layout_editor_inner_chrome_uses_active_language(qapp):
         block = editor.add_block_at("documents")
         editor.set_selected_block(block["id"])
         tile = WorkspaceLayoutTile(block, "Documentos", editor)
-        buttons = {
-            button.text()
-            for button in tile.findChildren(QPushButton)
-            if button.text()
+        menu = tile._build_context_menu()
+        menu_texts = {
+            action.text()
+            for action in menu.actions()
+            if action.text()
         }
-        assert {"Editar", "Copiar", "Frente", "Fondo", "Borrar"}.issubset(
-            buttons
-        )
+        assert {
+            "Seleccionar",
+            "Eliminar",
+            "Editar propiedades",
+            "Intercambiar",
+        }.issubset(menu_texts)
 
         hidden = dict(block)
         hidden["visible"] = False

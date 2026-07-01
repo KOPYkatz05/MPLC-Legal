@@ -19,6 +19,8 @@ from services.secretary_work_service import (
     PROJECT_STATUSES,
     TASK_GROUPS,
     TASK_STATUSES,
+    TASK_TYPES,
+    TASK_TYPE_LABELS,
     SecretaryWorkService,
 )
 from ui.dialogs.office_work_dialogs import ProjectDialog, TaskDialog
@@ -39,6 +41,7 @@ from utils.logger import logger
 TASK_GROUP_LABELS = dict(TASK_GROUPS)
 TASK_STATUS_LABELS = {
     "OPEN": "To Do",
+    "READY": "Ready",
     "WAITING": "Waiting",
     "DONE": "Done",
     "ARCHIVED": "Archived",
@@ -236,6 +239,22 @@ class OfficeWorkPage(QWidget):
         self.task_search.textChanged.connect(self.render_tasks)
         self.task_filter_bar.add_filter(self.task_search, stretch=1)
 
+        for label, preset in [
+            ("Today", "today"),
+            ("Overdue", "overdue"),
+            ("Waiting", "waiting"),
+            ("Ready", "ready"),
+            ("Appointments", "appointments"),
+            ("Critical", "critical"),
+            ("All", "all"),
+        ]:
+            preset_btn = create_button(label, "subtle", fixed_height=30)
+            preset_btn.clicked.connect(
+                lambda _=None, preset_key=preset:
+                self._apply_task_preset(preset_key)
+            )
+            self.task_filter_bar.add_filter(preset_btn)
+
         self.task_status_filter = create_combo_box()
         self.task_status_filter.addItem("Visible", None)
         self.task_status_filter.addItem("All", "ALL")
@@ -257,6 +276,18 @@ class OfficeWorkPage(QWidget):
             lambda _=None: self.render_tasks()
         )
         self.task_filter_bar.add_filter(self.task_priority_filter)
+
+        self.task_type_filter = create_combo_box()
+        self.task_type_filter.addItem("All Types", "ALL")
+        for task_type in TASK_TYPES:
+            self.task_type_filter.addItem(
+                TASK_TYPE_LABELS.get(task_type, task_type.title()),
+                task_type,
+            )
+        self.task_type_filter.currentIndexChanged.connect(
+            lambda _=None: self.render_tasks()
+        )
+        self.task_filter_bar.add_filter(self.task_type_filter)
 
         self.task_due_filter = create_combo_box()
         for label, value in [
@@ -376,6 +407,7 @@ class OfficeWorkPage(QWidget):
             project_id=self._project_filter_id,
             missionary_id=self.task_missionary_filter.currentData(),
             due_range=self.task_due_filter.currentData(),
+            task_type=self.task_type_filter.currentData(),
             include_done=self.task_status_filter.currentData() == "ALL",
         )
 
@@ -426,6 +458,7 @@ class OfficeWorkPage(QWidget):
         row.setSpacing(10)
         for key, label, color in [
             ("open", "To Do", "#0EA5AC"),
+            ("ready", "Ready", "#2563EB"),
             ("overdue", "Overdue", "#DC2626"),
             ("due_today", "Due Today", "#D97706"),
             ("waiting", "Waiting", "#71717A"),
@@ -465,6 +498,16 @@ class OfficeWorkPage(QWidget):
         ]
         if task.get("waiting_reason_label"):
             meta_parts.append(task["waiting_reason_label"])
+        if task.get("waiting_follow_up_label"):
+            meta_parts.append(task["waiting_follow_up_label"])
+        if task.get("task_type") and task.get("task_type") != "CUSTOM":
+            meta_parts.append(task.get("task_type_label", ""))
+        if task.get("related_stage"):
+            meta_parts.append(task["related_stage"].title())
+        if task.get("related_document_label"):
+            meta_parts.append(task["related_document_label"])
+        if task.get("automation_source"):
+            meta_parts.append("Auto")
         if task.get("project_title"):
             meta_parts.append(task["project_title"])
         if task.get("scope_label"):
@@ -484,6 +527,25 @@ class OfficeWorkPage(QWidget):
         layout.addWidget(review_btn)
 
         if task["status"] not in {"DONE", "ARCHIVED"}:
+            if task["status"] == "READY":
+                needs_work_btn = create_button(
+                    "Needs Work",
+                    "secondary",
+                    fixed_height=28,
+                )
+                needs_work_btn.clicked.connect(
+                    lambda _=None, task_id=task["id"]:
+                    self._reopen_task(task_id)
+                )
+                layout.addWidget(needs_work_btn)
+            else:
+                ready_btn = create_button("Ready", "secondary", fixed_height=28)
+                ready_btn.clicked.connect(
+                    lambda _=None, task_id=task["id"]:
+                    self._mark_task_ready(task_id)
+                )
+                layout.addWidget(ready_btn)
+
             done_btn = create_button("Done", "success", fixed_height=28)
             done_btn.clicked.connect(lambda _=None, task_id=task["id"]: self._complete_task(task_id))
             layout.addWidget(done_btn)
@@ -649,6 +711,32 @@ class OfficeWorkPage(QWidget):
         self._project_filter_id = self.task_project_filter.currentData()
         self.render_tasks()
 
+    def _apply_task_preset(self, preset):
+        self.task_search.clear()
+        self._project_filter_id = None
+        self._set_combo_data(self.task_project_filter, None)
+        self._set_combo_data(self.task_missionary_filter, None)
+        self._set_combo_data(self.task_status_filter, None)
+        self._set_combo_data(self.task_priority_filter, "ALL")
+        self._set_combo_data(self.task_type_filter, "ALL")
+        self._set_combo_data(self.task_due_filter, "all")
+
+        if preset == "today":
+            self._set_combo_data(self.task_due_filter, "today")
+        elif preset == "overdue":
+            self._set_combo_data(self.task_due_filter, "overdue")
+        elif preset == "waiting":
+            self._set_combo_data(self.task_status_filter, "WAITING")
+        elif preset == "ready":
+            self._set_combo_data(self.task_status_filter, "READY")
+        elif preset == "appointments":
+            self._set_combo_data(self.task_type_filter, "APPOINTMENT")
+        elif preset == "critical":
+            self._set_combo_data(self.task_priority_filter, "CRITICAL")
+        elif preset == "all":
+            pass
+        self.render_tasks()
+
     def focus_task_context(self, task_id=None, title=""):
         if task_id is not None:
             self._open_task_workspace(task_id)
@@ -708,6 +796,16 @@ class OfficeWorkPage(QWidget):
 
     def _complete_task(self, task_id):
         self.service.complete_task(task_id)
+        self.load_data()
+        self._refresh_calendar_page()
+
+    def _mark_task_ready(self, task_id):
+        self.service.mark_task_ready(task_id)
+        self.load_data()
+        self._refresh_calendar_page()
+
+    def _reopen_task(self, task_id):
+        self.service.reopen_task(task_id)
         self.load_data()
         self._refresh_calendar_page()
 

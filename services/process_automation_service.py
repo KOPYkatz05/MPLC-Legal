@@ -5,6 +5,7 @@ from database.models.document import Document
 from database.models.missionary import Missionary
 from database.models.secretary_work import SecretaryTask
 from services.secretary_work_service import SecretaryWorkService
+from services.secretary_work_service import VISIBLE_TASK_STATUSES
 from services.settings_service import SettingsService
 from utils.logger import logger
 
@@ -114,6 +115,8 @@ class ProcessAutomationService:
                 "priority": "IMPORTANT",
                 "work_date": transfer_date - timedelta(days=14),
                 "due_date": transfer_date - timedelta(days=14),
+                "task_type": "DOCUMENT",
+                "related_document_type": "FBI",
             })
             payloads.append({
                 "automation_key": f"transfer:flights:{_iso(transfer_date)}",
@@ -126,6 +129,7 @@ class ProcessAutomationService:
                 "priority": "IMPORTANT",
                 "work_date": transfer_date - timedelta(days=90),
                 "due_date": transfer_date - timedelta(days=90),
+                "task_type": "FOLLOW_UP",
             })
             payloads.append({
                 "automation_key": f"transfer:arrivals:{_iso(transfer_date)}",
@@ -138,6 +142,8 @@ class ProcessAutomationService:
                 "priority": "NORMAL",
                 "work_date": transfer_date,
                 "due_date": transfer_date,
+                "task_type": "DOCUMENT",
+                "related_document_type": "PASSPORT",
             })
         return payloads
 
@@ -230,6 +236,10 @@ class ProcessAutomationService:
                 "work_date": work_date,
                 "due_date": work_date,
                 "missionary_id": missionary.id,
+                "task_type": (
+                    "SUBMISSION" if offset <= 60 else "DOCUMENT"
+                ),
+                "related_stage": "PRORROGA",
             })
         if not eligible:
             return []
@@ -310,6 +320,9 @@ class ProcessAutomationService:
             "work_date": work_date,
             "due_date": due_date,
             "missionary_ids": missionary_ids,
+            "task_type": first.get("task_type"),
+            "related_stage": first.get("related_stage"),
+            "related_document_type": first.get("related_document_type"),
         }
 
     @staticmethod
@@ -330,7 +343,7 @@ class ProcessAutomationService:
                 .filter(
                     SecretaryTask.automation_key.in_(individual_keys),
                     SecretaryTask.automation_source == AUTOMATION_SOURCE,
-                    SecretaryTask.status.in_(("OPEN", "WAITING")),
+                    SecretaryTask.status.in_(VISIBLE_TASK_STATUSES),
                 )
                 .update(
                     {SecretaryTask.status: "ARCHIVED"},
@@ -385,6 +398,8 @@ class ProcessAutomationService:
                 "work_date": today,
                 "due_date": today,
                 "missionary_id": missionary.id,
+                "task_type": "GVM_UPDATE",
+                "related_document_type": document_type,
             })
         return payloads
 
@@ -413,6 +428,9 @@ class ProcessAutomationService:
                 "due_date": today,
                 "missionary_id": missionary.id,
                 "appointment_field": "interpol_appointment_date",
+                "task_type": "DOCUMENT",
+                "related_stage": "INTERPOL",
+                "related_document_type": "FICHA_DE_CANJE_INTERNACIONAL",
             })
 
         biometric_date = missionary.biometric_appointment_date
@@ -442,6 +460,9 @@ class ProcessAutomationService:
                 "due_date": today,
                 "missionary_id": missionary.id,
                 "appointment_field": "biometric_appointment_date",
+                "task_type": "APPOINTMENT",
+                "related_stage": "CARNET DE EXTRANJERIA",
+                "related_document_type": "CITA_RECOJO",
             })
 
         return payloads

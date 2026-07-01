@@ -112,10 +112,13 @@ def build_task_card(task, *, on_done=None, on_edit=None):
     title.setObjectName("StrongText")
     copy.addWidget(title)
 
-    status_label = (
-        tr("missionary_detail_task_waiting")
-        if task.get("status") == "WAITING"
-        else tr("missionary_detail_task_to_do")
+    status_labels = {
+        "READY": "Ready",
+        "WAITING": tr("missionary_detail_task_waiting"),
+    }
+    status_label = status_labels.get(
+        task.get("status"),
+        tr("missionary_detail_task_to_do"),
     )
     meta_parts = [task.get("priority", "NORMAL").title(), status_label]
     if task.get("due_date"):
