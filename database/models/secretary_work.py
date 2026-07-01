@@ -276,3 +276,40 @@ class SecretaryTask(Base):
     completed_at = Column(
         DateTime(timezone=True),
     )
+
+
+class SecretaryTaskHistory(Base):
+    __tablename__ = "secretary_task_history"
+
+    id = Column(
+        Integer,
+        primary_key=True,
+    )
+
+    task_id = Column(
+        Integer,
+        ForeignKey("secretary_tasks.id"),
+        nullable=False,
+    )
+
+    event_type = Column(
+        String,
+        nullable=False,
+    )
+
+    old_value = Column(
+        String,
+    )
+
+    new_value = Column(
+        String,
+    )
+
+    note = Column(
+        String,
+    )
+
+    created_at = Column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+    )

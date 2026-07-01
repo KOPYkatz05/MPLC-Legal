@@ -1,6 +1,6 @@
 from copy import deepcopy
 
-from PySide6.QtCore import QEvent, QPoint, Qt
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QDialog,
@@ -32,6 +32,7 @@ from ui.foundation import (
     show_message,
 )
 from ui.widgets.workspace_layout_editor import WorkspaceLayoutEditor, WorkspacePaletteButton
+from ui.widgets.editable_canvas import EditableCanvasScrollArea
 from utils.constants import DOCUMENTS
 from utils.language_helper import ui_text as tr
 
@@ -375,10 +376,18 @@ class WorkspacesPage(QWidget):
         self.workspaces_list.currentItemChanged.connect(self._workspace_selection_changed)
         left_layout.addWidget(self.workspaces_list, stretch=1)
 
+        library_header = QVBoxLayout()
+        library_header.setContentsMargins(0, 6, 0, 0)
+        library_header.setSpacing(2)
         self.palette_label = QLabel(tr("workspace_blocks"))
         palette_label = self.palette_label
         palette_label.setObjectName("WorkspacePanelTitle")
-        left_layout.addWidget(palette_label)
+        self.palette_hint_label = QLabel(tr("workspace_blocks_hint"))
+        self.palette_hint_label.setObjectName("WorkspacePanelHint")
+        self.palette_hint_label.setWordWrap(True)
+        library_header.addWidget(palette_label)
+        library_header.addWidget(self.palette_hint_label)
+        left_layout.addLayout(library_header)
         self.palette_search = create_search_edit(tr("workspace_search_blocks"))
         self.palette_search.textChanged.connect(self._refresh_palette)
         left_layout.addWidget(self.palette_search)
@@ -486,11 +495,10 @@ class WorkspacesPage(QWidget):
         status_row.addWidget(self.shortcut_hint_label)
         center_layout.addLayout(status_row)
 
-        canvas_scroll = create_scroll_area("WorkspaceCanvasScroll", transparent=True)
+        canvas_scroll = EditableCanvasScrollArea()
+        canvas_scroll.setObjectName("WorkspaceCanvasScroll")
         self.canvas_scroll = canvas_scroll
-        self._canvas_pan_active = False
-        self._canvas_pan_last_pos = QPoint()
-        canvas_scroll.viewport().installEventFilter(self)
+        canvas_scroll.zoomRequested.connect(self._zoom_canvas_by)
         canvas_shell = QWidget()
         canvas_shell_layout = QVBoxLayout()
         canvas_shell_layout.setContentsMargins(0, 0, 0, 0)
@@ -671,7 +679,7 @@ class WorkspacesPage(QWidget):
             if not matching:
                 continue
             label = QLabel(category)
-            label.setObjectName("MutedText")
+            label.setObjectName("WorkspacePaletteCategory")
             self.palette_body_layout.addWidget(label)
             for block_type in matching:
                 palette = WorkspacePaletteButton(block_type, self._block_label(block_type))
@@ -697,6 +705,7 @@ class WorkspacesPage(QWidget):
         self.workspace_duplicate_btn.setText(tr("workspace_duplicate"))
         self.workspace_delete_btn.setText(tr("workspace_delete"))
         self.palette_label.setText(tr("workspace_blocks"))
+        self.palette_hint_label.setText(tr("workspace_blocks_hint"))
         self.palette_search.setPlaceholderText(tr("workspace_search_blocks"))
         self.undo_btn.setText(tr("workspace_undo"))
         self.redo_btn.setText(tr("workspace_redo"))
@@ -1153,81 +1162,45 @@ class WorkspacesPage(QWidget):
         self._populate_block_options()
 
     def _zoom_in(self):
-        self.workspace_layout_editor.zoom_in()
-        self.zoom_reset_btn.setText(f"{round(self.workspace_layout_editor.zoom * 100)}%")
+        self._set_workspace_zoom(self.workspace_layout_editor.zoom + 0.1)
 
     def _zoom_out(self):
-        self.workspace_layout_editor.zoom_out()
-        self.zoom_reset_btn.setText(f"{round(self.workspace_layout_editor.zoom * 100)}%")
+        self._set_workspace_zoom(self.workspace_layout_editor.zoom - 0.1)
 
     def _zoom_reset(self):
-        self.workspace_layout_editor.reset_zoom()
-        self.zoom_reset_btn.setText("100%")
+        self._set_workspace_zoom(1.0)
 
     def _zoom_fit(self):
-        viewport_width = max(1, self.canvas_scroll.viewport().width() - 36)
-        target_zoom = viewport_width / 920
-        self.workspace_layout_editor.set_zoom(target_zoom)
+        self.workspace_layout_editor.fit_width_zoom(
+            self.canvas_scroll.viewport().width()
+        )
+        self._refresh_zoom_label()
+
+    def _set_workspace_zoom(self, value):
+        self.workspace_layout_editor.set_zoom(value)
+        self._refresh_zoom_label()
+
+    def _refresh_zoom_label(self):
         self.zoom_reset_btn.setText(f"{round(self.workspace_layout_editor.zoom * 100)}%")
+
+    def _zoom_canvas_by(self, factor, anchor_view_pos):
+        old_zoom = max(self.workspace_layout_editor.zoom, 0.01)
+        anchor_content_pos = self.workspace_layout_editor.mapFrom(
+            self.canvas_scroll.viewport(),
+            anchor_view_pos,
+        )
+        self._set_workspace_zoom(old_zoom * factor)
+        scale_ratio = self.workspace_layout_editor.zoom / old_zoom
+        target_x = int(anchor_content_pos.x() * scale_ratio) - anchor_view_pos.x()
+        target_y = int(anchor_content_pos.y() * scale_ratio) - anchor_view_pos.y()
+        self.canvas_scroll.horizontalScrollBar().setValue(target_x)
+        self.canvas_scroll.verticalScrollBar().setValue(target_y)
 
     def _toggle_workspace_grid(self, checked):
         self.workspace_layout_editor.set_grid_visible(checked)
 
     def _update_workspace_grid_size(self, value):
         self.workspace_layout_editor.set_grid_size(value)
-
-    def eventFilter(self, watched, event):
-        if (
-            hasattr(self, "canvas_scroll")
-            and watched == self.canvas_scroll.viewport()
-        ):
-            if self._handle_canvas_viewport_event(event):
-                return True
-        return super().eventFilter(watched, event)
-
-    def _handle_canvas_viewport_event(self, event):
-        event_type = event.type()
-        if event_type == QEvent.Type.Wheel and event.modifiers() & Qt.ControlModifier:
-            delta = event.angleDelta().y() or event.angleDelta().x()
-            if delta:
-                if delta > 0:
-                    self._zoom_in()
-                else:
-                    self._zoom_out()
-                event.accept()
-                return True
-        if event_type == QEvent.Type.MouseButtonPress and event.button() == Qt.MiddleButton:
-            self._canvas_pan_active = True
-            self._canvas_pan_last_pos = (
-                event.position().toPoint()
-                if hasattr(event, "position")
-                else event.pos()
-            )
-            self.canvas_scroll.viewport().setCursor(Qt.ClosedHandCursor)
-            event.accept()
-            return True
-        if event_type == QEvent.Type.MouseMove and self._canvas_pan_active:
-            pos = event.position().toPoint() if hasattr(event, "position") else event.pos()
-            delta = pos - self._canvas_pan_last_pos
-            self.canvas_scroll.horizontalScrollBar().setValue(
-                self.canvas_scroll.horizontalScrollBar().value() - delta.x()
-            )
-            self.canvas_scroll.verticalScrollBar().setValue(
-                self.canvas_scroll.verticalScrollBar().value() - delta.y()
-            )
-            self._canvas_pan_last_pos = pos
-            event.accept()
-            return True
-        if (
-            event_type == QEvent.Type.MouseButtonRelease
-            and event.button() == Qt.MiddleButton
-            and self._canvas_pan_active
-        ):
-            self._canvas_pan_active = False
-            self.canvas_scroll.viewport().unsetCursor()
-            event.accept()
-            return True
-        return False
 
     def _save_current_workspace(self):
         workspace = self._current_workspace()

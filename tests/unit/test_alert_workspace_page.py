@@ -47,6 +47,16 @@ class FakeWorkspaceService:
                     "value": "process_automation",
                 }
             ],
+            "status_history": [
+                {
+                    "summary": "Waiting -> Ready",
+                    "created_at_text": "Jul 01, 2026",
+                },
+                {
+                    "summary": "Created as Waiting",
+                    "created_at_text": "Jun 30, 2026",
+                },
+            ],
             "affected_missionaries": [
                 {
                     "id": 4,
@@ -82,6 +92,13 @@ def test_alert_workspace_renders_task_context(qapp):
         assert page.header.title_label.text() == (
             "Critical Prorroga follow-up needed"
         )
+        texts = {
+            label.text()
+            for label in page.findChildren(alert_workspace_page.QLabel)
+            if label.text()
+        }
+        assert "Recent status changes" in texts
+        assert "Waiting -> Ready" in texts
         assert page.findChild(alert_workspace_page.QFrame, "AlertMissionaryRow")
     finally:
         page.close()

@@ -21,6 +21,7 @@ from services.secretary_work_service import (
     TASK_STATUSES,
     TASK_TYPES,
     TASK_TYPE_LABELS,
+    WAITING_REASON_LABELS,
     SecretaryWorkService,
 )
 from ui.dialogs.office_work_dialogs import ProjectDialog, TaskDialog
@@ -35,6 +36,7 @@ from ui.foundation import (
     fluent_icon,
     show_message,
 )
+from utils.constants import WORKFLOW_STAGES
 from utils.logger import logger
 
 
@@ -242,6 +244,7 @@ class OfficeWorkPage(QWidget):
         for label, preset in [
             ("Today", "today"),
             ("Overdue", "overdue"),
+            ("Follow Up", "follow_up"),
             ("Waiting", "waiting"),
             ("Ready", "ready"),
             ("Appointments", "appointments"),
@@ -289,6 +292,15 @@ class OfficeWorkPage(QWidget):
         )
         self.task_filter_bar.add_filter(self.task_type_filter)
 
+        self.task_stage_filter = create_combo_box()
+        self.task_stage_filter.addItem("All Stages", "ALL")
+        for stage in WORKFLOW_STAGES:
+            self.task_stage_filter.addItem(stage.title(), stage)
+        self.task_stage_filter.currentIndexChanged.connect(
+            lambda _=None: self.render_tasks()
+        )
+        self.task_filter_bar.add_filter(self.task_stage_filter)
+
         self.task_due_filter = create_combo_box()
         for label, value in [
             ("All Due Dates", "all"),
@@ -303,6 +315,23 @@ class OfficeWorkPage(QWidget):
             lambda _=None: self.render_tasks()
         )
         self.task_filter_bar.add_filter(self.task_due_filter)
+
+        self.task_follow_up_filter = create_combo_box()
+        self.task_follow_up_filter.addItem("All Follow-Ups", "ALL")
+        self.task_follow_up_filter.addItem("Follow Up Due", "due")
+        self.task_follow_up_filter.currentIndexChanged.connect(
+            lambda _=None: self.render_tasks()
+        )
+        self.task_filter_bar.add_filter(self.task_follow_up_filter)
+
+        self.task_waiting_reason_filter = create_combo_box()
+        self.task_waiting_reason_filter.addItem("All Waiting Reasons", "ALL")
+        for reason, label in WAITING_REASON_LABELS.items():
+            self.task_waiting_reason_filter.addItem(label, reason)
+        self.task_waiting_reason_filter.currentIndexChanged.connect(
+            lambda _=None: self.render_tasks()
+        )
+        self.task_filter_bar.add_filter(self.task_waiting_reason_filter)
 
         self.task_project_filter = create_combo_box()
         self.task_project_filter.currentIndexChanged.connect(
@@ -408,6 +437,9 @@ class OfficeWorkPage(QWidget):
             missionary_id=self.task_missionary_filter.currentData(),
             due_range=self.task_due_filter.currentData(),
             task_type=self.task_type_filter.currentData(),
+            related_stage=self.task_stage_filter.currentData(),
+            waiting_follow_up=self.task_follow_up_filter.currentData(),
+            waiting_reason=self.task_waiting_reason_filter.currentData(),
             include_done=self.task_status_filter.currentData() == "ALL",
         )
 
@@ -459,6 +491,7 @@ class OfficeWorkPage(QWidget):
         for key, label, color in [
             ("open", "To Do", "#0EA5AC"),
             ("ready", "Ready", "#2563EB"),
+            ("follow_up", "Follow Up", "#7C3AED"),
             ("overdue", "Overdue", "#DC2626"),
             ("due_today", "Due Today", "#D97706"),
             ("waiting", "Waiting", "#71717A"),
@@ -601,13 +634,14 @@ class OfficeWorkPage(QWidget):
         title.setObjectName("StrongText")
         text_stack.addWidget(title)
 
+        task_breakdown = self._project_task_breakdown(project)
         meta = QLabel(
             "  |  ".join([
                 project["priority"].title(),
                 PROJECT_STATUS_LABELS.get(project["status"], project["status"].title()),
                 _format_date(project.get("due_date")),
                 project["progress"],
-                f"{project['open_tasks']} open",
+                task_breakdown,
             ])
         )
         meta.setObjectName("OfficeWorkMeta")
@@ -649,6 +683,21 @@ class OfficeWorkPage(QWidget):
             layout.addWidget(archive_btn)
 
         return card
+
+    @staticmethod
+    def _project_task_breakdown(project):
+        parts = []
+        for key, label in [
+            ("todo_tasks", "to do"),
+            ("ready_tasks", "ready"),
+            ("waiting_tasks", "waiting"),
+        ]:
+            count = project.get(key, 0)
+            if count:
+                parts.append(f"{count} {label}")
+        if parts:
+            return ", ".join(parts)
+        return f"{project.get('open_tasks', 0)} open"
 
     def _section_header(self, title, count):
         row = QFrame()
@@ -719,12 +768,17 @@ class OfficeWorkPage(QWidget):
         self._set_combo_data(self.task_status_filter, None)
         self._set_combo_data(self.task_priority_filter, "ALL")
         self._set_combo_data(self.task_type_filter, "ALL")
+        self._set_combo_data(self.task_stage_filter, "ALL")
         self._set_combo_data(self.task_due_filter, "all")
+        self._set_combo_data(self.task_follow_up_filter, "ALL")
+        self._set_combo_data(self.task_waiting_reason_filter, "ALL")
 
         if preset == "today":
             self._set_combo_data(self.task_due_filter, "today")
         elif preset == "overdue":
             self._set_combo_data(self.task_due_filter, "overdue")
+        elif preset == "follow_up":
+            self._set_combo_data(self.task_follow_up_filter, "due")
         elif preset == "waiting":
             self._set_combo_data(self.task_status_filter, "WAITING")
         elif preset == "ready":

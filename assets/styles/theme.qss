@@ -3464,6 +3464,21 @@ QLabel#WorkspaceDialogTitle {
     background: transparent;
 }
 
+QLabel#WorkspacePanelHint {
+    color: #71717A;
+    font-size: 11px;
+    background: transparent;
+}
+
+QLabel#WorkspacePaletteCategory {
+    color: #52525B;
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    background: transparent;
+    padding: 8px 2px 2px 2px;
+}
+
 QLabel#WorkspaceShortcutHint {
     color: #71717A;
     font-size: 11px;
@@ -3492,8 +3507,30 @@ QFrame#WorkspacePaletteButton:hover,
 QWidget#WorkspacePaletteButton:hover,
 QFrame#WorkspaceListItemCard:hover,
 QWidget#WorkspaceListItemCard:hover {
-    background-color: #FBFBFC;
-    border-color: #DADADF;
+    background-color: #F8FAFC;
+    border-color: #C9D7F2;
+}
+
+QLabel#WorkspacePaletteBadge {
+    background-color: #EEF4FF;
+    color: #1D4ED8;
+    border: 1px solid #D7E5FF;
+    border-radius: 7px;
+    font-size: 12px;
+    font-weight: 800;
+}
+
+QLabel#WorkspacePaletteTitle {
+    color: #18181B;
+    font-size: 12px;
+    font-weight: 700;
+    background: transparent;
+}
+
+QLabel#WorkspacePaletteHint {
+    color: #71717A;
+    font-size: 10px;
+    background: transparent;
 }
 
 QFrame#WorkspaceLayoutTile,

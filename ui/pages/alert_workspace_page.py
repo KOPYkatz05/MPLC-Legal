@@ -376,7 +376,37 @@ class AlertWorkspacePage(QWidget):
             grid.addWidget(key, row, 0)
             grid.addWidget(value, row, 1)
         layout.addLayout(grid)
+
+        history = self.workspace.get("status_history") or []
+        if history:
+            history_title = QLabel(tr("alert_workspace_status_history_title"))
+            history_title.setObjectName("PanelTitle")
+            layout.addWidget(history_title)
+            for item in history[:4]:
+                layout.addWidget(self._history_row(item))
         return card
+
+    @staticmethod
+    def _history_row(item):
+        row = QFrame()
+        row.setObjectName("AlertStepRow")
+        row.setAttribute(Qt.WA_StyledBackground, True)
+        layout = QVBoxLayout()
+        layout.setContentsMargins(10, 8, 10, 8)
+        layout.setSpacing(3)
+        row.setLayout(layout)
+
+        summary = QLabel(item.get("summary", ""))
+        summary.setObjectName("StrongText")
+        summary.setWordWrap(True)
+        timestamp = QLabel(item.get("created_at_text", ""))
+        timestamp.setObjectName("MiniMutedText")
+        timestamp.setWordWrap(True)
+
+        layout.addWidget(summary)
+        if timestamp.text():
+            layout.addWidget(timestamp)
+        return row
 
     def _build_missionaries_card(self):
         card = create_card()

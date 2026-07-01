@@ -30,6 +30,7 @@ def init_db():
         MissionaryGroupMember,
         SecretaryProject,
         SecretaryTask,
+        SecretaryTaskHistory,
         SecretaryTaskMissionary,
     )
     from database.models.residency_event import ResidencyEvent
@@ -149,6 +150,18 @@ def _run_migrations():
             FOREIGN KEY(group_id) REFERENCES missionary_groups(id)
         )
         """,
+        """
+        CREATE TABLE secretary_task_history (
+            id INTEGER PRIMARY KEY,
+            task_id INTEGER NOT NULL,
+            event_type VARCHAR NOT NULL,
+            old_value VARCHAR,
+            new_value VARCHAR,
+            note VARCHAR,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY(task_id) REFERENCES secretary_tasks(id)
+        )
+        """,
         "CREATE INDEX idx_secretary_projects_status ON secretary_projects(status)",
         "CREATE INDEX idx_secretary_projects_due_date ON secretary_projects(due_date)",
         "CREATE INDEX idx_secretary_tasks_status ON secretary_tasks(status)",
@@ -157,6 +170,7 @@ def _run_migrations():
         "CREATE INDEX idx_secretary_tasks_missionary_id ON secretary_tasks(missionary_id)",
         "CREATE INDEX idx_secretary_tasks_group_id ON secretary_tasks(group_id)",
         "CREATE UNIQUE INDEX idx_secretary_tasks_automation_key ON secretary_tasks(automation_key)",
+        "CREATE INDEX idx_secretary_task_history_task_id ON secretary_task_history(task_id)",
         "CREATE INDEX idx_missionary_group_members_missionary_id ON missionary_group_members(missionary_id)",
         "CREATE INDEX idx_secretary_task_missionaries_missionary_id ON secretary_task_missionaries(missionary_id)",
         """

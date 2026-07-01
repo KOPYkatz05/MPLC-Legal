@@ -83,6 +83,62 @@ def test_digest_can_exclude_overdue_tasks(monkeypatch):
     assert "Old task" not in digest["text"]
 
 
+def test_digest_includes_waiting_follow_up_due_tasks(monkeypatch):
+    today = date(2026, 6, 18)
+    session = _session(monkeypatch)
+    try:
+        session.add(
+            SecretaryTask(
+                title="Follow up with missionary",
+                status="WAITING",
+                priority="NORMAL",
+                waiting_reason="MISSIONARY",
+                waiting_follow_up_date=today,
+            )
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    digest = DailyDigestService().build_digest(today=today)
+
+    assert any(
+        item["type"] == "waiting_follow_up"
+        and item["title"] == "Follow up with missionary"
+        for item in digest["items"]
+    )
+    assert digest["summary"]["due_today"] >= 1
+    assert digest["summary"]["tasks"] >= 1
+    assert "Follow up with missionary" in digest["text"]
+
+
+def test_digest_includes_ready_tasks_without_due_date(monkeypatch):
+    today = date(2026, 6, 18)
+    session = _session(monkeypatch)
+    try:
+        session.add(
+            SecretaryTask(
+                title="Review ready Interpol packet",
+                status="READY",
+                priority="IMPORTANT",
+            )
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    digest = DailyDigestService().build_digest(today=today)
+
+    assert any(
+        item["type"] == "ready_task"
+        and item["title"] == "Review ready Interpol packet"
+        for item in digest["items"]
+    )
+    assert digest["summary"]["due_today"] >= 1
+    assert digest["summary"]["tasks"] >= 1
+    assert "Review ready Interpol packet" in digest["text"]
+
+
 def test_digest_orders_critical_items_before_important(monkeypatch):
     today = date(2026, 6, 18)
     session = _session(monkeypatch)

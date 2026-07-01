@@ -38,6 +38,7 @@ from ui.dialogs.missionary_workspace_dialog import (
     MissionaryWorkspaceContext,
     WorkspaceBlockFactory,
 )
+from ui.widgets.editable_canvas import EditableCanvasState, align_rect_to_peer
 from utils.language_helper import ui_text as tr
 
 
@@ -186,20 +187,33 @@ class WorkspacePaletteButton(QFrame):
         self.setCursor(Qt.OpenHandCursor)
         self.setMinimumHeight(46)
 
-        layout = QVBoxLayout()
-        layout.setContentsMargins(12, 8, 12, 8)
-        layout.setSpacing(1)
+        layout = QHBoxLayout()
+        layout.setContentsMargins(10, 9, 10, 9)
+        layout.setSpacing(9)
         self.setLayout(layout)
 
+        badge = QLabel((label[:1] or "?").upper(), self)
+        badge.setObjectName("WorkspacePaletteBadge")
+        badge.setAlignment(Qt.AlignCenter)
+        badge.setFixedSize(28, 28)
+        badge.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        layout.addWidget(badge, alignment=Qt.AlignTop)
+
+        text_stack = QVBoxLayout()
+        text_stack.setContentsMargins(0, 0, 0, 0)
+        text_stack.setSpacing(2)
+        layout.addLayout(text_stack, stretch=1)
+
         title = QLabel(label, self)
-        title.setObjectName("StrongText")
+        title.setObjectName("WorkspacePaletteTitle")
         title.setWordWrap(True)
         title.setAttribute(Qt.WA_TransparentForMouseEvents, True)
         hint = QLabel(tr("workspace_palette_hint"), self)
-        hint.setObjectName("MutedText")
+        hint.setObjectName("WorkspacePaletteHint")
+        hint.setWordWrap(True)
         hint.setAttribute(Qt.WA_TransparentForMouseEvents, True)
-        layout.addWidget(title)
-        layout.addWidget(hint)
+        text_stack.addWidget(title)
+        text_stack.addWidget(hint)
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
@@ -785,9 +799,15 @@ class WorkspaceLayoutEditor(QWidget):
         self.workspace = None
         self.selected_block_id = None
         self.selected_block_ids = []
-        self.zoom = 1.0
-        self.base_row_height = 96
-        self.grid_visible = True
+        self.canvas_state = EditableCanvasState(
+            zoom=1.0,
+            min_zoom=0.6,
+            max_zoom=1.6,
+            zoom_step=0.1,
+            base_grid_size=96,
+            min_grid_size=56,
+            max_grid_size=180,
+        )
         self._preview_host = WorkspaceEditorPreviewHost()
         self._preview_factory = WorkspaceBlockFactory(self._preview_host)
         self._undo_stack = []
@@ -818,28 +838,36 @@ class WorkspaceLayoutEditor(QWidget):
         return self.surface.rect().adjusted(margin, margin, -margin, -margin)
 
     @property
+    def zoom(self):
+        return self.canvas_state.zoom
+
+    @property
+    def base_row_height(self):
+        return self.canvas_state.base_grid_size
+
+    @property
+    def grid_visible(self):
+        return self.canvas_state.grid_visible
+
+    @property
     def row_height(self):
-        return int(self.base_row_height * self.zoom)
+        return self.canvas_state.scaled_grid_size()
 
     def cell_width(self):
         rect = self.canvas_rect()
         return max(1, rect.width() / WORKSPACE_GRID_COLUMNS)
 
     def set_zoom(self, value):
-        self.zoom = max(0.6, min(1.6, float(value)))
+        self.canvas_state.set_zoom(value)
         self.surface.setMinimumWidth(int(920 * self.zoom))
         self.render()
 
     def set_grid_visible(self, visible):
-        self.grid_visible = bool(visible)
+        self.canvas_state.set_grid_visible(visible)
         self.surface.update()
 
     def set_grid_size(self, value):
-        try:
-            size = int(value)
-        except (TypeError, ValueError):
-            size = self.base_row_height
-        self.base_row_height = max(56, min(180, size))
+        self.canvas_state.set_grid_size(value)
         self.render()
 
     def build_block_preview(self, block):
@@ -867,13 +895,22 @@ class WorkspaceLayoutEditor(QWidget):
         return preview
 
     def zoom_in(self):
-        self.set_zoom(self.zoom + 0.1)
+        self.set_zoom(self.canvas_state.zoom_in())
 
     def zoom_out(self):
-        self.set_zoom(self.zoom - 0.1)
+        self.set_zoom(self.canvas_state.zoom_out())
 
     def reset_zoom(self):
-        self.set_zoom(1.0)
+        self.set_zoom(self.canvas_state.reset_zoom())
+
+    def fit_width_zoom(self, viewport_width, content_width=920, padding=36):
+        self.set_zoom(
+            self.canvas_state.fit_width_zoom(
+                viewport_width,
+                content_width,
+                padding=padding,
+            )
+        )
 
     def position_to_grid(self, pos):
         rect = self.canvas_rect()
@@ -1283,6 +1320,45 @@ class WorkspaceLayoutEditor(QWidget):
         self._push_undo()
         return self._append_duplicates(self._duplicate_payloads(source_blocks))
 
+    def _peer_aligned_layout(self, layout, edge, block_id):
+        if not self.workspace or edge not in {"left", "right", "top", "center"}:
+            return None
+        peers = []
+        for block in self.workspace.get("blocks", []):
+            if not block.get("id") or block.get("id") == block_id:
+                continue
+            peer = validate_block_layout(block)
+            peers.append(
+                QRect(
+                    peer["col"],
+                    peer["row"],
+                    peer["col_span"],
+                    peer["row_span"],
+                )
+            )
+        if not peers:
+            return None
+
+        current = validate_block_layout({"layout": layout})
+        aligned_rect, changed = align_rect_to_peer(
+            QRect(
+                current["col"],
+                current["row"],
+                current["col_span"],
+                current["row_span"],
+            ),
+            peers,
+            edge,
+            bounds=QRect(0, 0, WORKSPACE_GRID_COLUMNS, 10000),
+        )
+        if not changed:
+            return current
+        return {
+            **current,
+            "col": aligned_rect.x(),
+            "row": aligned_rect.y(),
+        }
+
     def copy_selected(self):
         if not self.allow_structure_changes:
             self._structure_changes_blocked()
@@ -1315,11 +1391,23 @@ class WorkspaceLayoutEditor(QWidget):
             return
         self._push_undo()
         updated = []
+        single_selected_id = (
+            next(iter(editable_ids))
+            if len(editable_ids) == 1
+            else None
+        )
         for block in self.workspace.get("blocks", []):
             next_block = deepcopy(block)
             if next_block.get("id") in editable_ids:
                 layout = validate_block_layout(next_block)
-                if edge == "left":
+                peer_layout = self._peer_aligned_layout(
+                    layout,
+                    edge,
+                    next_block.get("id"),
+                ) if single_selected_id == next_block.get("id") else None
+                if peer_layout is not None:
+                    layout = peer_layout
+                elif edge == "left":
                     layout["col"] = 0
                 elif edge == "right":
                     layout["col"] = max(0, WORKSPACE_GRID_COLUMNS - layout["col_span"])

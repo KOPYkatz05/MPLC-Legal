@@ -93,6 +93,7 @@ from services.workspace_layout import (
     validate_block_layout,
 )
 from ui.widgets.workspace_layout_editor import WorkspaceLayoutEditor
+from ui.widgets.editable_canvas import resolve_overlapping_free_rects
 from ui.widgets.missionary_block_widgets import (
     build_document_card,
     build_empty_state_card,
@@ -1624,27 +1625,23 @@ class MissionaryDetailPage(QWidget):
         if moving_rect is None:
             return
 
-        displaced = []
+        resolved_rects = resolve_overlapping_free_rects(
+            rects,
+            moving_section_key,
+            DETAIL_LAYOUT_CANVAS_WIDTH,
+            padding=DETAIL_LAYOUT_CANVAS_PADDING,
+            spacing=OVERVIEW_CONTENT_SPACING,
+        )
         for block in tab_blocks:
             section_key = block.get("type") or block.get("id")
             if section_key == moving_section_key:
                 continue
-            rect = rects.get(section_key)
-            if rect is None:
+            resolved = resolved_rects.get(section_key)
+            original = rects.get(section_key)
+            if resolved is None or original is None or resolved == original:
                 continue
-            overlaps_x = not (
-                rect.right() < moving_rect.left()
-                or moving_rect.right() < rect.left()
-            )
-            if overlaps_x and rect.intersects(moving_rect):
-                displaced.append((rect.y(), section_key, block, rect))
-
-        next_y = moving_rect.bottom() + OVERVIEW_CONTENT_SPACING
-        for _, _, block, rect in sorted(displaced):
-            rect.moveTop(next_y)
-            bounded = self._bounded_free_rect(rect)
+            bounded = self._bounded_free_rect(resolved)
             block["free_layout"] = self._free_layout_from_rect(bounded)
-            next_y = bounded.bottom() + OVERVIEW_CONTENT_SPACING
 
     def _commit_layout_preview(self):
         if self._layout_preview_payload:

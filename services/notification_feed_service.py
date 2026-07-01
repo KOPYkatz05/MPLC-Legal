@@ -317,54 +317,119 @@ class NotificationFeedService:
             session.query(SecretaryTask)
             .filter(
                 SecretaryTask.status.in_(VISIBLE_TASK_STATUSES),
-                SecretaryTask.due_date.isnot(None),
-                SecretaryTask.due_date <= today,
+                (
+                    (
+                        SecretaryTask.due_date.isnot(None)
+                        & (SecretaryTask.due_date <= today)
+                    )
+                    | (
+                        (SecretaryTask.status == "WAITING")
+                        & SecretaryTask.waiting_follow_up_date.isnot(None)
+                        & (SecretaryTask.waiting_follow_up_date <= today)
+                    )
+                    | (SecretaryTask.status == "READY")
+                ),
             )
             .all()
         )
         items = []
         for task in tasks:
-            days = (task.due_date - today).days
-            automation_key = task.automation_key or ""
-            is_transfer = automation_key.startswith("transfer:")
-            if is_transfer:
-                if not settings.get("include_transfer_reminders", True):
-                    continue
-                item_type = "transfer_reminder"
-            else:
-                if days < 0 and not settings.get("include_overdue_tasks", True):
-                    continue
-                if days == 0 and not settings.get("include_due_today_tasks", True):
-                    continue
-                item_type = "secretary_task"
-            priority = (task.priority or "NORMAL").upper()
-            severity = self._task_severity(priority, days)
-            items.append({
-                "type": item_type,
-                "severity": severity,
-                "channel_tags": ["dashboard", "email", "windows"]
-                if severity in {"critical", "warning"}
-                else ["dashboard", "email"],
-                "title": task.title,
-                "detail": self._task_detail(task, days),
-                "target_date": task.due_date,
-                "source_id": task.id,
-                "source_kind": "secretary_task",
-                "fingerprint": f"task:{task.id}:{task.status}:{task.due_date}",
-                "task_id": task.id,
-                "missionary_id": task.missionary_id,
-                "target": "missionary" if task.missionary_id else "office_work",
-                "priority": priority,
-                "days": days,
-                "automation_key": task.automation_key,
-                "automation_source": task.automation_source,
-                "group_id": task.group_id,
-                "group_scope_label": task.group_scope_label,
-                "missionary_count": self._task_missionary_count(session, task),
-                "who": self._task_who(task),
-                "action": task.title or "Task",
-            })
+            if task.status == "READY":
+                item = self._task_item_for_date(
+                    session,
+                    task,
+                    today,
+                    settings,
+                    task.due_date or today,
+                    "ready",
+                )
+                if item:
+                    items.append(item)
+                continue
+            if task.due_date is not None and task.due_date <= today:
+                item = self._task_item_for_date(
+                    session,
+                    task,
+                    today,
+                    settings,
+                    task.due_date,
+                    "due",
+                )
+                if item:
+                    items.append(item)
+            if (
+                task.status == "WAITING"
+                and task.waiting_follow_up_date is not None
+                and task.waiting_follow_up_date <= today
+            ):
+                item = self._task_item_for_date(
+                    session,
+                    task,
+                    today,
+                    settings,
+                    task.waiting_follow_up_date,
+                    "follow_up",
+                )
+                if item:
+                    items.append(item)
         return items
+
+    def _task_item_for_date(
+        self,
+        session,
+        task,
+        today,
+        settings,
+        target_date,
+        date_kind,
+    ):
+        days = (target_date - today).days
+        automation_key = task.automation_key or ""
+        is_transfer = automation_key.startswith("transfer:")
+        if is_transfer and date_kind == "due":
+            if not settings.get("include_transfer_reminders", True):
+                return None
+            item_type = "transfer_reminder"
+        else:
+            if days < 0 and not settings.get("include_overdue_tasks", True):
+                return None
+            if days == 0 and not settings.get("include_due_today_tasks", True):
+                return None
+            if date_kind == "ready":
+                item_type = "ready_task"
+            elif date_kind == "follow_up":
+                item_type = "waiting_follow_up"
+            else:
+                item_type = "secretary_task"
+        priority = (task.priority or "NORMAL").upper()
+        severity = self._task_severity(priority, days)
+        return {
+            "type": item_type,
+            "severity": severity,
+            "channel_tags": ["dashboard", "email", "windows"]
+            if severity in {"critical", "warning"}
+            else ["dashboard", "email"],
+            "title": task.title,
+            "detail": self._task_detail(task, days, date_kind),
+            "target_date": target_date,
+            "source_id": task.id,
+            "source_kind": "secretary_task",
+            "fingerprint": (
+                f"task:{task.id}:{task.status}:{date_kind}:{target_date}"
+            ),
+            "task_id": task.id,
+            "missionary_id": task.missionary_id,
+            "target": "missionary" if task.missionary_id else "office_work",
+            "priority": priority,
+            "days": days,
+            "automation_key": task.automation_key,
+            "automation_source": task.automation_source,
+            "group_id": task.group_id,
+            "group_scope_label": task.group_scope_label,
+            "missionary_count": self._task_missionary_count(session, task),
+            "who": self._task_who(task),
+            "action": task.title or "Task",
+        }
 
     @staticmethod
     def _uploaded_documents_by_missionary(session):
@@ -412,12 +477,21 @@ class NotificationFeedService:
         return f"{name}: {timing} on {scheduled_date.strftime('%b %d, %Y')}."
 
     @staticmethod
-    def _task_detail(task, days):
+    def _task_detail(task, days, date_kind="due"):
         if days < 0:
             timing = f"{abs(days)} day(s) overdue"
         else:
             timing = "due today"
         priority = (task.priority or "NORMAL").title()
+        if date_kind == "ready":
+            if days < 0:
+                return (
+                    f"{priority} task ready for review "
+                    f"and {abs(days)} day(s) overdue."
+                )
+            return f"{priority} task ready for review."
+        if date_kind == "follow_up":
+            return f"{priority} waiting follow-up {timing}."
         return f"{priority} task {timing}."
 
     @staticmethod

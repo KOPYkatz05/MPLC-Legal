@@ -72,6 +72,8 @@ TEXT = {
     },
 }
 
+TASK_ITEM_TYPES = {"secretary_task", "waiting_follow_up", "ready_task"}
+
 
 GROUP_LABELS = {
     "prorroga": "Prorrogas",
@@ -261,7 +263,7 @@ class DailyDigestService:
         task_counts = Counter(
             self._task_category(item, language)
             for item in due_items
-            if item.get("type") == "secretary_task"
+            if item.get("type") in TASK_ITEM_TYPES
         )
         for label, count in sorted(task_counts.items()):
             template = text["task_overdue"] if overdue else text["task_due"]
@@ -313,7 +315,10 @@ class DailyDigestService:
     def _summary_counts(items, today):
         task_count = sum(
             1 for item in items
-            if item.get("type") in {"secretary_task", "transfer_reminder"}
+            if item.get("type") in {
+                *TASK_ITEM_TYPES,
+                "transfer_reminder",
+            }
         )
         appointment_count = sum(
             1 for item in items
@@ -324,7 +329,7 @@ class DailyDigestService:
             for item in items
             if item.get("severity") == "critical"
             and (
-                item.get("type") != "secretary_task"
+                item.get("type") not in TASK_ITEM_TYPES
                 or item.get("priority") == "CRITICAL"
             )
         )
@@ -339,7 +344,7 @@ class DailyDigestService:
             for item in items
             if item.get("days") == 0
             and item.get("type") in {
-                "secretary_task",
+                *TASK_ITEM_TYPES,
                 "transfer_reminder",
                 "appointment_due",
             }
@@ -409,6 +414,8 @@ class DailyDigestService:
             return "missing"
         if item_type == "transfer_reminder":
             return "transfer"
+        if item_type in {"waiting_follow_up", "ready_task"}:
+            return "office"
         title = (item.get("title") or "").casefold()
         automation_key = (item.get("automation_key") or "").casefold()
         appointment_field = (item.get("appointment_field") or "").casefold()

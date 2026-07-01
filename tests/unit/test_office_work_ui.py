@@ -18,18 +18,20 @@ class FakeSecretaryWorkService:
         self.reopened_tasks = []
         self.completed_projects = []
         self.archived_projects = []
+        self.last_task_filters = {}
 
     def summary(self):
         return {
             "open": 1,
             "ready": 1,
+            "follow_up": 1,
             "overdue": 1,
             "due_today": 0,
             "waiting": 0,
         }
 
     def grouped_tasks(self, **filters):
-        _ = filters
+        self.last_task_filters = filters
         return {
             "overdue": [
                 {
@@ -84,10 +86,13 @@ class FakeSecretaryWorkService:
                 "status": "ACTIVE",
                 "priority": "NORMAL",
                 "due_date": None,
-                "open_tasks": 1,
+                "open_tasks": 3,
+                "todo_tasks": 1,
+                "ready_tasks": 1,
+                "waiting_tasks": 1,
                 "done_tasks": 1,
-                "total_tasks": 2,
-                "progress": "1/2 done",
+                "total_tasks": 4,
+                "progress": "1/4 done",
             }
         ]
 
@@ -341,6 +346,18 @@ def test_office_work_task_presets_drive_existing_filters(qapp):
         page._apply_task_preset("ready")
         assert page.task_status_filter.currentData() == "READY"
 
+        page._apply_task_preset("follow_up")
+        assert page.task_follow_up_filter.currentData() == "due"
+        assert page.service.last_task_filters["waiting_follow_up"] == "due"
+
+        page._set_combo_data(page.task_waiting_reason_filter, "MISSIONARY")
+        page.render_tasks()
+        assert page.service.last_task_filters["waiting_reason"] == "MISSIONARY"
+
+        page._set_combo_data(page.task_stage_filter, "INTERPOL")
+        page.render_tasks()
+        assert page.service.last_task_filters["related_stage"] == "INTERPOL"
+
         page._apply_task_preset("appointments")
         assert page.task_type_filter.currentData() == "APPOINTMENT"
 
@@ -380,6 +397,19 @@ def test_office_work_project_archive_action(qapp):
         assert service.archived_projects == [7]
     finally:
         page.close()
+
+
+def test_office_work_project_task_breakdown_labels_counts():
+    assert OfficeWorkPage._project_task_breakdown({
+        "todo_tasks": 1,
+        "ready_tasks": 2,
+        "waiting_tasks": 3,
+        "open_tasks": 6,
+    }) == "1 to do, 2 ready, 3 waiting"
+
+    assert OfficeWorkPage._project_task_breakdown({
+        "open_tasks": 0,
+    }) == "0 open"
 
 
 def test_project_dialog_validates_required_title(monkeypatch, qapp):

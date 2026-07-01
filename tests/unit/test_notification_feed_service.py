@@ -156,3 +156,91 @@ def test_feed_respects_task_and_appointment_toggles(monkeypatch):
         item["type"] in {"secretary_task", "appointment_due"}
         for item in feed
     )
+
+
+def test_feed_includes_waiting_follow_up_due_tasks(monkeypatch):
+    today = date(2026, 6, 22)
+    session = _session(monkeypatch)
+    try:
+        session.add(
+            SecretaryTask(
+                title="Call missionary about missing document",
+                status="WAITING",
+                priority="NORMAL",
+                waiting_reason="MISSIONARY",
+                waiting_follow_up_date=today,
+            )
+        )
+        session.add(
+            SecretaryTask(
+                title="Later waiting task",
+                status="WAITING",
+                priority="NORMAL",
+                waiting_reason="DOCUMENT",
+                waiting_follow_up_date=today + timedelta(days=1),
+            )
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    feed = NotificationFeedService(FakeSettings()).build_feed(today=today)
+    follow_ups = [
+        item for item in feed
+        if item["type"] == "waiting_follow_up"
+    ]
+
+    assert [item["title"] for item in follow_ups] == [
+        "Call missionary about missing document"
+    ]
+    assert follow_ups[0]["target_date"] == today
+    assert follow_ups[0]["detail"] == "Normal waiting follow-up due today."
+
+
+def test_feed_includes_ready_tasks_without_due_date_once(monkeypatch):
+    today = date(2026, 6, 22)
+    session = _session(monkeypatch)
+    try:
+        session.add(
+            SecretaryTask(
+                title="Review complete packet",
+                status="READY",
+                priority="IMPORTANT",
+            )
+        )
+        session.add(
+            SecretaryTask(
+                title="Ready with due date",
+                status="READY",
+                priority="NORMAL",
+                due_date=today,
+            )
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    feed = NotificationFeedService(FakeSettings()).build_feed(today=today)
+    ready_items = [
+        item for item in feed
+        if item["type"] == "ready_task"
+    ]
+
+    assert sorted(item["title"] for item in ready_items) == [
+        "Ready with due date",
+        "Review complete packet",
+    ]
+    review_item = next(
+        item for item in ready_items
+        if item["title"] == "Review complete packet"
+    )
+    due_item = next(
+        item for item in ready_items
+        if item["title"] == "Ready with due date"
+    )
+    assert review_item["target_date"] == today
+    assert review_item["detail"] == "Important task ready for review."
+    assert len([
+        item for item in feed
+        if item.get("task_id") == due_item["task_id"]
+    ]) == 1

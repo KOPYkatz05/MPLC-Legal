@@ -13,6 +13,7 @@ from database.models.secretary_work import (
     MissionaryGroupMember,
     SecretaryProject,
     SecretaryTask,
+    SecretaryTaskHistory,
     SecretaryTaskMissionary,
 )
 from utils.constants import DOCUMENTS, WORKFLOW_STAGES
@@ -352,6 +353,14 @@ class SecretaryWorkService:
             )
             session.add(task)
             session.flush()
+            self._add_task_history(
+                session,
+                task.id,
+                "STATUS",
+                None,
+                task.status,
+                "Task created",
+            )
             self._replace_task_missionaries(session, task.id, linked_ids)
             session.commit()
             session.refresh(task)
@@ -370,6 +379,7 @@ class SecretaryWorkService:
             if task is None:
                 raise SecretaryWorkError("Task not found.")
 
+            old_status = task.status
             if "title" in updates:
                 title = _clean_text(updates["title"])
                 if not title:
@@ -462,6 +472,14 @@ class SecretaryWorkService:
                 task.completed_at = _now()
             elif task.status in VISIBLE_TASK_STATUSES:
                 task.completed_at = None
+            if old_status != task.status:
+                self._add_task_history(
+                    session,
+                    task.id,
+                    "STATUS",
+                    old_status,
+                    task.status,
+                )
 
             session.commit()
             session.refresh(task)
@@ -526,6 +544,7 @@ class SecretaryWorkService:
                 snapshot,
                 affected,
             )
+            history = self._task_history_items(task.id, session)
             workspace = dict(snapshot)
             workspace.update({
                 "days": days,
@@ -557,7 +576,8 @@ class SecretaryWorkService:
                     days,
                     classification,
                 ),
-                "evidence": self._workspace_evidence(snapshot),
+                "evidence": self._workspace_evidence(snapshot, history),
+                "status_history": history,
                 "affected_missionaries": affected,
                 "recommended_steps": self._workspace_recommended_steps(
                     snapshot,
@@ -811,6 +831,9 @@ class SecretaryWorkService:
         missionary_id=None,
         due_range=None,
         task_type=None,
+        related_stage=None,
+        waiting_follow_up=None,
+        waiting_reason=None,
         include_done=False,
     ):
         session = SessionLocal()
@@ -830,8 +853,21 @@ class SecretaryWorkService:
                     )
                 else:
                     query = query.filter(SecretaryTask.task_type == task_type)
+            if related_stage and related_stage != "ALL":
+                query = query.filter(SecretaryTask.related_stage == related_stage)
             if project_id:
                 query = query.filter(SecretaryTask.project_id == project_id)
+            if waiting_follow_up == "due":
+                query = query.filter(
+                    SecretaryTask.status == "WAITING",
+                    SecretaryTask.waiting_follow_up_date.is_not(None),
+                    SecretaryTask.waiting_follow_up_date <= date.today(),
+                )
+            if waiting_reason and waiting_reason != "ALL":
+                query = query.filter(
+                    SecretaryTask.status == "WAITING",
+                    SecretaryTask.waiting_reason == waiting_reason,
+                )
             if missionary_id:
                 linked_task_ids = (
                     session.query(SecretaryTaskMissionary.task_id)
@@ -918,6 +954,12 @@ class SecretaryWorkService:
                 "open": sum(1 for task in tasks if task.status == "OPEN"),
                 "ready": sum(1 for task in tasks if task.status == "READY"),
                 "waiting": sum(1 for task in tasks if task.status == "WAITING"),
+                "follow_up": sum(
+                    1 for task in tasks
+                    if task.status == "WAITING"
+                    and task.waiting_follow_up_date is not None
+                    and task.waiting_follow_up_date <= today
+                ),
                 "overdue": sum(
                     1 for task in tasks
                     if task.due_date is not None and task.due_date < today
@@ -986,6 +1028,9 @@ class SecretaryWorkService:
             "updated_at": project.updated_at,
             "completed_at": project.completed_at,
             "open_tasks": counts["open"],
+            "todo_tasks": counts["todo"],
+            "ready_tasks": counts["ready"],
+            "waiting_tasks": counts["waiting"],
             "done_tasks": done,
             "total_tasks": total,
             "progress": f"{done}/{total} done" if total else "0/0 done",
@@ -1285,12 +1330,17 @@ class SecretaryWorkService:
             "stage_summary": stage_summary,
         }
 
-    def _workspace_evidence(self, snapshot):
+    def _workspace_evidence(self, snapshot, history=None):
+        history = history or []
         evidence = [
             ("Task type", snapshot.get("task_type_label")),
             ("Related stage", snapshot.get("related_stage")),
             ("Related document", snapshot.get("related_document_label")),
             ("Waiting follow-up", snapshot.get("waiting_follow_up_label")),
+            (
+                "Last status change",
+                history[0]["summary"] if history else "",
+            ),
             ("Automation source", snapshot.get("automation_source")),
             ("Automation key", snapshot.get("automation_key")),
             ("Automation status", snapshot.get("automation_status_reason")),
@@ -1311,6 +1361,69 @@ class SecretaryWorkService:
         if not value:
             return ""
         return f"Follow up {value.strftime('%b %d, %Y')}"
+
+    @staticmethod
+    def _add_task_history(
+        session,
+        task_id,
+        event_type,
+        old_value,
+        new_value,
+        note=None,
+    ):
+        session.add(
+            SecretaryTaskHistory(
+                task_id=task_id,
+                event_type=event_type,
+                old_value=old_value,
+                new_value=new_value,
+                note=note,
+            )
+        )
+
+    def _task_history_items(self, task_id, session, limit=6):
+        rows = (
+            session.query(SecretaryTaskHistory)
+            .filter_by(task_id=task_id)
+            .order_by(
+                SecretaryTaskHistory.created_at.desc(),
+                SecretaryTaskHistory.id.desc(),
+            )
+            .limit(limit)
+            .all()
+        )
+        return [
+            {
+                "id": row.id,
+                "event_type": row.event_type,
+                "old_value": row.old_value,
+                "new_value": row.new_value,
+                "note": row.note or "",
+                "created_at": row.created_at,
+                "created_at_text": self._format_workspace_value(row.created_at),
+                "summary": self._task_history_summary(row),
+            }
+            for row in rows
+        ]
+
+    def _task_history_summary(self, row):
+        if row.event_type == "STATUS":
+            old_label = self._status_label(row.old_value)
+            new_label = self._status_label(row.new_value)
+            if row.old_value:
+                return f"{old_label} -> {new_label}"
+            return f"Created as {new_label}"
+        return row.note or row.event_type.title()
+
+    @staticmethod
+    def _status_label(status):
+        return {
+            "OPEN": "To Do",
+            "READY": "Ready",
+            "WAITING": "Waiting",
+            "DONE": "Done",
+            "ARCHIVED": "Archived",
+        }.get(status or "", status or "")
 
     def _workspace_brief_text(
         self,
@@ -1734,10 +1847,16 @@ class SecretaryWorkService:
     def _project_task_counts(self, project_id, session):
         tasks = session.query(SecretaryTask).filter_by(project_id=project_id).all()
         done = sum(1 for task in tasks if task.status == "DONE")
-        open_count = sum(1 for task in tasks if task.status in VISIBLE_TASK_STATUSES)
+        todo = sum(1 for task in tasks if task.status == "OPEN")
+        ready = sum(1 for task in tasks if task.status == "READY")
+        waiting = sum(1 for task in tasks if task.status == "WAITING")
+        open_count = todo + ready + waiting
         return {
             "done": done,
             "open": open_count,
+            "todo": todo,
+            "ready": ready,
+            "waiting": waiting,
             "total": len([task for task in tasks if task.status != "ARCHIVED"]),
         }
 

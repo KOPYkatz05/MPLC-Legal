@@ -13,6 +13,7 @@ from database.models.secretary_work import (
     MissionaryGroupMember,
     SecretaryProject,
     SecretaryTask,
+    SecretaryTaskHistory,
     SecretaryTaskMissionary,
 )
 from services import missionary_group_service as group_service_module
@@ -83,6 +84,40 @@ def test_create_update_complete_and_archive_task(secretary_service):
     assert archived["status"] == "ARCHIVED"
 
 
+def test_task_status_history_tracks_creation_and_transitions(secretary_service):
+    task = secretary_service.create_task("Track status")
+
+    secretary_service.mark_task_ready(task["id"])
+    secretary_service.update_task(
+        task["id"],
+        status="WAITING",
+        waiting_reason="DOCUMENT",
+    )
+    secretary_service.complete_task(task["id"])
+
+    session = service_module.SessionLocal()
+    try:
+        rows = (
+            session.query(SecretaryTaskHistory)
+            .filter_by(task_id=task["id"])
+            .order_by(SecretaryTaskHistory.id)
+            .all()
+        )
+        values = [
+            (row.old_value, row.new_value, row.note or "")
+            for row in rows
+        ]
+    finally:
+        session.close()
+
+    assert values == [
+        (None, "OPEN", "Task created"),
+        ("OPEN", "READY", ""),
+        ("READY", "WAITING", ""),
+        ("WAITING", "DONE", ""),
+    ]
+
+
 def test_ready_status_is_visible_grouped_and_counted(secretary_service, monkeypatch):
     class FakeDate(date):
         @classmethod
@@ -143,6 +178,22 @@ def test_appointment_filter_includes_legacy_appointment_tasks(secretary_service)
     secretary_service.create_task("Document task", task_type="DOCUMENT")
 
     results = secretary_service.list_tasks(task_type="APPOINTMENT")
+
+    assert [task["id"] for task in results] == [target["id"]]
+
+
+def test_filters_by_related_stage(secretary_service):
+    target = secretary_service.create_task(
+        "Review Interpol packet",
+        related_stage="INTERPOL",
+    )
+    secretary_service.create_task(
+        "Review Prorroga packet",
+        related_stage="PRORROGA",
+    )
+    secretary_service.create_task("General office task")
+
+    results = secretary_service.list_tasks(related_stage="INTERPOL")
 
     assert [task["id"] for task in results] == [target["id"]]
 
@@ -271,14 +322,21 @@ def test_task_workspace_uses_manual_task_fallback(secretary_service):
         description="Ask for missing travel confirmation.",
         due_date=date(2026, 6, 12),
     )
+    secretary_service.mark_task_ready(task["id"])
 
     workspace = secretary_service.get_task_workspace(
         task["id"],
         today=date(2026, 6, 13),
     )
 
-    assert workspace["why_text"] == "Ask for missing travel confirmation."
+    assert "Ask for missing travel confirmation." in workspace["why_text"]
     assert workspace["affected_missionaries"] == []
+    assert workspace["status_history"][0]["summary"] == "To Do -> Ready"
+    assert any(
+        item["label"] == "Last status change"
+        and item["value"] == "To Do -> Ready"
+        for item in workspace["evidence"]
+    )
     assert workspace["recommended_steps"][-1] == (
         "Mark this task done when the work is resolved."
     )
@@ -383,6 +441,57 @@ def test_waiting_workspace_surfaces_follow_up_date(secretary_service):
         "Update the waiting reason or notes if the situation changed.",
         "Mark Ready when the needed pieces are available.",
     ]
+
+
+def test_waiting_follow_up_due_filter_and_summary(secretary_service, monkeypatch):
+    class FakeDate(date):
+        @classmethod
+        def today(cls):
+            return cls(2026, 6, 18)
+
+    monkeypatch.setattr(service_module, "date", FakeDate)
+
+    due = secretary_service.create_task(
+        "Follow up today",
+        status="WAITING",
+        waiting_reason="MISSIONARY",
+        waiting_follow_up_date=FakeDate.today(),
+    )
+    secretary_service.create_task(
+        "Follow up later",
+        status="WAITING",
+        waiting_reason="DOCUMENT",
+        waiting_follow_up_date=FakeDate.today() + timedelta(days=1),
+    )
+    secretary_service.create_task(
+        "Waiting without follow-up",
+        status="WAITING",
+        waiting_reason="OTHER",
+    )
+
+    results = secretary_service.list_tasks(waiting_follow_up="due")
+    summary = secretary_service.summary()
+
+    assert [task["id"] for task in results] == [due["id"]]
+    assert summary["follow_up"] == 1
+
+
+def test_filters_by_waiting_reason(secretary_service):
+    target = secretary_service.create_task(
+        "Waiting on missionary",
+        status="WAITING",
+        waiting_reason="MISSIONARY",
+    )
+    secretary_service.create_task(
+        "Waiting on document",
+        status="WAITING",
+        waiting_reason="DOCUMENT",
+    )
+    secretary_service.create_task("Open task")
+
+    results = secretary_service.list_tasks(waiting_reason="MISSIONARY")
+
+    assert [task["id"] for task in results] == [target["id"]]
 
 
 def test_task_workspace_missing_task_raises(secretary_service):
@@ -741,6 +850,12 @@ def test_secretary_task_waiting_reason_migration(monkeypatch):
                 "FROM secretary_task_missionaries"
             )
         ).fetchall()
+        indexes = {
+            row[1]
+            for row in conn.execute(
+                text("PRAGMA index_list(secretary_task_history)")
+            )
+        }
 
     assert "waiting_reason" in columns
     assert "group_id" in columns
@@ -758,6 +873,8 @@ def test_secretary_task_waiting_reason_migration(monkeypatch):
     assert "missionary_groups" in group_tables
     assert "missionary_group_members" in group_tables
     assert "secretary_task_missionaries" in group_tables
+    assert "secretary_task_history" in group_tables
+    assert "idx_secretary_task_history_task_id" in indexes
     assert backfilled_links == [(10, 5)]
 
     with engine.connect() as conn:
@@ -771,6 +888,17 @@ def test_secretary_task_waiting_reason_migration(monkeypatch):
 def test_project_progress_counts_tasks(secretary_service):
     project = secretary_service.create_project("Pickup week")
     open_task = secretary_service.create_task("Open", project_id=project["id"])
+    ready_task = secretary_service.create_task(
+        "Ready",
+        status="READY",
+        project_id=project["id"],
+    )
+    waiting_task = secretary_service.create_task(
+        "Waiting",
+        status="WAITING",
+        waiting_reason="DOCUMENT",
+        project_id=project["id"],
+    )
     done_task = secretary_service.create_task("Done", project_id=project["id"])
     archived_task = secretary_service.create_task("Archived", project_id=project["id"])
     secretary_service.complete_task(done_task["id"])
@@ -778,10 +906,13 @@ def test_project_progress_counts_tasks(secretary_service):
 
     refreshed = secretary_service.list_projects(include_done=True)[0]
 
-    assert refreshed["open_tasks"] == 1
+    assert refreshed["open_tasks"] == 3
+    assert refreshed["todo_tasks"] == 1
+    assert refreshed["ready_tasks"] == 1
+    assert refreshed["waiting_tasks"] == 1
     assert refreshed["done_tasks"] == 1
-    assert refreshed["total_tasks"] == 2
-    assert refreshed["progress"] == "1/2 done"
+    assert refreshed["total_tasks"] == 4
+    assert refreshed["progress"] == "1/4 done"
 
 
 def test_title_is_required(secretary_service):

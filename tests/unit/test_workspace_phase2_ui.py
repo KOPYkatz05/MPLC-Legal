@@ -28,6 +28,12 @@ from ui.pages.missionary_detail_page import (
 )
 from ui.pages.missionary_workspace_page import MissionaryWorkspacePage
 from ui.pages.workspaces_page import WorkspacesPage, WorkspaceBlockPropertiesDialog
+from ui.widgets.editable_canvas import (
+    EditableCanvasState,
+    EditableCanvasScrollArea,
+    align_rect_to_peer,
+    resolve_overlapping_free_rects,
+)
 from ui.widgets.workspace_layout_editor import (
     WorkspaceLayoutEditor,
     WorkspaceLayoutTile,
@@ -516,6 +522,54 @@ def test_missionary_detail_layout_preview_commits_or_rebounds(qapp):
     )
 
 
+def test_shared_free_layout_resolver_cascades_overlapping_blocks():
+    resolved = resolve_overlapping_free_rects(
+        {
+            "moving": QRect(8, 8, 300, 160),
+            "first": QRect(20, 40, 300, 150),
+            "second": QRect(20, 180, 300, 150),
+        },
+        "moving",
+        canvas_width=1180,
+        padding=8,
+        spacing=16,
+    )
+
+    assert not resolved["first"].intersects(resolved["moving"])
+    assert not resolved["second"].intersects(resolved["first"])
+    assert resolved["first"].y() > resolved["moving"].bottom()
+    assert resolved["second"].y() > resolved["first"].bottom()
+
+
+def test_editable_canvas_state_clamps_zoom_and_grid_size():
+    state = EditableCanvasState(
+        min_zoom=0.5,
+        max_zoom=1.5,
+        base_grid_size=96,
+        min_grid_size=56,
+        max_grid_size=180,
+    )
+
+    assert state.set_zoom(9) == 1.5
+    assert state.set_zoom(0.1) == 0.5
+    assert state.fit_width_zoom(956, 920, padding=36) == 1.0
+    assert state.set_grid_size(999) == 180
+    assert state.set_grid_size(12) == 56
+
+
+def test_shared_peer_rect_alignment_uses_nearest_block_edge():
+    aligned, changed = align_rect_to_peer(
+        QRect(4, 6, 4, 2),
+        [QRect(2, 2, 4, 2), QRect(9, 9, 3, 2)],
+        "left",
+        bounds=QRect(0, 0, 12, 100),
+    )
+
+    assert changed is True
+    assert aligned.x() == 2
+    assert aligned.y() == 6
+
+
 def test_workspace_layout_editor_modern_actions(qapp):
     _ = qapp
     workspace = new_workspace("Actions")
@@ -571,7 +625,7 @@ def test_workspace_layout_editor_clipboard_and_alignment(qapp):
     assert len(workspace["blocks"]) == 2
 
     editor.align_selected("right")
-    assert workspace["blocks"][1]["layout"]["col"] == 6
+    assert workspace["blocks"][1]["layout"]["col"] == workspace["blocks"][0]["layout"]["col"]
 
     editor.align_selected("fit_width")
     assert workspace["blocks"][1]["layout"]["col"] == 0
@@ -579,6 +633,22 @@ def test_workspace_layout_editor_clipboard_and_alignment(qapp):
 
     editor.nudge_selected(row_delta=2, col_delta=1)
     assert workspace["blocks"][1]["layout"]["row"] >= 2
+
+
+def test_workspace_layout_editor_aligns_single_block_to_peer_edges(qapp):
+    _ = qapp
+    workspace = new_workspace("Peer Align")
+    editor = WorkspaceLayoutEditor(lambda block_type: block_type)
+    editor.set_workspace(workspace)
+    anchor = editor.add_block_at("documents", row=2, col=2)
+    moving = editor.add_block_at("notes", row=6, col=8)
+
+    editor.set_selected_block(moving["id"])
+    editor.align_selected("left")
+    assert editor._block(moving["id"])["layout"]["col"] == anchor["layout"]["col"]
+
+    editor.align_selected("top")
+    assert editor._block(moving["id"])["layout"]["row"] == anchor["layout"]["row"]
 
 
 def test_workspace_layout_editor_multi_select_alignment_and_distribution(qapp):
@@ -1009,7 +1079,7 @@ def test_workspace_palette_label_area_is_draggable_target(qapp):
     button.show()
     qapp.processEvents()
 
-    label = button.findChild(QLabel, "StrongText")
+    label = button.findChild(QLabel, "WorkspacePaletteTitle")
     hit_widget = QApplication.widgetAt(label.mapToGlobal(label.rect().center()))
 
     assert hit_widget is button
@@ -1619,7 +1689,7 @@ def test_workspaces_page_uses_canvas_without_visible_inspector(qapp):
         splitter.indexOf(page.inspector_panel) == -1
         for splitter in splitters
     )
-    assert page.canvas_scroll is not None
+    assert isinstance(page.canvas_scroll, EditableCanvasScrollArea)
 
 
 def test_workspaces_page_renders_editor_and_preview(qapp):
