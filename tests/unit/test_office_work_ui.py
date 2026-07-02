@@ -1,7 +1,8 @@
-from datetime import date
+from datetime import date, datetime
 from types import SimpleNamespace
 
 from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QLabel
 
 from ui.dialogs import office_work_dialogs
 from ui.dialogs.office_work_dialogs import ProjectDialog, TaskDialog
@@ -19,12 +20,14 @@ class FakeSecretaryWorkService:
         self.completed_projects = []
         self.archived_projects = []
         self.last_task_filters = {}
+        self.status_history = []
 
     def summary(self):
         return {
             "open": 1,
             "ready": 1,
             "follow_up": 1,
+            "missing_follow_up": 1,
             "overdue": 1,
             "due_today": 0,
             "waiting": 0,
@@ -114,6 +117,10 @@ class FakeSecretaryWorkService:
                 "member_count": 2,
             }
         ]
+
+    def get_task_status_history(self, task_id):
+        _ = task_id
+        return self.status_history
 
     def complete_task(self, task_id):
         self.completed_tasks.append(task_id)
@@ -283,6 +290,35 @@ def test_task_dialog_starts_with_details_collapsed(qapp):
         dialog.close()
 
 
+def test_task_dialog_shows_recent_status_history(qapp):
+    _ = qapp
+    service = FakeSecretaryWorkService()
+    service.status_history = [
+        {
+            "summary": "To Do -> Ready",
+            "created_at": datetime(2026, 6, 10, 9, 30),
+            "note": "",
+        }
+    ]
+    dialog = TaskDialog(
+        service,
+        task={
+            "id": 4,
+            "title": "Review packet",
+            "status": "READY",
+            "priority": "NORMAL",
+        },
+    )
+
+    try:
+        labels = [label.text() for label in dialog.findChildren(QLabel)]
+
+        assert "Recent Status Changes" in labels
+        assert any("To Do -> Ready" in text for text in labels)
+    finally:
+        dialog.close()
+
+
 def test_task_dialog_requires_waiting_reason(monkeypatch, qapp):
     _ = qapp
     messages = []
@@ -350,6 +386,14 @@ def test_office_work_task_presets_drive_existing_filters(qapp):
         assert page.task_follow_up_filter.currentData() == "due"
         assert page.service.last_task_filters["waiting_follow_up"] == "due"
 
+        page._set_combo_data(page.task_follow_up_filter, "upcoming")
+        page.render_tasks()
+        assert page.service.last_task_filters["waiting_follow_up"] == "upcoming"
+
+        page._set_combo_data(page.task_follow_up_filter, "missing")
+        page.render_tasks()
+        assert page.service.last_task_filters["waiting_follow_up"] == "missing"
+
         page._set_combo_data(page.task_waiting_reason_filter, "MISSIONARY")
         page.render_tasks()
         assert page.service.last_task_filters["waiting_reason"] == "MISSIONARY"
@@ -358,8 +402,21 @@ def test_office_work_task_presets_drive_existing_filters(qapp):
         page.render_tasks()
         assert page.service.last_task_filters["related_stage"] == "INTERPOL"
 
+        page._set_combo_data(page.task_document_filter, "PASSPORT")
+        page.render_tasks()
+        assert (
+            page.service.last_task_filters["related_document_type"]
+            == "PASSPORT"
+        )
+
+        page._set_combo_data(page.task_source_filter, "AUTO")
+        page.render_tasks()
+        assert page.service.last_task_filters["automation_state"] == "AUTO"
+
         page._apply_task_preset("appointments")
         assert page.task_type_filter.currentData() == "APPOINTMENT"
+        assert page.task_document_filter.currentData() == "ALL"
+        assert page.task_source_filter.currentData() == "ALL"
 
         page._apply_task_preset("critical")
         assert page.task_priority_filter.currentData() == "CRITICAL"

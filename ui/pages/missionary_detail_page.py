@@ -93,7 +93,11 @@ from services.workspace_layout import (
     validate_block_layout,
 )
 from ui.widgets.workspace_layout_editor import WorkspaceLayoutEditor
-from ui.widgets.editable_canvas import resolve_overlapping_free_rects
+from ui.widgets.editable_canvas import (
+    EditableCanvasEditorKit,
+    EditableCanvasState,
+    FreeLayoutEditSession,
+)
 from ui.widgets.missionary_block_widgets import (
     build_document_card,
     build_empty_state_card,
@@ -499,6 +503,20 @@ class MissionaryDetailPage(QWidget):
         self._layout_drag_targets = set()
         self._layout_drag_accepts = {}
         self._layout_animation_group = None
+        self._free_layout_session = None
+        self.layout_editor_kit = EditableCanvasEditorKit(
+            state=EditableCanvasState(
+                zoom=1.0,
+                min_zoom=0.5,
+                max_zoom=1.8,
+                zoom_step=0.1,
+                base_grid_size=DETAIL_LAYOUT_GRID_ROW_HEIGHT,
+                min_grid_size=80,
+                max_grid_size=240,
+            ),
+            parent=self,
+        )
+        self._layout_canvas_state = self.layout_editor_kit.state
 
         self.setup_ui()
 
@@ -955,6 +973,18 @@ class MissionaryDetailPage(QWidget):
             self.layout_edit_banner_hint,
             stretch=1,
         )
+        self.layout_canvas_controls = self.layout_editor_kit.create_controls(
+            show_grid=False
+        )
+        self.layout_canvas_controls.zoomOutRequested.connect(self._zoom_detail_layout_out)
+        self.layout_canvas_controls.zoomResetRequested.connect(self._reset_detail_layout_zoom)
+        self.layout_canvas_controls.zoomInRequested.connect(self._zoom_detail_layout_in)
+        self.layout_canvas_controls.zoomFitRequested.connect(self._fit_detail_layout_zoom)
+        self.layout_zoom_out_button = self.layout_canvas_controls.zoom_out_btn
+        self.layout_zoom_reset_button = self.layout_canvas_controls.zoom_reset_btn
+        self.layout_zoom_in_button = self.layout_canvas_controls.zoom_in_btn
+        self.layout_zoom_fit_button = self.layout_canvas_controls.zoom_fit_btn
+        layout_edit_banner_layout.addWidget(self.layout_canvas_controls)
         main_layout.addWidget(self.layout_edit_banner)
 
         # ==========================================
@@ -1092,9 +1122,13 @@ class MissionaryDetailPage(QWidget):
 
         overview_tab.setLayout(tab_layout)
 
-        scroll = create_scroll_area(single_direction=True)
+        scroll = self.layout_editor_kit.create_scroll_area()
         scroll.setObjectName("PageSurface")
-        tune_fluent_scrollable(scroll)
+        self.overview_canvas_scroll = scroll
+        scroll.zoomRequested.connect(
+            lambda factor, pos, area=scroll:
+            self._zoom_detail_layout_canvas_by(area, factor, pos)
+        )
 
         content = QWidget()
 
@@ -1144,6 +1178,103 @@ class MissionaryDetailPage(QWidget):
             "details",
         )
 
+    def _layout_canvas_zoom(self):
+        state = getattr(self, "_layout_canvas_state", None)
+        return state.zoom if state is not None else 1.0
+
+    def _scaled_layout_rect(self, rect):
+        zoom = self._layout_canvas_zoom()
+        return QRect(
+            int(round(rect.x() * zoom)),
+            int(round(rect.y() * zoom)),
+            int(round(rect.width() * zoom)),
+            int(round(rect.height() * zoom)),
+        )
+
+    def _logical_layout_rect(self, rect):
+        zoom = max(self._layout_canvas_zoom(), 0.01)
+        return QRect(
+            int(round(rect.x() / zoom)),
+            int(round(rect.y() / zoom)),
+            int(round(rect.width() / zoom)),
+            int(round(rect.height() / zoom)),
+        )
+
+    def _zoom_detail_layout_canvas_by(self, scroll, factor, anchor_pos):
+        state = getattr(self, "_layout_canvas_state", None)
+        if state is None:
+            return
+        old_zoom = max(state.zoom, 0.01)
+        state.set_zoom(old_zoom * factor)
+        if state.zoom == old_zoom:
+            return
+        scale_ratio = state.zoom / old_zoom
+        anchor_x = scroll.horizontalScrollBar().value() + anchor_pos.x()
+        anchor_y = scroll.verticalScrollBar().value() + anchor_pos.y()
+        self._apply_current_detail_layouts()
+        scroll.horizontalScrollBar().setValue(
+            int(anchor_x * scale_ratio) - anchor_pos.x()
+        )
+        scroll.verticalScrollBar().setValue(
+            int(anchor_y * scale_ratio) - anchor_pos.y()
+        )
+        self._refresh_detail_layout_zoom_label()
+
+    def _set_detail_layout_zoom(self, value):
+        state = getattr(self, "_layout_canvas_state", None)
+        if state is None:
+            return
+        state.set_zoom(value)
+        self._apply_current_detail_layouts()
+        self._refresh_detail_layout_zoom_label()
+
+    def _zoom_detail_layout_in(self, checked=False):
+        _ = checked
+        state = getattr(self, "_layout_canvas_state", None)
+        if state is not None:
+            self._set_detail_layout_zoom(state.zoom + state.zoom_step)
+
+    def _zoom_detail_layout_out(self, checked=False):
+        _ = checked
+        state = getattr(self, "_layout_canvas_state", None)
+        if state is not None:
+            self._set_detail_layout_zoom(state.zoom - state.zoom_step)
+
+    def _reset_detail_layout_zoom(self, checked=False):
+        _ = checked
+        self._set_detail_layout_zoom(1.0)
+
+    def _fit_detail_layout_zoom(self, checked=False):
+        _ = checked
+        state = getattr(self, "_layout_canvas_state", None)
+        scroll = self._active_detail_canvas_scroll()
+        if state is None or scroll is None:
+            return
+        state.fit_width_zoom(
+            scroll.viewport().width(),
+            DETAIL_LAYOUT_CANVAS_WIDTH,
+            padding=40,
+        )
+        self._apply_current_detail_layouts()
+        self._refresh_detail_layout_zoom_label()
+
+    def _active_detail_canvas_scroll(self):
+        for attr_name in (
+            "overview_canvas_scroll",
+            "details_canvas_scroll",
+            "legacy_details_canvas_scroll",
+        ):
+            scroll = getattr(self, attr_name, None)
+            if scroll is not None and scroll.isVisible():
+                return scroll
+        return getattr(self, "overview_canvas_scroll", None)
+
+    def _refresh_detail_layout_zoom_label(self):
+        controls = getattr(self, "layout_canvas_controls", None)
+        state = getattr(self, "_layout_canvas_state", None)
+        if controls is not None and state is not None:
+            controls.set_zoom_percent(state.zoom)
+
     def _apply_layout_to_canvas(self, canvas, sections, tab_key):
         layout_payload = self._current_detail_layout_payload()
         max_bottom = 0
@@ -1160,10 +1291,11 @@ class MissionaryDetailPage(QWidget):
                 continue
             self._mark_layout_section(section, section_key, tab_key)
             rect = self._free_rect_for_block(block)
-            max_bottom = max(max_bottom, rect.bottom())
+            visual_rect = self._scaled_layout_rect(rect)
+            max_bottom = max(max_bottom, visual_rect.bottom())
             used_sections.add(section_key)
             section.setParent(canvas)
-            geometry_updates.append((section, rect))
+            geometry_updates.append((section, visual_rect))
             section.show()
 
         next_y = max_bottom + OVERVIEW_CONTENT_SPACING
@@ -1171,18 +1303,25 @@ class MissionaryDetailPage(QWidget):
             if section_key in used_sections:
                 continue
             self._mark_layout_section(section, section_key, tab_key)
+            logical_next_y = int(
+                round(next_y / max(self._layout_canvas_zoom(), 0.01))
+            )
             rect = QRect(
                 DETAIL_LAYOUT_CANVAS_PADDING,
-                max(DETAIL_LAYOUT_CANVAS_PADDING, next_y),
+                max(DETAIL_LAYOUT_CANVAS_PADDING, logical_next_y),
                 DETAIL_LAYOUT_CANVAS_WIDTH - (DETAIL_LAYOUT_CANVAS_PADDING * 2),
                 DETAIL_LAYOUT_GRID_ROW_HEIGHT,
             )
+            visual_rect = self._scaled_layout_rect(rect)
             section.setParent(canvas)
             section.show()
-            next_y = rect.bottom() + OVERVIEW_CONTENT_SPACING
-            max_bottom = max(max_bottom, rect.bottom())
-            geometry_updates.append((section, rect))
+            next_y = visual_rect.bottom() + OVERVIEW_CONTENT_SPACING
+            max_bottom = max(max_bottom, visual_rect.bottom())
+            geometry_updates.append((section, visual_rect))
 
+        canvas.setMinimumWidth(
+            int(round(DETAIL_LAYOUT_CANVAS_WIDTH * self._layout_canvas_zoom()))
+        )
         canvas.setMinimumHeight(
             max(max_bottom + DETAIL_LAYOUT_CANVAS_PADDING, 320)
         )
@@ -1201,6 +1340,31 @@ class MissionaryDetailPage(QWidget):
         ):
             return self._layout_edit_payload
         return self.detail_layout_service.get_layout()
+
+    def _layout_edit_session(self):
+        session = getattr(self, "_free_layout_session", None)
+        if session is None:
+            kit = getattr(self, "layout_editor_kit", None)
+            factory = (
+                kit.create_free_layout_session
+                if kit is not None
+                else FreeLayoutEditSession
+            )
+            session = factory(
+                DETAIL_LAYOUT_CANVAS_WIDTH,
+                padding=DETAIL_LAYOUT_CANVAS_PADDING,
+                spacing=OVERVIEW_CONTENT_SPACING,
+                rect_for_block=self._free_rect_for_block,
+                layout_from_rect=self._free_layout_from_rect,
+                bound_rect=self._bounded_free_rect,
+            )
+            self._free_layout_session = session
+        if (
+            getattr(self, "_layout_edit_payload", None)
+            and session.edit_payload is None
+        ):
+            session.set_payload(self._layout_edit_payload)
+        return session
 
     def _apply_layout_section_geometries(self, geometry_updates):
         if not geometry_updates:
@@ -1468,7 +1632,7 @@ class MissionaryDetailPage(QWidget):
                     "key": section_key,
                     "mode": handle or "move",
                     "global_pos": self._event_global_pos(event),
-                    "start_rect": QRect(section.geometry()),
+                    "start_rect": self._logical_layout_rect(section.geometry()),
                     "base_payload": json.loads(
                         json.dumps(self._layout_edit_payload or {})
                     ),
@@ -1541,7 +1705,12 @@ class MissionaryDetailPage(QWidget):
         state = self._layout_drag_state
         if not state:
             return None
-        delta = self._event_global_pos(event) - state["global_pos"]
+        raw_delta = self._event_global_pos(event) - state["global_pos"]
+        zoom = max(self._layout_canvas_zoom(), 0.01)
+        delta = QPoint(
+            int(round(raw_delta.x() / zoom)),
+            int(round(raw_delta.y() / zoom)),
+        )
         rect = QRect(state["start_rect"])
         mode = state["mode"]
         if mode == "move":
@@ -1574,22 +1743,15 @@ class MissionaryDetailPage(QWidget):
             if self._layout_drag_state
             else self._layout_edit_payload
         )
-        if not source_payload:
-            return False
-        self._layout_preview_payload = json.loads(json.dumps(source_payload))
-        block = self._layout_block_for_section(
+        session = self._layout_edit_session()
+        preview_payload = session.preview(
             section_key,
-            self._layout_preview_payload,
+            rect,
+            source_payload=source_payload,
         )
-        if block is None:
+        if not preview_payload:
             return False
-        rect = self._bounded_free_rect(rect)
-        block["free_layout"] = self._free_layout_from_rect(rect)
-        self._push_overlapping_free_layouts(
-            block.get("tab", "overview"),
-            section_key,
-            self._layout_preview_payload,
-        )
+        self._layout_preview_payload = preview_payload
         self._apply_current_detail_layouts(
             duration=DETAIL_LAYOUT_PREVIEW_ANIMATION_MS,
             easing=QEasingCurve.OutCubic,
@@ -1609,43 +1771,16 @@ class MissionaryDetailPage(QWidget):
         moving_section_key,
         payload=None,
     ):
-        payload = payload or self._layout_preview_payload or self._layout_edit_payload
-        if not payload:
-            return
-        tab_blocks = [
-            block
-            for block in payload.get("blocks", [])
-            if block.get("tab", "overview") == tab_key
-        ]
-        rects = {
-            (block.get("type") or block.get("id")): self._free_rect_for_block(block)
-            for block in tab_blocks
-        }
-        moving_rect = rects.get(moving_section_key)
-        if moving_rect is None:
-            return
-
-        resolved_rects = resolve_overlapping_free_rects(
-            rects,
+        self._layout_edit_session().resolve_overlaps(
+            tab_key,
             moving_section_key,
-            DETAIL_LAYOUT_CANVAS_WIDTH,
-            padding=DETAIL_LAYOUT_CANVAS_PADDING,
-            spacing=OVERVIEW_CONTENT_SPACING,
+            payload=payload,
         )
-        for block in tab_blocks:
-            section_key = block.get("type") or block.get("id")
-            if section_key == moving_section_key:
-                continue
-            resolved = resolved_rects.get(section_key)
-            original = rects.get(section_key)
-            if resolved is None or original is None or resolved == original:
-                continue
-            bounded = self._bounded_free_rect(resolved)
-            block["free_layout"] = self._free_layout_from_rect(bounded)
 
     def _commit_layout_preview(self):
-        if self._layout_preview_payload:
-            self._layout_edit_payload = self._layout_preview_payload
+        committed_payload = self._layout_edit_session().commit()
+        if committed_payload:
+            self._layout_edit_payload = committed_payload
         self._layout_preview_payload = None
         self._layout_drag_state = None
         self._apply_current_detail_layouts(
@@ -1654,6 +1789,7 @@ class MissionaryDetailPage(QWidget):
         )
 
     def _rebound_layout_preview(self):
+        self._layout_edit_session().rebound()
         self._layout_preview_payload = None
         self._layout_drag_state = None
         self._apply_current_detail_layouts(
@@ -1924,8 +2060,12 @@ class MissionaryDetailPage(QWidget):
 
         details_outer.setLayout(outer_layout)
 
-        scroll = create_scroll_area(single_direction=True)
-        tune_fluent_scrollable(scroll)
+        scroll = self.layout_editor_kit.create_scroll_area()
+        self.legacy_details_canvas_scroll = scroll
+        scroll.zoomRequested.connect(
+            lambda factor, pos, area=scroll:
+            self._zoom_detail_layout_canvas_by(area, factor, pos)
+        )
 
         details_content = QWidget()
 
@@ -2101,8 +2241,12 @@ class MissionaryDetailPage(QWidget):
         outer_layout.setContentsMargins(0, 0, 0, 0)
         details_outer.setLayout(outer_layout)
 
-        scroll = create_scroll_area(single_direction=True)
-        tune_fluent_scrollable(scroll)
+        scroll = self.layout_editor_kit.create_scroll_area()
+        self.details_canvas_scroll = scroll
+        scroll.zoomRequested.connect(
+            lambda factor, pos, area=scroll:
+            self._zoom_detail_layout_canvas_by(area, factor, pos)
+        )
 
         details_content = QWidget()
         details_content.setObjectName("PageSurface")
@@ -2939,6 +3083,9 @@ class MissionaryDetailPage(QWidget):
             self.layout_edit_banner_hint.setText(
                 tr("missionary_detail_layout_editing_hint")
             )
+        if hasattr(self, "layout_canvas_controls"):
+            self.layout_canvas_controls.retranslate_ui()
+            self._refresh_detail_layout_zoom_label()
         if hasattr(self, "actions_button"):
             self.actions_button.setText(tr("missionary_detail_actions"))
         if hasattr(self, "print_interpol_packet_action"):
@@ -3136,6 +3283,7 @@ class MissionaryDetailPage(QWidget):
             json.dumps(self.detail_layout_service.get_layout())
         )
         self._layout_preview_payload = None
+        self._layout_edit_session().set_payload(self._layout_edit_payload)
         self._layout_editing = True
         self._set_layout_edit_controls_visible(True)
         self._apply_current_detail_layouts()
@@ -3145,7 +3293,7 @@ class MissionaryDetailPage(QWidget):
         if not self._layout_editing or not self._layout_edit_payload:
             return
         if self._layout_preview_payload:
-            self._layout_edit_payload = self._layout_preview_payload
+            self._layout_edit_payload = self._layout_edit_session().commit()
             self._layout_preview_payload = None
         self.detail_layout_service.save_layout(self._layout_edit_payload)
         self._finish_layout_editing(
@@ -3174,6 +3322,7 @@ class MissionaryDetailPage(QWidget):
         self._layout_edit_payload = MissionaryDetailLayoutService.default_layout()
         self._layout_preview_payload = None
         self._layout_drag_state = None
+        self._layout_edit_session().set_payload(self._layout_edit_payload)
         self._apply_current_detail_layouts(
             duration=DETAIL_LAYOUT_REBOUND_ANIMATION_MS,
             easing=QEasingCurve.OutBack,
@@ -3188,6 +3337,7 @@ class MissionaryDetailPage(QWidget):
         self._layout_edit_payload = None
         self._layout_preview_payload = None
         self._layout_drag_state = None
+        self._layout_edit_session().set_payload(None)
         self._set_layout_edit_controls_visible(False)
         self._apply_current_detail_layouts(duration=duration, easing=easing)
         self._refresh_layout_drag_targets()

@@ -117,6 +117,31 @@ def test_task_status_history_tracks_creation_and_transitions(secretary_service):
         ("WAITING", "DONE", ""),
     ]
 
+    history = secretary_service.get_task_status_history(task["id"])
+
+    assert history[0]["summary"] == "Waiting -> Done"
+    assert history[-1]["summary"] == "Created as To Do"
+
+
+def test_obsolete_automatic_archive_records_status_history(secretary_service):
+    task = secretary_service.create_task(
+        "Generated task",
+        automation_key="auto:stale",
+        automation_source="process_automation",
+    )
+
+    archived = secretary_service.archive_obsolete_automatic_tasks(
+        active_keys=[],
+        source="process_automation",
+        prefixes=["auto:"],
+        reason="No longer current",
+    )
+    history = secretary_service.get_task_status_history(task["id"])
+
+    assert archived == 1
+    assert history[0]["summary"] == "To Do -> Archived"
+    assert history[0]["note"] == "No longer current"
+
 
 def test_ready_status_is_visible_grouped_and_counted(secretary_service, monkeypatch):
     class FakeDate(date):
@@ -196,6 +221,37 @@ def test_filters_by_related_stage(secretary_service):
     results = secretary_service.list_tasks(related_stage="INTERPOL")
 
     assert [task["id"] for task in results] == [target["id"]]
+
+
+def test_filters_by_related_document_type(secretary_service):
+    target = secretary_service.create_task(
+        "Review passport",
+        related_document_type="PASSPORT",
+    )
+    secretary_service.create_task(
+        "Review FBI",
+        related_document_type="FBI",
+    )
+    secretary_service.create_task("General office task")
+
+    results = secretary_service.list_tasks(related_document_type="PASSPORT")
+
+    assert [task["id"] for task in results] == [target["id"]]
+
+
+def test_filters_by_automation_state(secretary_service):
+    manual = secretary_service.create_task("Manual follow-up")
+    automated = secretary_service.create_task(
+        "Generated passport reminder",
+        automation_key="auto:passport",
+        automation_source="process_automation",
+    )
+
+    auto_results = secretary_service.list_tasks(automation_state="AUTO")
+    manual_results = secretary_service.list_tasks(automation_state="MANUAL")
+
+    assert [task["id"] for task in auto_results] == [automated["id"]]
+    assert [task["id"] for task in manual_results] == [manual["id"]]
 
 
 def test_automatic_task_preserves_completed_task(secretary_service):
@@ -451,29 +507,58 @@ def test_waiting_follow_up_due_filter_and_summary(secretary_service, monkeypatch
 
     monkeypatch.setattr(service_module, "date", FakeDate)
 
-    due = secretary_service.create_task(
-        "Follow up today",
+    today_due = secretary_service.create_task(
+        "A follow up today",
         status="WAITING",
         waiting_reason="MISSIONARY",
         waiting_follow_up_date=FakeDate.today(),
     )
-    secretary_service.create_task(
+    overdue = secretary_service.create_task(
+        "Z overdue follow-up",
+        status="WAITING",
+        waiting_reason="PAYMENT",
+        waiting_follow_up_date=FakeDate.today() - timedelta(days=2),
+    )
+    upcoming = secretary_service.create_task(
         "Follow up later",
         status="WAITING",
         waiting_reason="DOCUMENT",
         waiting_follow_up_date=FakeDate.today() + timedelta(days=1),
     )
-    secretary_service.create_task(
+    missing = secretary_service.create_task(
         "Waiting without follow-up",
         status="WAITING",
         waiting_reason="OTHER",
     )
+    secretary_service.create_task("Open task without follow-up")
 
     results = secretary_service.list_tasks(waiting_follow_up="due")
+    upcoming_results = secretary_service.list_tasks(waiting_follow_up="upcoming")
+    missing_results = secretary_service.list_tasks(waiting_follow_up="missing")
     summary = secretary_service.summary()
+    grouped = secretary_service.grouped_tasks()
 
-    assert [task["id"] for task in results] == [due["id"]]
-    assert summary["follow_up"] == 1
+    assert [task["id"] for task in results] == [overdue["id"], today_due["id"]]
+    assert [task["id"] for task in upcoming_results] == [upcoming["id"]]
+    assert [task["id"] for task in missing_results] == [missing["id"]]
+    assert summary["follow_up"] == 2
+    assert summary["missing_follow_up"] == 1
+    assert [task["id"] for task in grouped["follow_up_due"]] == [
+        overdue["id"],
+        today_due["id"],
+    ]
+    assert today_due["id"] not in [
+        task["id"]
+        for group_key, tasks in grouped.items()
+        if group_key != "follow_up_due"
+        for task in tasks
+    ]
+    assert overdue["id"] not in [
+        task["id"]
+        for group_key, tasks in grouped.items()
+        if group_key != "follow_up_due"
+        for task in tasks
+    ]
 
 
 def test_filters_by_waiting_reason(secretary_service):

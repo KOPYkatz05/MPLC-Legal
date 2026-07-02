@@ -22,17 +22,14 @@ from services.workspace_service import WorkspaceService, new_workspace
 from ui.foundation import (
     DialogFooter,
     create_button,
-    create_check_box,
     create_combo_box,
     create_line_edit,
     create_list_widget,
     create_plain_text_edit,
-    create_search_edit,
-    create_scroll_area,
     show_message,
 )
 from ui.widgets.workspace_layout_editor import WorkspaceLayoutEditor, WorkspacePaletteButton
-from ui.widgets.editable_canvas import EditableCanvasScrollArea
+from ui.widgets.editable_canvas import EditableCanvasEditorKit
 from utils.constants import DOCUMENTS
 from utils.language_helper import ui_text as tr
 
@@ -345,6 +342,8 @@ class WorkspacesPage(QWidget):
         top_layout.addWidget(self.workspace_save_btn)
         root.addWidget(top)
 
+        self.editor_kit = EditableCanvasEditorKit(parent=self)
+
         splitter = QSplitter(Qt.Horizontal)
         splitter.setObjectName("WorkspaceBuilderSplitter")
         splitter.setChildrenCollapsible(False)
@@ -376,29 +375,22 @@ class WorkspacesPage(QWidget):
         self.workspaces_list.currentItemChanged.connect(self._workspace_selection_changed)
         left_layout.addWidget(self.workspaces_list, stretch=1)
 
-        library_header = QVBoxLayout()
-        library_header.setContentsMargins(0, 6, 0, 0)
-        library_header.setSpacing(2)
-        self.palette_label = QLabel(tr("workspace_blocks"))
-        palette_label = self.palette_label
-        palette_label.setObjectName("WorkspacePanelTitle")
-        self.palette_hint_label = QLabel(tr("workspace_blocks_hint"))
-        self.palette_hint_label.setObjectName("WorkspacePanelHint")
-        self.palette_hint_label.setWordWrap(True)
-        library_header.addWidget(palette_label)
-        library_header.addWidget(self.palette_hint_label)
-        left_layout.addLayout(library_header)
-        self.palette_search = create_search_edit(tr("workspace_search_blocks"))
-        self.palette_search.textChanged.connect(self._refresh_palette)
-        left_layout.addWidget(self.palette_search)
-        palette_scroll = create_scroll_area("WorkspacePaletteScroll", transparent=True)
-        self.palette_body = QWidget()
-        self.palette_body_layout = QVBoxLayout()
-        self.palette_body_layout.setContentsMargins(0, 0, 0, 0)
-        self.palette_body_layout.setSpacing(8)
-        self.palette_body.setLayout(self.palette_body_layout)
-        palette_scroll.setWidget(self.palette_body)
-        left_layout.addWidget(palette_scroll, stretch=2)
+        self.block_library_panel = self.editor_kit.create_block_library(
+            BLOCK_CATEGORIES,
+            self._block_label,
+            self._make_palette_button,
+            tr("workspace_blocks"),
+            tr("workspace_blocks_hint"),
+            tr("workspace_search_blocks"),
+            tr("workspace_no_blocks_match"),
+        )
+        self.block_library_panel.blockAddRequested.connect(self._add_palette_block)
+        self.palette_label = self.block_library_panel.title_label
+        self.palette_hint_label = self.block_library_panel.hint_label
+        self.palette_search = self.block_library_panel.search
+        self.palette_body = self.block_library_panel.body
+        self.palette_body_layout = self.block_library_panel.body_layout
+        left_layout.addWidget(self.block_library_panel, stretch=2)
         splitter.addWidget(left)
 
         center = QFrame()
@@ -418,21 +410,20 @@ class WorkspacesPage(QWidget):
         toolbar_frame.setLayout(toolbar)
         self.undo_btn = create_button(tr("workspace_undo"), "secondary")
         self.redo_btn = create_button(tr("workspace_redo"), "secondary")
-        self.zoom_out_btn = create_button("-", "secondary")
-        self.zoom_reset_btn = create_button("100%", "secondary")
-        self.zoom_in_btn = create_button("+", "secondary")
-        self.zoom_fit_btn = create_button(tr("workspace_zoom_fit"), "secondary")
-        self.grid_toggle = create_check_box(
-            tr("workspace_show_grid"),
-            "WorkspaceGridToggle",
+        self.canvas_controls = self.editor_kit.create_controls(
+            show_grid=True,
+            grid_min=56,
+            grid_max=180,
+            grid_step=8,
+            grid_value=96,
+            grid_suffix=tr("workspace_grid_px"),
         )
-        self.grid_toggle.setChecked(True)
-        self.grid_size_spin = QSpinBox()
-        self.grid_size_spin.setObjectName("WorkspaceGridSizeSpin")
-        self.grid_size_spin.setRange(56, 180)
-        self.grid_size_spin.setSingleStep(8)
-        self.grid_size_spin.setValue(96)
-        self.grid_size_spin.setSuffix(f" {tr('workspace_grid_px')}")
+        self.zoom_out_btn = self.canvas_controls.zoom_out_btn
+        self.zoom_reset_btn = self.canvas_controls.zoom_reset_btn
+        self.zoom_in_btn = self.canvas_controls.zoom_in_btn
+        self.zoom_fit_btn = self.canvas_controls.zoom_fit_btn
+        self.grid_toggle = self.canvas_controls.grid_toggle
+        self.grid_size_spin = self.canvas_controls.grid_size_spin
         self.copy_btn = create_button(tr("workspace_copy"), "secondary")
         self.paste_btn = create_button(tr("workspace_paste"), "secondary")
         self.clear_canvas_btn = create_button(tr("workspace_clear_canvas"), "danger")
@@ -443,12 +434,12 @@ class WorkspacesPage(QWidget):
             self.block_add_combo.addItem(self._block_label(block_type), block_type)
         self.undo_btn.clicked.connect(self._undo)
         self.redo_btn.clicked.connect(self._redo)
-        self.zoom_out_btn.clicked.connect(self._zoom_out)
-        self.zoom_reset_btn.clicked.connect(self._zoom_reset)
-        self.zoom_in_btn.clicked.connect(self._zoom_in)
-        self.zoom_fit_btn.clicked.connect(self._zoom_fit)
-        self.grid_toggle.toggled.connect(self._toggle_workspace_grid)
-        self.grid_size_spin.valueChanged.connect(self._update_workspace_grid_size)
+        self.canvas_controls.zoomOutRequested.connect(self._zoom_out)
+        self.canvas_controls.zoomResetRequested.connect(self._zoom_reset)
+        self.canvas_controls.zoomInRequested.connect(self._zoom_in)
+        self.canvas_controls.zoomFitRequested.connect(self._zoom_fit)
+        self.canvas_controls.gridVisibleChanged.connect(self._toggle_workspace_grid)
+        self.canvas_controls.gridSizeChanged.connect(self._update_workspace_grid_size)
         self.copy_btn.clicked.connect(self._copy_selected_block)
         self.paste_btn.clicked.connect(self._paste_block)
         self.clear_canvas_btn.clicked.connect(self._clear_canvas)
@@ -456,10 +447,6 @@ class WorkspacesPage(QWidget):
         for button in (
             self.undo_btn,
             self.redo_btn,
-            self.zoom_out_btn,
-            self.zoom_reset_btn,
-            self.zoom_in_btn,
-            self.zoom_fit_btn,
             self.copy_btn,
             self.paste_btn,
             self.clear_canvas_btn,
@@ -468,12 +455,7 @@ class WorkspacesPage(QWidget):
             button.setFixedHeight(30)
         toolbar.addWidget(self.undo_btn)
         toolbar.addWidget(self.redo_btn)
-        toolbar.addWidget(self.zoom_out_btn)
-        toolbar.addWidget(self.zoom_reset_btn)
-        toolbar.addWidget(self.zoom_in_btn)
-        toolbar.addWidget(self.zoom_fit_btn)
-        toolbar.addWidget(self.grid_toggle)
-        toolbar.addWidget(self.grid_size_spin)
+        toolbar.addWidget(self.canvas_controls)
         toolbar.addWidget(self.copy_btn)
         toolbar.addWidget(self.paste_btn)
         toolbar.addWidget(self.clear_canvas_btn)
@@ -495,7 +477,7 @@ class WorkspacesPage(QWidget):
         status_row.addWidget(self.shortcut_hint_label)
         center_layout.addLayout(status_row)
 
-        canvas_scroll = EditableCanvasScrollArea()
+        canvas_scroll = self.editor_kit.create_scroll_area()
         canvas_scroll.setObjectName("WorkspaceCanvasScroll")
         self.canvas_scroll = canvas_scroll
         canvas_scroll.zoomRequested.connect(self._zoom_canvas_by)
@@ -649,6 +631,9 @@ class WorkspacesPage(QWidget):
     def _block_label(self, block_type):
         return tr(BLOCK_LABELS.get(block_type, "workspace_block_unsupported"))
 
+    def _make_palette_button(self, block_type):
+        return WorkspacePaletteButton(block_type, self._block_label(block_type))
+
     def _clear_layout(self, layout):
         while layout.count():
             item = layout.takeAt(0)
@@ -660,6 +645,9 @@ class WorkspacesPage(QWidget):
                 self._clear_layout(child_layout)
 
     def _refresh_palette(self):
+        if hasattr(self, "block_library_panel"):
+            self.block_library_panel.refresh()
+            return
         if not hasattr(self, "palette_body_layout"):
             return
         query = self.palette_search.text().strip().lower() if hasattr(self, "palette_search") else ""
@@ -704,14 +692,15 @@ class WorkspacesPage(QWidget):
         self.workspace_new_btn.setText(tr("workspace_new"))
         self.workspace_duplicate_btn.setText(tr("workspace_duplicate"))
         self.workspace_delete_btn.setText(tr("workspace_delete"))
-        self.palette_label.setText(tr("workspace_blocks"))
-        self.palette_hint_label.setText(tr("workspace_blocks_hint"))
-        self.palette_search.setPlaceholderText(tr("workspace_search_blocks"))
+        self.block_library_panel.set_texts(
+            tr("workspace_blocks"),
+            tr("workspace_blocks_hint"),
+            tr("workspace_search_blocks"),
+            tr("workspace_no_blocks_match"),
+        )
         self.undo_btn.setText(tr("workspace_undo"))
         self.redo_btn.setText(tr("workspace_redo"))
-        self.zoom_fit_btn.setText(tr("workspace_zoom_fit"))
-        self.grid_toggle.setText(tr("workspace_show_grid"))
-        self.grid_size_spin.setSuffix(f" {tr('workspace_grid_px')}")
+        self.canvas_controls.retranslate_ui()
         self.copy_btn.setText(tr("workspace_copy"))
         self.paste_btn.setText(tr("workspace_paste"))
         self.clear_canvas_btn.setText(tr("workspace_clear_canvas"))
@@ -1181,7 +1170,7 @@ class WorkspacesPage(QWidget):
         self._refresh_zoom_label()
 
     def _refresh_zoom_label(self):
-        self.zoom_reset_btn.setText(f"{round(self.workspace_layout_editor.zoom * 100)}%")
+        self.canvas_controls.set_zoom_percent(self.workspace_layout_editor.zoom)
 
     def _zoom_canvas_by(self, factor, anchor_view_pos):
         old_zoom = max(self.workspace_layout_editor.zoom, 0.01)

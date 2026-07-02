@@ -451,6 +451,10 @@ class TaskDialog(_OfficeWorkDialogBase):
         details_layout.addWidget(self.waiting_follow_up_field)
         details_layout.addWidget(self.no_waiting_follow_up_check)
 
+        history_widget = self._status_history_widget()
+        if history_widget is not None:
+            details_layout.addWidget(history_widget)
+
         self.body_layout.addWidget(self.details_widget)
         self.details_widget.setVisible(False)
         self.status_combo.currentIndexChanged.connect(
@@ -539,6 +543,39 @@ class TaskDialog(_OfficeWorkDialogBase):
         self.missionary_picker.set_selected_ids(
             self._group_members_by_id.get(group_id, [])
         )
+
+    def _status_history_widget(self):
+        task_id = self.task.get("id")
+        if not task_id or not hasattr(self.service, "get_task_status_history"):
+            return None
+
+        history = self.service.get_task_status_history(task_id)
+        if not history:
+            return None
+
+        frame = QFrame()
+        frame.setObjectName("TaskDialogStatusHistory")
+        layout = QVBoxLayout()
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(6)
+        frame.setLayout(layout)
+
+        title = QLabel("Recent Status Changes")
+        title.setObjectName("OfficeWorkFieldLabel")
+        layout.addWidget(title)
+
+        for item in history:
+            when = item.get("created_at")
+            when_text = when.strftime("%b %d, %Y") if when else ""
+            summary = item.get("summary") or ""
+            note = item.get("note") or ""
+            parts = [part for part in (summary, when_text, note) if part]
+            row = QLabel(" - ".join(parts))
+            row.setObjectName("MutedText")
+            row.setWordWrap(True)
+            layout.addWidget(row)
+
+        return frame
 
 
 class ProjectDialog(_OfficeWorkDialogBase):

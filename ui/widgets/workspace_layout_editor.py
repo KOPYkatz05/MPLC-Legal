@@ -38,7 +38,11 @@ from ui.dialogs.missionary_workspace_dialog import (
     MissionaryWorkspaceContext,
     WorkspaceBlockFactory,
 )
-from ui.widgets.editable_canvas import EditableCanvasState, align_rect_to_peer
+from ui.widgets.editable_canvas import (
+    EditableCanvasState,
+    EditableCanvasEditorKit,
+    align_rect_to_peer,
+)
 from utils.language_helper import ui_text as tr
 
 
@@ -60,6 +64,14 @@ HIDDEN_OVERLAY = QColor(251, 251, 252, 180)
 WORKSPACE_PREVIEW_ANIMATION_MS = 110
 WORKSPACE_COMMIT_ANIMATION_MS = 170
 WORKSPACE_REBOUND_ANIMATION_MS = 240
+WORKSPACE_ARTBOARD_WIDTH = 1004
+WORKSPACE_ARTBOARD_MIN_HEIGHT = 560
+WORKSPACE_ARTBOARD_MARGIN = 28
+WORKSPACE_DIALOG_BODY_WIDTHS = {
+    "medium": 784,
+    "large": 1004,
+    "wide": 1184,
+}
 
 
 def _event_position(event):
@@ -251,8 +263,11 @@ class WorkspaceCanvasSurface(QFrame):
         self.setObjectName("WorkspaceCanvasSurface")
         self.setAcceptDrops(True)
         self.setMouseTracking(True)
-        self.setMinimumSize(920, 560)
-        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.setMinimumSize(
+            max(WORKSPACE_DIALOG_BODY_WIDTHS.values()) + (WORKSPACE_ARTBOARD_MARGIN * 2),
+            WORKSPACE_ARTBOARD_MIN_HEIGHT + (WORKSPACE_ARTBOARD_MARGIN * 2),
+        )
+        self.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         self._marquee_origin = QPoint()
         self._marquee_additive = False
         self._rubber_band = QRubberBand(QRubberBand.Rectangle, self)
@@ -799,20 +814,25 @@ class WorkspaceLayoutEditor(QWidget):
         self.workspace = None
         self.selected_block_id = None
         self.selected_block_ids = []
-        self.canvas_state = EditableCanvasState(
-            zoom=1.0,
-            min_zoom=0.6,
-            max_zoom=1.6,
-            zoom_step=0.1,
-            base_grid_size=96,
-            min_grid_size=56,
-            max_grid_size=180,
+        self.editor_kit = EditableCanvasEditorKit(
+            state=EditableCanvasState(
+                zoom=1.0,
+                min_zoom=0.6,
+                max_zoom=1.6,
+                zoom_step=0.1,
+                base_grid_size=96,
+                min_grid_size=56,
+                max_grid_size=180,
+            ),
+            parent=self,
         )
+        self.canvas_state = self.editor_kit.state
         self._preview_host = WorkspaceEditorPreviewHost()
         self._preview_factory = WorkspaceBlockFactory(self._preview_host)
         self._undo_stack = []
         self._redo_stack = []
         self._interaction_snapshot = None
+        self._grid_edit_session = self.editor_kit.create_grid_layout_session()
         self._clipboard_block = None
         self._clipboard_blocks = []
         self._tile_animation_group = None
@@ -831,11 +851,18 @@ class WorkspaceLayoutEditor(QWidget):
 
         self.surface = WorkspaceCanvasSurface(self)
         self.setFocusPolicy(Qt.StrongFocus)
-        root.addWidget(self.surface)
+        root.addWidget(self.surface, 0, Qt.AlignHCenter | Qt.AlignTop)
+        self._artboard_logical_width = WORKSPACE_ARTBOARD_WIDTH
+        self._artboard_logical_height = WORKSPACE_ARTBOARD_MIN_HEIGHT
+        self._sync_surface_size()
 
     def canvas_rect(self):
-        margin = 28
-        return self.surface.rect().adjusted(margin, margin, -margin, -margin)
+        return QRect(
+            WORKSPACE_ARTBOARD_MARGIN,
+            WORKSPACE_ARTBOARD_MARGIN,
+            int(round(self._artboard_logical_width * self.zoom)),
+            int(round(self._artboard_logical_height * self.zoom)),
+        )
 
     @property
     def zoom(self):
@@ -853,14 +880,18 @@ class WorkspaceLayoutEditor(QWidget):
     def row_height(self):
         return self.canvas_state.scaled_grid_size()
 
+    @property
+    def logical_row_height(self):
+        return self.canvas_state.base_grid_size
+
     def cell_width(self):
         rect = self.canvas_rect()
         return max(1, rect.width() / WORKSPACE_GRID_COLUMNS)
 
     def set_zoom(self, value):
         self.canvas_state.set_zoom(value)
-        self.surface.setMinimumWidth(int(920 * self.zoom))
-        self.render()
+        self._sync_surface_size()
+        self.refresh_tile_geometries(duration=0)
 
     def set_grid_visible(self, visible):
         self.canvas_state.set_grid_visible(visible)
@@ -868,7 +899,48 @@ class WorkspaceLayoutEditor(QWidget):
 
     def set_grid_size(self, value):
         self.canvas_state.set_grid_size(value)
+        self._sync_surface_size()
         self.render()
+
+    def _logical_artboard_height_for_blocks(self, blocks=None):
+        max_row = 0
+        for block in blocks or []:
+            layout = validate_block_layout(block)
+            max_row = max(max_row, layout["row"] + layout["row_span"])
+        content_height = (
+            (max_row + 2) * self.logical_row_height
+            + WORKSPACE_ARTBOARD_MARGIN
+        )
+        return max(WORKSPACE_ARTBOARD_MIN_HEIGHT, content_height)
+
+    def _sync_artboard_width(self):
+        size_key = self.workspace.get("dialog_size") if self.workspace else "large"
+        self._artboard_logical_width = WORKSPACE_DIALOG_BODY_WIDTHS.get(
+            size_key,
+            WORKSPACE_ARTBOARD_WIDTH,
+        )
+
+    def _sync_artboard_height(self):
+        blocks = self.workspace.get("blocks", []) if self.workspace else []
+        self._sync_artboard_width()
+        self._artboard_logical_height = self._logical_artboard_height_for_blocks(blocks)
+        self._sync_surface_size()
+
+    def _sync_surface_size(self):
+        width = int(
+            round(
+                (self._artboard_logical_width * self.zoom)
+                + (WORKSPACE_ARTBOARD_MARGIN * 2)
+            )
+        )
+        height = int(
+            round(
+                (self._artboard_logical_height * self.zoom)
+                + (WORKSPACE_ARTBOARD_MARGIN * 2)
+            )
+        )
+        self.surface.setFixedSize(max(1, width), max(1, height))
+        self.updateGeometry()
 
     def build_block_preview(self, block):
         try:
@@ -903,7 +975,8 @@ class WorkspaceLayoutEditor(QWidget):
     def reset_zoom(self):
         self.set_zoom(self.canvas_state.reset_zoom())
 
-    def fit_width_zoom(self, viewport_width, content_width=920, padding=36):
+    def fit_width_zoom(self, viewport_width, content_width=None, padding=36):
+        content_width = content_width or self._artboard_logical_width
         self.set_zoom(
             self.canvas_state.fit_width_zoom(
                 viewport_width,
@@ -1489,12 +1562,11 @@ class WorkspaceLayoutEditor(QWidget):
     def preview_selected_move(self, start_layouts, row_delta=0, col_delta=0, anchor_id=None):
         if not self.workspace or not start_layouts:
             return
-        updated = []
+        updated_layouts = {}
         moved_ids = set(start_layouts.keys())
         anchor_layout = None
         for block in self.workspace.get("blocks", []):
-            next_block = deepcopy(block)
-            block_id = next_block.get("id")
+            block_id = block.get("id")
             if block_id in moved_ids:
                 layout = dict(start_layouts[block_id])
                 layout["row"] = max(0, layout["row"] + row_delta)
@@ -1505,11 +1577,13 @@ class WorkspaceLayoutEditor(QWidget):
                         layout["col"] + col_delta,
                     ),
                 )
-                next_block["layout"] = validate_block_layout({"layout": layout})
+                updated_layouts[block_id] = validate_block_layout({"layout": layout})
                 if block_id == anchor_id:
-                    anchor_layout = next_block["layout"]
-            updated.append(next_block)
-        self.workspace["blocks"] = updated
+                    anchor_layout = updated_layouts[block_id]
+        self.workspace["blocks"] = self._grid_edit_session.preview_many(
+            self.workspace.get("blocks", []),
+            updated_layouts,
+        )
         self._sync_source()
         if anchor_layout is None and moved_ids:
             anchor_layout = validate_block_layout(
@@ -1707,12 +1781,15 @@ class WorkspaceLayoutEditor(QWidget):
             self._redo_stack.clear()
 
     def begin_interaction(self):
-        if self.workspace and self._interaction_snapshot is None:
-            self._interaction_snapshot = deepcopy(self.workspace.get("blocks", []))
+        if self.workspace and not self._grid_edit_session.has_snapshot():
+            blocks = self.workspace.get("blocks", [])
+            self._grid_edit_session.begin(blocks)
+            self._interaction_snapshot = self._grid_edit_session.snapshot_blocks
 
     def commit_interaction(self):
-        if self._interaction_snapshot is not None:
-            self._undo_stack.append(self._interaction_snapshot)
+        snapshot = self._grid_edit_session.commit()
+        if snapshot is not None:
+            self._undo_stack.append(snapshot)
             self._redo_stack.clear()
             self._interaction_snapshot = None
             self.layoutChanged.emit()
@@ -1723,9 +1800,9 @@ class WorkspaceLayoutEditor(QWidget):
         )
 
     def cancel_interaction(self):
-        if self._interaction_snapshot is None or not self.workspace:
+        if not self._grid_edit_session.has_snapshot() or not self.workspace:
             return False
-        self.workspace["blocks"] = self._interaction_snapshot
+        self.workspace["blocks"] = self._grid_edit_session.rebound()
         self._interaction_snapshot = None
         self._sync_source()
         self.clear_placement_guide()
@@ -1748,7 +1825,7 @@ class WorkspaceLayoutEditor(QWidget):
         layout.update(changes)
         layout, _ = self.snap_layout_to_alignment(layout, block_id=block_id)
         layout, _ = self.resolve_placement(layout, block_id=block_id)
-        self.workspace["blocks"] = update_block_layout(
+        self.workspace["blocks"] = self._grid_edit_session.preview_block(
             self.workspace.get("blocks", []),
             block_id,
             layout,
@@ -1836,6 +1913,7 @@ class WorkspaceLayoutEditor(QWidget):
         self._undo_stack.clear()
         self._redo_stack.clear()
         self._interaction_snapshot = None
+        self._grid_edit_session = self.editor_kit.create_grid_layout_session()
         valid_ids = {
             block.get("id")
             for block in self.workspace.get("blocks", [])
@@ -1986,6 +2064,7 @@ class WorkspaceLayoutEditor(QWidget):
 
     def render(self):
         self._clear_grid()
+        self._sync_artboard_height()
         if not self.workspace:
             empty = QLabel(tr("workspace_no_workspaces"))
             empty.setObjectName("MutedText")
@@ -2007,10 +2086,8 @@ class WorkspaceLayoutEditor(QWidget):
             empty.show()
             self.surface.update()
             return
-        max_row = 0
         for block in blocks:
             layout = validate_block_layout(block)
-            max_row = max(max_row, layout["row"] + layout["row_span"])
             tile = WorkspaceLayoutTile(
                 block,
                 self.block_label_for_type(block.get("type")),
@@ -2021,7 +2098,6 @@ class WorkspaceLayoutEditor(QWidget):
             tile.style().polish(tile)
             tile.setGeometry(self.layout_to_rect(layout))
             tile.show()
-        self.surface.setMinimumHeight(max(560, (max_row + 2) * self.row_height + 56))
         self.surface.update()
 
     def refresh_tile_geometries(
@@ -2044,12 +2120,10 @@ class WorkspaceLayoutEditor(QWidget):
         if not tiles:
             self.render()
             return
-        max_row = 0
         geometry_updates = []
         for block in self.workspace.get("blocks", []):
             block_id = block.get("id")
             layout = validate_block_layout(block)
-            max_row = max(max_row, layout["row"] + layout["row_span"])
             tile = tiles.get(block_id)
             if tile is None:
                 self.render()
@@ -2058,8 +2132,8 @@ class WorkspaceLayoutEditor(QWidget):
             tile.setProperty("selected", block_id in self.selected_block_ids)
             geometry_updates.append((tile, self.layout_to_rect(layout)))
             tile.update()
+        self._sync_artboard_height()
         self._set_tile_geometries(geometry_updates, duration, easing)
-        self.surface.setMinimumHeight(max(560, (max_row + 2) * self.row_height + 56))
         self.surface.update()
 
     def _set_tile_geometries(self, updates, duration, easing):

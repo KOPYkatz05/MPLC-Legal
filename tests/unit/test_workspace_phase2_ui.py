@@ -29,8 +29,13 @@ from ui.pages.missionary_detail_page import (
 from ui.pages.missionary_workspace_page import MissionaryWorkspacePage
 from ui.pages.workspaces_page import WorkspacesPage, WorkspaceBlockPropertiesDialog
 from ui.widgets.editable_canvas import (
+    EditableBlockLibraryPanel,
+    EditableCanvasControls,
+    EditableCanvasEditorKit,
     EditableCanvasState,
     EditableCanvasScrollArea,
+    FreeLayoutEditSession,
+    GridLayoutEditSession,
     align_rect_to_peer,
     resolve_overlapping_free_rects,
 )
@@ -205,6 +210,14 @@ def test_missionary_detail_layout_edit_mode_shows_status_banner(qapp):
         assert page.layout_edit_banner.isVisible() is True
         assert page.layout_edit_banner_title.text() == "Editing layout"
         assert "Drag or resize" in page.layout_edit_banner_hint.text()
+        assert isinstance(page.layout_editor_kit, EditableCanvasEditorKit)
+        assert isinstance(page.layout_canvas_controls, EditableCanvasControls)
+        assert page.layout_zoom_reset_button.text() == "100%"
+        page.layout_zoom_in_button.click()
+        assert page._layout_canvas_state.zoom > 1.0
+        assert page.layout_zoom_reset_button.text() == "110%"
+        page.layout_zoom_reset_button.click()
+        assert page._layout_canvas_state.zoom == 1.0
         assert page.edit_layout_button.isVisible() is False
         assert page.save_layout_button.isVisible() is True
         assert page.actions_button.isVisible() is False
@@ -393,6 +406,62 @@ def test_missionary_detail_details_tab_uses_saved_layout(qapp):
     assert credentials.geometry().y() < summary.geometry().y()
 
 
+def test_missionary_detail_layout_canvas_scales_visual_geometry(qapp):
+    _ = qapp
+    canvas = QWidget()
+    overview = QLabel("Overview")
+
+    layout_payload = {
+        "blocks": [
+            {
+                "id": "overview",
+                "type": "overview",
+                "layout": {
+                    "row": 0,
+                    "col": 0,
+                    "row_span": 1,
+                    "col_span": 12,
+                },
+                "free_layout": {
+                    "x": 20,
+                    "y": 30,
+                    "width": 400,
+                    "height": 180,
+                },
+            },
+        ]
+    }
+
+    page = MissionaryDetailPage.__new__(MissionaryDetailPage)
+    page.overview_layout_canvas = canvas
+    page._overview_sections = {"overview": overview}
+    page.detail_layout_service = SimpleNamespace(get_layout=lambda: layout_payload)
+    page._layout_canvas_state = EditableCanvasState(zoom=1.5)
+
+    MissionaryDetailPage._apply_overview_layout(page)
+
+    assert overview.geometry() == QRect(30, 45, 600, 270)
+    assert layout_payload["blocks"][0]["free_layout"] == {
+        "x": 20,
+        "y": 30,
+        "width": 400,
+        "height": 180,
+    }
+
+
+def test_missionary_detail_layout_drag_rect_converts_zoom_to_logical(qapp):
+    _ = qapp
+    page = MissionaryDetailPage.__new__(MissionaryDetailPage)
+    page._layout_canvas_state = EditableCanvasState(zoom=1.5)
+    visual = QRect(30, 45, 600, 270)
+
+    logical = MissionaryDetailPage._logical_layout_rect(page, visual)
+    scaled = MissionaryDetailPage._scaled_layout_rect(page, logical)
+
+    assert logical == QRect(20, 30, 400, 180)
+    assert scaled == visual
+
+
 def test_missionary_detail_layout_edit_uses_free_card_geometry(qapp):
     _ = qapp
     layout = MissionaryDetailLayoutService.default_layout()
@@ -539,6 +608,131 @@ def test_shared_free_layout_resolver_cascades_overlapping_blocks():
     assert not resolved["second"].intersects(resolved["first"])
     assert resolved["first"].y() > resolved["moving"].bottom()
     assert resolved["second"].y() > resolved["first"].bottom()
+
+
+def test_free_layout_edit_session_previews_commits_and_rebounds():
+    payload = {
+        "blocks": [
+            {
+                "id": "moving",
+                "type": "moving",
+                "tab": "overview",
+                "free_layout": {"x": 8, "y": 8, "width": 300, "height": 160},
+            },
+            {
+                "id": "other",
+                "type": "other",
+                "tab": "overview",
+                "free_layout": {"x": 20, "y": 40, "width": 300, "height": 150},
+            },
+        ]
+    }
+    session = FreeLayoutEditSession(
+        1180,
+        padding=8,
+        spacing=16,
+        rect_for_block=lambda block: QRect(
+            block["free_layout"]["x"],
+            block["free_layout"]["y"],
+            block["free_layout"]["width"],
+            block["free_layout"]["height"],
+        ),
+        layout_from_rect=lambda rect: {
+            "x": rect.x(),
+            "y": rect.y(),
+            "width": rect.width(),
+            "height": rect.height(),
+        },
+        bound_rect=lambda rect: QRect(
+            max(8, rect.x()),
+            max(8, rect.y()),
+            max(220, rect.width()),
+            max(120, rect.height()),
+        ),
+    )
+
+    session.set_payload(payload)
+    preview = session.preview("moving", QRect(20, 40, 300, 160))
+
+    assert preview is not payload
+    assert preview["blocks"][0]["free_layout"]["x"] == 20
+    assert preview["blocks"][1]["free_layout"]["y"] > 40
+    assert payload["blocks"][0]["free_layout"]["x"] == 8
+
+    committed = session.commit()
+    assert committed["blocks"][0]["free_layout"]["x"] == 20
+
+    session.preview("moving", QRect(400, 400, 300, 160))
+    rebound = session.rebound()
+    assert rebound["blocks"][0]["free_layout"]["x"] == 20
+    assert session.preview_payload is None
+
+
+def test_grid_layout_edit_session_previews_commits_and_rebounds():
+    blocks = [
+        {"id": "a", "layout": {"row": 0, "col": 0, "row_span": 2, "col_span": 4}},
+        {"id": "b", "layout": {"row": 3, "col": 4, "row_span": 2, "col_span": 4}},
+    ]
+    session = GridLayoutEditSession()
+    session.begin(blocks)
+
+    preview = session.preview_block(
+        blocks,
+        "a",
+        {"row": 2, "col": 6, "row_span": 2, "col_span": 4},
+    )
+
+    assert preview[0]["layout"]["col"] == 6
+    assert blocks[0]["layout"]["col"] == 0
+
+    multi = session.preview_many(
+        preview,
+        {
+            "a": {"row": 1, "col": 1, "row_span": 2, "col_span": 4},
+            "b": {"row": 4, "col": 7, "row_span": 2, "col_span": 4},
+        },
+    )
+    assert [block["layout"]["col"] for block in multi] == [1, 7]
+
+    snapshot = session.commit()
+    assert snapshot[0]["layout"]["col"] == 0
+
+    session.begin(blocks)
+    session.preview_block(blocks, "a", {"row": 9, "col": 9, "row_span": 2, "col_span": 4})
+    rebound = session.rebound()
+    assert rebound[0]["layout"]["col"] == 0
+
+
+def test_editable_canvas_editor_kit_creates_shared_editor_parts(qapp):
+    _ = qapp
+    kit = EditableCanvasEditorKit(
+        state=EditableCanvasState(zoom=1.25),
+    )
+
+    controls = kit.create_controls(show_grid=True)
+    scroll = kit.create_scroll_area()
+    grid_session = kit.create_grid_layout_session()
+    free_session = kit.create_free_layout_session(
+        1180,
+        rect_for_block=lambda block: QRect(0, 0, 1, 1),
+        layout_from_rect=lambda rect: {},
+    )
+    library = kit.create_block_library(
+        {"Core": ["documents"]},
+        lambda block_type: "Documents",
+        lambda block_type: WorkspacePaletteButton(block_type, "Documents"),
+        "Blocks",
+        "Drag blocks",
+        "Search",
+        "No blocks",
+    )
+
+    assert kit.state.zoom == 1.25
+    assert controls is kit.controls
+    assert scroll is kit.scroll
+    assert grid_session is kit.grid_layout_session
+    assert free_session is kit.free_layout_session
+    assert library is kit.block_library
 
 
 def test_editable_canvas_state_clamps_zoom_and_grid_size():
@@ -1644,12 +1838,88 @@ def test_workspace_layout_editor_zoom_controls(qapp):
     editor = WorkspaceLayoutEditor(lambda block_type: block_type)
     editor.set_workspace(workspace)
 
+    assert isinstance(editor.editor_kit, EditableCanvasEditorKit)
     editor.zoom_in()
     assert editor.zoom > 1
     assert editor.row_height > editor.base_row_height
 
     editor.reset_zoom()
     assert editor.zoom == 1.0
+
+
+def test_workspace_layout_editor_zoom_scales_fixed_artboard_not_layout(qapp):
+    _ = qapp
+    workspace = new_workspace("Zoom Artboard")
+    workspace["dialog_size"] = "wide"
+    workspace["blocks"] = [
+        {
+            "id": "task",
+            "type": "task_board",
+            "layout": {"row": 1, "col": 2, "row_span": 3, "col_span": 4},
+        }
+    ]
+    editor = WorkspaceLayoutEditor(lambda block_type: block_type)
+    editor.set_workspace(workspace)
+
+    original_layout = dict(editor.workspace["blocks"][0]["layout"])
+    original_canvas = editor.canvas_rect()
+    original_tile = next(
+        child
+        for child in editor.surface.findChildren(
+            WorkspaceLayoutTile,
+            options=Qt.FindDirectChildrenOnly,
+        )
+        if child.block["id"] == "task"
+    ).geometry()
+
+    editor.set_zoom(1.5)
+    zoomed_canvas = editor.canvas_rect()
+    zoomed_tile = next(
+        child
+        for child in editor.surface.findChildren(
+            WorkspaceLayoutTile,
+            options=Qt.FindDirectChildrenOnly,
+        )
+        if child.block["id"] == "task"
+    ).geometry()
+
+    assert editor.workspace["blocks"][0]["layout"] == original_layout
+    assert zoomed_canvas.width() == int(original_canvas.width() * 1.5)
+    assert zoomed_tile.width() > original_tile.width()
+    assert zoomed_tile.height() > original_tile.height()
+    assert editor.surface.width() == zoomed_canvas.width() + 56
+
+
+def test_workspace_layout_editor_drag_uses_zoomed_artboard_scale(qapp):
+    _ = qapp
+    workspace = new_workspace("Zoom Drag")
+    editor = WorkspaceLayoutEditor(lambda block_type: block_type)
+    editor.resize(1200, 800)
+    editor.show()
+    qapp.processEvents()
+    editor.set_workspace(workspace)
+    block = editor.add_block_at("documents", row=0, col=0)
+    editor.set_zoom(1.5)
+    qapp.processEvents()
+
+    tile = next(
+        child
+        for child in editor.surface.findChildren(
+            WorkspaceLayoutTile,
+            options=Qt.FindDirectChildrenOnly,
+        )
+        if child.block["id"] == block["id"]
+    )
+    start = tile.rect().center()
+    drag_delta = QPoint(int(editor.cell_width()), editor.row_height)
+
+    QTest.mousePress(tile, Qt.LeftButton, Qt.NoModifier, start)
+    QTest.mouseMove(tile, start + drag_delta)
+    QTest.mouseRelease(tile, Qt.LeftButton, Qt.NoModifier, start + drag_delta)
+
+    moved_layout = editor._block(block["id"])["layout"]
+    assert moved_layout["row"] >= 1
+    assert moved_layout["col"] >= 1
 
 
 def test_workspaces_page_grid_controls_update_editor(qapp):
@@ -1661,6 +1931,8 @@ def test_workspaces_page_grid_controls_update_editor(qapp):
     )
     page = WorkspacesPage(main_window)
 
+    assert isinstance(page.editor_kit, EditableCanvasEditorKit)
+    assert isinstance(page.canvas_controls, EditableCanvasControls)
     page.grid_toggle.setChecked(False)
     assert page.workspace_layout_editor.grid_visible is False
 
@@ -1690,6 +1962,7 @@ def test_workspaces_page_uses_canvas_without_visible_inspector(qapp):
         for splitter in splitters
     )
     assert isinstance(page.canvas_scroll, EditableCanvasScrollArea)
+    assert isinstance(page.block_library_panel, EditableBlockLibraryPanel)
 
 
 def test_workspaces_page_renders_editor_and_preview(qapp):

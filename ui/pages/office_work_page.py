@@ -36,7 +36,7 @@ from ui.foundation import (
     fluent_icon,
     show_message,
 )
-from utils.constants import WORKFLOW_STAGES
+from utils.constants import DOCUMENTS, WORKFLOW_STAGES
 from utils.logger import logger
 
 
@@ -301,6 +301,30 @@ class OfficeWorkPage(QWidget):
         )
         self.task_filter_bar.add_filter(self.task_stage_filter)
 
+        self.task_document_filter = create_combo_box()
+        self.task_document_filter.addItem("All Documents", "ALL")
+        for document_type, definition in sorted(
+            DOCUMENTS.items(),
+            key=lambda item: item[1].get("label", item[0]).casefold(),
+        ):
+            self.task_document_filter.addItem(
+                definition.get("label", document_type),
+                document_type,
+            )
+        self.task_document_filter.currentIndexChanged.connect(
+            lambda _=None: self.render_tasks()
+        )
+        self.task_filter_bar.add_filter(self.task_document_filter)
+
+        self.task_source_filter = create_combo_box()
+        self.task_source_filter.addItem("All Sources", "ALL")
+        self.task_source_filter.addItem("Manual", "MANUAL")
+        self.task_source_filter.addItem("Auto", "AUTO")
+        self.task_source_filter.currentIndexChanged.connect(
+            lambda _=None: self.render_tasks()
+        )
+        self.task_filter_bar.add_filter(self.task_source_filter)
+
         self.task_due_filter = create_combo_box()
         for label, value in [
             ("All Due Dates", "all"),
@@ -319,6 +343,8 @@ class OfficeWorkPage(QWidget):
         self.task_follow_up_filter = create_combo_box()
         self.task_follow_up_filter.addItem("All Follow-Ups", "ALL")
         self.task_follow_up_filter.addItem("Follow Up Due", "due")
+        self.task_follow_up_filter.addItem("Upcoming Follow-Ups", "upcoming")
+        self.task_follow_up_filter.addItem("No Follow-Up", "missing")
         self.task_follow_up_filter.currentIndexChanged.connect(
             lambda _=None: self.render_tasks()
         )
@@ -438,6 +464,8 @@ class OfficeWorkPage(QWidget):
             due_range=self.task_due_filter.currentData(),
             task_type=self.task_type_filter.currentData(),
             related_stage=self.task_stage_filter.currentData(),
+            related_document_type=self.task_document_filter.currentData(),
+            automation_state=self.task_source_filter.currentData(),
             waiting_follow_up=self.task_follow_up_filter.currentData(),
             waiting_reason=self.task_waiting_reason_filter.currentData(),
             include_done=self.task_status_filter.currentData() == "ALL",
@@ -492,6 +520,7 @@ class OfficeWorkPage(QWidget):
             ("open", "To Do", "#0EA5AC"),
             ("ready", "Ready", "#2563EB"),
             ("follow_up", "Follow Up", "#7C3AED"),
+            ("missing_follow_up", "No Follow-Up", "#A16207"),
             ("overdue", "Overdue", "#DC2626"),
             ("due_today", "Due Today", "#D97706"),
             ("waiting", "Waiting", "#71717A"),
@@ -769,6 +798,8 @@ class OfficeWorkPage(QWidget):
         self._set_combo_data(self.task_priority_filter, "ALL")
         self._set_combo_data(self.task_type_filter, "ALL")
         self._set_combo_data(self.task_stage_filter, "ALL")
+        self._set_combo_data(self.task_document_filter, "ALL")
+        self._set_combo_data(self.task_source_filter, "ALL")
         self._set_combo_data(self.task_due_filter, "all")
         self._set_combo_data(self.task_follow_up_filter, "ALL")
         self._set_combo_data(self.task_waiting_reason_filter, "ALL")

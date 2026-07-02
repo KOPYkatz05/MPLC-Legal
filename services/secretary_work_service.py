@@ -24,6 +24,7 @@ VISIBLE_TASK_STATUSES = ("OPEN", "READY", "WAITING")
 VISIBLE_PROJECT_STATUSES = ("ACTIVE", "WAITING")
 TASK_GROUPS = [
     ("overdue", "Overdue"),
+    ("follow_up_due", "Follow Up Due"),
     ("today", "Today"),
     ("ready_to_review", "Ready to Review"),
     ("this_week", "This Week"),
@@ -588,6 +589,16 @@ class SecretaryWorkService:
         finally:
             session.close()
 
+    def get_task_status_history(self, task_id, limit=6):
+        session = SessionLocal()
+        try:
+            task = session.query(SecretaryTask).filter_by(id=task_id).first()
+            if task is None:
+                raise SecretaryWorkError("Task not found.")
+            return self._task_history_items(task.id, session, limit=limit)
+        finally:
+            session.close()
+
     def archive_obsolete_automatic_tasks(
         self,
         *,
@@ -615,9 +626,18 @@ class SecretaryWorkService:
                     continue
                 if prefixes and not key.startswith(prefixes):
                     continue
+                old_status = task.status
                 task.status = "ARCHIVED"
                 task.completed_at = task.completed_at or _now()
                 task.automation_status_reason = reason
+                self._add_task_history(
+                    session,
+                    task.id,
+                    "STATUS",
+                    old_status,
+                    task.status,
+                    reason,
+                )
                 self._cleanup_temporary_group_in_session(session, task)
                 archived += 1
             session.commit()
@@ -832,6 +852,8 @@ class SecretaryWorkService:
         due_range=None,
         task_type=None,
         related_stage=None,
+        related_document_type=None,
+        automation_state=None,
         waiting_follow_up=None,
         waiting_reason=None,
         include_done=False,
@@ -855,6 +877,21 @@ class SecretaryWorkService:
                     query = query.filter(SecretaryTask.task_type == task_type)
             if related_stage and related_stage != "ALL":
                 query = query.filter(SecretaryTask.related_stage == related_stage)
+            if related_document_type and related_document_type != "ALL":
+                query = query.filter(
+                    SecretaryTask.related_document_type
+                    == _normalize_related_document_type(related_document_type)
+                )
+            if automation_state == "AUTO":
+                query = query.filter(
+                    SecretaryTask.automation_source.is_not(None),
+                    SecretaryTask.automation_source != "",
+                )
+            elif automation_state == "MANUAL":
+                query = query.filter(
+                    (SecretaryTask.automation_source.is_(None))
+                    | (SecretaryTask.automation_source == "")
+                )
             if project_id:
                 query = query.filter(SecretaryTask.project_id == project_id)
             if waiting_follow_up == "due":
@@ -862,6 +899,17 @@ class SecretaryWorkService:
                     SecretaryTask.status == "WAITING",
                     SecretaryTask.waiting_follow_up_date.is_not(None),
                     SecretaryTask.waiting_follow_up_date <= date.today(),
+                )
+            elif waiting_follow_up == "upcoming":
+                query = query.filter(
+                    SecretaryTask.status == "WAITING",
+                    SecretaryTask.waiting_follow_up_date.is_not(None),
+                    SecretaryTask.waiting_follow_up_date > date.today(),
+                )
+            elif waiting_follow_up == "missing":
+                query = query.filter(
+                    SecretaryTask.status == "WAITING",
+                    SecretaryTask.waiting_follow_up_date.is_(None),
                 )
             if waiting_reason and waiting_reason != "ALL":
                 query = query.filter(
@@ -909,6 +957,8 @@ class SecretaryWorkService:
                     task for task in snapshots
                     if task["due_group"] == due_range
                 ]
+            if waiting_follow_up in {"due", "upcoming"}:
+                snapshots = self._sort_by_waiting_follow_up(snapshots)
             return snapshots
         finally:
             session.close()
@@ -918,12 +968,17 @@ class SecretaryWorkService:
         due_range = filters.get("due_range")
         for task in self.list_tasks(**filters):
             group_key = task["due_group"]
-            if (
+            if self._is_waiting_follow_up_due(task) and due_range in (None, "all"):
+                group_key = "follow_up_due"
+            elif (
                 task["status"] == "READY"
                 and due_range in (None, "all")
             ):
                 group_key = "ready_to_review"
             grouped.setdefault(group_key, []).append(task)
+        grouped["follow_up_due"] = self._sort_by_waiting_follow_up(
+            grouped.get("follow_up_due", [])
+        )
         return grouped
 
     def list_calendar_tasks(self):
@@ -960,6 +1015,11 @@ class SecretaryWorkService:
                     and task.waiting_follow_up_date is not None
                     and task.waiting_follow_up_date <= today
                 ),
+                "missing_follow_up": sum(
+                    1 for task in tasks
+                    if task.status == "WAITING"
+                    and task.waiting_follow_up_date is None
+                ),
                 "overdue": sum(
                     1 for task in tasks
                     if task.due_date is not None and task.due_date < today
@@ -968,6 +1028,26 @@ class SecretaryWorkService:
             }
         finally:
             session.close()
+
+    @staticmethod
+    def _is_waiting_follow_up_due(task, today=None):
+        today = today or date.today()
+        follow_up = task.get("waiting_follow_up_date")
+        return (
+            task.get("status") == "WAITING"
+            and follow_up is not None
+            and follow_up <= today
+        )
+
+    @staticmethod
+    def _sort_by_waiting_follow_up(tasks):
+        return sorted(
+            tasks,
+            key=lambda task: (
+                task.get("waiting_follow_up_date") or date.max,
+                task["title"].casefold(),
+            ),
+        )
 
     def missionary_options(self):
         session = SessionLocal()

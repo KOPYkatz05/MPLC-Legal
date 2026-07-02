@@ -1,7 +1,24 @@
-from PySide6.QtCore import QEvent, QPoint, QRect, Qt, Signal
-from PySide6.QtWidgets import QScrollArea
+from copy import deepcopy
 
-from ui.foundation import SmoothScrollDelegate, tune_fluent_scrollable
+from PySide6.QtCore import QEvent, QPoint, QRect, Qt, Signal
+from PySide6.QtWidgets import (
+    QHBoxLayout,
+    QLabel,
+    QSpinBox,
+    QScrollArea,
+    QVBoxLayout,
+    QWidget,
+)
+
+from ui.foundation import (
+    SmoothScrollDelegate,
+    create_button,
+    create_check_box,
+    create_scroll_area,
+    create_search_edit,
+    tune_fluent_scrollable,
+)
+from utils.language_helper import ui_text as tr
 
 
 class EditableCanvasState:
@@ -156,6 +173,384 @@ class EditableCanvasScrollArea(QScrollArea):
             return
         self._is_middle_panning = False
         self.viewport().unsetCursor()
+
+
+class EditableCanvasControls(QWidget):
+    zoomOutRequested = Signal()
+    zoomResetRequested = Signal()
+    zoomInRequested = Signal()
+    zoomFitRequested = Signal()
+    gridVisibleChanged = Signal(bool)
+    gridSizeChanged = Signal(int)
+
+    def __init__(
+        self,
+        parent=None,
+        show_grid=False,
+        grid_min=56,
+        grid_max=180,
+        grid_step=8,
+        grid_value=96,
+        grid_suffix=None,
+    ):
+        super().__init__(parent)
+        self.setObjectName("EditableCanvasControls")
+        layout = QHBoxLayout()
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(4)
+        self.setLayout(layout)
+
+        self.zoom_out_btn = create_button("-", "secondary")
+        self.zoom_reset_btn = create_button("100%", "secondary")
+        self.zoom_in_btn = create_button("+", "secondary")
+        self.zoom_fit_btn = create_button(tr("workspace_zoom_fit"), "secondary")
+        for button in (
+            self.zoom_out_btn,
+            self.zoom_reset_btn,
+            self.zoom_in_btn,
+            self.zoom_fit_btn,
+        ):
+            button.setFixedHeight(30)
+            layout.addWidget(button)
+
+        self.zoom_out_btn.clicked.connect(
+            lambda checked=False: self.zoomOutRequested.emit()
+        )
+        self.zoom_reset_btn.clicked.connect(
+            lambda checked=False: self.zoomResetRequested.emit()
+        )
+        self.zoom_in_btn.clicked.connect(
+            lambda checked=False: self.zoomInRequested.emit()
+        )
+        self.zoom_fit_btn.clicked.connect(
+            lambda checked=False: self.zoomFitRequested.emit()
+        )
+
+        self.grid_toggle = None
+        self.grid_size_spin = None
+        if show_grid:
+            self.grid_toggle = create_check_box(
+                tr("workspace_show_grid"),
+                "WorkspaceGridToggle",
+            )
+            self.grid_toggle.setChecked(True)
+            self.grid_toggle.toggled.connect(self.gridVisibleChanged.emit)
+            layout.addWidget(self.grid_toggle)
+
+            self.grid_size_spin = QSpinBox()
+            self.grid_size_spin.setObjectName("WorkspaceGridSizeSpin")
+            self.grid_size_spin.setRange(grid_min, grid_max)
+            self.grid_size_spin.setSingleStep(grid_step)
+            self.grid_size_spin.setValue(grid_value)
+            self.grid_size_spin.setSuffix(
+                f" {grid_suffix or tr('workspace_grid_px')}"
+            )
+            self.grid_size_spin.valueChanged.connect(self.gridSizeChanged.emit)
+            layout.addWidget(self.grid_size_spin)
+
+    def set_zoom_percent(self, value):
+        self.zoom_reset_btn.setText(f"{round(float(value) * 100)}%")
+
+    def retranslate_ui(self):
+        self.zoom_fit_btn.setText(tr("workspace_zoom_fit"))
+        if self.grid_toggle is not None:
+            self.grid_toggle.setText(tr("workspace_show_grid"))
+        if self.grid_size_spin is not None:
+            self.grid_size_spin.setSuffix(f" {tr('workspace_grid_px')}")
+
+
+class EditableBlockLibraryPanel(QWidget):
+    blockAddRequested = Signal(str)
+
+    def __init__(
+        self,
+        categories,
+        label_for_type,
+        button_factory,
+        title_text,
+        hint_text,
+        search_placeholder,
+        empty_text,
+        parent=None,
+    ):
+        super().__init__(parent)
+        self.categories = categories
+        self.label_for_type = label_for_type
+        self.button_factory = button_factory
+        self.empty_text = empty_text
+
+        root = QVBoxLayout()
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(10)
+        self.setLayout(root)
+
+        header = QVBoxLayout()
+        header.setContentsMargins(0, 6, 0, 0)
+        header.setSpacing(2)
+        self.title_label = QLabel(title_text)
+        self.title_label.setObjectName("WorkspacePanelTitle")
+        self.hint_label = QLabel(hint_text)
+        self.hint_label.setObjectName("WorkspacePanelHint")
+        self.hint_label.setWordWrap(True)
+        header.addWidget(self.title_label)
+        header.addWidget(self.hint_label)
+        root.addLayout(header)
+
+        self.search = create_search_edit(search_placeholder)
+        self.search.textChanged.connect(self.refresh)
+        root.addWidget(self.search)
+
+        self.scroll = create_scroll_area("WorkspacePaletteScroll", transparent=True)
+        self.body = QWidget()
+        self.body_layout = QVBoxLayout()
+        self.body_layout.setContentsMargins(0, 0, 0, 0)
+        self.body_layout.setSpacing(8)
+        self.body.setLayout(self.body_layout)
+        self.scroll.setWidget(self.body)
+        root.addWidget(self.scroll, stretch=1)
+
+    def set_texts(self, title_text, hint_text, search_placeholder, empty_text):
+        self.title_label.setText(title_text)
+        self.hint_label.setText(hint_text)
+        self.search.setPlaceholderText(search_placeholder)
+        self.empty_text = empty_text
+
+    def refresh(self):
+        query = self.search.text().strip().lower()
+        self._clear_layout(self.body_layout)
+        shown = 0
+        for category, block_types in self.categories.items():
+            matching = [
+                block_type
+                for block_type in block_types
+                if (
+                    not query
+                    or query in category.lower()
+                    or query in block_type.lower()
+                    or query in self.label_for_type(block_type).lower()
+                )
+            ]
+            if not matching:
+                continue
+            label = QLabel(category)
+            label.setObjectName("WorkspacePaletteCategory")
+            self.body_layout.addWidget(label)
+            for block_type in matching:
+                button = self.button_factory(block_type)
+                button.addRequested.connect(self.blockAddRequested.emit)
+                self.body_layout.addWidget(button)
+                shown += 1
+        if shown == 0:
+            empty = QLabel(self.empty_text)
+            empty.setObjectName("MutedText")
+            empty.setWordWrap(True)
+            self.body_layout.addWidget(empty)
+        self.body_layout.addStretch()
+
+    def _clear_layout(self, layout):
+        while layout.count():
+            item = layout.takeAt(0)
+            widget = item.widget()
+            child_layout = item.layout()
+            if widget is not None:
+                widget.deleteLater()
+            elif child_layout is not None:
+                self._clear_layout(child_layout)
+
+
+class FreeLayoutEditSession:
+    def __init__(
+        self,
+        canvas_width,
+        padding=24,
+        spacing=12,
+        block_key=None,
+        block_tab=None,
+        rect_for_block=None,
+        layout_from_rect=None,
+        bound_rect=None,
+    ):
+        self.canvas_width = canvas_width
+        self.padding = padding
+        self.spacing = spacing
+        self.block_key = block_key or (
+            lambda block: block.get("type") or block.get("id")
+        )
+        self.block_tab = block_tab or (
+            lambda block: block.get("tab", "overview")
+        )
+        self.rect_for_block = rect_for_block
+        self.layout_from_rect = layout_from_rect
+        self.bound_rect = bound_rect or (lambda rect: QRect(rect))
+        self.edit_payload = None
+        self.preview_payload = None
+        self.drag_base_payload = None
+
+    def set_payload(self, payload):
+        self.edit_payload = deepcopy(payload) if payload else None
+        self.preview_payload = None
+        self.drag_base_payload = None
+
+    def set_drag_base(self, payload):
+        self.drag_base_payload = deepcopy(payload) if payload else None
+
+    def current_payload(self):
+        return self.preview_payload or self.edit_payload
+
+    def block_for_section(self, section_key, payload=None):
+        payload = payload or self.current_payload() or {}
+        for block in payload.get("blocks", []):
+            if self.block_key(block) == section_key:
+                return block
+        return None
+
+    def preview(self, section_key, rect, source_payload=None):
+        if self.rect_for_block is None or self.layout_from_rect is None:
+            return None
+        source = (
+            source_payload
+            or self.drag_base_payload
+            or self.edit_payload
+        )
+        if not source:
+            return None
+        self.preview_payload = deepcopy(source)
+        block = self.block_for_section(section_key, self.preview_payload)
+        if block is None:
+            self.preview_payload = None
+            return None
+
+        bounded = self.bound_rect(QRect(rect))
+        block["free_layout"] = self.layout_from_rect(bounded)
+        self.resolve_overlaps(self.block_tab(block), section_key, self.preview_payload)
+        return self.preview_payload
+
+    def resolve_overlaps(self, tab_key, moving_section_key, payload=None):
+        if self.rect_for_block is None or self.layout_from_rect is None:
+            return
+        payload = payload or self.preview_payload or self.edit_payload
+        if not payload:
+            return
+        tab_blocks = [
+            block
+            for block in payload.get("blocks", [])
+            if self.block_tab(block) == tab_key
+        ]
+        rects = {
+            self.block_key(block): self.rect_for_block(block)
+            for block in tab_blocks
+        }
+        if moving_section_key not in rects:
+            return
+
+        resolved_rects = resolve_overlapping_free_rects(
+            rects,
+            moving_section_key,
+            self.canvas_width,
+            padding=self.padding,
+            spacing=self.spacing,
+        )
+        for block in tab_blocks:
+            section_key = self.block_key(block)
+            if section_key == moving_section_key:
+                continue
+            resolved = resolved_rects.get(section_key)
+            original = rects.get(section_key)
+            if resolved is None or original is None or resolved == original:
+                continue
+            block["free_layout"] = self.layout_from_rect(self.bound_rect(resolved))
+
+    def commit(self):
+        if self.preview_payload is not None:
+            self.edit_payload = self.preview_payload
+        self.preview_payload = None
+        self.drag_base_payload = None
+        return self.edit_payload
+
+    def rebound(self):
+        self.preview_payload = None
+        self.drag_base_payload = None
+        return self.edit_payload
+
+
+class GridLayoutEditSession:
+    def __init__(self, block_key=None):
+        self.block_key = block_key or (lambda block: block.get("id"))
+        self.snapshot_blocks = None
+
+    def begin(self, blocks):
+        if self.snapshot_blocks is None:
+            self.snapshot_blocks = deepcopy(blocks or [])
+
+    def has_snapshot(self):
+        return self.snapshot_blocks is not None
+
+    def preview_block(self, blocks, block_id, layout):
+        updated = []
+        for block in blocks or []:
+            next_block = deepcopy(block)
+            if self.block_key(next_block) == block_id:
+                next_block["layout"] = deepcopy(layout)
+            updated.append(next_block)
+        return updated
+
+    def preview_many(self, blocks, layouts_by_id):
+        updated = []
+        layouts_by_id = layouts_by_id or {}
+        for block in blocks or []:
+            next_block = deepcopy(block)
+            block_id = self.block_key(next_block)
+            if block_id in layouts_by_id:
+                next_block["layout"] = deepcopy(layouts_by_id[block_id])
+            updated.append(next_block)
+        return updated
+
+    def commit(self):
+        snapshot = self.snapshot_blocks
+        self.snapshot_blocks = None
+        return snapshot
+
+    def rebound(self):
+        snapshot = self.snapshot_blocks
+        self.snapshot_blocks = None
+        return deepcopy(snapshot) if snapshot is not None else None
+
+
+class EditableCanvasEditorKit:
+    def __init__(
+        self,
+        state=None,
+        state_kwargs=None,
+        parent=None,
+    ):
+        self.parent = parent
+        self.state = state or EditableCanvasState(**(state_kwargs or {}))
+        self.controls = None
+        self.scroll = None
+        self.block_library = None
+        self.free_layout_session = None
+        self.grid_layout_session = None
+
+    def create_controls(self, **kwargs):
+        self.controls = EditableCanvasControls(parent=self.parent, **kwargs)
+        self.controls.set_zoom_percent(self.state.zoom)
+        return self.controls
+
+    def create_scroll_area(self, **kwargs):
+        self.scroll = EditableCanvasScrollArea(parent=self.parent, **kwargs)
+        return self.scroll
+
+    def create_block_library(self, *args, **kwargs):
+        self.block_library = EditableBlockLibraryPanel(*args, parent=self.parent, **kwargs)
+        return self.block_library
+
+    def create_free_layout_session(self, *args, **kwargs):
+        self.free_layout_session = FreeLayoutEditSession(*args, **kwargs)
+        return self.free_layout_session
+
+    def create_grid_layout_session(self, *args, **kwargs):
+        self.grid_layout_session = GridLayoutEditSession(*args, **kwargs)
+        return self.grid_layout_session
 
 
 def resolve_overlapping_free_rects(
