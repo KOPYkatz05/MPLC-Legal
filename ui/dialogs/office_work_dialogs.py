@@ -456,9 +456,9 @@ class TaskDialog(_OfficeWorkDialogBase):
             details_layout.addWidget(history_widget)
 
         self.body_layout.addWidget(self.details_widget)
-        self.details_widget.setVisible(False)
+        self._set_details_visible(self.status_combo.currentData() == "WAITING")
         self.status_combo.currentIndexChanged.connect(
-            lambda _=None: self._sync_waiting_reason_visibility()
+            lambda _=None: self._status_changed()
         )
         self._sync_waiting_reason_visibility()
 
@@ -526,7 +526,10 @@ class TaskDialog(_OfficeWorkDialogBase):
             show_message(self, "Office Work", str(exc), kind="warning")
 
     def _toggle_details(self):
-        visible = not self.details_widget.isVisible()
+        visible = self.details_widget.isHidden()
+        self._set_details_visible(visible)
+
+    def _set_details_visible(self, visible):
         self.details_widget.setVisible(visible)
         self.details_button.setText("Hide details" if visible else "More details")
 
@@ -535,6 +538,11 @@ class TaskDialog(_OfficeWorkDialogBase):
         self.waiting_reason_field.setVisible(is_waiting)
         self.waiting_follow_up_field.setVisible(is_waiting)
         self.no_waiting_follow_up_check.setVisible(is_waiting)
+
+    def _status_changed(self):
+        self._sync_waiting_reason_visibility()
+        if self.status_combo.currentData() == "WAITING":
+            self._set_details_visible(True)
 
     def _group_changed(self):
         group_id = self.group_combo.currentData()

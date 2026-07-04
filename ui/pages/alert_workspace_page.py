@@ -82,6 +82,11 @@ class AlertWorkspacePage(QWidget):
         self.back_btn.clicked.connect(self._go_back)
         self.edit_btn = create_button(tr("alert_workspace_edit_task"), "secondary")
         self.edit_btn.clicked.connect(self._edit_task)
+        self.follow_up_btn = create_button(
+            tr("alert_workspace_set_follow_up"),
+            "secondary",
+        )
+        self.follow_up_btn.clicked.connect(self._edit_task)
         self.ready_btn = create_button(tr("alert_workspace_mark_ready"), "secondary")
         self.ready_btn.clicked.connect(self._mark_ready)
         self.needs_work_btn = create_button(
@@ -160,6 +165,7 @@ class AlertWorkspacePage(QWidget):
         command_row.addStretch()
         command_row.addWidget(self.back_btn)
         command_row.addWidget(self.edit_btn)
+        command_row.addWidget(self.follow_up_btn)
         command_row.addWidget(self.ready_btn)
         command_row.addWidget(self.needs_work_btn)
         command_row.addWidget(self.done_btn)
@@ -189,6 +195,10 @@ class AlertWorkspacePage(QWidget):
         status = self.workspace.get("status", "")
         self.done_btn.setVisible(status not in {"DONE", "ARCHIVED"})
         self.edit_btn.setVisible(status != "ARCHIVED")
+        self.follow_up_btn.setVisible(
+            status == "WAITING"
+            and self.workspace.get("waiting_follow_up_date") is None
+        )
         self.ready_btn.setVisible(status in {"OPEN", "WAITING"})
         self.needs_work_btn.setVisible(status == "READY")
 
@@ -223,6 +233,7 @@ class AlertWorkspacePage(QWidget):
         self.subtitle_label.setText(self._breadcrumb_text())
         self.done_btn.setVisible(False)
         self.edit_btn.setVisible(False)
+        self.follow_up_btn.setVisible(False)
         self.ready_btn.setVisible(False)
         self.needs_work_btn.setVisible(False)
 

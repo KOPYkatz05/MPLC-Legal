@@ -88,6 +88,36 @@ def test_extract_ocr_texts_honors_subprocess_mode(monkeypatch):
     ]
 
 
+def test_extract_ocr_texts_subprocess_hides_windows_worker(monkeypatch):
+    captured = {}
+
+    def fake_run(command, **kwargs):
+        captured["command"] = command
+        captured["kwargs"] = kwargs
+        output_path = command[command.index("--output") + 1]
+        with open(output_path, "w", encoding="utf-8") as handle:
+            handle.write('{"pages": [{"text": "ok"}]}')
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(upload_pipeline.subprocess, "run", fake_run)
+
+    assert upload_pipeline._extract_ocr_texts_subprocess(["page.png"]) == [
+        {"text": "ok"}
+    ]
+
+    if upload_pipeline.os.name == "nt":
+        assert captured["kwargs"]["creationflags"] == getattr(
+            upload_pipeline.subprocess,
+            "CREATE_NO_WINDOW",
+            0,
+        )
+        startupinfo = captured["kwargs"]["startupinfo"]
+        assert startupinfo.dwFlags & upload_pipeline.subprocess.STARTF_USESHOWWINDOW
+        assert startupinfo.wShowWindow == upload_pipeline.subprocess.SW_HIDE
+    else:
+        assert "startupinfo" not in captured["kwargs"]
+
+
 def test_in_process_ocr_reuses_cached_service(monkeypatch):
     class FakeOcrService:
         def __init__(self):

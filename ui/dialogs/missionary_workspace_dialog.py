@@ -21,7 +21,11 @@ except Exception:
 from services.document_service import DocumentService
 from services.residency_service import ResidencyService
 from services.secretary_work_service import SecretaryWorkService
-from services.workspace_block_registry import BLOCK_LABELS, block_definition
+from services.workspace_block_registry import (
+    BLOCK_LABELS,
+    block_definition,
+    block_presentation,
+)
 from services.workspace_layout import (
     WORKSPACE_GRID_COLUMNS,
     normalize_workspace_layout,
@@ -261,9 +265,19 @@ class WorkspaceBlockFactory:
         height = block.get("height", "normal")
         card.setMinimumHeight({"compact": 160, "normal": 260, "tall": 420}.get(height, 260))
         card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        presentation = self.presentation(block)
+        margins = {
+            "compact": (14, 12, 14, 12),
+            "comfortable": (18, 16, 18, 16),
+            "spacious": (22, 20, 22, 20),
+        }.get(presentation["density"], (18, 16, 18, 16))
+        spacing = {"compact": 6, "comfortable": 10, "spacious": 14}.get(
+            presentation["density"],
+            10,
+        )
         layout = QVBoxLayout()
-        layout.setContentsMargins(18, 16, 18, 16)
-        layout.setSpacing(10)
+        layout.setContentsMargins(*margins)
+        layout.setSpacing(spacing)
         card.setLayout(layout)
         definition = block_definition(block.get("type"))
         header = QHBoxLayout()
@@ -279,6 +293,39 @@ class WorkspaceBlockFactory:
             header.addWidget(action_hint)
         layout.addLayout(header)
         return card, layout
+
+    def presentation(self, block):
+        return block_presentation(block)
+
+    def variant(self, block):
+        return self.presentation(block)["variant"]
+
+    def is_variant(self, block, *variants):
+        return self.variant(block) in variants
+
+    def limited_items(self, block, items):
+        presentation = self.presentation(block)
+        limit = presentation["content_limit"]
+        items = list(items or [])
+        return items[:limit], max(0, len(items) - limit)
+
+    def add_overflow_hint(self, layout, hidden_count, label="View all"):
+        if hidden_count <= 0:
+            return
+        hint = QLabel(f"{label} ({hidden_count} more)")
+        hint.setObjectName("MutedText")
+        layout.addWidget(hint)
+
+    def metric_grid(self, layout, metrics):
+        grid = QGridLayout()
+        grid.setContentsMargins(0, 0, 0, 0)
+        grid.setHorizontalSpacing(8)
+        grid.setVerticalSpacing(8)
+        for index, metric in enumerate(metrics):
+            label, value, *rest = metric
+            detail = rest[0] if rest else None
+            grid.addWidget(self.metric_card(label, value, detail), index // 2, index % 2)
+        layout.addLayout(grid)
 
     def empty(self, title, detail):
         return build_empty_state_card(title, detail)
@@ -335,22 +382,28 @@ class WorkspaceBlockFactory:
 
     def personal_info(self, block):
         card, layout = self.card(block)
-        grid = QGridLayout()
-        grid.setContentsMargins(0, 0, 0, 0)
-        grid.setHorizontalSpacing(12)
-        grid.setVerticalSpacing(8)
-        layout.addLayout(grid)
+        grid = None
+        if self.is_variant(block, "detail"):
+            grid = QGridLayout()
+            grid.setContentsMargins(0, 0, 0, 0)
+            grid.setHorizontalSpacing(12)
+            grid.setVerticalSpacing(8)
+            layout.addLayout(grid)
         fields = block.get("fields") or [
             "full_name",
             "nationality",
             "passport_number",
             "carnet_number",
         ]
+        fields, hidden_count = self.limited_items(block, fields)
         for index, field_key in enumerate(fields):
             value = getattr(self.dialog.context.missionary, field_key, None)
             label = field_label(field_key)
             if field_key == "current_stage":
                 value = stage_display_name(value)
+            if self.is_variant(block, "summary"):
+                layout.addWidget(self.key_value_row(label, value))
+                continue
             item = QWidget()
             item_layout = QVBoxLayout()
             item_layout.setContentsMargins(0, 0, 0, 0)
@@ -363,7 +416,9 @@ class WorkspaceBlockFactory:
             value_widget.setWordWrap(True)
             item_layout.addWidget(label_widget)
             item_layout.addWidget(value_widget)
-            grid.addWidget(item, index // 2, index % 2)
+            if grid is not None:
+                grid.addWidget(item, index // 2, index % 2)
+        self.add_overflow_hint(layout, hidden_count)
         layout.addStretch()
         return card
 
@@ -383,8 +438,26 @@ class WorkspaceBlockFactory:
             )
             layout.addStretch()
             return card
-        for doc in documents[:8]:
-            layout.addWidget(self.document_row(doc))
+        documents, hidden_count = self.limited_items(block, documents)
+        if self.is_variant(block, "summary"):
+            self.metric_grid(
+                layout,
+                [
+                    ("Documents", len(self.dialog.context.documents)),
+                    ("Missing groups", len(self.dialog.context.missing_groups)),
+                ],
+            )
+            for doc in documents:
+                layout.addWidget(
+                    self.key_value_row(
+                        "Recent",
+                        document_label(getattr(doc, "document_type", "")),
+                    )
+                )
+        else:
+            for doc in documents:
+                layout.addWidget(self.document_row(doc))
+        self.add_overflow_hint(layout, hidden_count)
         layout.addStretch()
         return card
 
@@ -493,8 +566,33 @@ class WorkspaceBlockFactory:
             )
             layout.addStretch()
             return card
-        for stage_name, missing_docs, is_current in self.dialog.context.missing_groups:
-            layout.addWidget(self.missing_row(stage_name, missing_docs, is_current))
+        missing_groups, hidden_count = self.limited_items(
+            block,
+            self.dialog.context.missing_groups,
+        )
+        if self.is_variant(block, "summary"):
+            total_missing = sum(
+                len(missing_docs)
+                for _, missing_docs, _ in self.dialog.context.missing_groups
+            )
+            self.metric_grid(
+                layout,
+                [
+                    ("Missing", total_missing),
+                    ("Groups", len(self.dialog.context.missing_groups)),
+                ],
+            )
+            for stage_name, missing_docs, _ in missing_groups:
+                layout.addWidget(
+                    self.key_value_row(
+                        stage_display_name(stage_name),
+                        f"{len(missing_docs)} document(s)",
+                    )
+                )
+        else:
+            for stage_name, missing_docs, is_current in missing_groups:
+                layout.addWidget(self.missing_row(stage_name, missing_docs, is_current))
+        self.add_overflow_hint(layout, hidden_count)
         layout.addStretch()
         return card
 
@@ -508,10 +606,37 @@ class WorkspaceBlockFactory:
     def workflow(self, block):
         card, layout = self.card(block)
         current = getattr(self.dialog.context.missionary, "current_stage", None)
-        for workflow in self.dialog.context.workflows:
-            layout.addWidget(self.workflow_row(workflow, workflow.stage_name == current))
+        workflows, hidden_count = self.limited_items(block, self.dialog.context.workflows)
+        if self.is_variant(block, "summary"):
+            layout.addWidget(
+                self.key_value_row(
+                    "Current stage",
+                    stage_display_name(current),
+                )
+            )
+            active_workflow = self.current_workflow()
+            if active_workflow:
+                layout.addWidget(
+                    self.key_value_row(
+                        "Status",
+                        status_label(getattr(active_workflow, "status", "")),
+                    )
+                )
+            for workflow in workflows:
+                if getattr(workflow, "stage_name", None) == current:
+                    continue
+                layout.addWidget(
+                    self.key_value_row(
+                        stage_display_name(getattr(workflow, "stage_name", "")),
+                        status_label(getattr(workflow, "status", "")),
+                    )
+                )
+        else:
+            for workflow in workflows:
+                layout.addWidget(self.workflow_row(workflow, workflow.stage_name == current))
         if not self.dialog.context.workflows:
             layout.addWidget(QLabel(tr("missionary_detail_no_workflow_stages")))
+        self.add_overflow_hint(layout, hidden_count)
         layout.addStretch()
         return card
 
@@ -541,8 +666,31 @@ class WorkspaceBlockFactory:
             )
             layout.addStretch()
             return card
-        for task in self.dialog.context.tasks:
-            layout.addWidget(self.task_row(task))
+        tasks, hidden_count = self.limited_items(block, self.dialog.context.tasks)
+        if self.is_variant(block, "summary"):
+            priority_count = sum(
+                1
+                for task in self.dialog.context.tasks
+                if (
+                    task.get("priority") if isinstance(task, dict)
+                    else getattr(task, "priority", "")
+                )
+                in {"High", "HIGH", "Urgent", "URGENT"}
+            )
+            self.metric_grid(
+                layout,
+                [
+                    ("Open tasks", len(self.dialog.context.tasks)),
+                    ("High priority", priority_count),
+                ],
+            )
+            for task in tasks:
+                title = task.get("title") if isinstance(task, dict) else getattr(task, "title", "Task")
+                layout.addWidget(self.key_value_row("Next", title))
+        else:
+            for task in tasks:
+                layout.addWidget(self.task_row(task))
+        self.add_overflow_hint(layout, hidden_count)
         layout.addStretch()
         return card
 
@@ -555,7 +703,10 @@ class WorkspaceBlockFactory:
 
     def notes(self, block):
         card, layout = self.card(block)
-        label = QLabel(getattr(self.dialog.context.missionary, "notes", None) or tr("workspace_no_notes"))
+        notes = getattr(self.dialog.context.missionary, "notes", None) or tr("workspace_no_notes")
+        if self.is_variant(block, "summary") and len(str(notes)) > 180:
+            notes = f"{str(notes)[:177].rstrip()}..."
+        label = QLabel(notes)
         label.setObjectName("RowText")
         label.setWordWrap(True)
         layout.addWidget(label, stretch=1)
@@ -567,15 +718,33 @@ class WorkspaceBlockFactory:
             layout.addWidget(QLabel(tr("missionary_detail_residency_timeline_hint")))
             layout.addStretch()
             return card
-        for row in self.dialog.context.residency_rows:
-            line = QHBoxLayout()
-            label = QLabel(row.get("event_type", ""))
-            target = QLabel(format_value(row.get("target_expiration")))
-            target.setObjectName("MutedText")
-            line.addWidget(label)
-            line.addStretch()
-            line.addWidget(target)
-            layout.addLayout(line)
+        rows, hidden_count = self.limited_items(block, self.dialog.context.residency_rows)
+        if self.is_variant(block, "summary"):
+            self.metric_grid(
+                layout,
+                [
+                    ("Events", len(self.dialog.context.residency_rows)),
+                    ("Next", format_value(rows[0].get("target_expiration")) if rows else "-"),
+                ],
+            )
+            for row in rows:
+                layout.addWidget(
+                    self.key_value_row(
+                        row.get("event_type", ""),
+                        row.get("target_expiration"),
+                    )
+                )
+        else:
+            for row in rows:
+                line = QHBoxLayout()
+                label = QLabel(row.get("event_type", ""))
+                target = QLabel(format_value(row.get("target_expiration")))
+                target.setObjectName("MutedText")
+                line.addWidget(label)
+                line.addStretch()
+                line.addWidget(target)
+                layout.addLayout(line)
+        self.add_overflow_hint(layout, hidden_count)
         layout.addStretch()
         return card
 
@@ -603,6 +772,19 @@ class WorkspaceBlockFactory:
         grid.setContentsMargins(0, 0, 0, 0)
         grid.setHorizontalSpacing(8)
         grid.setVerticalSpacing(8)
+        actions, hidden_count = self.limited_items(block, actions)
+        if self.is_variant(block, "summary"):
+            self.metric_grid(layout, [("Actions", len(actions))])
+            for action in actions:
+                layout.addWidget(
+                    self.key_value_row(
+                        "Action",
+                        labels.get(action, str(action).replace("_", " ").title()),
+                    )
+                )
+            self.add_overflow_hint(layout, hidden_count)
+            layout.addStretch()
+            return card
         for index, action in enumerate(actions):
             btn = create_button(
                 labels.get(action, str(action).replace("_", " ").title()),
@@ -618,6 +800,7 @@ class WorkspaceBlockFactory:
                 btn.clicked.connect(handler)
             grid.addWidget(btn, index // 2, index % 2)
         layout.addLayout(grid)
+        self.add_overflow_hint(layout, hidden_count)
         layout.addStretch()
         return card
 
@@ -625,6 +808,23 @@ class WorkspaceBlockFactory:
         card, layout = self.card(block)
         fields = ["interpol_appointment_date", "biometric_appointment_date", "pickup_appointment_date", "visa_expiration", "passport_expiration", "residency_expiration", "prorroga_expiration"]
         added = 0
+        fields, hidden_count = self.limited_items(block, fields)
+        dated_fields = [
+            (field, getattr(self.dialog.context.missionary, field, None))
+            for field in fields
+            if getattr(self.dialog.context.missionary, field, None)
+        ]
+        if self.is_variant(block, "summary") and dated_fields:
+            next_field, next_value = dated_fields[0]
+            self.metric_grid(layout, [("Upcoming", len(dated_fields))])
+            layout.addWidget(self.key_value_row(field_label(next_field), next_value))
+            remaining = dated_fields[1:]
+            for field, value in remaining[: max(0, self.presentation(block)["content_limit"] - 1)]:
+                layout.addWidget(self.key_value_row(field_label(field), value))
+            hidden_count += max(0, len(remaining) - max(0, self.presentation(block)["content_limit"] - 1))
+            self.add_overflow_hint(layout, hidden_count)
+            layout.addStretch()
+            return card
         for field in fields:
             value = getattr(self.dialog.context.missionary, field, None)
             if value:
@@ -632,6 +832,7 @@ class WorkspaceBlockFactory:
                 added += 1
         if not added:
             layout.addWidget(self.empty("No upcoming appointments", "Appointment and expiration dates will appear here."))
+        self.add_overflow_hint(layout, hidden_count)
         layout.addStretch()
         return card
 
@@ -640,19 +841,14 @@ class WorkspaceBlockFactory:
         current = stage_display_name(
             getattr(self.dialog.context.missionary, "current_stage", None)
         )
-        metrics = QGridLayout()
-        metrics.setContentsMargins(0, 0, 0, 0)
-        metrics.setHorizontalSpacing(8)
-        metrics.setVerticalSpacing(8)
         metric_data = [
             ("Stage", current),
             ("Documents", len(self.dialog.context.documents)),
             ("Missing groups", len(self.dialog.context.missing_groups)),
             ("Open tasks", len(self.dialog.context.tasks)),
         ]
-        for index, (label, value) in enumerate(metric_data):
-            metrics.addWidget(self.metric_card(label, value), index // 2, index % 2)
-        layout.addLayout(metrics)
+        metric_data, hidden_count = self.limited_items(block, metric_data)
+        self.metric_grid(layout, metric_data)
         workflow = self.current_workflow()
         if workflow:
             layout.addWidget(
@@ -661,6 +857,7 @@ class WorkspaceBlockFactory:
                     status_label(getattr(workflow, "status", "")),
                 )
             )
+        self.add_overflow_hint(layout, hidden_count)
         layout.addStretch()
         return card
 
@@ -672,15 +869,31 @@ class WorkspaceBlockFactory:
 
     def contact_info(self, block):
         card, layout = self.card(block)
-        for field in ["phone", "email", "emergency_contact", "folder_path"]:
+        fields, hidden_count = self.limited_items(
+            block,
+            ["phone", "email", "emergency_contact", "folder_path"],
+        )
+        for field in fields:
             value = getattr(self.dialog.context.missionary, field, None)
             line = QHBoxLayout(); line.addWidget(QLabel(field_label(field))); line.addStretch(); line.addWidget(QLabel(format_value(value))); layout.addLayout(line)
+        self.add_overflow_hint(layout, hidden_count)
         layout.addStretch(); return card
 
     def contact_info_polished(self, block):
         card, layout = self.card(block)
         added = 0
-        for field in ["phone", "email", "emergency_contact", "folder_path"]:
+        fields, hidden_count = self.limited_items(
+            block,
+            ["phone", "email", "emergency_contact", "folder_path"],
+        )
+        if self.is_variant(block, "summary"):
+            available = [
+                field
+                for field in fields
+                if getattr(self.dialog.context.missionary, field, None)
+            ]
+            self.metric_grid(layout, [("Contact fields", len(available))])
+        for field in fields:
             value = getattr(self.dialog.context.missionary, field, None)
             if not value:
                 continue
@@ -701,42 +914,27 @@ class WorkspaceBlockFactory:
                 )
             )
         layout.addStretch()
+        self.add_overflow_hint(layout, hidden_count)
         return card
 
     def workflow_next_steps(self, block):
-        card, layout = self.card(block)
-        current = stage_display_name(getattr(self.dialog.context.missionary, "current_stage", None))
-        layout.addWidget(QLabel(f"Current workflow: {current}"))
-        for text in ["Review missing documents", "Confirm appointments", "Update open tasks"]:
-            layout.addWidget(QLabel(f"• {text}"))
-        layout.addStretch(); return card
+        return self.workflow_next_steps_polished(block)
 
     def recent_activity(self, block):
-        card, layout = self.card(block)
-        for doc in self.dialog.context.documents[:4]:
-            layout.addWidget(QLabel(f"Document uploaded: {document_label(getattr(doc, 'document_type', ''))}"))
-        for task in self.dialog.context.tasks[:4]:
-            title = task.get("title") if isinstance(task, dict) else getattr(task, "title", "Task")
-            layout.addWidget(QLabel(f"Task updated: {title}"))
-        if layout.count() <= 1:
-            layout.addWidget(self.empty("No recent activity", "Document, task, and workflow changes will appear here."))
-        layout.addStretch(); return card
+        return self.recent_activity_polished(block)
 
     def link_list(self, block):
-        card, layout = self.card(block)
-        links = (block.get("settings") or {}).get("links") or []
-        if not links:
-            layout.addWidget(self.empty("No links configured", "Add government portals or reference links in the inspector."))
-        for link in links:
-            layout.addWidget(QLabel(link.get("label") or link.get("url") or "Link"))
-        layout.addStretch(); return card
+        return self.link_list_polished(block)
 
     def workflow_next_steps_polished(self, block):
         card, layout = self.card(block)
         current = stage_display_name(
             getattr(self.dialog.context.missionary, "current_stage", None)
         )
-        layout.addWidget(self.key_value_row("Current workflow", current))
+        if self.is_variant(block, "summary"):
+            self.metric_grid(layout, [("Current", current)])
+        else:
+            layout.addWidget(self.key_value_row("Current workflow", current))
 
         next_steps = []
         if self.dialog.context.missing_groups:
@@ -754,8 +952,10 @@ class WorkspaceBlockFactory:
         if not next_steps:
             next_steps.append("No urgent next steps for this workspace.")
 
-        for text in next_steps[:5]:
+        next_steps, hidden_count = self.limited_items(block, next_steps)
+        for text in next_steps:
             layout.addWidget(self.key_value_row("Next", text))
+        self.add_overflow_hint(layout, hidden_count)
         layout.addStretch()
         return card
 
@@ -767,7 +967,16 @@ class WorkspaceBlockFactory:
             key=lambda doc: getattr(doc, "uploaded_at", None) or 0,
             reverse=True,
         )
-        for doc in documents[:3]:
+        documents, hidden_docs = self.limited_items(block, documents)
+        if self.is_variant(block, "summary"):
+            self.metric_grid(
+                layout,
+                [
+                    ("Documents", len(self.dialog.context.documents)),
+                    ("Tasks", len(self.dialog.context.tasks)),
+                ],
+            )
+        for doc in documents:
             layout.addWidget(
                 self.key_value_row(
                     "Document",
@@ -775,7 +984,11 @@ class WorkspaceBlockFactory:
                 )
             )
             added += 1
-        for task in self.dialog.context.tasks[:3]:
+        remaining_slots = max(0, self.presentation(block)["content_limit"] - added)
+        tasks = list(self.dialog.context.tasks or [])
+        visible_tasks = tasks[:remaining_slots]
+        hidden_tasks = max(0, len(tasks) - len(visible_tasks))
+        for task in visible_tasks:
             title = task.get("title") if isinstance(task, dict) else getattr(task, "title", "Task")
             layout.addWidget(self.key_value_row("Task", title))
             added += 1
@@ -786,6 +999,7 @@ class WorkspaceBlockFactory:
                     "Document, task, and workflow changes will appear here.",
                 )
             )
+        self.add_overflow_hint(layout, hidden_docs + hidden_tasks)
         layout.addStretch()
         return card
 
@@ -799,6 +1013,9 @@ class WorkspaceBlockFactory:
                     "Add government portals or reference links in the inspector.",
                 )
             )
+        links, hidden_count = self.limited_items(block, links)
+        if self.is_variant(block, "summary"):
+            self.metric_grid(layout, [("Links", len(links))])
         for link in links:
             if isinstance(link, str):
                 label = link
@@ -814,6 +1031,7 @@ class WorkspaceBlockFactory:
                 lambda checked=False, target=url: self.dialog.open_web_url(target)
             )
             layout.addWidget(self.key_value_row("Link", label, action=open_btn))
+        self.add_overflow_hint(layout, hidden_count)
         layout.addStretch()
         return card
 
@@ -825,7 +1043,14 @@ class WorkspaceBlockFactory:
 
 
 class MissionaryWorkspaceDialog(MaskDialogBase):
-    def __init__(self, missionary, workspace, parent=None, on_refresh=None):
+    def __init__(
+        self,
+        missionary,
+        workspace,
+        parent=None,
+        on_refresh=None,
+        context=None,
+    ):
         super().__init__(parent)
         self.missionary = missionary
         self.workspace = normalize_workspace_layout(workspace or {})
@@ -834,7 +1059,7 @@ class MissionaryWorkspaceDialog(MaskDialogBase):
         self.workflow_service = WorkflowService()
         self.secretary_work_service = SecretaryWorkService()
         self.workflow_validator = WorkflowValidator()
-        self.context = MissionaryWorkspaceContext.load(missionary)
+        self.context = context or MissionaryWorkspaceContext.load(missionary)
 
         self.setWindowTitle(self.workspace.get("name") or tr("workspace_title"))
         width, height = {

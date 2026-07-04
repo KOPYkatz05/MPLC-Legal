@@ -520,12 +520,19 @@ class OfficeWorkPage(QWidget):
             ("open", "To Do", "#0EA5AC"),
             ("ready", "Ready", "#2563EB"),
             ("follow_up", "Follow Up", "#7C3AED"),
+            ("upcoming_follow_up", "Upcoming", "#0891B2"),
             ("missing_follow_up", "No Follow-Up", "#A16207"),
             ("overdue", "Overdue", "#DC2626"),
             ("due_today", "Due Today", "#D97706"),
             ("waiting", "Waiting", "#71717A"),
         ]:
-            row.addWidget(StatCard(summary.get(key, 0), label, color=color))
+            card = StatCard(summary.get(key, 0), label, color=color)
+            card.setCursor(Qt.PointingHandCursor)
+            card.mousePressEvent = (
+                lambda event, preset_key=key:
+                self._summary_card_clicked(event, preset_key)
+            )
+            row.addWidget(card)
 
         wrapper = QWidget()
         wrapper.setObjectName("OfficeWorkSummaryRow")
@@ -560,8 +567,8 @@ class OfficeWorkPage(QWidget):
         ]
         if task.get("waiting_reason_label"):
             meta_parts.append(task["waiting_reason_label"])
-        if task.get("waiting_follow_up_label"):
-            meta_parts.append(task["waiting_follow_up_label"])
+        if task.get("waiting_follow_up_status_label"):
+            meta_parts.append(task["waiting_follow_up_status_label"])
         if task.get("task_type") and task.get("task_type") != "CUSTOM":
             meta_parts.append(task.get("task_type_label", ""))
         if task.get("related_stage"):
@@ -804,12 +811,18 @@ class OfficeWorkPage(QWidget):
         self._set_combo_data(self.task_follow_up_filter, "ALL")
         self._set_combo_data(self.task_waiting_reason_filter, "ALL")
 
-        if preset == "today":
+        if preset == "open":
+            self._set_combo_data(self.task_status_filter, "OPEN")
+        elif preset in {"today", "due_today"}:
             self._set_combo_data(self.task_due_filter, "today")
         elif preset == "overdue":
             self._set_combo_data(self.task_due_filter, "overdue")
         elif preset == "follow_up":
             self._set_combo_data(self.task_follow_up_filter, "due")
+        elif preset == "upcoming_follow_up":
+            self._set_combo_data(self.task_follow_up_filter, "upcoming")
+        elif preset == "missing_follow_up":
+            self._set_combo_data(self.task_follow_up_filter, "missing")
         elif preset == "waiting":
             self._set_combo_data(self.task_status_filter, "WAITING")
         elif preset == "ready":
@@ -821,6 +834,10 @@ class OfficeWorkPage(QWidget):
         elif preset == "all":
             pass
         self.render_tasks()
+
+    def _summary_card_clicked(self, event, preset):
+        if event.button() == Qt.LeftButton:
+            self._apply_task_preset(preset)
 
     def focus_task_context(self, task_id=None, title=""):
         if task_id is not None:

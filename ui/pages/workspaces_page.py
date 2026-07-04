@@ -16,7 +16,13 @@ from PySide6.QtWidgets import (
 )
 
 from services.settings_service import SettingsService
-from services.workspace_block_registry import BLOCK_CATEGORIES, BLOCK_LABELS
+from services.workspace_block_registry import (
+    BLOCK_CATEGORIES,
+    BLOCK_LABELS,
+    DEFAULT_DENSITIES,
+    block_definition,
+    block_presentation,
+)
 from services.workspace_layout import WORKSPACE_GRID_COLUMNS, validate_block_layout
 from services.workspace_service import WorkspaceService, new_workspace
 from ui.foundation import (
@@ -28,7 +34,12 @@ from ui.foundation import (
     create_plain_text_edit,
     show_message,
 )
-from ui.widgets.workspace_layout_editor import WorkspaceLayoutEditor, WorkspacePaletteButton
+from ui.dialogs.missionary_workspace_dialog import MissionaryWorkspaceDialog
+from ui.widgets.workspace_layout_editor import (
+    GraphicsWorkspaceLayoutEditor,
+    WorkspaceLayoutEditor,
+    WorkspacePaletteButton,
+)
 from ui.widgets.editable_canvas import EditableCanvasEditorKit
 from utils.constants import DOCUMENTS
 from utils.language_helper import ui_text as tr
@@ -103,6 +114,33 @@ class WorkspaceBlockPropertiesDialog(QDialog):
         )
         self.title_input.setText(self.block.get("title", ""))
         form.addRow(tr("workspace_properties_title_field"), self.title_input)
+
+        definition = block_definition(self.block.get("type"))
+        presentation = block_presentation(self.block)
+        self.variant_combo = create_combo_box()
+        for variant in definition.get("allowed_variants", []):
+            self.variant_combo.addItem(
+                tr(f"workspace_variant_{variant}"),
+                variant,
+            )
+        variant_idx = self.variant_combo.findData(presentation["variant"])
+        self.variant_combo.setCurrentIndex(max(variant_idx, 0))
+        form.addRow(tr("workspace_properties_variant"), self.variant_combo)
+
+        self.density_combo = create_combo_box()
+        for density in DEFAULT_DENSITIES:
+            self.density_combo.addItem(
+                tr(f"workspace_density_{density}"),
+                density,
+            )
+        density_idx = self.density_combo.findData(presentation["density"])
+        self.density_combo.setCurrentIndex(max(density_idx, 0))
+        form.addRow(tr("workspace_properties_density"), self.density_combo)
+
+        self.content_limit_spin = QSpinBox()
+        self.content_limit_spin.setRange(1, 12)
+        self.content_limit_spin.setValue(presentation["content_limit"])
+        form.addRow(tr("workspace_properties_content_limit"), self.content_limit_spin)
 
         layout_data = validate_block_layout(self.block)
         self.row_spin = QSpinBox()
@@ -192,6 +230,10 @@ class WorkspaceBlockPropertiesDialog(QDialog):
     def updated_block(self):
         block = deepcopy(self.block)
         block["title"] = self.title_input.text().strip() or block.get("title", "")
+        block["variant"] = self.variant_combo.currentData() or block.get("variant", "summary")
+        block["density"] = self.density_combo.currentData() or block.get("density", "comfortable")
+        block["content_limit"] = self.content_limit_spin.value()
+        block["overflow"] = "view_all"
         block["layout"] = validate_block_layout({
             **block,
             "layout": {
@@ -424,6 +466,15 @@ class WorkspacesPage(QWidget):
         self.zoom_fit_btn = self.canvas_controls.zoom_fit_btn
         self.grid_toggle = self.canvas_controls.grid_toggle
         self.grid_size_spin = self.canvas_controls.grid_size_spin
+        self.preview_mode_btn = create_button(
+            tr("workspace_preview_as_opened"),
+            "secondary",
+        )
+        self.preview_mode_btn.setCheckable(True)
+        self.open_preview_btn = create_button(
+            tr("workspace_open_preview"),
+            "secondary",
+        )
         self.copy_btn = create_button(tr("workspace_copy"), "secondary")
         self.paste_btn = create_button(tr("workspace_paste"), "secondary")
         self.clear_canvas_btn = create_button(tr("workspace_clear_canvas"), "danger")
@@ -440,6 +491,8 @@ class WorkspacesPage(QWidget):
         self.canvas_controls.zoomFitRequested.connect(self._zoom_fit)
         self.canvas_controls.gridVisibleChanged.connect(self._toggle_workspace_grid)
         self.canvas_controls.gridSizeChanged.connect(self._update_workspace_grid_size)
+        self.preview_mode_btn.toggled.connect(self._toggle_workspace_preview_mode)
+        self.open_preview_btn.clicked.connect(self._open_workspace_preview)
         self.copy_btn.clicked.connect(self._copy_selected_block)
         self.paste_btn.clicked.connect(self._paste_block)
         self.clear_canvas_btn.clicked.connect(self._clear_canvas)
@@ -451,11 +504,15 @@ class WorkspacesPage(QWidget):
             self.paste_btn,
             self.clear_canvas_btn,
             self.add_selected_btn,
+            self.preview_mode_btn,
+            self.open_preview_btn,
         ):
             button.setFixedHeight(30)
         toolbar.addWidget(self.undo_btn)
         toolbar.addWidget(self.redo_btn)
         toolbar.addWidget(self.canvas_controls)
+        toolbar.addWidget(self.preview_mode_btn)
+        toolbar.addWidget(self.open_preview_btn)
         toolbar.addWidget(self.copy_btn)
         toolbar.addWidget(self.paste_btn)
         toolbar.addWidget(self.clear_canvas_btn)
@@ -485,7 +542,7 @@ class WorkspacesPage(QWidget):
         canvas_shell_layout = QVBoxLayout()
         canvas_shell_layout.setContentsMargins(0, 0, 0, 0)
         canvas_shell.setLayout(canvas_shell_layout)
-        self.workspace_layout_editor = WorkspaceLayoutEditor(self._block_label)
+        self.workspace_layout_editor = GraphicsWorkspaceLayoutEditor(self._block_label)
         self.workspace_layout_editor.blockSelected.connect(self._select_block_from_layout)
         self.workspace_layout_editor.editRequested.connect(self._edit_block_properties)
         self.workspace_layout_editor.layoutChanged.connect(self._workspace_layout_changed)
@@ -701,6 +758,12 @@ class WorkspacesPage(QWidget):
         self.undo_btn.setText(tr("workspace_undo"))
         self.redo_btn.setText(tr("workspace_redo"))
         self.canvas_controls.retranslate_ui()
+        self.preview_mode_btn.setText(
+            tr("workspace_back_to_edit")
+            if self.preview_mode_btn.isChecked()
+            else tr("workspace_preview_as_opened")
+        )
+        self.open_preview_btn.setText(tr("workspace_open_preview"))
         self.copy_btn.setText(tr("workspace_copy"))
         self.paste_btn.setText(tr("workspace_paste"))
         self.clear_canvas_btn.setText(tr("workspace_clear_canvas"))
@@ -1006,7 +1069,41 @@ class WorkspacesPage(QWidget):
     def _update_workspace_size(self):
         workspace = self._current_workspace()
         if workspace is not None:
-            workspace["dialog_size"] = self.workspace_size_combo.currentData()
+            dialog_size = self.workspace_size_combo.currentData()
+            workspace["dialog_size"] = dialog_size
+            if getattr(self.workspace_layout_editor, "workspace", None) is not None:
+                self.workspace_layout_editor.workspace["dialog_size"] = dialog_size
+            self.workspace_layout_editor.render()
+            self._refresh_zoom_label()
+
+    def _toggle_workspace_preview_mode(self, checked):
+        if hasattr(self.workspace_layout_editor, "set_preview_as_opened"):
+            self.workspace_layout_editor.set_preview_as_opened(checked)
+        self.preview_mode_btn.setText(
+            tr("workspace_back_to_edit")
+            if checked
+            else tr("workspace_preview_as_opened")
+        )
+
+    def _open_workspace_preview(self):
+        workspace = self._current_workspace()
+        if not workspace:
+            return
+        preview_host = getattr(self.workspace_layout_editor, "_preview_host", None)
+        missionary = getattr(getattr(preview_host, "context", None), "missionary", None)
+        opener = getattr(self.main_window, "open_missionary_workspace", None)
+        if callable(opener) and missionary is not None:
+            if opener(missionary, workspace):
+                return
+        dialog = MissionaryWorkspaceDialog(
+            missionary,
+            deepcopy(workspace),
+            parent=self,
+            context=getattr(preview_host, "context", None),
+        )
+        dialog.setAttribute(Qt.WA_DeleteOnClose, True)
+        self._workspace_preview_dialog = dialog
+        dialog.show()
 
     def _add_workspace_block(self):
         block_type = self.block_add_combo.currentData()
@@ -1126,7 +1223,14 @@ class WorkspacesPage(QWidget):
         if not block_id:
             return
         workspace = self._current_workspace()
-        block = self._current_block()
+        block = next(
+            (
+                item
+                for item in (workspace or {}).get("blocks", [])
+                if item.get("id") == block_id
+            ),
+            None,
+        )
         if not workspace or not block:
             return
         dialog = WorkspaceBlockPropertiesDialog(block, self)

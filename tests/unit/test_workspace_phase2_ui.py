@@ -1,11 +1,14 @@
 from copy import deepcopy
+from datetime import date
 from types import SimpleNamespace
 
-from PySide6.QtCore import QEvent, QPoint, QRect, Qt
+from PySide6.QtCore import QEvent, QPoint, QPointF, QRect, Qt
 from PySide6.QtGui import QKeyEvent
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import (
     QApplication,
+    QDialog,
+    QFrame,
     QGridLayout,
     QLabel,
     QListWidget,
@@ -15,6 +18,7 @@ from PySide6.QtWidgets import (
 )
 
 from services.settings_service import SettingsService
+from services.workspace_block_registry import block_definition, block_presentation, block_types
 from services.workspace_service import new_block, new_workspace
 from ui.dialogs import missionary_workspace_dialog as workspace_dialog_module
 from ui.dialogs.missionary_workspace_dialog import (
@@ -40,6 +44,8 @@ from ui.widgets.editable_canvas import (
     resolve_overlapping_free_rects,
 )
 from ui.widgets.workspace_layout_editor import (
+    GraphicsWorkspaceLayoutEditor,
+    WORKSPACE_DIALOG_BODY_SIZES,
     WorkspaceLayoutEditor,
     WorkspaceLayoutTile,
     WorkspacePaletteButton,
@@ -90,6 +96,18 @@ def _widget_texts(widget):
     ]
 
 
+def _widget_signature(widget):
+    return [
+        (
+            child.metaObject().className(),
+            child.objectName(),
+            child.text() if isinstance(child, QLabel) else "",
+        )
+        for child in widget.findChildren(QWidget)
+        if child is not widget
+    ]
+
+
 class FakeWorkspaceDialog:
     def __init__(self):
         self.preview_mode = False
@@ -126,11 +144,26 @@ class FakeWorkspaceDialog:
     def open_web_url(self, url):
         self.opened_urls.append(url)
 
+    def open_document_viewer(self, *args):
+        self.actions.append("open_document_viewer")
+
+    def open_document_notes(self, *args):
+        self.actions.append("open_document_notes")
+
+    def open_document_file(self, *args):
+        self.actions.append("open_document_file")
+
     def upload_document(self):
         self.actions.append("upload_document")
 
     def add_task(self):
         self.actions.append("add_task")
+
+    def complete_task(self, *args):
+        self.actions.append("complete_task")
+
+    def edit_task(self, *args):
+        self.actions.append("edit_task")
 
     def open_folder_path(self):
         self.actions.append("open_folder")
@@ -1304,6 +1337,31 @@ def test_workspace_layout_editor_render_keeps_marquee_rubber_band(qapp):
     assert rubber_band.isVisible() is False
 
 
+def test_workspace_layout_editor_clear_grid_hides_tiles_before_detaching(qapp):
+    _ = qapp
+    workspace = new_workspace("No Floating Tiles")
+    editor = WorkspaceLayoutEditor(lambda block_type: block_type)
+    editor.show()
+    qapp.processEvents()
+    editor.set_workspace(workspace)
+    block = editor.add_block_at("documents", row=0, col=0)
+    tile = next(
+        child
+        for child in editor.surface.findChildren(
+            WorkspaceLayoutTile,
+            options=Qt.FindDirectChildrenOnly,
+        )
+        if child.block["id"] == block["id"]
+    )
+    assert tile.isVisible()
+
+    editor.render()
+    qapp.processEvents()
+
+    assert tile.parent() is None
+    assert tile.isVisible() is False
+
+
 def test_workspace_layout_editor_group_and_ungroup(qapp):
     _ = qapp
     workspace = new_workspace("Grouping")
@@ -1890,6 +1948,46 @@ def test_workspace_layout_editor_zoom_scales_fixed_artboard_not_layout(qapp):
     assert editor.surface.width() == zoomed_canvas.width() + 56
 
 
+def test_workspace_layout_editor_uses_screen_size_preset(qapp):
+    _ = qapp
+    workspace = new_workspace("Screen Size")
+    workspace["dialog_size"] = "medium"
+    editor = WorkspaceLayoutEditor(lambda block_type: block_type)
+    editor.set_workspace(workspace)
+
+    width, height = WORKSPACE_DIALOG_BODY_SIZES["medium"]
+
+    assert editor.canvas_rect().width() == width
+    assert editor.canvas_rect().height() == height
+
+    workspace["dialog_size"] = "wide"
+    editor.set_workspace(workspace)
+    width, height = WORKSPACE_DIALOG_BODY_SIZES["wide"]
+
+    assert editor.canvas_rect().width() == width
+    assert editor.canvas_rect().height() == height
+
+
+def test_workspace_layout_editor_extends_past_screen_for_overflow_blocks(qapp):
+    _ = qapp
+    workspace = new_workspace("Overflow Screen")
+    workspace["dialog_size"] = "large"
+    workspace["blocks"] = [
+        {
+            "id": "late",
+            "type": "notes",
+            "layout": {"row": 9, "col": 0, "row_span": 2, "col_span": 6},
+        }
+    ]
+    editor = WorkspaceLayoutEditor(lambda block_type: block_type)
+    editor.set_workspace(workspace)
+
+    _, preset_height = WORKSPACE_DIALOG_BODY_SIZES["large"]
+
+    assert editor.canvas_rect().height() > preset_height
+    assert editor.canvas_rect().height() == (11 * editor.logical_row_height) + 28
+
+
 def test_workspace_layout_editor_drag_uses_zoomed_artboard_scale(qapp):
     _ = qapp
     workspace = new_workspace("Zoom Drag")
@@ -1922,6 +2020,330 @@ def test_workspace_layout_editor_drag_uses_zoomed_artboard_scale(qapp):
     assert moved_layout["col"] >= 1
 
 
+def test_graphics_workspace_editor_uses_transform_zoom_not_relayout(qapp):
+    _ = qapp
+    workspace = new_workspace("Graphics Zoom")
+    workspace["dialog_size"] = "wide"
+    workspace["blocks"] = [
+        {
+            "id": "task",
+            "type": "task_board",
+            "layout": {"row": 1, "col": 2, "row_span": 3, "col_span": 4},
+        }
+    ]
+    editor = GraphicsWorkspaceLayoutEditor(lambda block_type: block_type)
+    editor.resize(1200, 800)
+    editor.show()
+    qapp.processEvents()
+    editor.set_workspace(workspace)
+
+    original_layout = dict(editor.workspace["blocks"][0]["layout"])
+    original_rect = editor._graphics_block_widgets["task"].sceneBoundingRect()
+
+    editor.set_zoom(1.5)
+    qapp.processEvents()
+
+    assert round(editor.view.transform().m11(), 2) == 1.5
+    assert editor.workspace["blocks"][0]["layout"] == original_layout
+    assert editor._graphics_block_widgets["task"].sceneBoundingRect() == original_rect
+    assert editor.canvas_rect().width() == 1184
+
+
+def test_graphics_workspace_editor_drags_in_scene_coordinates(qapp):
+    _ = qapp
+    workspace = new_workspace("Graphics Drag")
+    editor = GraphicsWorkspaceLayoutEditor(lambda block_type: block_type)
+    editor.resize(1200, 800)
+    editor.show()
+    qapp.processEvents()
+    editor.set_workspace(workspace)
+    block = editor.add_block_at("documents", row=0, col=0)
+    editor.set_zoom(1.5)
+    qapp.processEvents()
+
+    overlay = editor._graphics_block_overlays[block["id"]]
+    start_scene = overlay.sceneBoundingRect().center()
+    end_scene = start_scene + QPointF(editor.cell_width(), editor.row_height)
+    start_view = editor.view.mapFromScene(start_scene)
+    end_view = editor.view.mapFromScene(end_scene)
+
+    QTest.mousePress(editor.view.viewport(), Qt.LeftButton, Qt.NoModifier, start_view)
+    QTest.mouseMove(editor.view.viewport(), end_view)
+    QTest.mouseRelease(editor.view.viewport(), Qt.LeftButton, Qt.NoModifier, end_view)
+
+    moved_layout = editor._block(block["id"])["layout"]
+    assert moved_layout["row"] >= 1
+    assert moved_layout["col"] >= 1
+
+
+def test_graphics_workspace_editor_double_click_requests_edit(qapp):
+    _ = qapp
+    workspace = new_workspace("Graphics Edit")
+    editor = GraphicsWorkspaceLayoutEditor(lambda block_type: block_type)
+    editor.resize(1200, 800)
+    editor.show()
+    qapp.processEvents()
+    editor.set_workspace(workspace)
+    block = editor.add_block_at("documents", row=0, col=0)
+    qapp.processEvents()
+    requested = []
+    editor.editRequested.connect(requested.append)
+
+    overlay = editor._graphics_block_overlays[block["id"]]
+    center = editor.view.mapFromScene(overlay.sceneBoundingRect().center())
+
+    QTest.mouseDClick(
+        editor.view.viewport(),
+        Qt.LeftButton,
+        Qt.NoModifier,
+        center,
+    )
+
+    assert requested == [block["id"]]
+    assert editor.selected_block_id == block["id"]
+
+
+def test_graphics_workspace_editor_context_menu_exposes_edit_action(qapp):
+    _ = qapp
+    workspace = new_workspace("Graphics Context")
+    editor = GraphicsWorkspaceLayoutEditor(lambda block_type: block_type)
+    editor.set_workspace(workspace)
+    first = editor.add_block_at("documents", row=0, col=0)
+    second = editor.add_block_at("notes", row=3, col=4)
+    requested = []
+    editor.editRequested.connect(requested.append)
+
+    menu = editor.build_block_context_menu(first["id"])
+    action_texts = [
+        action.text()
+        for action in menu.actions()
+        if action.text()
+    ]
+    edit_action = next(
+        action
+        for action in menu.actions()
+        if action.text() == "Edit Properties"
+    )
+    edit_action.trigger()
+    swap_list = menu.actions()[-1].menu().findChild(
+        QListWidget,
+        "WorkspaceSwapBlockList",
+    )
+
+    assert action_texts == ["Select", "Delete", "Edit Properties", "Swap"]
+    assert requested == [first["id"]]
+    assert swap_list is not None
+    assert swap_list.item(0).data(Qt.UserRole) == second["id"]
+
+
+def test_graphics_workspace_editor_preview_mode_hides_edit_overlays(qapp):
+    _ = qapp
+    workspace = new_workspace("Graphics Preview")
+    workspace["blocks"] = [
+        {
+            "id": "notes",
+            "type": "notes",
+            "layout": {"row": 0, "col": 0, "row_span": 2, "col_span": 6},
+        }
+    ]
+    editor = GraphicsWorkspaceLayoutEditor(lambda block_type: block_type)
+    editor.set_workspace(workspace)
+
+    assert editor._graphics_block_overlays
+    assert editor._graphics_guide_items
+
+    editor.set_preview_as_opened(True)
+
+    assert editor.preview_as_opened is True
+    assert editor._graphics_block_overlays == {}
+    assert all(
+        item.zValue() != 8
+        for item in editor._graphics_guide_items
+    )
+
+
+def test_graphics_workspace_editor_snapshots_heavy_blocks(qapp):
+    _ = qapp
+    workspace = new_workspace("Graphics Snapshot")
+    workspace["blocks"] = [
+        {
+            "id": "web",
+            "type": "web_viewer",
+            "web_url": "https://example.org",
+            "layout": {"row": 0, "col": 0, "row_span": 4, "col_span": 8},
+        }
+    ]
+    editor = GraphicsWorkspaceLayoutEditor(lambda block_type: block_type)
+    editor.set_workspace(workspace)
+
+    item = editor._graphics_block_widgets["web"]
+
+    assert item.pixmap().isNull() is False
+    assert "web" in editor._graphics_block_overlays
+
+
+def test_graphics_workspace_editor_snapshot_widget_never_shows(qapp, monkeypatch):
+    _ = qapp
+    editor = GraphicsWorkspaceLayoutEditor(lambda block_type: block_type)
+    block = {
+        "id": "web",
+        "type": "web_viewer",
+        "layout": {"row": 0, "col": 0, "row_span": 4, "col_span": 8},
+    }
+    created = []
+
+    class RecordingTile(QFrame):
+        def __init__(self):
+            super().__init__()
+            self.show_called = False
+
+        def show(self):
+            self.show_called = True
+            super().show()
+
+    def make_tile(_block):
+        tile = RecordingTile()
+        tile.setObjectName("WorkspaceLayoutTile")
+        created.append(tile)
+        return tile
+
+    monkeypatch.setattr(editor, "_make_graphics_tile_widget", make_tile)
+
+    item = editor._snapshot_graphics_tile(block, editor.layout_to_rect(block["layout"]))
+
+    assert item.pixmap().isNull() is False
+    assert created[0].show_called is False
+    assert created[0].isVisible() is False
+
+
+def test_graphics_workspace_editor_minimap_recenters_zoomed_canvas(qapp):
+    _ = qapp
+    workspace = new_workspace("Graphics Minimap")
+    workspace["blocks"] = [
+        {
+            "id": "notes",
+            "type": "notes",
+            "layout": {"row": 8, "col": 8, "row_span": 3, "col_span": 4},
+        }
+    ]
+    editor = GraphicsWorkspaceLayoutEditor(lambda block_type: block_type)
+    editor.resize(520, 360)
+    editor.show()
+    qapp.processEvents()
+    editor.set_workspace(workspace)
+    editor.set_zoom(1.5)
+    qapp.processEvents()
+
+    assert editor.minimap.isVisible() is True
+    assert editor.minimap.width() == 152
+
+    before = editor.view.horizontalScrollBar().value()
+    QTest.mouseClick(
+        editor.minimap,
+        Qt.LeftButton,
+        Qt.NoModifier,
+        editor.minimap.rect().bottomRight() - QPoint(12, 12),
+    )
+
+    assert editor.view.horizontalScrollBar().value() >= before
+
+
+def test_graphics_workspace_editor_animates_preview_geometry(qapp):
+    _ = qapp
+    workspace = new_workspace("Graphics Motion")
+    workspace["blocks"] = [
+        {
+            "id": "notes",
+            "type": "notes",
+            "layout": {"row": 0, "col": 0, "row_span": 2, "col_span": 4},
+        }
+    ]
+    editor = GraphicsWorkspaceLayoutEditor(lambda block_type: block_type)
+    editor.set_workspace(workspace)
+    editor.begin_interaction()
+
+    editor.preview_layout("notes", row=2, col=4, row_span=2, col_span=4)
+    expected_live_rect = editor.layout_to_rect(editor._block("notes")["layout"])
+    live_overlay = editor._graphics_block_overlays["notes"]
+
+    assert editor._graphics_animations
+    assert live_overlay.pos() == expected_live_rect.topLeft()
+    assert live_overlay.rect().width() == expected_live_rect.width()
+    assert live_overlay.rect().height() == expected_live_rect.height()
+    QTest.qWait(180)
+    assert editor._graphics_animations == []
+    resolved_layout = editor._block("notes")["layout"]
+    expected_rect = editor.layout_to_rect(resolved_layout)
+    actual_rect = editor._graphics_block_widgets["notes"].sceneBoundingRect()
+    overlay = editor._graphics_block_overlays["notes"]
+    assert actual_rect.x() == expected_rect.x()
+    assert actual_rect.y() == expected_rect.y()
+    assert overlay.pos() == actual_rect.topLeft()
+    assert overlay.rect().width() == actual_rect.width()
+    assert overlay.rect().height() == actual_rect.height()
+
+
+def test_graphics_workspace_editor_renders_alignment_guides(qapp):
+    _ = qapp
+    workspace = new_workspace("Graphics Guides")
+    workspace["blocks"] = [
+        {
+            "id": "left",
+            "type": "notes",
+            "layout": {"row": 0, "col": 0, "row_span": 2, "col_span": 4},
+        },
+        {
+            "id": "right",
+            "type": "documents",
+            "layout": {"row": 4, "col": 6, "row_span": 2, "col_span": 4},
+        },
+    ]
+    editor = GraphicsWorkspaceLayoutEditor(lambda block_type: block_type)
+    editor.set_workspace(workspace)
+
+    editor.set_placement_guide(
+        {"row": 4, "col": 6, "row_span": 2, "col_span": 4},
+        block_id="left",
+    )
+
+    guide_items = [item for item in editor._graphics_guide_items if item.zValue() == 7]
+    assert guide_items
+
+
+def test_graphics_workspace_editor_guides_do_not_touch_legacy_surface(qapp):
+    _ = qapp
+    workspace = new_workspace("Graphics Deleted Surface")
+    workspace["blocks"] = [
+        {
+            "id": "notes",
+            "type": "notes",
+            "layout": {"row": 0, "col": 0, "row_span": 2, "col_span": 4},
+        }
+    ]
+    editor = GraphicsWorkspaceLayoutEditor(lambda block_type: block_type)
+    editor.set_workspace(workspace)
+
+    class DeletedSurface:
+        def update(self):
+            raise RuntimeError(
+                "Internal C++ object (WorkspaceCanvasSurface) already deleted"
+            )
+
+    editor.surface = DeletedSurface()
+
+    editor.set_placement_guide(
+        {"row": 1, "col": 1, "row_span": 2, "col_span": 4},
+        block_id="notes",
+    )
+    editor.preview_new_block("documents", row=3, col=3)
+    editor.clear_placement_guide()
+
+    assert editor.interaction_hint
+
+    editor.set_preview_as_opened(True)
+    assert [item for item in editor._graphics_guide_items if item.zValue() == 7] == []
+
+
 def test_workspaces_page_grid_controls_update_editor(qapp):
     _ = qapp
     service = MemoryWorkspaceService()
@@ -1933,6 +2355,7 @@ def test_workspaces_page_grid_controls_update_editor(qapp):
 
     assert isinstance(page.editor_kit, EditableCanvasEditorKit)
     assert isinstance(page.canvas_controls, EditableCanvasControls)
+    assert isinstance(page.workspace_layout_editor, GraphicsWorkspaceLayoutEditor)
     page.grid_toggle.setChecked(False)
     assert page.workspace_layout_editor.grid_visible is False
 
@@ -1943,6 +2366,121 @@ def test_workspaces_page_grid_controls_update_editor(qapp):
     page._zoom_fit()
     assert page.workspace_layout_editor.zoom != 1.0
     assert page.zoom_reset_btn.text().endswith("%")
+
+
+def test_workspaces_page_preview_toggle_and_size_preset_update_graphics_editor(qapp):
+    _ = qapp
+    service = MemoryWorkspaceService()
+    main_window = SimpleNamespace(
+        settings_service=SettingsService(),
+        workspace_service=service,
+    )
+    page = WorkspacesPage(main_window)
+    page._new_workspace()
+
+    page.preview_mode_btn.setChecked(True)
+    assert page.workspace_layout_editor.preview_as_opened is True
+    assert page.preview_mode_btn.text() == "Edit"
+
+    page.preview_mode_btn.setChecked(False)
+    assert page.workspace_layout_editor.preview_as_opened is False
+    assert page.preview_mode_btn.text() == "Preview"
+
+    wide_index = page.workspace_size_combo.findData("wide")
+    page.workspace_size_combo.setCurrentIndex(wide_index)
+
+    assert page._current_workspace()["dialog_size"] == "wide"
+    assert page.workspace_size_combo.currentText() == "Wide (1184 x 660)"
+    assert page.workspace_layout_editor.canvas_rect().width() == WORKSPACE_DIALOG_BODY_SIZES["wide"][0]
+    assert page.workspace_layout_editor.canvas_rect().height() == WORKSPACE_DIALOG_BODY_SIZES["wide"][1]
+
+
+def test_workspaces_page_open_preview_uses_actual_workspace_dialog(monkeypatch, qapp):
+    _ = qapp
+    opened = []
+
+    class FakeWorkspaceDialog:
+        def __init__(self, missionary, workspace, parent=None, context=None, **kwargs):
+            opened.append(
+                {
+                    "missionary": missionary,
+                    "workspace": workspace,
+                    "parent": parent,
+                    "context": context,
+                    "kwargs": kwargs,
+                }
+            )
+
+        def setAttribute(self, *args):
+            opened[-1]["attribute"] = args
+
+        def show(self):
+            opened[-1]["shown"] = True
+
+    monkeypatch.setattr(
+        "ui.pages.workspaces_page.MissionaryWorkspaceDialog",
+        FakeWorkspaceDialog,
+    )
+    service = MemoryWorkspaceService()
+    main_window = SimpleNamespace(
+        settings_service=SettingsService(),
+        workspace_service=service,
+    )
+    page = WorkspacesPage(main_window)
+    page._new_workspace()
+
+    page._open_workspace_preview()
+
+    assert opened
+    assert opened[0]["missionary"].full_name == "Sample Missionary"
+    assert opened[0]["workspace"]["id"] == page._current_workspace()["id"]
+    assert opened[0]["context"] is page.workspace_layout_editor._preview_host.context
+    assert opened[0]["shown"] is True
+
+
+def test_workspaces_page_edit_properties_targets_requested_block(monkeypatch, qapp):
+    _ = qapp
+    service = MemoryWorkspaceService()
+    main_window = SimpleNamespace(
+        settings_service=SettingsService(),
+        workspace_service=service,
+    )
+    page = WorkspacesPage(main_window)
+    page._new_workspace()
+    first = page.workspace_layout_editor.add_block_at("documents")
+    second = page.workspace_layout_editor.add_block_at("notes")
+    page.workspace_layout_editor.set_selected_block(first["id"])
+
+    class FakePropertiesDialog:
+        def __init__(self, block, parent=None):
+            self.block = deepcopy(block)
+            self.parent = parent
+
+        def exec(self):
+            return QDialog.Accepted
+
+        def updated_block(self):
+            updated = deepcopy(self.block)
+            updated["title"] = "Edited requested block"
+            return updated
+
+    monkeypatch.setattr(
+        "ui.pages.workspaces_page.WorkspaceBlockPropertiesDialog",
+        FakePropertiesDialog,
+    )
+
+    page._edit_block_properties(second["id"])
+
+    workspace = page._current_workspace()
+    first_after = next(
+        block for block in workspace["blocks"] if block["id"] == first["id"]
+    )
+    second_after = next(
+        block for block in workspace["blocks"] if block["id"] == second["id"]
+    )
+    assert first_after.get("title") != "Edited requested block"
+    assert second_after.get("title") == "Edited requested block"
+    assert page.workspace_layout_editor.selected_block_id == second["id"]
 
 
 def test_workspaces_page_uses_canvas_without_visible_inspector(qapp):
@@ -2246,6 +2784,25 @@ def test_workspace_block_properties_dialog_updates_web_url(qapp):
     assert updated["layout"]["row"] == 2
 
 
+def test_workspace_block_properties_dialog_updates_presentation(qapp):
+    _ = qapp
+    block = new_block("documents")
+    dialog = WorkspaceBlockPropertiesDialog(block)
+
+    list_index = dialog.variant_combo.findData("list")
+    compact_index = dialog.density_combo.findData("compact")
+    dialog.variant_combo.setCurrentIndex(list_index)
+    dialog.density_combo.setCurrentIndex(compact_index)
+    dialog.content_limit_spin.setValue(2)
+    updated = dialog.updated_block()
+
+    assert block_definition("documents")["allowed_variants"] == ["summary", "list"]
+    assert updated["variant"] == "list"
+    assert updated["density"] == "compact"
+    assert updated["content_limit"] == 2
+    assert updated["overflow"] == "view_all"
+
+
 def test_workspace_block_properties_dialog_uses_active_language(qapp):
     _ = qapp
     i18n = get_i18n()
@@ -2290,6 +2847,271 @@ def test_runtime_status_summary_block_renders_metrics(qapp):
     assert "Missing groups" in texts
     assert "Open tasks" in texts
     assert "Workflow status" in texts
+
+
+def test_workspace_block_manifest_limits_content_by_size():
+    block = new_block("documents")
+    block["layout"] = {"row": 0, "col": 0, "row_span": 1, "col_span": 3}
+
+    presentation = block_presentation(block)
+
+    assert presentation["variant"] == "summary"
+    assert presentation["size_bucket"] == "compact"
+    assert presentation["content_limit"] == 2
+
+
+def test_runtime_documents_block_obeys_content_limit(qapp):
+    _ = qapp
+    dialog = FakeWorkspaceDialog()
+    dialog.context.documents = [
+        SimpleNamespace(document_type=f"DOC_{index}", uploaded_at=date(2026, 1, index + 1))
+        for index in range(6)
+    ]
+    factory = WorkspaceBlockFactory(dialog)
+    widget = factory.build(
+        {
+            "type": "documents",
+            "title": "Documents",
+            "content_limit": 2,
+            "layout": {"row": 0, "col": 0, "row_span": 2, "col_span": 6},
+        }
+    )
+    texts = _widget_texts(widget)
+
+    assert "DOC_5" in texts
+    assert "DOC_4" in texts
+    assert "DOC_3" not in texts
+    assert "View all (4 more)" in texts
+
+
+def test_runtime_open_tasks_block_obeys_content_limit(qapp):
+    _ = qapp
+    dialog = FakeWorkspaceDialog()
+    dialog.context.tasks = [
+        {"id": index, "title": f"Task {index}"}
+        for index in range(5)
+    ]
+    factory = WorkspaceBlockFactory(dialog)
+    widget = factory.build(
+        {
+            "type": "open_tasks",
+            "title": "Tasks",
+            "content_limit": 2,
+            "layout": {"row": 0, "col": 0, "row_span": 2, "col_span": 6},
+        }
+    )
+    texts = _widget_texts(widget)
+
+    assert "Task 0" in texts
+    assert "Task 1" in texts
+    assert "Task 2" not in texts
+    assert "View all (3 more)" in texts
+
+
+def test_runtime_documents_summary_and_list_variants_are_distinct(qapp):
+    _ = qapp
+    dialog = FakeWorkspaceDialog()
+    dialog.context.documents = [
+        SimpleNamespace(document_type=f"DOC_{index}", uploaded_at=date(2026, 1, index + 1))
+        for index in range(3)
+    ]
+    factory = WorkspaceBlockFactory(dialog)
+
+    summary = factory.build(
+        {
+            "type": "documents",
+            "title": "Documents",
+            "variant": "summary",
+            "content_limit": 1,
+            "layout": {"row": 0, "col": 0, "row_span": 2, "col_span": 6},
+        }
+    )
+    list_widget = factory.build(
+        {
+            "type": "documents",
+            "title": "Documents",
+            "variant": "list",
+            "content_limit": 1,
+            "layout": {"row": 0, "col": 0, "row_span": 2, "col_span": 6},
+        }
+    )
+
+    summary_texts = _widget_texts(summary)
+    list_texts = _widget_texts(list_widget)
+
+    assert "Recent" in summary_texts
+    assert "Missing groups" in summary_texts
+    assert "Recent" not in list_texts
+    assert "View all (2 more)" in summary_texts
+    assert "View all (2 more)" in list_texts
+    summary.deleteLater()
+    list_widget.deleteLater()
+
+
+def test_runtime_open_tasks_summary_and_list_variants_are_distinct(qapp):
+    _ = qapp
+    dialog = FakeWorkspaceDialog()
+    dialog.context.tasks = [
+        {"id": 1, "title": "Urgent visa task", "priority": "High"},
+        {"id": 2, "title": "Call office", "priority": "Normal"},
+        {"id": 3, "title": "File update", "priority": "Normal"},
+    ]
+    factory = WorkspaceBlockFactory(dialog)
+
+    summary = factory.build(
+        {
+            "type": "open_tasks",
+            "title": "Tasks",
+            "variant": "summary",
+            "content_limit": 1,
+            "layout": {"row": 0, "col": 0, "row_span": 2, "col_span": 6},
+        }
+    )
+    list_widget = factory.build(
+        {
+            "type": "open_tasks",
+            "title": "Tasks",
+            "variant": "list",
+            "content_limit": 1,
+            "layout": {"row": 0, "col": 0, "row_span": 2, "col_span": 6},
+        }
+    )
+
+    summary_texts = _widget_texts(summary)
+    list_texts = _widget_texts(list_widget)
+
+    assert "Open tasks" in summary_texts
+    assert "High priority" in summary_texts
+    assert "Next" in summary_texts
+    assert "Next" not in list_texts
+    assert "View all (2 more)" in summary_texts
+    assert "View all (2 more)" in list_texts
+    summary.deleteLater()
+    list_widget.deleteLater()
+
+
+def test_workspace_editor_and_opened_renderer_share_block_output(qapp):
+    _ = qapp
+    workspace = new_workspace("Parity")
+    block = new_block("personal_info")
+    block["id"] = "personal"
+    block["layout"] = {"row": 0, "col": 0, "row_span": 2, "col_span": 6}
+    block["content_limit"] = 3
+    workspace["blocks"] = [block]
+    editor = GraphicsWorkspaceLayoutEditor(lambda block_type: block_type)
+    editor.set_workspace(workspace)
+
+    editor._preview_host.preview_mode = False
+    editor_widget = editor._preview_factory.build(block)
+    editor_texts = _widget_texts(editor_widget)
+
+    opened_host = editor._preview_host
+    opened_host.preview_mode = False
+    opened_widget = WorkspaceBlockFactory(opened_host).build(block)
+    opened_texts = _widget_texts(opened_widget)
+
+    assert editor_texts == opened_texts
+    editor_widget.deleteLater()
+    opened_widget.deleteLater()
+
+
+def test_workspace_editor_and_opened_renderer_share_documents_variant_output(qapp):
+    _ = qapp
+    workspace = new_workspace("Parity")
+    block = new_block("documents")
+    block["id"] = "documents"
+    block["variant"] = "summary"
+    block["content_limit"] = 1
+    block["layout"] = {"row": 0, "col": 0, "row_span": 2, "col_span": 6}
+    workspace["blocks"] = [block]
+    editor = GraphicsWorkspaceLayoutEditor(lambda block_type: block_type)
+    editor.set_workspace(workspace)
+    editor._preview_host.context.documents = [
+        SimpleNamespace(document_type="PASSPORT", uploaded_at=2),
+        SimpleNamespace(document_type="FBI", uploaded_at=1),
+    ]
+    editor._preview_host.context.missing_groups = [("INTERPOL", ["FBI"], True)]
+
+    editor._preview_host.preview_mode = False
+    editor_widget = editor._preview_factory.build(block)
+    editor_texts = _widget_texts(editor_widget)
+
+    opened_host = editor._preview_host
+    opened_host.preview_mode = False
+    opened_widget = WorkspaceBlockFactory(opened_host).build(block)
+    opened_texts = _widget_texts(opened_widget)
+
+    assert editor_texts == opened_texts
+    assert "Recent" in editor_texts
+    editor_widget.deleteLater()
+    opened_widget.deleteLater()
+
+
+def test_workspace_editor_and_opened_renderer_share_all_block_outputs(monkeypatch, qapp):
+    _ = qapp
+    monkeypatch.setattr(
+        workspace_dialog_module,
+        "QWebEngineView",
+        None,
+    )
+    workspace = new_workspace("All Block Parity")
+    editor = GraphicsWorkspaceLayoutEditor(lambda block_type: block_type)
+    editor.set_workspace(workspace)
+    host = editor._preview_host
+    host.preview_mode = False
+    host.context.missionary.phone = "555-0100"
+    host.context.missionary.email = "test@example.org"
+    host.context.missionary.emergency_contact = "Office"
+    host.context.missionary.folder_path = "C:/Missionary"
+    host.context.missionary.interpol_appointment_date = "2026-07-01"
+    host.context.missionary.biometric_appointment_date = "2026-07-10"
+    host.context.documents = [
+        SimpleNamespace(document_type="PASSPORT", uploaded_at=date(2026, 1, 2)),
+        SimpleNamespace(document_type="FBI", uploaded_at=date(2026, 1, 1)),
+    ]
+    host.context.tasks = [
+        {"id": 1, "title": "Urgent visa task", "priority": "High"},
+        {"id": 2, "title": "Call office", "priority": "Normal"},
+    ]
+    host.context.residency_rows = [
+        {"event_type": "Visa expires", "target_expiration": "2026-08-01"},
+        {"event_type": "Carnet renewal", "target_expiration": "2026-09-01"},
+    ]
+    host.context.missing_groups = [("INTERPOL", ["FBI"], True)]
+
+    for block_type in block_types():
+        block = new_block(block_type)
+        block["id"] = f"parity_{block_type}"
+        block["layout"] = {"row": 0, "col": 0, "row_span": 2, "col_span": 6}
+        block["content_limit"] = 2
+        if block_type == "web_viewer":
+            block["web_url"] = "https://example.org"
+        if block_type == "document_viewer":
+            block["document_type"] = "PASSPORT"
+        if block_type == "link_list":
+            block["settings"] = {
+                "links": [
+                    {"label": "Migraciones", "url": "https://example.org"},
+                    {"label": "Interpol", "url": "https://interpol.example.org"},
+                ],
+            }
+
+        editor_widget = editor._preview_factory.build(block)
+        opened_widget = WorkspaceBlockFactory(host).build(block)
+
+        assert _widget_texts(editor_widget) == _widget_texts(opened_widget), block_type
+        assert _widget_signature(editor_widget) == _widget_signature(opened_widget), block_type
+        assert editor_widget.minimumSize() == opened_widget.minimumSize(), block_type
+        assert (
+            editor_widget.sizePolicy().horizontalPolicy()
+            == opened_widget.sizePolicy().horizontalPolicy()
+        ), block_type
+        assert (
+            editor_widget.sizePolicy().verticalPolicy()
+            == opened_widget.sizePolicy().verticalPolicy()
+        ), block_type
+        editor_widget.deleteLater()
+        opened_widget.deleteLater()
 
 
 def test_runtime_quick_actions_are_wired(qapp):

@@ -624,9 +624,17 @@ def _extract_ocr_texts_subprocess(image_paths):
         *[str(path) for path in image_paths],
     ]
 
-    creationflags = 0
+    popen_kwargs = {}
     if os.name == "nt":
-        creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        startupinfo = subprocess.STARTUPINFO()
+        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        startupinfo.wShowWindow = subprocess.SW_HIDE
+        popen_kwargs["creationflags"] = getattr(
+            subprocess,
+            "CREATE_NO_WINDOW",
+            0,
+        )
+        popen_kwargs["startupinfo"] = startupinfo
 
     try:
         try:
@@ -644,7 +652,7 @@ def _extract_ocr_texts_subprocess(image_paths):
                 capture_output=True,
                 text=True,
                 timeout=OCR_SUBPROCESS_TIMEOUT_SECONDS,
-                creationflags=creationflags,
+                **popen_kwargs,
             )
             elapsed = time.monotonic() - started_at
             logger.info(

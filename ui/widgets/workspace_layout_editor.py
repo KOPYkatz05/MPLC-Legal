@@ -5,15 +5,22 @@ from PySide6.QtCore import (
     QEasingCurve,
     QMimeData,
     QPoint,
+    QPointF,
     QParallelAnimationGroup,
     QPropertyAnimation,
     QRect,
+    QRectF,
     Qt,
     Signal,
+    QVariantAnimation,
 )
-from PySide6.QtGui import QColor, QDrag, QPainter, QPen, QBrush
+from PySide6.QtGui import QColor, QDrag, QPainter, QPen, QBrush, QPixmap
 from PySide6.QtWidgets import (
     QFrame,
+    QGraphicsItem,
+    QGraphicsRectItem,
+    QGraphicsScene,
+    QGraphicsView,
     QHBoxLayout,
     QLabel,
     QListWidget,
@@ -67,13 +74,11 @@ WORKSPACE_REBOUND_ANIMATION_MS = 240
 WORKSPACE_ARTBOARD_WIDTH = 1004
 WORKSPACE_ARTBOARD_MIN_HEIGHT = 560
 WORKSPACE_ARTBOARD_MARGIN = 28
-WORKSPACE_DIALOG_BODY_WIDTHS = {
-    "medium": 784,
-    "large": 1004,
-    "wide": 1184,
+WORKSPACE_DIALOG_BODY_SIZES = {
+    "medium": (784, 520),
+    "large": (1004, 620),
+    "wide": (1184, 660),
 }
-
-
 def _event_position(event):
     return event.position().toPoint() if hasattr(event, "position") else event.pos()
 
@@ -264,8 +269,10 @@ class WorkspaceCanvasSurface(QFrame):
         self.setAcceptDrops(True)
         self.setMouseTracking(True)
         self.setMinimumSize(
-            max(WORKSPACE_DIALOG_BODY_WIDTHS.values()) + (WORKSPACE_ARTBOARD_MARGIN * 2),
-            WORKSPACE_ARTBOARD_MIN_HEIGHT + (WORKSPACE_ARTBOARD_MARGIN * 2),
+            max(width for width, _ in WORKSPACE_DIALOG_BODY_SIZES.values())
+            + (WORKSPACE_ARTBOARD_MARGIN * 2),
+            max(height for _, height in WORKSPACE_DIALOG_BODY_SIZES.values())
+            + (WORKSPACE_ARTBOARD_MARGIN * 2),
         )
         self.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         self._marquee_origin = QPoint()
@@ -903,22 +910,28 @@ class WorkspaceLayoutEditor(QWidget):
         self.render()
 
     def _logical_artboard_height_for_blocks(self, blocks=None):
+        size_key = self.workspace.get("dialog_size") if self.workspace else "large"
+        _, preset_height = WORKSPACE_DIALOG_BODY_SIZES.get(
+            size_key,
+            (WORKSPACE_ARTBOARD_WIDTH, WORKSPACE_ARTBOARD_MIN_HEIGHT),
+        )
         max_row = 0
         for block in blocks or []:
             layout = validate_block_layout(block)
             max_row = max(max_row, layout["row"] + layout["row_span"])
         content_height = (
-            (max_row + 2) * self.logical_row_height
+            max_row * self.logical_row_height
             + WORKSPACE_ARTBOARD_MARGIN
         )
-        return max(WORKSPACE_ARTBOARD_MIN_HEIGHT, content_height)
+        return max(preset_height, content_height)
 
     def _sync_artboard_width(self):
         size_key = self.workspace.get("dialog_size") if self.workspace else "large"
-        self._artboard_logical_width = WORKSPACE_DIALOG_BODY_WIDTHS.get(
+        width, _ = WORKSPACE_DIALOG_BODY_SIZES.get(
             size_key,
-            WORKSPACE_ARTBOARD_WIDTH,
+            (WORKSPACE_ARTBOARD_WIDTH, WORKSPACE_ARTBOARD_MIN_HEIGHT),
         )
+        self._artboard_logical_width = width
 
     def _sync_artboard_height(self):
         blocks = self.workspace.get("blocks", []) if self.workspace else []
@@ -2252,5 +2265,909 @@ class WorkspaceLayoutEditor(QWidget):
         for child in self.surface.findChildren(QWidget, options=Qt.FindDirectChildrenOnly):
             if child is self.surface._rubber_band:
                 continue
+            child.hide()
             child.setParent(None)
             child.deleteLater()
+
+
+class WorkspaceGraphicsView(QGraphicsView):
+    zoomRequested = Signal(float, QPoint)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._is_middle_panning = False
+        self._last_pan_pos = QPoint()
+        self.setObjectName("WorkspaceGraphicsView")
+        self.setRenderHints(self.renderHints() | QPainter.Antialiasing)
+        self.setTransformationAnchor(QGraphicsView.AnchorUnderMouse)
+        self.setResizeAnchor(QGraphicsView.AnchorViewCenter)
+        self.setDragMode(QGraphicsView.NoDrag)
+        self.setAcceptDrops(True)
+        self.setMouseTracking(True)
+
+    def wheelEvent(self, event):
+        if event.modifiers() & Qt.ControlModifier:
+            delta = event.angleDelta().y() or event.angleDelta().x()
+            if delta:
+                self.zoomRequested.emit(1.25 if delta > 0 else 0.8, event.position().toPoint())
+                event.accept()
+                return
+        super().wheelEvent(event)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MiddleButton:
+            self._is_middle_panning = True
+            self._last_pan_pos = _event_position(event)
+            self.viewport().setCursor(Qt.ClosedHandCursor)
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if self._is_middle_panning:
+            current = _event_position(event)
+            delta = current - self._last_pan_pos
+            self.horizontalScrollBar().setValue(
+                self.horizontalScrollBar().value() - delta.x()
+            )
+            self.verticalScrollBar().setValue(
+                self.verticalScrollBar().value() - delta.y()
+            )
+            self._last_pan_pos = current
+            event.accept()
+            return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.MiddleButton and self._is_middle_panning:
+            self._is_middle_panning = False
+            self.viewport().unsetCursor()
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
+
+
+class WorkspaceGraphicsBlockOverlay(QGraphicsRectItem):
+    def __init__(self, block, editor):
+        super().__init__()
+        self.block = block
+        self.editor = editor
+        self._start_scene_pos = QPointF()
+        self._start_layout = None
+        self._start_group_layouts = {}
+        self._mode = None
+        self._drag_moved = False
+        self._hover_handle = None
+        self.setAcceptHoverEvents(True)
+        self.setAcceptedMouseButtons(Qt.LeftButton | Qt.RightButton)
+        self.setZValue(20)
+
+    def resize_handle(self, pos):
+        margin = 14
+        rect = self.rect()
+        left = pos.x() <= margin
+        right = pos.x() >= rect.width() - margin
+        top = pos.y() <= margin
+        bottom = pos.y() >= rect.height() - margin
+        if top and left:
+            return "nw"
+        if top and right:
+            return "ne"
+        if bottom and left:
+            return "sw"
+        if bottom and right:
+            return "se"
+        if left:
+            return "w"
+        if right:
+            return "e"
+        if top:
+            return "n"
+        if bottom:
+            return "s"
+        return None
+
+    def cursor_for_handle(self, handle):
+        if handle in {"nw", "se"}:
+            return Qt.SizeFDiagCursor
+        if handle in {"ne", "sw"}:
+            return Qt.SizeBDiagCursor
+        if handle in {"e", "w"}:
+            return Qt.SizeHorCursor
+        if handle in {"n", "s"}:
+            return Qt.SizeVerCursor
+        return Qt.OpenHandCursor
+
+    def update_block(self, block):
+        self.block = block
+        self.update()
+
+    def paint(self, painter, option, widget=None):
+        _ = option, widget
+        rect = self.rect()
+        selected = self.block.get("id") in self.editor.selected_block_ids
+        hidden = self.block.get("visible") is False
+        locked = bool(self.block.get("locked"))
+        if hidden:
+            painter.fillRect(rect, HIDDEN_OVERLAY)
+        color = QColor(ACCENT_TEAL) if selected else QColor(SELECTION_MUTED)
+        painter.setPen(QPen(color, 2, Qt.DashLine if hidden else Qt.SolidLine))
+        painter.setBrush(Qt.NoBrush)
+        painter.drawRoundedRect(rect.adjusted(1, 1, -2, -2), 12, 12)
+        if locked or hidden:
+            labels = []
+            if locked:
+                labels.append(tr("workspace_locked_badge"))
+            if hidden:
+                labels.append(tr("workspace_hidden_badge"))
+            badge = QRectF(rect.width() - 112, rect.height() - 30, 100, 22)
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(QColor(DARK_CHIP))
+            painter.drawRoundedRect(badge, 8, 8)
+            painter.setPen(QColor(WHITE))
+            painter.drawText(badge, Qt.AlignCenter, " / ".join(labels))
+        if selected:
+            painter.setPen(Qt.NoPen)
+            handles = {
+                "nw": (4, 4),
+                "n": (rect.width() / 2 - 5, 4),
+                "ne": (rect.width() - 14, 4),
+                "w": (4, rect.height() / 2 - 5),
+                "e": (rect.width() - 14, rect.height() / 2 - 5),
+                "sw": (4, rect.height() - 14),
+                "s": (rect.width() / 2 - 5, rect.height() - 14),
+                "se": (rect.width() - 14, rect.height() - 14),
+            }
+            active_handle = self._mode if self._mode != "move" else self._hover_handle
+            for handle, (x, y) in handles.items():
+                active = handle == active_handle
+                size = 14 if active else 10
+                offset = 2 if active else 0
+                painter.setBrush(QColor(ACCENT_GROUP) if active else QColor(ACCENT_TEAL))
+                painter.drawRoundedRect(
+                    QRectF(x - offset, y - offset, size, size),
+                    5,
+                    5,
+                )
+
+    def hoverMoveEvent(self, event):
+        handle = self.resize_handle(event.pos())
+        if handle != self._hover_handle:
+            self._hover_handle = handle
+            self.update()
+        self.setCursor(self.cursor_for_handle(handle))
+        super().hoverMoveEvent(event)
+
+    def hoverLeaveEvent(self, event):
+        self._hover_handle = None
+        self.setCursor(Qt.OpenHandCursor)
+        self.update()
+        super().hoverLeaveEvent(event)
+
+    def contextMenuEvent(self, event):
+        block_id = self.block.get("id")
+        if block_id:
+            self.editor.select_block(block_id)
+            menu = self.editor.build_block_context_menu(block_id)
+            menu.exec(event.screenPos())
+            event.accept()
+            return
+        super().contextMenuEvent(event)
+
+    def mouseDoubleClickEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            block_id = self.block.get("id")
+            if block_id:
+                self.editor.select_block(block_id)
+                self.editor.request_edit(block_id)
+                event.accept()
+                return
+        super().mouseDoubleClickEvent(event)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            block_id = self.block.get("id")
+            additive = bool(event.modifiers() & Qt.ControlModifier)
+            self.editor.select_block_for_drag(block_id, additive=additive)
+            if self.block.get("locked"):
+                self.editor._set_interaction_state(verb=tr("workspace_locked_block"))
+                event.accept()
+                return
+            self._start_scene_pos = event.scenePos()
+            self._start_layout = validate_block_layout(self.block)
+            self._start_group_layouts = {
+                selected.get("id"): validate_block_layout(selected)
+                for selected in self.editor._selected_blocks()
+                if selected.get("id") and not selected.get("locked")
+            }
+            self._mode = self.resize_handle(event.pos()) or "move"
+            self._drag_moved = False
+            self.editor.begin_interaction()
+            self.setCursor(
+                self.cursor_for_handle(self._mode)
+                if self._mode != "move"
+                else Qt.ClosedHandCursor
+            )
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if not self._start_layout:
+            super().mouseMoveEvent(event)
+            return
+        delta = event.scenePos() - self._start_scene_pos
+        if abs(delta.x()) + abs(delta.y()) > 3:
+            self._drag_moved = True
+        col_delta = round(delta.x() / max(1, self.editor.cell_width()))
+        row_delta = round(delta.y() / max(1, self.editor.row_height))
+        layout = dict(self._start_layout)
+        if self._mode != "move":
+            if "e" in self._mode:
+                layout["col_span"] = max(1, self._start_layout["col_span"] + col_delta)
+            if "s" in self._mode:
+                layout["row_span"] = max(1, self._start_layout["row_span"] + row_delta)
+            if "w" in self._mode:
+                next_col = max(0, self._start_layout["col"] + col_delta)
+                right_edge = self._start_layout["col"] + self._start_layout["col_span"]
+                layout["col"] = min(next_col, right_edge - 1)
+                layout["col_span"] = max(1, right_edge - layout["col"])
+            if "n" in self._mode:
+                next_row = max(0, self._start_layout["row"] + row_delta)
+                bottom_edge = self._start_layout["row"] + self._start_layout["row_span"]
+                layout["row"] = min(next_row, bottom_edge - 1)
+                layout["row_span"] = max(1, bottom_edge - layout["row"])
+            self.editor.set_placement_guide(
+                layout,
+                block_id=self.block.get("id"),
+                verb="Resize block",
+            )
+            self.editor.preview_layout(self.block.get("id"), **layout)
+        else:
+            if len(self._start_group_layouts) > 1:
+                self.editor.preview_selected_move(
+                    self._start_group_layouts,
+                    row_delta=row_delta,
+                    col_delta=col_delta,
+                    anchor_id=self.block.get("id"),
+                )
+                event.accept()
+                return
+            layout["col"] = max(0, self._start_layout["col"] + col_delta)
+            layout["row"] = max(0, self._start_layout["row"] + row_delta)
+            self.editor.set_placement_guide(
+                layout,
+                block_id=self.block.get("id"),
+                verb="Move block",
+            )
+            self.editor.preview_layout(self.block.get("id"), **layout)
+        event.accept()
+
+    def mouseReleaseEvent(self, event):
+        if self._mode:
+            if self._drag_moved:
+                self.editor.commit_interaction()
+            else:
+                self.editor.cancel_interaction()
+            self.editor.clear_placement_guide()
+            self._mode = None
+            self._start_layout = None
+            self._start_group_layouts = {}
+            self._drag_moved = False
+            self.setCursor(Qt.OpenHandCursor)
+            self.update()
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
+
+
+class WorkspaceGraphicsMiniMap(QFrame):
+    def __init__(self, editor):
+        super().__init__(editor.view)
+        self.editor = editor
+        self.setObjectName("WorkspaceGraphicsMiniMap")
+        self.setFixedSize(152, 108)
+        self.setCursor(Qt.PointingHandCursor)
+        self.setAttribute(Qt.WA_StyledBackground, True)
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.fillRect(self.rect(), QColor(255, 255, 255, 232))
+        painter.setPen(QPen(QColor("#D4D4D8"), 1))
+        painter.drawRoundedRect(self.rect().adjusted(0, 0, -1, -1), 8, 8)
+
+        canvas = QRectF(self.editor.canvas_rect())
+        target = self._target_rect(canvas)
+        painter.setBrush(QColor(CANVAS_SURFACE))
+        painter.setPen(QPen(QColor(GRID_EDGE), 1))
+        painter.drawRect(target)
+
+        if self.editor.workspace:
+            painter.setBrush(QColor(ACCENT_TEAL))
+            painter.setPen(Qt.NoPen)
+            for block in self.editor.workspace.get("blocks", []):
+                if block.get("visible") is False:
+                    continue
+                rect = QRectF(
+                    self.editor.layout_to_rect(validate_block_layout(block))
+                )
+                mapped = self._map_scene_rect(rect, canvas, target)
+                painter.drawRoundedRect(mapped, 2, 2)
+
+        viewport_scene = self.editor.view.mapToScene(
+            self.editor.view.viewport().rect()
+        ).boundingRect()
+        visible = self._map_scene_rect(viewport_scene, canvas, target)
+        painter.setBrush(Qt.NoBrush)
+        painter.setPen(QPen(QColor(ACCENT_GROUP), 2))
+        painter.drawRect(visible)
+
+    def mousePressEvent(self, event):
+        self._center_main_view(event.position().toPoint())
+        event.accept()
+
+    def mouseMoveEvent(self, event):
+        if event.buttons() & Qt.LeftButton:
+            self._center_main_view(event.position().toPoint())
+            event.accept()
+            return
+        super().mouseMoveEvent(event)
+
+    def _target_rect(self, canvas):
+        if canvas.width() <= 0 or canvas.height() <= 0:
+            return QRectF(10, 10, self.width() - 20, self.height() - 20)
+        available = QRectF(10, 10, self.width() - 20, self.height() - 20)
+        scale = min(
+            available.width() / canvas.width(),
+            available.height() / canvas.height(),
+        )
+        width = canvas.width() * scale
+        height = canvas.height() * scale
+        return QRectF(
+            available.center().x() - (width / 2),
+            available.center().y() - (height / 2),
+            width,
+            height,
+        )
+
+    def _map_scene_rect(self, rect, canvas, target):
+        if canvas.width() <= 0 or canvas.height() <= 0:
+            return QRectF(target)
+        return QRectF(
+            target.left() + ((rect.left() - canvas.left()) / canvas.width() * target.width()),
+            target.top() + ((rect.top() - canvas.top()) / canvas.height() * target.height()),
+            rect.width() / canvas.width() * target.width(),
+            rect.height() / canvas.height() * target.height(),
+        ).intersected(target)
+
+    def _center_main_view(self, pos):
+        canvas = QRectF(self.editor.canvas_rect())
+        target = self._target_rect(canvas)
+        if not target.contains(pos):
+            return
+        x_ratio = (pos.x() - target.left()) / max(1, target.width())
+        y_ratio = (pos.y() - target.top()) / max(1, target.height())
+        self.editor.view.centerOn(
+            canvas.left() + (canvas.width() * x_ratio),
+            canvas.top() + (canvas.height() * y_ratio),
+        )
+        self.update()
+
+
+class GraphicsWorkspaceLayoutEditor(WorkspaceLayoutEditor):
+    """Graphics-view Workspace editor with true transform-based artboard zoom."""
+
+    def __init__(self, block_label_for_type, parent=None):
+        super().__init__(block_label_for_type, parent=parent)
+        old_surface = self.surface
+        layout = self.layout()
+        item = layout.takeAt(0)
+        if item and item.widget():
+            item.widget().hide()
+            item.widget().setParent(None)
+        old_surface.hide()
+        old_surface.deleteLater()
+
+        self.scene = QGraphicsScene(self)
+        self.view = WorkspaceGraphicsView(self)
+        self.view.setScene(self.scene)
+        self.view.zoomRequested.connect(
+            lambda factor, pos: self.set_zoom(self.zoom * factor)
+        )
+        layout.addWidget(self.view)
+        self.minimap = WorkspaceGraphicsMiniMap(self)
+        self.view.horizontalScrollBar().valueChanged.connect(self.minimap.update)
+        self.view.verticalScrollBar().valueChanged.connect(self.minimap.update)
+
+        self._graphics_artboard_item = None
+        self._graphics_block_widgets = {}
+        self._graphics_block_overlays = {}
+        self._graphics_guide_items = []
+        self._graphics_animations = []
+        self._preview_as_opened = False
+        self._sync_scene()
+        self._position_minimap()
+
+    @property
+    def row_height(self):
+        return self.canvas_state.base_grid_size
+
+    def canvas_rect(self):
+        return QRect(
+            WORKSPACE_ARTBOARD_MARGIN,
+            WORKSPACE_ARTBOARD_MARGIN,
+            int(round(self._artboard_logical_width)),
+            int(round(self._artboard_logical_height)),
+        )
+
+    def _sync_surface_size(self):
+        if not hasattr(self, "view"):
+            WorkspaceLayoutEditor._sync_surface_size(self)
+            return
+        self._sync_scene()
+
+    def set_zoom(self, value):
+        old_zoom = self.canvas_state.zoom
+        self.canvas_state.set_zoom(value)
+        if self.canvas_state.zoom == old_zoom and self.view.transform().m11():
+            return
+        self.view.resetTransform()
+        self.view.scale(self.canvas_state.zoom, self.canvas_state.zoom)
+        self.minimap.update()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._position_minimap()
+
+    def _position_minimap(self):
+        if not hasattr(self, "minimap"):
+            return
+        margin = 14
+        self.minimap.move(
+            max(margin, self.view.width() - self.minimap.width() - margin),
+            max(margin, self.view.height() - self.minimap.height() - margin),
+        )
+        self.minimap.raise_()
+
+    def set_grid_visible(self, visible):
+        self.canvas_state.set_grid_visible(visible)
+        self.render()
+
+    def set_grid_size(self, value):
+        self.canvas_state.set_grid_size(value)
+        self.render()
+
+    @property
+    def preview_as_opened(self):
+        return self._preview_as_opened
+
+    def set_preview_as_opened(self, enabled):
+        enabled = bool(enabled)
+        if self._preview_as_opened == enabled:
+            return
+        self._preview_as_opened = enabled
+        self._preview_host.preview_mode = not enabled
+        self.render()
+
+    def fit_width_zoom(self, viewport_width, content_width=None, padding=36):
+        content_width = content_width or (
+            self._artboard_logical_width + (WORKSPACE_ARTBOARD_MARGIN * 2)
+        )
+        self.set_zoom(
+            self.canvas_state.fit_width_zoom(
+                viewport_width,
+                content_width,
+                padding=padding,
+            )
+        )
+
+    def preview_new_block(self, block_type, row=0, col=0):
+        block = new_block(block_type)
+        layout = validate_block_layout(block)
+        layout.update({"row": row, "col": col})
+        snapped_layout, snapped = self.snap_layout_to_alignment(layout)
+        resolved, adjusted = self.resolve_placement(snapped_layout)
+        self.placement_guide_layout = resolved
+        self.placement_guide_status = "adjusted" if adjusted else "snapped" if snapped else "clear"
+        self._set_interaction_state(
+            resolved,
+            adjusted=adjusted,
+            snapped=snapped,
+            verb="Place block",
+        )
+        self._refresh_graphics_guides()
+
+    def set_placement_guide(self, layout, block_id=None, verb="Move block"):
+        snapped_layout, snapped = self.snap_layout_to_alignment(layout, block_id=block_id)
+        resolved, adjusted = self.resolve_placement(snapped_layout, block_id=block_id)
+        self.placement_guide_layout = resolved
+        self.placement_guide_status = "adjusted" if adjusted else "snapped" if snapped else "clear"
+        self._set_interaction_state(
+            resolved,
+            block_id=block_id,
+            adjusted=adjusted,
+            snapped=snapped,
+            verb=verb,
+        )
+        self._refresh_graphics_guides()
+
+    def clear_placement_guide(self):
+        if self.placement_guide_layout is None:
+            return
+        self.placement_guide_layout = None
+        self.placement_guide_status = "clear"
+        self._set_interaction_state(verb=tr("workspace_ready"))
+        self._refresh_graphics_guides()
+
+    def scene_position_to_grid(self, pos):
+        rect = self.canvas_rect()
+        col = int((pos.x() - rect.left()) / self.cell_width())
+        row = int((pos.y() - rect.top()) / self.row_height)
+        return max(0, row), max(0, min(WORKSPACE_GRID_COLUMNS - 1, col))
+
+    def position_to_grid(self, pos):
+        scene_pos = self.view.mapToScene(pos)
+        return self.scene_position_to_grid(scene_pos)
+
+    def layout_to_rect(self, layout):
+        rect = self.canvas_rect()
+        x = rect.left() + int(layout["col"] * self.cell_width())
+        y = rect.top() + int(layout["row"] * self.row_height)
+        width = int(layout["col_span"] * self.cell_width()) - 10
+        height = int(layout["row_span"] * self.row_height) - 10
+        return QRectF(x + 5, y + 5, max(96, width), max(64, height))
+
+    def render(self):
+        self._sync_artboard_height()
+        self._sync_scene()
+        self._render_graphics_blocks()
+        self.minimap.update()
+
+    def refresh_tile_geometries(
+        self,
+        duration=WORKSPACE_PREVIEW_ANIMATION_MS,
+        easing=QEasingCurve.OutCubic,
+    ):
+        _ = duration, easing
+        if not self.workspace:
+            self.render()
+            return
+        if not self._graphics_block_widgets:
+            self.render()
+            return
+        self._sync_artboard_height()
+        self._sync_scene()
+        for block in self.workspace.get("blocks", []):
+            block_id = block.get("id")
+            proxy = self._graphics_block_widgets.get(block_id)
+            overlay = self._graphics_block_overlays.get(block_id)
+            if proxy is None or (overlay is None and not self._preview_as_opened):
+                self.render()
+                return
+            rect = self.layout_to_rect(validate_block_layout(block))
+            self._set_graphics_item_rect(
+                proxy,
+                overlay,
+                rect,
+                duration,
+                easing,
+                block=block,
+            )
+            if overlay is not None:
+                overlay.update_block(block)
+        self._refresh_graphics_guides()
+        self.minimap.update()
+
+    def _set_graphics_item_rect(self, proxy, overlay, rect, duration, easing, block=None):
+        if (
+            block is not None
+            and hasattr(proxy, "setPixmap")
+            and proxy.pixmap().size() != rect.size().toSize()
+        ):
+            proxy.setPixmap(self._render_graphics_tile_pixmap(block, rect))
+        if duration <= 0:
+            if hasattr(proxy, "setGeometry"):
+                proxy.setGeometry(rect)
+            else:
+                proxy.setPos(rect.topLeft())
+            if overlay is not None:
+                overlay.setRect(QRectF(0, 0, rect.width(), rect.height()))
+                overlay.setPos(rect.topLeft())
+            return
+        start_rect = self._graphics_item_rect(proxy)
+        end_rect = QRectF(rect)
+        if start_rect == end_rect:
+            if overlay is not None:
+                overlay.setRect(QRectF(0, 0, end_rect.width(), end_rect.height()))
+                overlay.setPos(end_rect.topLeft())
+            return
+        if overlay is not None:
+            overlay.setRect(QRectF(0, 0, end_rect.width(), end_rect.height()))
+            overlay.setPos(end_rect.topLeft())
+            overlay.update()
+        animation = QVariantAnimation(self)
+        animation.setDuration(duration)
+        animation.setEasingCurve(easing)
+        animation.setStartValue(start_rect)
+        animation.setEndValue(end_rect)
+
+        def apply_rect(value, item=proxy):
+            if hasattr(item, "setGeometry"):
+                item.setGeometry(value)
+            else:
+                item.setPos(value.topLeft())
+
+        animation.valueChanged.connect(apply_rect)
+        animation.finished.connect(
+            lambda anim=animation: self._graphics_animations.remove(anim)
+            if anim in self._graphics_animations
+            else None
+        )
+        self._graphics_animations.append(animation)
+        animation.start()
+
+    def refresh_tile_selection_state(self):
+        for overlay in self._graphics_block_overlays.values():
+            overlay.update()
+
+    def _clear_graphics_blocks(self):
+        self._stop_graphics_animations()
+        for item in list(self._graphics_block_overlays.values()):
+            self.scene.removeItem(item)
+        for proxy in list(self._graphics_block_widgets.values()):
+            self.scene.removeItem(proxy)
+            widget = proxy.widget() if hasattr(proxy, "widget") else None
+            if widget is not None:
+                widget.hide()
+                widget.deleteLater()
+        self._graphics_block_widgets = {}
+        self._graphics_block_overlays = {}
+
+    def _graphics_item_rect(self, item):
+        if hasattr(item, "geometry"):
+            return QRectF(item.geometry())
+        return item.sceneBoundingRect()
+
+    def _stop_graphics_animations(self):
+        for animation in list(getattr(self, "_graphics_animations", [])):
+            animation.stop()
+        self._graphics_animations = []
+
+    def _sync_scene(self):
+        scene_rect = QRectF(
+            0,
+            0,
+            self._artboard_logical_width + (WORKSPACE_ARTBOARD_MARGIN * 2),
+            self._artboard_logical_height + (WORKSPACE_ARTBOARD_MARGIN * 2),
+        )
+        self.scene.setSceneRect(scene_rect)
+        self.scene.setBackgroundBrush(QBrush(QColor(CANVAS_OUTER)))
+        if self._graphics_artboard_item is None:
+            self._graphics_artboard_item = QGraphicsRectItem()
+            self._graphics_artboard_item.setZValue(-10)
+            self.scene.addItem(self._graphics_artboard_item)
+        canvas = QRectF(self.canvas_rect())
+        self._graphics_artboard_item.setRect(canvas)
+        self._graphics_artboard_item.setBrush(QBrush(QColor(CANVAS_SURFACE)))
+        self._graphics_artboard_item.setPen(QPen(QColor(GRID_EDGE), 2))
+        self._refresh_graphics_guides()
+
+    def _refresh_graphics_guides(self):
+        for item in self._graphics_guide_items:
+            self.scene.removeItem(item)
+        self._graphics_guide_items = []
+        canvas = QRectF(self.canvas_rect())
+        if self.grid_visible and not self._preview_as_opened:
+            minor = QPen(QColor(GRID_MINOR))
+            major = QPen(QColor(GRID_MAJOR))
+            for col in range(WORKSPACE_GRID_COLUMNS + 1):
+                x = canvas.left() + (col * self.cell_width())
+                item = self.scene.addLine(
+                    x,
+                    canvas.top(),
+                    x,
+                    canvas.bottom(),
+                    major if col in (0, WORKSPACE_GRID_COLUMNS) else minor,
+                )
+                item.setZValue(-5)
+                self._graphics_guide_items.append(item)
+            rows = max(10, int(canvas.height() / max(1, self.row_height)) + 1)
+            for row in range(rows + 1):
+                y = canvas.top() + (row * self.row_height)
+                item = self.scene.addLine(
+                    canvas.left(),
+                    y,
+                    canvas.right(),
+                    y,
+                    major if row == 0 else minor,
+                )
+                item.setZValue(-5)
+                self._graphics_guide_items.append(item)
+        if not self._preview_as_opened:
+            guide_pen = QPen(QColor(ACCENT_GROUP), 2, Qt.DashLine)
+            for col in self.alignment_guides.get("vertical", []):
+                x = canvas.left() + (col * self.cell_width())
+                item = self.scene.addLine(
+                    x,
+                    canvas.top(),
+                    x,
+                    canvas.bottom(),
+                    guide_pen,
+                )
+                item.setZValue(7)
+                self._graphics_guide_items.append(item)
+            for row in self.alignment_guides.get("horizontal", []):
+                y = canvas.top() + (row * self.row_height)
+                item = self.scene.addLine(
+                    canvas.left(),
+                    y,
+                    canvas.right(),
+                    y,
+                    guide_pen,
+                )
+                item.setZValue(7)
+                self._graphics_guide_items.append(item)
+        guide_layout = self.placement_guide_layout
+        if guide_layout and not self._preview_as_opened:
+            rect = self.layout_to_rect(guide_layout)
+            guide = self.scene.addRect(
+                rect,
+                QPen(QColor(ACCENT_TEAL), 2, Qt.DashLine),
+                QBrush(ACCENT_TEAL_SOFT),
+            )
+            guide.setZValue(8)
+            self._graphics_guide_items.append(guide)
+
+    def _make_graphics_tile_widget(self, block):
+        tile = QFrame()
+        tile.setObjectName("WorkspaceLayoutTile")
+        tile.setProperty("selected", block.get("id") in self.selected_block_ids)
+        layout = QVBoxLayout()
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(6)
+        tile.setLayout(layout)
+        preview = self.build_block_preview(block)
+        preview.setParent(tile)
+        preview.setObjectName("WorkspaceTileLivePreview")
+        _make_mouse_transparent(preview)
+        layout.addWidget(preview, stretch=1)
+        block_layout = validate_block_layout(block)
+        chip = QLabel(f"{block_layout['col_span']}x{block_layout['row_span']}", tile)
+        chip.setObjectName("WorkspaceTileSizeChip")
+        chip.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        layout.addWidget(chip, alignment=Qt.AlignLeft)
+        return tile
+
+    def build_block_context_menu(self, block_id):
+        menu = QMenu()
+        menu.setObjectName("WorkspaceTileContextMenu")
+
+        select_action = menu.addAction(tr("workspace_context_select"))
+        select_action.triggered.connect(
+            lambda checked=False: self.select_block(block_id)
+        )
+
+        delete_action = menu.addAction(tr("workspace_delete"))
+        delete_action.setEnabled(
+            self.allow_structure_changes
+            and not self.is_block_locked(block_id)
+        )
+        delete_action.triggered.connect(
+            lambda checked=False: self.delete_block(block_id)
+        )
+
+        edit_action = menu.addAction(tr("workspace_edit_properties"))
+        edit_action.triggered.connect(
+            lambda checked=False: self.request_edit(block_id)
+        )
+
+        swap_menu = QMenu(tr("workspace_context_swap"), menu)
+        swap_menu.setObjectName("WorkspaceTileContextMenu")
+        self._populate_block_swap_menu(swap_menu, block_id)
+        menu.addMenu(swap_menu)
+        return menu
+
+    def _populate_block_swap_menu(self, menu, block_id):
+        candidates = [
+            block
+            for block in (self.workspace or {}).get("blocks", [])
+            if block.get("id") and block.get("id") != block_id
+        ]
+        if not candidates:
+            empty_action = menu.addAction(tr("workspace_context_swap_empty"))
+            empty_action.setEnabled(False)
+            return
+
+        list_widget = QListWidget(menu)
+        list_widget.setObjectName("WorkspaceSwapBlockList")
+        list_widget.setMinimumWidth(260)
+        visible_rows = min(7, max(1, len(candidates)))
+        list_widget.setFixedHeight(min(220, visible_rows * 34 + 8))
+        for candidate in candidates:
+            item = QListWidgetItem(
+                candidate.get("title")
+                or self.block_label_for_type(candidate.get("type"))
+            )
+            item.setData(Qt.UserRole, candidate.get("id"))
+            if (
+                self.is_block_locked(block_id)
+                or self.is_block_locked(candidate.get("id"))
+            ):
+                item.setFlags(item.flags() & ~Qt.ItemIsEnabled)
+            list_widget.addItem(item)
+        list_widget.itemClicked.connect(
+            lambda item: self._swap_block_from_menu(menu, block_id, item)
+        )
+
+        action = QWidgetAction(menu)
+        action.setDefaultWidget(list_widget)
+        menu.addAction(action)
+
+    def _swap_block_from_menu(self, menu, block_id, item):
+        target_id = item.data(Qt.UserRole)
+        if not target_id:
+            return
+        self.swap_block_layouts(block_id, target_id)
+        menu.close()
+
+    def _render_graphics_tile_pixmap(self, block, rect):
+        previous_preview_mode = getattr(self._preview_host, "preview_mode", True)
+        self._preview_host.preview_mode = True
+        widget = self._make_graphics_tile_widget(block)
+        self._preview_host.preview_mode = previous_preview_mode
+        width = max(1, int(rect.width()))
+        height = max(1, int(rect.height()))
+        widget.resize(width, height)
+        widget.ensurePolished()
+        if widget.layout():
+            widget.layout().activate()
+        pixmap = QPixmap(width, height)
+        pixmap.fill(Qt.transparent)
+        widget.render(pixmap)
+        widget.deleteLater()
+        return pixmap
+
+    def _snapshot_graphics_tile(self, block, rect):
+        pixmap = self._render_graphics_tile_pixmap(block, rect)
+        item = self.scene.addPixmap(pixmap)
+        item.setPos(rect.topLeft())
+        item.setZValue(10)
+        return item
+
+    def _render_graphics_blocks(self):
+        self._clear_graphics_blocks()
+        if not self.workspace:
+            text = self.scene.addText(tr("workspace_no_workspaces"))
+            text.setDefaultTextColor(QColor(SELECTION_MUTED))
+            text.setPos(self.canvas_rect().center() - QPoint(80, 12))
+            self._graphics_guide_items.append(text)
+            return
+        blocks = self.workspace.get("blocks", [])
+        if not blocks:
+            text = self.scene.addText(
+                "Blank canvas\nDrag a block from the left palette or use Add Block to begin."
+            )
+            text.setDefaultTextColor(QColor(SELECTION_MUTED))
+            text.setPos(self.canvas_rect().center() - QPoint(150, 20))
+            self._graphics_guide_items.append(text)
+            return
+        for block in blocks:
+            if block.get("visible") is False:
+                continue
+            rect = self.layout_to_rect(validate_block_layout(block))
+            proxy = self._snapshot_graphics_tile(block, rect)
+            overlay = None
+            if not self._preview_as_opened:
+                overlay = WorkspaceGraphicsBlockOverlay(block, self)
+                overlay.setRect(QRectF(0, 0, rect.width(), rect.height()))
+                overlay.setPos(rect.topLeft())
+                self.scene.addItem(overlay)
+            block_id = block.get("id")
+            self._graphics_block_widgets[block_id] = proxy
+            if overlay is not None:
+                self._graphics_block_overlays[block_id] = overlay
+
+    def _clear_grid(self):
+        self._clear_graphics_blocks()

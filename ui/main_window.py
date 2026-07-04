@@ -115,6 +115,8 @@ class _FluentShellCompat:
 
 
 class MainWindow(QMainWindow):
+    _windows_toast_available = None
+
     def __init__(self):
         super().__init__()
 
@@ -600,9 +602,17 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def _send_windows_toast(title, body):
+        if MainWindow._windows_toast_available is False:
+            return False
         try:
             from winotify import Notification
+        except ImportError:
+            MainWindow._windows_toast_available = False
+            logger.info("Windows notifications unavailable: winotify is not installed")
+            return False
 
+        MainWindow._windows_toast_available = True
+        try:
             toast = Notification(
                 app_id="Mission Legal",
                 title=title,

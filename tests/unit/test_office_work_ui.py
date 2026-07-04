@@ -27,6 +27,7 @@ class FakeSecretaryWorkService:
             "open": 1,
             "ready": 1,
             "follow_up": 1,
+            "upcoming_follow_up": 1,
             "missing_follow_up": 1,
             "overdue": 1,
             "due_today": 0,
@@ -70,6 +71,7 @@ class FakeSecretaryWorkService:
                     "waiting_reason_label": "",
                     "waiting_follow_up_date": None,
                     "waiting_follow_up_label": "",
+                    "waiting_follow_up_status_label": "",
                 }
             ],
             "today": [],
@@ -290,6 +292,45 @@ def test_task_dialog_starts_with_details_collapsed(qapp):
         dialog.close()
 
 
+def test_task_dialog_opens_details_for_waiting_task(qapp):
+    _ = qapp
+    dialog = TaskDialog(
+        FakeSecretaryWorkService(),
+        task={
+            "id": 6,
+            "title": "Waiting task",
+            "status": "WAITING",
+            "priority": "NORMAL",
+            "waiting_reason": "OTHER",
+        },
+    )
+
+    try:
+        assert dialog.details_widget.isHidden() is False
+        assert dialog.details_button.text() == "Hide details"
+        assert dialog.waiting_reason_field.isHidden() is False
+        assert dialog.no_waiting_follow_up_check.isHidden() is False
+    finally:
+        dialog.close()
+
+
+def test_task_dialog_opens_details_when_status_changes_to_waiting(qapp):
+    _ = qapp
+    dialog = TaskDialog(FakeSecretaryWorkService())
+
+    try:
+        assert dialog.details_widget.isHidden() is True
+
+        dialog._set_combo_data(dialog.status_combo, "WAITING")
+
+        assert dialog.details_widget.isHidden() is False
+        assert dialog.details_button.text() == "Hide details"
+        assert dialog.waiting_reason_field.isHidden() is False
+        assert dialog.no_waiting_follow_up_check.isHidden() is False
+    finally:
+        dialog.close()
+
+
 def test_task_dialog_shows_recent_status_history(qapp):
     _ = qapp
     service = FakeSecretaryWorkService()
@@ -374,6 +415,27 @@ def test_office_work_ready_transition_actions(qapp):
         page.close()
 
 
+def test_office_work_task_row_labels_missing_follow_up(qapp):
+    _ = qapp
+    page = OfficeWorkPage(service=FakeSecretaryWorkService())
+
+    try:
+        task = page.service.grouped_tasks()["overdue"][0].copy()
+        task.update({
+            "status": "WAITING",
+            "waiting_reason": "OTHER",
+            "waiting_reason_label": "Other waiting reason",
+            "waiting_follow_up_status_label": "No follow-up date",
+        })
+
+        row = page._task_row(task)
+        labels = [label.text() for label in row.findChildren(QLabel)]
+
+        assert any("No follow-up date" in text for text in labels)
+    finally:
+        page.close()
+
+
 def test_office_work_task_presets_drive_existing_filters(qapp):
     _ = qapp
     page = OfficeWorkPage(service=FakeSecretaryWorkService())
@@ -385,6 +447,26 @@ def test_office_work_task_presets_drive_existing_filters(qapp):
         page._apply_task_preset("follow_up")
         assert page.task_follow_up_filter.currentData() == "due"
         assert page.service.last_task_filters["waiting_follow_up"] == "due"
+
+        page._summary_card_clicked(
+            SimpleNamespace(button=lambda: Qt.LeftButton),
+            "missing_follow_up",
+        )
+        assert page.task_follow_up_filter.currentData() == "missing"
+        assert page.service.last_task_filters["waiting_follow_up"] == "missing"
+
+        page._summary_card_clicked(
+            SimpleNamespace(button=lambda: Qt.LeftButton),
+            "open",
+        )
+        assert page.task_status_filter.currentData() == "OPEN"
+
+        page._summary_card_clicked(
+            SimpleNamespace(button=lambda: Qt.LeftButton),
+            "upcoming_follow_up",
+        )
+        assert page.task_follow_up_filter.currentData() == "upcoming"
+        assert page.service.last_task_filters["waiting_follow_up"] == "upcoming"
 
         page._set_combo_data(page.task_follow_up_filter, "upcoming")
         page.render_tasks()

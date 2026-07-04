@@ -1,5 +1,9 @@
 from copy import deepcopy
 
+
+DEFAULT_VARIANTS = ("summary", "list", "detail")
+DEFAULT_DENSITIES = ("compact", "comfortable", "spacious")
+
 BLOCK_CATEGORIES = {
     "Core": ["personal_info", "contact_info", "status_summary", "appointments"],
     "Documents": ["documents", "document_viewer", "missing_documents", "document_checklist"],
@@ -29,6 +33,28 @@ _BLOCKS = {
     "link_list": {"label": "Link List", "i18n_key": "workspace_block_link_list", "icon": "🔗", "default_size": (6, 2), "min_size": (3, 1), "default_settings": {"settings": {"links": []}}, "inspector_fields": ["title", "links"]},
 }
 
+_PRESENTATION_MANIFESTS = {
+    "personal_info": {"default_variant": "summary", "allowed_variants": ["summary", "detail"], "max_items_by_size": {"compact": 3, "normal": 4, "large": 8}},
+    "documents": {"default_variant": "summary", "allowed_variants": ["summary", "list"], "max_items_by_size": {"compact": 2, "normal": 4, "large": 8}},
+    "document_viewer": {"default_variant": "detail", "allowed_variants": ["summary", "detail"], "max_items_by_size": {"compact": 1, "normal": 1, "large": 1}},
+    "web_viewer": {"default_variant": "detail", "allowed_variants": ["summary", "detail"], "max_items_by_size": {"compact": 1, "normal": 1, "large": 1}},
+    "missing_documents": {"default_variant": "summary", "allowed_variants": ["summary", "list"], "max_items_by_size": {"compact": 1, "normal": 2, "large": 5}},
+    "workflow": {"default_variant": "summary", "allowed_variants": ["summary", "list"], "max_items_by_size": {"compact": 1, "normal": 2, "large": 5}},
+    "open_tasks": {"default_variant": "summary", "allowed_variants": ["summary", "list"], "max_items_by_size": {"compact": 2, "normal": 3, "large": 8}},
+    "notes": {"default_variant": "summary", "allowed_variants": ["summary", "detail"], "max_items_by_size": {"compact": 1, "normal": 1, "large": 1}},
+    "residency_timeline": {"default_variant": "summary", "allowed_variants": ["summary", "timeline"], "max_items_by_size": {"compact": 2, "normal": 4, "large": 8}},
+    "quick_actions": {"default_variant": "action_panel", "allowed_variants": ["action_panel", "summary"], "max_items_by_size": {"compact": 2, "normal": 4, "large": 6}},
+    "appointments": {"default_variant": "summary", "allowed_variants": ["summary", "list"], "max_items_by_size": {"compact": 1, "normal": 3, "large": 7}},
+    "status_summary": {"default_variant": "compact_metric", "allowed_variants": ["compact_metric", "summary"], "max_items_by_size": {"compact": 2, "normal": 4, "large": 5}},
+    "document_checklist": {"default_variant": "summary", "allowed_variants": ["summary", "list"], "max_items_by_size": {"compact": 2, "normal": 4, "large": 8}},
+    "task_board": {"default_variant": "summary", "allowed_variants": ["summary", "list"], "max_items_by_size": {"compact": 2, "normal": 3, "large": 8}},
+    "notes_editor": {"default_variant": "detail", "allowed_variants": ["summary", "detail"], "max_items_by_size": {"compact": 1, "normal": 1, "large": 1}},
+    "contact_info": {"default_variant": "summary", "allowed_variants": ["summary", "detail"], "max_items_by_size": {"compact": 2, "normal": 4, "large": 6}},
+    "workflow_next_steps": {"default_variant": "summary", "allowed_variants": ["summary", "list"], "max_items_by_size": {"compact": 1, "normal": 3, "large": 5}},
+    "recent_activity": {"default_variant": "summary", "allowed_variants": ["summary", "list"], "max_items_by_size": {"compact": 2, "normal": 3, "large": 6}},
+    "link_list": {"default_variant": "summary", "allowed_variants": ["summary", "list"], "max_items_by_size": {"compact": 2, "normal": 4, "large": 8}},
+}
+
 BLOCK_LABELS = {key: value["i18n_key"] for key, value in _BLOCKS.items()}
 
 
@@ -37,7 +63,72 @@ def block_types():
 
 
 def block_definition(block_type):
-    return deepcopy(_BLOCKS.get(block_type, {"label": str(block_type), "i18n_key": "workspace_block_unsupported", "icon": "□", "default_size": (6, 2), "min_size": (1, 1)}))
+    definition = deepcopy(
+        _BLOCKS.get(
+            block_type,
+            {
+                "label": str(block_type),
+                "i18n_key": "workspace_block_unsupported",
+                "icon": "?",
+                "default_size": (6, 2),
+                "min_size": (1, 1),
+            },
+        )
+    )
+    definition.update(
+        deepcopy(
+            _PRESENTATION_MANIFESTS.get(
+                block_type,
+                {
+                    "default_variant": "summary",
+                    "allowed_variants": ["summary"],
+                    "max_items_by_size": {"compact": 1, "normal": 3, "large": 6},
+                },
+            )
+        )
+    )
+    return definition
+
+
+def block_size_bucket(block):
+    layout = block.get("layout") if isinstance(block.get("layout"), dict) else {}
+    try:
+        row_span = int(layout.get("row_span") or 2)
+        col_span = int(layout.get("col_span") or 6)
+    except (TypeError, ValueError):
+        row_span = 2
+        col_span = 6
+    area = row_span * col_span
+    if row_span <= 1 or area <= 8:
+        return "compact"
+    if row_span >= 4 or area >= 28:
+        return "large"
+    return "normal"
+
+
+def block_presentation(block):
+    definition = block_definition(block.get("type"))
+    allowed = definition.get("allowed_variants") or list(DEFAULT_VARIANTS)
+    variant = block.get("variant") or definition.get("default_variant") or allowed[0]
+    if variant not in allowed:
+        variant = allowed[0]
+    density = block.get("density") or "comfortable"
+    if density not in DEFAULT_DENSITIES:
+        density = "comfortable"
+    bucket = block_size_bucket(block)
+    max_items = definition.get("max_items_by_size", {}).get(bucket, 3)
+    try:
+        content_limit = int(block.get("content_limit") or max_items)
+    except (TypeError, ValueError):
+        content_limit = max_items
+    return {
+        "variant": variant,
+        "density": density,
+        "size_bucket": bucket,
+        "content_limit": max(1, min(content_limit, max_items)),
+        "overflow": block.get("overflow") or definition.get("overflow") or "view_all",
+        "allowed_variants": list(allowed),
+    }
 
 
 def default_block_payload(block_type):
@@ -47,6 +138,9 @@ def default_block_payload(block_type):
     payload.update({
         "type": block_type,
         "title": definition.get("label", str(block_type)),
+        "variant": definition.get("default_variant", "summary"),
+        "density": "comfortable",
+        "overflow": definition.get("overflow", "view_all"),
         "width": "full" if col_span >= 12 else "half",
         "height": "compact" if row_span <= 1 else "tall" if row_span >= 3 else "normal",
         "layout": {"row": 0, "col": 0, "row_span": row_span, "col_span": col_span},

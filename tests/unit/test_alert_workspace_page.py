@@ -14,6 +14,7 @@ class FakeWorkspaceService:
         self.reopened = []
         self.calls = 0
         self.status = "OPEN"
+        self.waiting_follow_up_date = None
 
     def get_task_workspace(self, task_id):
         self.calls += 1
@@ -22,6 +23,7 @@ class FakeWorkspaceService:
             "title": "Critical Prorroga follow-up needed",
             "description": "Review Prorroga records.",
             "status": self.status,
+            "waiting_follow_up_date": self.waiting_follow_up_date,
             "priority": "CRITICAL",
             "timing": "19 day(s) overdue",
             "brief_text": "Prorroga follow-up is overdue for 1 missionary record.",
@@ -126,6 +128,7 @@ def test_alert_workspace_chrome_uses_active_language(qapp):
 
         assert page.back_btn.text() == "Volver"
         assert "Editar tarea" in buttons
+        assert page.follow_up_btn.isHidden() is True
         assert "Marcar lista" in buttons
         assert "Marcar hecha" in buttons
         assert "Trabajo de oficina / Espacio de alerta" in texts
@@ -243,6 +246,43 @@ def test_alert_workspace_edit_task_reloads(monkeypatch, qapp):
         page._edit_task()
 
         assert service.calls == 2
+    finally:
+        page.close()
+
+
+def test_alert_workspace_set_follow_up_action_opens_waiting_task_editor(
+    monkeypatch,
+    qapp,
+):
+    _ = qapp
+    service = FakeWorkspaceService()
+    service.status = "WAITING"
+    opened = []
+
+    class FakeTaskDialog:
+        def __init__(self, *args, **kwargs):
+            opened.append((args, kwargs))
+
+        def exec(self):
+            return True
+
+    monkeypatch.setattr(alert_workspace_page, "TaskDialog", FakeTaskDialog)
+    page = AlertWorkspacePage(service=service)
+
+    try:
+        page.load_task(12)
+
+        assert page.follow_up_btn.isHidden() is False
+
+        page.follow_up_btn.click()
+
+        assert opened
+        assert service.calls == 2
+
+        service.waiting_follow_up_date = "2026-07-03"
+        page.load_task(12)
+
+        assert page.follow_up_btn.isHidden() is True
     finally:
         page.close()
 

@@ -499,6 +499,36 @@ def test_waiting_workspace_surfaces_follow_up_date(secretary_service):
     ]
 
 
+def test_waiting_workspace_recommends_follow_up_date_when_missing(
+    secretary_service,
+):
+    task = secretary_service.create_task(
+        "Waiting with no check-in",
+        status="WAITING",
+        waiting_reason="OTHER",
+    )
+
+    workspace = secretary_service.get_task_workspace(task["id"])
+
+    assert "No follow-up date" in workspace["why_points"]
+    assert any(
+        fact["label"] == "Follow-up"
+        and fact["value"] == "No follow-up date"
+        for fact in workspace["key_facts"]
+    )
+    assert any(
+        item["label"] == "Waiting follow-up"
+        and item["value"] == "No follow-up date"
+        for item in workspace["evidence"]
+    )
+    assert workspace["recommended_steps"] == [
+        "Check what this task is waiting on.",
+        "Set a waiting follow-up date so this task is checked again.",
+        "Update the waiting reason or notes if the situation changed.",
+        "Mark Ready when the needed pieces are available.",
+    ]
+
+
 def test_waiting_follow_up_due_filter_and_summary(secretary_service, monkeypatch):
     class FakeDate(date):
         @classmethod
@@ -535,17 +565,29 @@ def test_waiting_follow_up_due_filter_and_summary(secretary_service, monkeypatch
     results = secretary_service.list_tasks(waiting_follow_up="due")
     upcoming_results = secretary_service.list_tasks(waiting_follow_up="upcoming")
     missing_results = secretary_service.list_tasks(waiting_follow_up="missing")
+    no_follow_up_search = secretary_service.list_tasks(search="no follow-up")
     summary = secretary_service.summary()
     grouped = secretary_service.grouped_tasks()
 
     assert [task["id"] for task in results] == [overdue["id"], today_due["id"]]
     assert [task["id"] for task in upcoming_results] == [upcoming["id"]]
     assert [task["id"] for task in missing_results] == [missing["id"]]
+    assert [task["id"] for task in no_follow_up_search] == [missing["id"]]
+    assert missing_results[0]["waiting_follow_up_status_label"] == (
+        "No follow-up date"
+    )
     assert summary["follow_up"] == 2
     assert summary["missing_follow_up"] == 1
+    assert summary["upcoming_follow_up"] == 1
     assert [task["id"] for task in grouped["follow_up_due"]] == [
         overdue["id"],
         today_due["id"],
+    ]
+    assert [task["id"] for task in grouped["needs_follow_up"]] == [
+        missing["id"]
+    ]
+    assert [task["id"] for task in grouped["scheduled_follow_up"]] == [
+        upcoming["id"]
     ]
     assert today_due["id"] not in [
         task["id"]
@@ -557,6 +599,18 @@ def test_waiting_follow_up_due_filter_and_summary(secretary_service, monkeypatch
         task["id"]
         for group_key, tasks in grouped.items()
         if group_key != "follow_up_due"
+        for task in tasks
+    ]
+    assert missing["id"] not in [
+        task["id"]
+        for group_key, tasks in grouped.items()
+        if group_key != "needs_follow_up"
+        for task in tasks
+    ]
+    assert upcoming["id"] not in [
+        task["id"]
+        for group_key, tasks in grouped.items()
+        if group_key != "scheduled_follow_up"
         for task in tasks
     ]
 
@@ -600,6 +654,7 @@ def test_waiting_task_requires_reason_and_clears_when_reopened(secretary_service
     assert task["waiting_reason_label"] == "Waiting on document"
     assert task["waiting_follow_up_date"] == date(2026, 6, 18)
     assert task["waiting_follow_up_label"] == "Follow up Jun 18, 2026"
+    assert task["waiting_follow_up_status_label"] == "Follow up Jun 18, 2026"
 
     reopened = secretary_service.update_task(task["id"], status="OPEN")
 
@@ -608,6 +663,7 @@ def test_waiting_task_requires_reason_and_clears_when_reopened(secretary_service
     assert reopened["waiting_reason_label"] == ""
     assert reopened["waiting_follow_up_date"] is None
     assert reopened["waiting_follow_up_label"] == ""
+    assert reopened["waiting_follow_up_status_label"] == ""
 
 
 def test_ready_and_needs_work_transitions_clear_waiting_reason(secretary_service):

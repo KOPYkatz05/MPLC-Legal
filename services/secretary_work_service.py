@@ -25,6 +25,8 @@ VISIBLE_PROJECT_STATUSES = ("ACTIVE", "WAITING")
 TASK_GROUPS = [
     ("overdue", "Overdue"),
     ("follow_up_due", "Follow Up Due"),
+    ("needs_follow_up", "Needs Follow-Up"),
+    ("scheduled_follow_up", "Scheduled Follow-Ups"),
     ("today", "Today"),
     ("ready_to_review", "Ready to Review"),
     ("this_week", "This Week"),
@@ -948,6 +950,7 @@ class SecretaryWorkService:
                     or needle in task["appointment_label"].casefold()
                     or needle in task["waiting_reason_label"].casefold()
                     or needle in task["waiting_follow_up_label"].casefold()
+                    or needle in task["waiting_follow_up_status_label"].casefold()
                     or needle in task["task_type_label"].casefold()
                     or needle in (task["related_stage"] or "").casefold()
                     or needle in task["related_document_label"].casefold()
@@ -971,6 +974,16 @@ class SecretaryWorkService:
             if self._is_waiting_follow_up_due(task) and due_range in (None, "all"):
                 group_key = "follow_up_due"
             elif (
+                self._is_waiting_missing_follow_up(task)
+                and due_range in (None, "all")
+            ):
+                group_key = "needs_follow_up"
+            elif (
+                self._is_waiting_follow_up_upcoming(task)
+                and due_range in (None, "all")
+            ):
+                group_key = "scheduled_follow_up"
+            elif (
                 task["status"] == "READY"
                 and due_range in (None, "all")
             ):
@@ -978,6 +991,9 @@ class SecretaryWorkService:
             grouped.setdefault(group_key, []).append(task)
         grouped["follow_up_due"] = self._sort_by_waiting_follow_up(
             grouped.get("follow_up_due", [])
+        )
+        grouped["scheduled_follow_up"] = self._sort_by_waiting_follow_up(
+            grouped.get("scheduled_follow_up", [])
         )
         return grouped
 
@@ -1020,6 +1036,12 @@ class SecretaryWorkService:
                     if task.status == "WAITING"
                     and task.waiting_follow_up_date is None
                 ),
+                "upcoming_follow_up": sum(
+                    1 for task in tasks
+                    if task.status == "WAITING"
+                    and task.waiting_follow_up_date is not None
+                    and task.waiting_follow_up_date > today
+                ),
                 "overdue": sum(
                     1 for task in tasks
                     if task.due_date is not None and task.due_date < today
@@ -1037,6 +1059,23 @@ class SecretaryWorkService:
             task.get("status") == "WAITING"
             and follow_up is not None
             and follow_up <= today
+        )
+
+    @staticmethod
+    def _is_waiting_missing_follow_up(task):
+        return (
+            task.get("status") == "WAITING"
+            and task.get("waiting_follow_up_date") is None
+        )
+
+    @staticmethod
+    def _is_waiting_follow_up_upcoming(task, today=None):
+        today = today or date.today()
+        follow_up = task.get("waiting_follow_up_date")
+        return (
+            task.get("status") == "WAITING"
+            and follow_up is not None
+            and follow_up > today
         )
 
     @staticmethod
@@ -1178,6 +1217,12 @@ class SecretaryWorkService:
             "waiting_follow_up_date": task.waiting_follow_up_date,
             "waiting_follow_up_label": self._waiting_follow_up_label(
                 task.waiting_follow_up_date,
+            ),
+            "waiting_follow_up_status_label": (
+                self._waiting_follow_up_status_label(
+                    task.status,
+                    task.waiting_follow_up_date,
+                )
             ),
             "created_at": task.created_at,
             "updated_at": task.updated_at,
@@ -1416,7 +1461,10 @@ class SecretaryWorkService:
             ("Task type", snapshot.get("task_type_label")),
             ("Related stage", snapshot.get("related_stage")),
             ("Related document", snapshot.get("related_document_label")),
-            ("Waiting follow-up", snapshot.get("waiting_follow_up_label")),
+            (
+                "Waiting follow-up",
+                snapshot.get("waiting_follow_up_status_label"),
+            ),
             (
                 "Last status change",
                 history[0]["summary"] if history else "",
@@ -1441,6 +1489,12 @@ class SecretaryWorkService:
         if not value:
             return ""
         return f"Follow up {value.strftime('%b %d, %Y')}"
+
+    @classmethod
+    def _waiting_follow_up_status_label(cls, status, value):
+        if status != "WAITING":
+            return ""
+        return cls._waiting_follow_up_label(value) or "No follow-up date"
 
     @staticmethod
     def _add_task_history(
@@ -1648,8 +1702,8 @@ class SecretaryWorkService:
             points.append(classification["document_summary"])
         if classification.get("stage_summary"):
             points.append(classification["stage_summary"])
-        if snapshot.get("waiting_follow_up_label"):
-            points.append(snapshot["waiting_follow_up_label"])
+        if snapshot.get("waiting_follow_up_status_label"):
+            points.append(snapshot["waiting_follow_up_status_label"])
         if days is not None:
             points.append(self._workspace_timing(days))
         if affected:
@@ -1709,10 +1763,10 @@ class SecretaryWorkService:
                 "value": snapshot["group_scope_label"],
                 "color": "#71717A",
             })
-        if snapshot.get("waiting_follow_up_label"):
+        if snapshot.get("waiting_follow_up_status_label"):
             facts.append({
                 "label": "Follow-up",
-                "value": snapshot["waiting_follow_up_label"],
+                "value": snapshot["waiting_follow_up_status_label"],
                 "color": "#D97706",
             })
         if classification.get("document_summary"):
@@ -1747,6 +1801,10 @@ class SecretaryWorkService:
                 steps.append(
                     f"Use the waiting follow-up date: "
                     f"{snapshot['waiting_follow_up_label']}."
+                )
+            else:
+                steps.append(
+                    "Set a waiting follow-up date so this task is checked again."
                 )
             steps.extend([
                 "Update the waiting reason or notes if the situation changed.",
