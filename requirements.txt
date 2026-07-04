@@ -5,6 +5,7 @@ openpyxl
 python-dotenv
 setuptools
 keyring
+iconipy==0.5.1
 
 paddleocr==2.8.1
 paddlepaddle==2.6.2

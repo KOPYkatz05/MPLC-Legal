@@ -48,6 +48,7 @@ from ui.foundation import (
     create_search_edit,
     create_table,
     fluent_icon,
+    app_icon,
     setup_dialog_shell,
     show_message,
 )
@@ -404,6 +405,14 @@ def _fallback_edit_icon():
 
 
 def _qicon_from_fluent(names, fallback):
+    lucide_icon = app_icon(
+        _icon_slot_for_names(names),
+        size=18,
+        color="#52525B",
+    )
+    if isinstance(lucide_icon, QIcon) and not lucide_icon.isNull():
+        return lucide_icon
+
     for name in names:
         icon = fluent_icon(name)
 
@@ -417,6 +426,26 @@ def _qicon_from_fluent(names, fallback):
                 continue
 
     return fallback
+
+
+def _icon_slot_for_names(names):
+    slot_by_name = {
+        "ACCEPT": "table.copy_done",
+        "CHECKBOX": "table.copy_done",
+        "CHECK_MARK": "table.copy_done",
+        "COMPLETED": "table.copy_done",
+        "COPY": "table.copy",
+        "DOCUMENT_COPY": "table.copy",
+        "DUPLICATE": "table.copy",
+        "EDIT": "table.edit",
+        "EDIT_SOLID": "table.edit",
+        "PENCIL": "table.edit",
+    }
+    for name in names:
+        slot = slot_by_name.get(name)
+        if slot:
+            return slot
+    return ""
 
 
 class MissionaryTableItem(QTableWidgetItem):

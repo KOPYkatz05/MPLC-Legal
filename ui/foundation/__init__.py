@@ -47,6 +47,14 @@ from ui.foundation.fluent import (
     tune_fluent_scrollable,
     show_message,
 )
+from ui.foundation.icons import (
+    ICON_MAP_PATH,
+    app_icon,
+    available_lucide_icons,
+    iconipy_available,
+    lucide_icon,
+    tint_for_widget,
+)
 from ui.foundation.widgets import (
     AppShell,
     DialogFooter,
@@ -114,4 +122,10 @@ __all__ = [
     "setup_dialog_shell",
     "tune_fluent_scrollable",
     "show_message",
+    "ICON_MAP_PATH",
+    "app_icon",
+    "available_lucide_icons",
+    "iconipy_available",
+    "lucide_icon",
+    "tint_for_widget",
 ]

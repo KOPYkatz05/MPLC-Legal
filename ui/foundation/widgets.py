@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
 
 from ui.foundation.fluent import create_button
 from ui.foundation.fluent import CardWidget, SimpleCardWidget, fluent_icon
+from ui.foundation.icons import app_icon
 
 
 @dataclass(frozen=True)
@@ -220,7 +221,9 @@ class AppShell(QWidget):
         self.menu_button.setToolTip(app_title)
         self.menu_button.setAccessibleName(app_title)
         self.menu_button.setToolButtonStyle(Qt.ToolButtonIconOnly)
-        self.menu_button.setIcon(self._line_icon("menu"))
+        self.menu_button.setIcon(
+            app_icon("sidebar.menu", size=24, fallback=self._line_icon("menu"))
+        )
         self.menu_button.setIconSize(QSize(20, 20))
         self.menu_button.setAutoRaise(True)
         self.sidebar_layout.addWidget(self.menu_button)
@@ -279,6 +282,14 @@ class AppShell(QWidget):
             self._buttons[key].setToolTip(title)
 
     def _nav_icon(self, key):
+        icon = app_icon(
+            f"sidebar.{key}",
+            fallback_names=self._icon_names.get(key, ()),
+            size=24,
+        )
+        if icon is not None:
+            return icon
+
         for name in self._icon_names.get(key, ()):
             icon = fluent_icon(name)
             if hasattr(icon, "icon"):

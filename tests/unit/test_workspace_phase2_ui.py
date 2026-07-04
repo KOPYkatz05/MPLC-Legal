@@ -2,7 +2,7 @@ from copy import deepcopy
 from datetime import date
 from types import SimpleNamespace
 
-from PySide6.QtCore import QEvent, QPoint, QPointF, QRect, Qt
+from PySide6.QtCore import QEvent, QMimeData, QPoint, QPointF, QRect, QRectF, QTimer, Qt
 from PySide6.QtGui import QKeyEvent
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import (
@@ -31,7 +31,11 @@ from ui.pages.missionary_detail_page import (
     MissionaryDetailPage,
 )
 from ui.pages.missionary_workspace_page import MissionaryWorkspacePage
-from ui.pages.workspaces_page import WorkspacesPage, WorkspaceBlockPropertiesDialog
+from ui.pages.workspaces_page import (
+    WorkspacesPage,
+    WorkspaceBlockPropertiesDialog,
+    WorkspaceFieldPill,
+)
 from ui.widgets.editable_canvas import (
     EditableBlockLibraryPanel,
     EditableCanvasControls,
@@ -46,6 +50,7 @@ from ui.widgets.editable_canvas import (
 from ui.widgets.workspace_layout_editor import (
     GraphicsWorkspaceLayoutEditor,
     WORKSPACE_DIALOG_BODY_SIZES,
+    WorkspacePaletteAddButton,
     WorkspaceLayoutEditor,
     WorkspaceLayoutTile,
     WorkspacePaletteButton,
@@ -1046,6 +1051,33 @@ def test_workspace_layout_editor_preview_keeps_active_tile_alive(qapp):
     assert active_tile.geometry() == expected_rect
 
 
+def test_workspace_layout_editor_resize_pushes_lower_block_not_selected(qapp):
+    _ = qapp
+    workspace = new_workspace("Anchored Resize")
+    workspace["blocks"] = [
+        {
+            "id": "top",
+            "type": "task_board",
+            "layout": {"row": 0, "col": 0, "row_span": 2, "col_span": 4},
+        },
+        {
+            "id": "lower",
+            "type": "personal_info",
+            "layout": {"row": 2, "col": 0, "row_span": 2, "col_span": 4},
+        },
+    ]
+    editor = WorkspaceLayoutEditor(lambda block_type: block_type)
+    editor.set_workspace(workspace)
+    editor.set_selected_block("top")
+    editor.begin_interaction()
+
+    editor.preview_layout("top", row_span=4)
+
+    layouts = {block["id"]: block["layout"] for block in workspace["blocks"]}
+    assert layouts["top"] == {"row": 0, "col": 0, "row_span": 4, "col_span": 4}
+    assert layouts["lower"] == {"row": 4, "col": 0, "row_span": 2, "col_span": 4}
+
+
 def test_workspace_layout_editor_cancel_rebounds_preview(qapp):
     _ = qapp
     workspace = new_workspace("Cancel Preview")
@@ -1307,9 +1339,32 @@ def test_workspace_palette_label_area_is_draggable_target(qapp):
     qapp.processEvents()
 
     label = button.findChild(QLabel, "WorkspacePaletteTitle")
+    add_button = button.findChild(WorkspacePaletteAddButton, "WorkspacePaletteAddButton")
     hit_widget = QApplication.widgetAt(label.mapToGlobal(label.rect().center()))
 
     assert hit_widget is button
+    assert add_button is not None
+    assert add_button.size().width() == add_button.size().height()
+    assert add_button.cursor().shape() == Qt.PointingHandCursor
+    assert label.font().bold() is False
+
+    QApplication.sendEvent(button, QEvent(QEvent.Enter))
+    qapp.processEvents()
+
+    assert label.font().bold() is True
+
+
+def test_workspace_palette_add_button_emits_add_request(qapp):
+    button = WorkspacePaletteButton("documents", "Documents")
+    requested = []
+    button.addRequested.connect(requested.append)
+    button.show()
+    qapp.processEvents()
+
+    add_button = button.findChild(WorkspacePaletteAddButton, "WorkspacePaletteAddButton")
+    QTest.mouseClick(add_button, Qt.LeftButton)
+
+    assert requested == ["documents"]
 
 
 def test_workspace_layout_editor_render_keeps_marquee_rubber_band(qapp):
@@ -2136,6 +2191,47 @@ def test_graphics_workspace_editor_context_menu_exposes_edit_action(qapp):
     assert swap_list.item(0).data(Qt.UserRole) == second["id"]
 
 
+def test_graphics_workspace_editor_accepts_palette_drop(qapp):
+    _ = qapp
+    workspace = new_workspace("Graphics Drop")
+    editor = GraphicsWorkspaceLayoutEditor(lambda block_type: block_type)
+    editor.resize(900, 620)
+    editor.show()
+    qapp.processEvents()
+    editor.set_workspace(workspace)
+
+    class FakeDropEvent:
+        def __init__(self):
+            self._mime = QMimeData()
+            self._mime.setData(
+                "application/x-workspace-block-type",
+                b"documents",
+            )
+            self.accepted = False
+            self.drop_action = None
+
+        def mimeData(self):
+            return self._mime
+
+        def position(self):
+            return QPointF(80, 80)
+
+        def setDropAction(self, action):
+            self.drop_action = action
+
+        def accept(self):
+            self.accepted = True
+
+    event = FakeDropEvent()
+
+    editor.view.dropEvent(event)
+
+    assert event.accepted is True
+    assert event.drop_action == Qt.CopyAction
+    assert len(editor.workspace["blocks"]) == 1
+    assert editor.workspace["blocks"][0]["type"] == "documents"
+
+
 def test_graphics_workspace_editor_preview_mode_hides_edit_overlays(qapp):
     _ = qapp
     workspace = new_workspace("Graphics Preview")
@@ -2281,6 +2377,78 @@ def test_graphics_workspace_editor_animates_preview_geometry(qapp):
     assert overlay.pos() == actual_rect.topLeft()
     assert overlay.rect().width() == actual_rect.width()
     assert overlay.rect().height() == actual_rect.height()
+
+
+def test_graphics_workspace_editor_resize_pushes_lower_block_not_selected(qapp):
+    _ = qapp
+    workspace = new_workspace("Graphics Anchored Resize")
+    workspace["blocks"] = [
+        {
+            "id": "top",
+            "type": "task_board",
+            "layout": {"row": 0, "col": 0, "row_span": 2, "col_span": 4},
+        },
+        {
+            "id": "lower",
+            "type": "personal_info",
+            "layout": {"row": 2, "col": 0, "row_span": 2, "col_span": 4},
+        },
+    ]
+    editor = GraphicsWorkspaceLayoutEditor(lambda block_type: block_type)
+    editor.set_workspace(workspace)
+    editor.set_selected_block("top")
+    editor.begin_interaction()
+
+    editor.preview_layout("top", row_span=4)
+
+    layouts = {block["id"]: block["layout"] for block in workspace["blocks"]}
+    top_rect = editor.layout_to_rect(layouts["top"])
+    lower_rect = editor.layout_to_rect(layouts["lower"])
+    top_overlay = editor._graphics_block_overlays["top"]
+    lower_overlay = editor._graphics_block_overlays["lower"]
+
+    assert layouts["top"] == {"row": 0, "col": 0, "row_span": 4, "col_span": 4}
+    assert layouts["lower"] == {"row": 4, "col": 0, "row_span": 2, "col_span": 4}
+    assert top_overlay.pos() == top_rect.topLeft()
+    assert top_overlay.rect().height() == top_rect.height()
+    assert lower_overlay.pos() == lower_rect.topLeft()
+
+
+def test_graphics_workspace_editor_grid_off_free_scales_block(qapp):
+    _ = qapp
+    workspace = new_workspace("Graphics Free Scale")
+    workspace["blocks"] = [
+        {
+            "id": "notes",
+            "type": "notes",
+            "layout": {"row": 0, "col": 0, "row_span": 2, "col_span": 4},
+        }
+    ]
+    editor = GraphicsWorkspaceLayoutEditor(lambda block_type: block_type)
+    editor.set_workspace(workspace)
+    editor.set_grid_visible(False)
+    editor.begin_interaction()
+
+    start_rect = editor.block_to_rect(editor._block("notes"))
+    target_rect = QRectF(
+        start_rect.left(),
+        start_rect.top(),
+        start_rect.width() + 37,
+        start_rect.height() + 23,
+    )
+
+    editor.preview_free_rect("notes", target_rect)
+
+    block = editor._block("notes")
+    overlay = editor._graphics_block_overlays["notes"]
+    visual_rect = editor.block_to_rect(block)
+
+    assert block["free_layout"]["width"] == round(target_rect.width(), 2)
+    assert block["free_layout"]["height"] == round(target_rect.height(), 2)
+    assert visual_rect.width() == target_rect.width()
+    assert visual_rect.height() == target_rect.height()
+    assert overlay.rect().width() == target_rect.width()
+    assert overlay.rect().height() == target_rect.height()
 
 
 def test_graphics_workspace_editor_renders_alignment_guides(qapp):
@@ -2503,6 +2671,26 @@ def test_workspaces_page_uses_canvas_without_visible_inspector(qapp):
     assert isinstance(page.block_library_panel, EditableBlockLibraryPanel)
 
 
+def test_workspaces_page_left_rail_has_resizable_workspace_and_blocks_sections(qapp):
+    _ = qapp
+    service = MemoryWorkspaceService()
+    main_window = SimpleNamespace(
+        settings_service=SettingsService(),
+        workspace_service=service,
+    )
+    page = WorkspacesPage(main_window)
+
+    splitter = page.findChild(QSplitter, "WorkspaceLeftPanelSplitter")
+
+    assert splitter is page.left_panel_splitter
+    assert splitter.orientation() == Qt.Vertical
+    assert splitter.childrenCollapsible() is False
+    assert splitter.widget(0) is page.workspaces_list
+    assert splitter.widget(1) is page.block_library_panel
+    assert page.workspaces_list.minimumHeight() == 120
+    assert page.block_library_panel.minimumHeight() == 220
+
+
 def test_workspaces_page_renders_editor_and_preview(qapp):
     _ = qapp
     service = MemoryWorkspaceService()
@@ -2723,7 +2911,9 @@ def test_workspace_layout_editor_inner_chrome_uses_active_language(qapp):
         i18n.set_language("es")
         palette = WorkspacePaletteButton("documents", "Documentos")
         palette_texts = _widget_texts(palette)
-        assert "Haga clic para agregar o arrastre al lienzo" in palette_texts
+        assert "Documentos" in palette_texts
+        add_button = palette.findChild(WorkspacePaletteAddButton, "WorkspacePaletteAddButton")
+        assert add_button.size().width() == add_button.size().height()
 
         workspace = new_workspace("Lienzo")
         editor = WorkspaceLayoutEditor(lambda block_type: block_type)
@@ -2772,16 +2962,18 @@ def test_workspace_layout_editor_inner_chrome_uses_active_language(qapp):
 def test_workspace_block_properties_dialog_updates_web_url(qapp):
     _ = qapp
     block = new_block("web_viewer")
+    block["layout"] = {"row": 3, "col": 2, "row_span": 4, "col_span": 6}
     dialog = WorkspaceBlockPropertiesDialog(block)
 
     dialog.title_input.setText("Portal")
     dialog.web_url_input.setText("https://example.org")
-    dialog.row_spin.setValue(2)
     updated = dialog.updated_block()
 
     assert updated["title"] == "Portal"
     assert updated["web_url"] == "https://example.org"
-    assert updated["layout"]["row"] == 2
+    assert updated["layout"] == block["layout"]
+    assert not hasattr(dialog, "row_spin")
+    assert not hasattr(dialog, "col_spin")
 
 
 def test_workspace_block_properties_dialog_updates_presentation(qapp):
@@ -2833,6 +3025,72 @@ def test_workspace_block_properties_dialog_uses_active_language(qapp):
         i18n.set_language(original_language)
         if "dialog" in locals():
             dialog.close()
+
+
+def test_workspace_block_properties_menu_exec_can_open_and_close(qapp):
+    _ = qapp
+    dialog = WorkspaceBlockPropertiesDialog(new_block("web_viewer"))
+
+    QTimer.singleShot(10, dialog.close)
+    result = dialog.exec()
+
+    assert result == QDialog.Rejected
+
+
+def test_workspace_block_properties_dialog_shows_selected_field_pills(qapp):
+    _ = qapp
+    block = new_block("personal_info")
+    block["fields"] = ["full_name", "passport_number"]
+    dialog = WorkspaceBlockPropertiesDialog(block)
+
+    pill_texts = {
+        label.text()
+        for pill in dialog.findChildren(WorkspaceFieldPill)
+        for label in pill.findChildren(QLabel)
+        if label.objectName() == "WorkspaceFieldPillText"
+    }
+    options = dialog.field_options_list
+    selected_option = next(
+        options.item(row)
+        for row in range(options.count())
+        if options.item(row).data(Qt.UserRole) == "full_name"
+    )
+
+    assert pill_texts == {"Full Name", "Passport Number"}
+    assert selected_option.checkState() == Qt.Checked
+    assert not bool(selected_option.flags() & Qt.ItemIsEnabled)
+
+
+def test_workspace_block_properties_dialog_adds_and_removes_fields(qapp):
+    _ = qapp
+    block = new_block("personal_info")
+    block["fields"] = ["full_name"]
+    dialog = WorkspaceBlockPropertiesDialog(block)
+
+    nationality_item = next(
+        dialog.field_options_list.item(row)
+        for row in range(dialog.field_options_list.count())
+        if dialog.field_options_list.item(row).data(Qt.UserRole) == "nationality"
+    )
+    dialog._add_field_from_item(nationality_item)
+    nationality_item = next(
+        dialog.field_options_list.item(row)
+        for row in range(dialog.field_options_list.count())
+        if dialog.field_options_list.item(row).data(Qt.UserRole) == "nationality"
+    )
+    dialog._add_field_from_item(nationality_item)
+
+    assert dialog.updated_block()["fields"] == ["full_name", "nationality"]
+
+    nationality_pill = next(
+        pill
+        for pill in dialog.findChildren(WorkspaceFieldPill)
+        if pill.field_key == "nationality"
+    )
+    remove_btn = nationality_pill.findChild(QPushButton, "WorkspaceFieldPillRemove")
+    QTest.mouseClick(remove_btn, Qt.LeftButton)
+
+    assert dialog.updated_block()["fields"] == ["full_name"]
 
 
 def test_runtime_status_summary_block_renders_metrics(qapp):
@@ -3193,6 +3451,50 @@ def test_runtime_web_viewer_loads_after_layout_and_uses_full_screen_size(
     assert web_view.minimumHeight() == 520
     assert web_view.loaded_url.toString() == "https://example.org"
     assert "Portal" in _widget_texts(widget)
+
+
+def test_missionary_workspace_dialog_honors_free_layout_geometry(qapp):
+    _ = qapp
+    missionary = SimpleNamespace(id=7, full_name="Test Missionary")
+    workspace = new_workspace("Free Geometry")
+    workspace["dialog_size"] = "wide"
+    workspace["blocks"] = [
+        {
+            "id": "personal",
+            "type": "personal_info",
+            "title": "Personal Information",
+            "layout": {"row": 0, "col": 0, "row_span": 2, "col_span": 4},
+            "free_layout": {"x": 12, "y": 18, "width": 420, "height": 640},
+        }
+    ]
+    context = SimpleNamespace(
+        missionary=SimpleNamespace(
+            id=7,
+            full_name="Test Missionary",
+            nationality="Peru",
+            passport_number="A0000000",
+            carnet_number="",
+            current_stage="INTERPOL",
+        ),
+        documents=[],
+        workflows=[],
+        tasks=[],
+        residency_rows=[],
+        missing_groups=[],
+    )
+
+    parent = QWidget()
+    parent.resize(1400, 900)
+    dialog = MissionaryWorkspaceDialog(missionary, workspace, parent=parent, context=context)
+    try:
+        widget = dialog._workspace_block_widgets[0]
+
+        assert widget.geometry() == QRect(12, 18, 420, 640)
+        assert dialog.content.minimumWidth() == 1184
+        assert dialog.content.minimumHeight() >= 675
+    finally:
+        dialog.close()
+        parent.close()
 
 
 def test_missionary_detail_opens_workspace_as_full_screen_when_available():

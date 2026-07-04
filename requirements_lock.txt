@@ -15,6 +15,7 @@ h11==0.16.0
 httpcore==1.0.9
 httpx==0.28.1
 idna==3.17
+iconipy==0.5.1
 ImageIO==2.37.3
 imgaug==0.4.0
 kiwisolver==1.5.0

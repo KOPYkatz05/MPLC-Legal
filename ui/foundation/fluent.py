@@ -736,6 +736,8 @@ def create_button(text, variant="secondary", fixed_height=34, parent=None, icon=
         button = button_class(icon, text, parent)
     else:
         button = button_class(text, parent)
+        if icon is not None and hasattr(button, "setIcon"):
+            button.setIcon(icon)
 
     if not FLUENT_AVAILABLE:
         button.setObjectName(

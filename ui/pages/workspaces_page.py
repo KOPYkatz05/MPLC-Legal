@@ -1,17 +1,23 @@
 from copy import deepcopy
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QEventLoop, QPoint, Qt
+from PySide6.QtGui import QColor, QCursor
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QDialog,
     QFormLayout,
     QFrame,
+    QGridLayout,
+    QGraphicsDropShadowEffect,
     QHBoxLayout,
     QLabel,
     QListWidgetItem,
+    QMenu,
+    QPushButton,
     QSpinBox,
     QSplitter,
     QVBoxLayout,
+    QWidgetAction,
     QWidget,
 )
 
@@ -26,12 +32,10 @@ from services.workspace_block_registry import (
 from services.workspace_layout import WORKSPACE_GRID_COLUMNS, validate_block_layout
 from services.workspace_service import WorkspaceService, new_workspace
 from ui.foundation import (
-    DialogFooter,
     create_button,
     create_combo_box,
     create_line_edit,
     create_list_widget,
-    create_plain_text_edit,
     show_message,
 )
 from ui.dialogs.missionary_workspace_dialog import MissionaryWorkspaceDialog
@@ -42,6 +46,7 @@ from ui.widgets.workspace_layout_editor import (
 )
 from ui.widgets.editable_canvas import EditableCanvasEditorKit
 from utils.constants import DOCUMENTS
+from utils.i18n import field_label
 from utils.language_helper import ui_text as tr
 
 
@@ -66,25 +71,97 @@ FIELD_KEYS = [
 ]
 
 
-class WorkspaceBlockPropertiesDialog(QDialog):
+class WorkspaceFieldPill(QFrame):
+    def __init__(self, field_key, label, remove_callback, parent=None):
+        super().__init__(parent)
+        self.field_key = field_key
+        self.setObjectName("WorkspaceFieldPill")
+        self.setAttribute(Qt.WA_StyledBackground, True)
+        self.setFixedHeight(28)
+        self._shadow = QGraphicsDropShadowEffect(self)
+        self._shadow.setBlurRadius(0)
+        self._shadow.setOffset(0, 0)
+        self._shadow.setColor(QColor(24, 24, 27, 0))
+        self.setGraphicsEffect(self._shadow)
+
+        layout = QHBoxLayout()
+        layout.setContentsMargins(12, 0, 8, 0)
+        layout.setSpacing(6)
+        self.setLayout(layout)
+
+        self.text_label = QLabel(label)
+        self.text_label.setObjectName("WorkspaceFieldPillText")
+        self.text_label.setAlignment(Qt.AlignCenter)
+        layout.addWidget(self.text_label)
+
+        remove_btn = QPushButton("x")
+        remove_btn.setObjectName("WorkspaceFieldPillRemove")
+        remove_btn.setCursor(Qt.PointingHandCursor)
+        remove_btn.setFixedSize(18, 18)
+        remove_btn.clicked.connect(lambda checked=False: remove_callback(field_key))
+        layout.addWidget(remove_btn)
+
+    def enterEvent(self, event):
+        self._shadow.setBlurRadius(18)
+        self._shadow.setOffset(0, 2)
+        self._shadow.setColor(QColor(24, 24, 27, 32))
+        font = self.text_label.font()
+        font.setBold(True)
+        self.text_label.setFont(font)
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self._shadow.setBlurRadius(0)
+        self._shadow.setOffset(0, 0)
+        self._shadow.setColor(QColor(24, 24, 27, 0))
+        font = self.text_label.font()
+        font.setBold(False)
+        self.text_label.setFont(font)
+        super().leaveEvent(event)
+
+
+class WorkspaceBlockPropertiesDialog(QMenu):
     def __init__(self, block, parent=None):
         super().__init__(parent)
+        self._result = QDialog.Rejected
         self.block = deepcopy(block or {})
+        self.selected_fields = [
+            field_key
+            for field_key in self.block.get("fields", [])
+            if field_key in FIELD_KEYS
+        ]
         self.setWindowTitle(tr("workspace_properties_title"))
-        self.resize(520, 540)
-        self.setObjectName("WorkspacePropertiesDialog")
+        self.setObjectName("WorkspaceTileContextMenu")
+
+        content = QWidget()
+        content.setObjectName("WorkspacePropertiesPopup")
+        content.setFixedWidth(404)
+
+        surface = QFrame()
+        surface.setObjectName("WorkspacePropertiesSurface")
+        surface.setAttribute(Qt.WA_StyledBackground, True)
 
         root = QVBoxLayout()
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
-        self.setLayout(root)
+        content.setLayout(root)
+        root.addWidget(surface)
+
+        wrapper_action = QWidgetAction(self)
+        wrapper_action.setDefaultWidget(content)
+        self.addAction(wrapper_action)
+
+        surface_layout = QVBoxLayout()
+        surface_layout.setContentsMargins(6, 6, 6, 6)
+        surface_layout.setSpacing(8)
+        surface.setLayout(surface_layout)
 
         header = QFrame()
         header.setObjectName("WorkspacePropertiesHeader")
         header.setAttribute(Qt.WA_StyledBackground, True)
         header_layout = QVBoxLayout()
-        header_layout.setContentsMargins(18, 16, 18, 12)
-        header_layout.setSpacing(4)
+        header_layout.setContentsMargins(0, 0, 0, 2)
+        header_layout.setSpacing(3)
         header.setLayout(header_layout)
 
         title = QLabel(tr("workspace_properties_title"))
@@ -94,19 +171,20 @@ class WorkspaceBlockPropertiesDialog(QDialog):
         helper.setObjectName("WorkspacePropertiesSubtitle")
         helper.setWordWrap(True)
         header_layout.addWidget(helper)
-        root.addWidget(header)
+        surface_layout.addWidget(header)
 
         body = QFrame()
         body.setObjectName("WorkspacePropertiesBody")
         body.setAttribute(Qt.WA_StyledBackground, True)
         body_layout = QVBoxLayout()
-        body_layout.setContentsMargins(18, 16, 18, 16)
-        body_layout.setSpacing(12)
+        body_layout.setContentsMargins(0, 0, 0, 0)
+        body_layout.setSpacing(10)
         body.setLayout(body_layout)
 
         form = QFormLayout()
-        form.setSpacing(10)
-        body_layout.addLayout(form, stretch=1)
+        form.setSpacing(8)
+        form.setLabelAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        body_layout.addLayout(form)
 
         self.title_input = create_line_edit(
             tr("workspace_block_title"),
@@ -142,36 +220,30 @@ class WorkspaceBlockPropertiesDialog(QDialog):
         self.content_limit_spin.setValue(presentation["content_limit"])
         form.addRow(tr("workspace_properties_content_limit"), self.content_limit_spin)
 
-        layout_data = validate_block_layout(self.block)
-        self.row_spin = QSpinBox()
-        self.row_spin.setRange(0, 99)
-        self.row_spin.setValue(layout_data["row"])
-        self.col_spin = QSpinBox()
-        self.col_spin.setRange(0, WORKSPACE_GRID_COLUMNS - 1)
-        self.col_spin.setValue(layout_data["col"])
-        self.col_span_spin = QSpinBox()
-        self.col_span_spin.setRange(1, WORKSPACE_GRID_COLUMNS)
-        self.col_span_spin.setValue(layout_data["col_span"])
-        self.row_span_spin = QSpinBox()
-        self.row_span_spin.setRange(1, 8)
-        self.row_span_spin.setValue(layout_data["row_span"])
-        layout_row = QHBoxLayout()
-        for label, widget in (
-            ("Row", self.row_spin),
-            ("Col", self.col_spin),
-            ("W", self.col_span_spin),
-            ("H", self.row_span_spin),
-        ):
-            stack = QVBoxLayout()
-            stack.setContentsMargins(0, 0, 0, 0)
-            stack.addWidget(QLabel(label))
-            stack.addWidget(widget)
-            layout_row.addLayout(stack)
-        form.addRow(tr("workspace_properties_canvas"), layout_row)
+        self.fields_panel = QFrame()
+        self.fields_panel.setObjectName("WorkspacePropertiesFieldsPanel")
+        self.fields_panel.setAttribute(Qt.WA_StyledBackground, True)
+        fields_layout = QVBoxLayout()
+        fields_layout.setContentsMargins(0, 0, 0, 0)
+        fields_layout.setSpacing(8)
+        self.fields_panel.setLayout(fields_layout)
 
-        self.fields_input = create_plain_text_edit(tr("workspace_block_fields"))
-        self.fields_input.setPlainText("\n".join(self.block.get("fields", [])))
-        form.addRow(tr("workspace_block_fields"), self.fields_input)
+        self.selected_fields_frame = QFrame()
+        self.selected_fields_frame.setObjectName("WorkspacePropertiesSelectedFields")
+        self.selected_fields_frame.setAttribute(Qt.WA_StyledBackground, True)
+        self.selected_fields_layout = QGridLayout()
+        self.selected_fields_layout.setContentsMargins(8, 7, 8, 7)
+        self.selected_fields_layout.setHorizontalSpacing(7)
+        self.selected_fields_layout.setVerticalSpacing(7)
+        self.selected_fields_frame.setLayout(self.selected_fields_layout)
+        fields_layout.addWidget(self.selected_fields_frame)
+
+        self.field_options_list = create_list_widget("WorkspaceFieldOptionList")
+        self.field_options_list.setFixedHeight(188)
+        self.field_options_list.itemClicked.connect(self._add_field_from_item)
+        fields_layout.addWidget(self.field_options_list)
+        form.addRow(tr("workspace_block_fields"), self.fields_panel)
+        self._refresh_field_picker()
 
         self.document_combo = create_combo_box()
         self.document_combo.addItem(tr("workspace_first_available_document"), "")
@@ -188,25 +260,32 @@ class WorkspaceBlockPropertiesDialog(QDialog):
         self.web_url_input.setText(self.block.get("web_url", ""))
         form.addRow(tr("workspace_properties_website"), self.web_url_input)
 
-        self.links_input = create_plain_text_edit(tr("workspace_properties_links"))
+        self.links_input = create_list_widget("WorkspacePropertiesLinksList")
         links = (self.block.get("settings") or {}).get("links", [])
-        self.links_input.setPlainText(
-            "\n".join(
-                f"{link.get('label', '')}|{link.get('url', '')}"
-                for link in links
-                if isinstance(link, dict)
-            )
-        )
+        self.links_input.setFixedHeight(112)
+        for link in links:
+            if isinstance(link, dict):
+                label = link.get("label", "") or link.get("url", "")
+                url = link.get("url", "") or label
+                item = QListWidgetItem(f"{label}  -  {url}")
+                item.setData(Qt.UserRole, {"label": label, "url": url})
+                item.setFlags(item.flags() | Qt.ItemIsEditable)
+                self.links_input.addItem(item)
         form.addRow(tr("workspace_properties_links"), self.links_input)
 
-        self.actions_input = create_plain_text_edit(tr("workspace_properties_actions"))
+        self.actions_input = create_list_widget("WorkspacePropertiesActionsList")
         actions = (self.block.get("settings") or {}).get("actions", [])
-        self.actions_input.setPlainText("\n".join(actions))
+        self.actions_input.setFixedHeight(112)
+        for action in actions:
+            item = QListWidgetItem(str(action).replace("_", " ").title())
+            item.setData(Qt.UserRole, action)
+            item.setFlags(item.flags() | Qt.ItemIsEditable)
+            self.actions_input.addItem(item)
         form.addRow(tr("workspace_properties_actions"), self.actions_input)
 
         block_type = self.block.get("type")
         for widget, visible in (
-            (self.fields_input, block_type == "personal_info"),
+            (self.fields_panel, block_type == "personal_info"),
             (self.document_combo, block_type == "document_viewer"),
             (self.web_url_input, block_type == "web_viewer"),
             (self.links_input, block_type == "link_list"),
@@ -217,15 +296,103 @@ class WorkspaceBlockPropertiesDialog(QDialog):
             except AttributeError:
                 widget.setVisible(visible)
 
-        footer = DialogFooter()
-        cancel_btn = create_button(tr("missionary_detail_cancel"), "secondary")
-        apply_btn = create_button(tr("workspace_apply"), "primary")
+        footer = QFrame()
+        footer.setObjectName("WorkspacePropertiesFooter")
+        footer_layout = QHBoxLayout()
+        footer_layout.setContentsMargins(0, 4, 0, 0)
+        footer_layout.setSpacing(8)
+        footer.setLayout(footer_layout)
+        cancel_btn = QPushButton(tr("missionary_detail_cancel"))
+        cancel_btn.setObjectName("WorkspacePropertiesCancelButton")
+        cancel_btn.setCursor(Qt.PointingHandCursor)
+        cancel_btn.setFixedHeight(34)
+        apply_btn = QPushButton(tr("workspace_apply"))
+        apply_btn.setObjectName("WorkspacePropertiesApplyButton")
+        apply_btn.setCursor(Qt.PointingHandCursor)
+        apply_btn.setFixedHeight(34)
         cancel_btn.clicked.connect(self.reject)
         apply_btn.clicked.connect(self.accept)
-        footer.add_action(cancel_btn)
-        footer.add_action(apply_btn)
+        footer_layout.addStretch()
+        footer_layout.addWidget(cancel_btn)
+        footer_layout.addWidget(apply_btn)
         body_layout.addWidget(footer)
-        root.addWidget(body, stretch=1)
+        surface_layout.addWidget(body, stretch=1)
+
+    def exec(self):
+        self._result = QDialog.Rejected
+        self.adjustSize()
+        position = QCursor.pos()
+        if self.parentWidget() is not None:
+            anchor = QCursor.pos()
+            screen = self.parentWidget().screen()
+            if screen is not None:
+                available = screen.availableGeometry()
+                x = min(anchor.x(), available.right() - self.width() - 12)
+                y = min(anchor.y(), available.bottom() - self.height() - 12)
+                position = QPoint(max(available.left() + 12, x), max(available.top() + 12, y))
+        loop = QEventLoop(self)
+        self.aboutToHide.connect(loop.quit)
+        self.popup(position)
+        loop.exec()
+        return self._result
+
+    def accept(self):
+        self._result = QDialog.Accepted
+        self.close()
+
+    def reject(self):
+        self._result = QDialog.Rejected
+        self.close()
+
+    def _refresh_field_picker(self):
+        while self.selected_fields_layout.count():
+            item = self.selected_fields_layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+
+        if self.selected_fields:
+            for index, field_key in enumerate(self.selected_fields):
+                pill = WorkspaceFieldPill(
+                    field_key,
+                    field_label(field_key),
+                    self._remove_field,
+                    self.selected_fields_frame,
+                )
+                self.selected_fields_layout.addWidget(pill, index // 2, index % 2)
+        else:
+            empty = QLabel(tr("workspace_properties_no_fields"))
+            empty.setObjectName("WorkspacePropertiesNoFields")
+            self.selected_fields_layout.addWidget(empty, 0, 0, 1, 2)
+        self.selected_fields_layout.setColumnStretch(0, 1)
+        self.selected_fields_layout.setColumnStretch(1, 1)
+
+        self.field_options_list.blockSignals(True)
+        self.field_options_list.clear()
+        for field_key in FIELD_KEYS:
+            item = QListWidgetItem(field_label(field_key))
+            item.setData(Qt.UserRole, field_key)
+            if field_key in self.selected_fields:
+                item.setFlags(item.flags() & ~Qt.ItemIsEnabled)
+                item.setCheckState(Qt.Checked)
+            else:
+                item.setCheckState(Qt.Unchecked)
+            self.field_options_list.addItem(item)
+        self.field_options_list.blockSignals(False)
+
+    def _add_field_from_item(self, item):
+        field_key = item.data(Qt.UserRole)
+        if field_key and field_key not in self.selected_fields:
+            self.selected_fields.append(field_key)
+            self._refresh_field_picker()
+
+    def _remove_field(self, field_key):
+        self.selected_fields = [
+            existing
+            for existing in self.selected_fields
+            if existing != field_key
+        ]
+        self._refresh_field_picker()
 
     def updated_block(self):
         block = deepcopy(self.block)
@@ -234,38 +401,28 @@ class WorkspaceBlockPropertiesDialog(QDialog):
         block["density"] = self.density_combo.currentData() or block.get("density", "comfortable")
         block["content_limit"] = self.content_limit_spin.value()
         block["overflow"] = "view_all"
-        block["layout"] = validate_block_layout({
-            **block,
-            "layout": {
-                "row": self.row_spin.value(),
-                "col": self.col_spin.value(),
-                "col_span": self.col_span_spin.value(),
-                "row_span": self.row_span_spin.value(),
-            },
-        })
+        block["layout"] = validate_block_layout(block)
         if block.get("type") == "personal_info":
-            block["fields"] = [
-                line.strip()
-                for line in self.fields_input.toPlainText().splitlines()
-                if line.strip()
-            ]
+            block["fields"] = list(self.selected_fields)
         if block.get("type") == "document_viewer":
             block["document_type"] = self.document_combo.currentData() or ""
         if block.get("type") == "web_viewer":
             block["web_url"] = self.web_url_input.text().strip()
         if block.get("type") == "link_list":
             links = []
-            for line in self.links_input.toPlainText().splitlines():
-                if not line.strip():
-                    continue
-                label, _, url = line.partition("|")
-                links.append({"label": label.strip() or url.strip(), "url": url.strip() or label.strip()})
+            for row in range(self.links_input.count()):
+                item = self.links_input.item(row)
+                label, _, url = item.text().partition(" - ")
+                label = label.strip()
+                url = url.strip()
+                if label or url:
+                    links.append({"label": label or url, "url": url or label})
             block.setdefault("settings", {})["links"] = links
         if block.get("type") == "quick_actions":
             block.setdefault("settings", {})["actions"] = [
-                line.strip()
-                for line in self.actions_input.toPlainText().splitlines()
-                if line.strip()
+                self.actions_input.item(row).text().strip().lower().replace(" ", "_")
+                for row in range(self.actions_input.count())
+                if self.actions_input.item(row).text().strip()
             ]
         return block
 
@@ -415,7 +572,7 @@ class WorkspacesPage(QWidget):
 
         self.workspaces_list = create_list_widget("WorkspaceBuilderList")
         self.workspaces_list.currentItemChanged.connect(self._workspace_selection_changed)
-        left_layout.addWidget(self.workspaces_list, stretch=1)
+        self.workspaces_list.setMinimumHeight(120)
 
         self.block_library_panel = self.editor_kit.create_block_library(
             BLOCK_CATEGORIES,
@@ -432,7 +589,15 @@ class WorkspacesPage(QWidget):
         self.palette_search = self.block_library_panel.search
         self.palette_body = self.block_library_panel.body
         self.palette_body_layout = self.block_library_panel.body_layout
-        left_layout.addWidget(self.block_library_panel, stretch=2)
+        self.block_library_panel.setMinimumHeight(220)
+
+        self.left_panel_splitter = QSplitter(Qt.Vertical)
+        self.left_panel_splitter.setObjectName("WorkspaceLeftPanelSplitter")
+        self.left_panel_splitter.setChildrenCollapsible(False)
+        self.left_panel_splitter.addWidget(self.workspaces_list)
+        self.left_panel_splitter.addWidget(self.block_library_panel)
+        self.left_panel_splitter.setSizes([220, 480])
+        left_layout.addWidget(self.left_panel_splitter, stretch=1)
         splitter.addWidget(left)
 
         center = QFrame()

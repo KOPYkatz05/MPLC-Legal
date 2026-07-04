@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from datetime import date, timedelta
 from itertools import groupby
 
-from PySide6.QtCore import QMimeData, Qt
+from PySide6.QtCore import QMimeData, QSize, Qt
 from PySide6.QtGui import QColor, QDrag, QPalette, QPixmap
 from PySide6.QtWidgets import (
     QButtonGroup,
@@ -48,6 +48,7 @@ from ui.foundation import (
     create_scroll_area,
     create_search_edit,
     fluent_icon,
+    app_icon,
     setup_dialog_shell,
     show_message,
 )
@@ -838,6 +839,15 @@ class CalendarPage(QWidget):
         return toolbar
 
     def _make_nav_arrow_button(self, icon_name, tooltip):
+        slot = "calendar.previous" if icon_name == "LEFT_ARROW" else "calendar.next"
+        lucide = app_icon(slot, size=20)
+        if lucide is not None:
+            button = create_button("", "subtle", fixed_height=30, icon=lucide)
+            button.setFixedWidth(32)
+            button.setIconSize(QSize(18, 18))
+            button.setToolTip(tooltip)
+            return button
+
         icon = fluent_icon(icon_name)
         if FLUENT_AVAILABLE and TransparentToolButton is not None and icon:
             button = TransparentToolButton(icon, self)

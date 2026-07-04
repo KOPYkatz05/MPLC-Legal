@@ -17,6 +17,7 @@ from PySide6.QtCore import (
 from PySide6.QtGui import QColor, QDrag, QPainter, QPen, QBrush, QPixmap
 from PySide6.QtWidgets import (
     QFrame,
+    QGraphicsDropShadowEffect,
     QGraphicsItem,
     QGraphicsRectItem,
     QGraphicsScene,
@@ -37,6 +38,7 @@ from services.workspace_service import new_block
 from services.workspace_layout import (
     WORKSPACE_GRID_COLUMNS,
     first_available_layout,
+    layouts_overlap,
     normalize_workspace_layout,
     update_block_layout,
     validate_block_layout,
@@ -192,6 +194,48 @@ def _make_mouse_transparent(widget):
         child.setAttribute(Qt.WA_TransparentForMouseEvents, True)
 
 
+class WorkspacePaletteAddButton(QFrame):
+    def __init__(self, palette_button):
+        super().__init__(palette_button)
+        self.palette_button = palette_button
+        self.setObjectName("WorkspacePaletteAddButton")
+        self.setCursor(Qt.PointingHandCursor)
+        self.setFixedSize(22, 22)
+        self.setAttribute(Qt.WA_StyledBackground, True)
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setPen(QColor("#18181B" if self.underMouse() else "#71717A"))
+        font = painter.font()
+        font.setPointSize(13)
+        font.setBold(True)
+        painter.setFont(font)
+        painter.drawText(self.rect(), Qt.AlignCenter, "+")
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.palette_button.begin_drag_candidate(event)
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if self.palette_button.continue_drag_candidate(event):
+            event.accept()
+            return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            if not self.palette_button.finish_drag_candidate():
+                self.palette_button.addRequested.emit(self.palette_button.block_type)
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
+
+
 class WorkspacePaletteButton(QFrame):
     addRequested = Signal(str)
 
@@ -202,63 +246,90 @@ class WorkspacePaletteButton(QFrame):
         self._dragging = False
         self.setObjectName("WorkspacePaletteButton")
         self.setCursor(Qt.OpenHandCursor)
-        self.setMinimumHeight(46)
+        self.setMinimumHeight(34)
+        self.setMaximumHeight(38)
+        self._shadow = QGraphicsDropShadowEffect(self)
+        self._shadow.setBlurRadius(0)
+        self._shadow.setOffset(0, 0)
+        self._shadow.setColor(QColor(24, 24, 27, 0))
+        self.setGraphicsEffect(self._shadow)
 
         layout = QHBoxLayout()
-        layout.setContentsMargins(10, 9, 10, 9)
-        layout.setSpacing(9)
+        layout.setContentsMargins(12, 5, 7, 5)
+        layout.setSpacing(8)
         self.setLayout(layout)
 
-        badge = QLabel((label[:1] or "?").upper(), self)
-        badge.setObjectName("WorkspacePaletteBadge")
-        badge.setAlignment(Qt.AlignCenter)
-        badge.setFixedSize(28, 28)
-        badge.setAttribute(Qt.WA_TransparentForMouseEvents, True)
-        layout.addWidget(badge, alignment=Qt.AlignTop)
+        self.title_label = QLabel(label, self)
+        self.title_label.setObjectName("WorkspacePaletteTitle")
+        self.title_label.setWordWrap(False)
+        self.title_label.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        title_font = self.title_label.font()
+        title_font.setBold(False)
+        self.title_label.setFont(title_font)
+        layout.addWidget(self.title_label, stretch=1)
 
-        text_stack = QVBoxLayout()
-        text_stack.setContentsMargins(0, 0, 0, 0)
-        text_stack.setSpacing(2)
-        layout.addLayout(text_stack, stretch=1)
+        self.add_button = WorkspacePaletteAddButton(self)
+        layout.addWidget(self.add_button)
 
-        title = QLabel(label, self)
-        title.setObjectName("WorkspacePaletteTitle")
-        title.setWordWrap(True)
-        title.setAttribute(Qt.WA_TransparentForMouseEvents, True)
-        hint = QLabel(tr("workspace_palette_hint"), self)
-        hint.setObjectName("WorkspacePaletteHint")
-        hint.setWordWrap(True)
-        hint.setAttribute(Qt.WA_TransparentForMouseEvents, True)
-        text_stack.addWidget(title)
-        text_stack.addWidget(hint)
+    def enterEvent(self, event):
+        self._shadow.setBlurRadius(18)
+        self._shadow.setOffset(0, 2)
+        self._shadow.setColor(QColor(24, 24, 27, 32))
+        font = self.title_label.font()
+        font.setBold(True)
+        self.title_label.setFont(font)
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self._shadow.setBlurRadius(0)
+        self._shadow.setOffset(0, 0)
+        self._shadow.setColor(QColor(24, 24, 27, 0))
+        font = self.title_label.font()
+        font.setBold(False)
+        self.title_label.setFont(font)
+        super().leaveEvent(event)
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
-            self._drag_start = _event_global_position(event)
-            self._dragging = False
+            self.begin_drag_candidate(event)
             event.accept()
             return
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event):
+        if self.continue_drag_candidate(event):
+            event.accept()
+            return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.LeftButton and not self.finish_drag_candidate():
+            self.addRequested.emit(self.block_type)
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
+
+    def begin_drag_candidate(self, event):
+        self._drag_start = _event_global_position(event)
+        self._dragging = False
+
+    def continue_drag_candidate(self, event):
         if not event.buttons() & Qt.LeftButton:
-            return
+            return False
         if (_event_global_position(event) - self._drag_start).manhattanLength() < 8:
-            return
+            return False
         self._dragging = True
         drag = QDrag(self)
         data = QMimeData()
         data.setData("application/x-workspace-block-type", self.block_type.encode("utf-8"))
         drag.setMimeData(data)
         drag.exec(Qt.CopyAction)
+        return True
 
-    def mouseReleaseEvent(self, event):
-        if event.button() == Qt.LeftButton and not self._dragging:
-            self.addRequested.emit(self.block_type)
-            event.accept()
-            return
+    def finish_drag_candidate(self):
+        was_dragging = self._dragging
         self._dragging = False
-        super().mouseReleaseEvent(event)
+        return was_dragging
 
 
 class WorkspaceCanvasSurface(QFrame):
@@ -916,14 +987,24 @@ class WorkspaceLayoutEditor(QWidget):
             (WORKSPACE_ARTBOARD_WIDTH, WORKSPACE_ARTBOARD_MIN_HEIGHT),
         )
         max_row = 0
+        free_bottom = 0
         for block in blocks or []:
             layout = validate_block_layout(block)
             max_row = max(max_row, layout["row"] + layout["row_span"])
+            free_layout = block.get("free_layout")
+            if isinstance(free_layout, dict):
+                try:
+                    free_bottom = max(
+                        free_bottom,
+                        int(float(free_layout.get("y", 0)) + float(free_layout.get("height", 0))),
+                    )
+                except (TypeError, ValueError):
+                    pass
         content_height = (
             max_row * self.logical_row_height
             + WORKSPACE_ARTBOARD_MARGIN
         )
-        return max(preset_height, content_height)
+        return max(preset_height, content_height, free_bottom + WORKSPACE_ARTBOARD_MARGIN)
 
     def _sync_artboard_width(self):
         size_key = self.workspace.get("dialog_size") if self.workspace else "large"
@@ -1076,6 +1157,57 @@ class WorkspaceLayoutEditor(QWidget):
             or resolved["col"] != desired["col"]
         )
         return resolved, adjusted
+
+    def resolve_active_layout(self, block_id, layout):
+        desired = validate_block_layout({"layout": layout})
+        if not self.workspace or not block_id:
+            return {}, desired, False
+        blocks = self.workspace.get("blocks", [])
+        layouts = {
+            block.get("id"): validate_block_layout(block)
+            for block in blocks
+            if block.get("id")
+        }
+        if block_id not in layouts:
+            return {}, desired, False
+
+        layouts[block_id] = dict(desired)
+        block_by_id = {
+            block.get("id"): block
+            for block in blocks
+            if block.get("id")
+        }
+        pending = [block_id]
+        moved = {block_id}
+
+        while pending:
+            current_id = pending.pop(0)
+            current_layout = layouts[current_id]
+            current_bottom = current_layout["row"] + current_layout["row_span"]
+            for other_id, other_layout in list(layouts.items()):
+                if other_id == current_id:
+                    continue
+                if other_id == block_id:
+                    continue
+                if not layouts_overlap(current_layout, other_layout):
+                    continue
+                other_block = block_by_id.get(other_id, {})
+                if other_block.get("locked"):
+                    continue
+                next_layout = dict(other_layout)
+                next_layout["row"] = current_bottom
+                if next_layout == other_layout:
+                    continue
+                layouts[other_id] = next_layout
+                moved.add(other_id)
+                pending.append(other_id)
+
+        updates = {item_id: layouts[item_id] for item_id in moved}
+        adjusted = any(
+            item_id != block_id
+            for item_id in moved
+        )
+        return updates, desired, adjusted
 
     def is_block_locked(self, block_id):
         block = self._block(block_id)
@@ -1263,7 +1395,10 @@ class WorkspaceLayoutEditor(QWidget):
 
     def set_placement_guide(self, layout, block_id=None, verb="Move block"):
         snapped_layout, snapped = self.snap_layout_to_alignment(layout, block_id=block_id)
-        resolved, adjusted = self.resolve_placement(snapped_layout, block_id=block_id)
+        if block_id:
+            _, resolved, adjusted = self.resolve_active_layout(block_id, snapped_layout)
+        else:
+            resolved, adjusted = self.resolve_placement(snapped_layout, block_id=block_id)
         self.placement_guide_layout = resolved
         self.placement_guide_status = "adjusted" if adjusted else "snapped" if snapped else "clear"
         self._set_interaction_state(
@@ -1837,17 +1972,106 @@ class WorkspaceLayoutEditor(QWidget):
         layout = validate_block_layout(block)
         layout.update(changes)
         layout, _ = self.snap_layout_to_alignment(layout, block_id=block_id)
-        layout, _ = self.resolve_placement(layout, block_id=block_id)
-        self.workspace["blocks"] = self._grid_edit_session.preview_block(
+        updated_layouts, layout, _ = self.resolve_active_layout(block_id, layout)
+        self.workspace["blocks"] = self._grid_edit_session.preview_many(
             self.workspace.get("blocks", []),
-            block_id,
-            layout,
+            updated_layouts or {block_id: layout},
         )
         self._sync_source()
         self.refresh_tile_geometries(
             duration=WORKSPACE_PREVIEW_ANIMATION_MS,
             easing=QEasingCurve.OutCubic,
         )
+
+    def block_to_rect(self, block):
+        free_layout = block.get("free_layout") if isinstance(block, dict) else None
+        if isinstance(free_layout, dict):
+            try:
+                canvas = self.canvas_rect()
+                return QRectF(
+                    canvas.left() + float(free_layout.get("x", 0)),
+                    canvas.top() + float(free_layout.get("y", 0)),
+                    max(96.0, float(free_layout.get("width", 96))),
+                    max(64.0, float(free_layout.get("height", 64))),
+                )
+            except (TypeError, ValueError):
+                pass
+        return self.layout_to_rect(validate_block_layout(block))
+
+    def _free_layout_from_rect(self, rect):
+        canvas = self.canvas_rect()
+        bounded = QRectF(rect)
+        bounded.setLeft(max(canvas.left(), bounded.left()))
+        bounded.setTop(max(canvas.top(), bounded.top()))
+        bounded.setWidth(max(96.0, bounded.width()))
+        bounded.setHeight(max(64.0, bounded.height()))
+        return {
+            "x": round(bounded.left() - canvas.left(), 2),
+            "y": round(bounded.top() - canvas.top(), 2),
+            "width": round(bounded.width(), 2),
+            "height": round(bounded.height(), 2),
+        }
+
+    def _grid_layout_from_rect(self, rect, base_layout):
+        canvas = self.canvas_rect()
+        col = round((rect.left() - canvas.left()) / max(1, self.cell_width()))
+        row = round((rect.top() - canvas.top()) / max(1, self.row_height))
+        col_span = round(rect.width() / max(1, self.cell_width()))
+        row_span = round(rect.height() / max(1, self.row_height))
+        layout = dict(base_layout)
+        layout.update(
+            {
+                "row": max(0, row),
+                "col": max(0, min(WORKSPACE_GRID_COLUMNS - 1, col)),
+                "row_span": max(1, row_span),
+                "col_span": max(1, col_span),
+            }
+        )
+        return validate_block_layout({"layout": layout})
+
+    def preview_free_rect(self, block_id, rect):
+        if not self.workspace or not block_id:
+            return
+        if self.is_block_locked(block_id):
+            self._set_interaction_state(verb=tr("workspace_locked_block"))
+            return
+        block = self._block(block_id)
+        if not block:
+            return
+        free_layout = self._free_layout_from_rect(rect)
+        grid_layout = self._grid_layout_from_rect(
+            QRectF(rect),
+            validate_block_layout(block),
+        )
+        updated = []
+        for item in self.workspace.get("blocks", []):
+            next_item = deepcopy(item)
+            if next_item.get("id") == block_id:
+                next_item["layout"] = grid_layout
+                next_item["free_layout"] = free_layout
+            updated.append(next_item)
+        self.workspace["blocks"] = updated
+        self._sync_source()
+        self.refresh_tile_geometries(
+            duration=WORKSPACE_PREVIEW_ANIMATION_MS,
+            easing=QEasingCurve.OutCubic,
+        )
+
+    def set_free_placement_guide(self, rect, block_id=None, verb="Resize block"):
+        self.placement_guide_layout = self._grid_layout_from_rect(
+            QRectF(rect),
+            validate_block_layout(self._block(block_id) or {}),
+        )
+        self.placement_guide_status = "clear"
+        self._set_interaction_state(
+            self.placement_guide_layout,
+            block_id=block_id,
+            verb=verb,
+        )
+        if hasattr(self, "_refresh_graphics_guides"):
+            self._refresh_graphics_guides()
+        elif hasattr(self, "surface"):
+            self.surface.update()
 
     def keyPressEvent(self, event):
         if event.key() == Qt.Key_Escape:
@@ -2285,6 +2509,48 @@ class WorkspaceGraphicsView(QGraphicsView):
         self.setAcceptDrops(True)
         self.setMouseTracking(True)
 
+    def _palette_block_type(self, event):
+        if not event.mimeData().hasFormat("application/x-workspace-block-type"):
+            return None
+        return bytes(
+            event.mimeData().data("application/x-workspace-block-type")
+        ).decode("utf-8")
+
+    def _accept_palette_drag(self, event):
+        event.setDropAction(Qt.CopyAction)
+        event.accept()
+
+    def dragEnterEvent(self, event):
+        if self._palette_block_type(event):
+            self._accept_palette_drag(event)
+            return
+        super().dragEnterEvent(event)
+
+    def dragMoveEvent(self, event):
+        block_type = self._palette_block_type(event)
+        if block_type:
+            scene_pos = self.mapToScene(_event_position(event))
+            row, col = self.parent().scene_position_to_grid(scene_pos)
+            self.parent().preview_new_block(block_type, row=row, col=col)
+            self._accept_palette_drag(event)
+            return
+        super().dragMoveEvent(event)
+
+    def dragLeaveEvent(self, event):
+        self.parent().clear_placement_guide()
+        super().dragLeaveEvent(event)
+
+    def dropEvent(self, event):
+        block_type = self._palette_block_type(event)
+        if not block_type:
+            super().dropEvent(event)
+            return
+        scene_pos = self.mapToScene(_event_position(event))
+        row, col = self.parent().scene_position_to_grid(scene_pos)
+        self.parent().clear_placement_guide()
+        self.parent().add_block_at(block_type, row=row, col=col)
+        self._accept_palette_drag(event)
+
     def wheelEvent(self, event):
         if event.modifiers() & Qt.ControlModifier:
             delta = event.angleDelta().y() or event.angleDelta().x()
@@ -2334,6 +2600,7 @@ class WorkspaceGraphicsBlockOverlay(QGraphicsRectItem):
         self.editor = editor
         self._start_scene_pos = QPointF()
         self._start_layout = None
+        self._start_rect = QRectF()
         self._start_group_layouts = {}
         self._mode = None
         self._drag_moved = False
@@ -2475,6 +2742,7 @@ class WorkspaceGraphicsBlockOverlay(QGraphicsRectItem):
                 return
             self._start_scene_pos = event.scenePos()
             self._start_layout = validate_block_layout(self.block)
+            self._start_rect = self.editor.block_to_rect(self.block)
             self._start_group_layouts = {
                 selected.get("id"): validate_block_layout(selected)
                 for selected in self.editor._selected_blocks()
@@ -2502,7 +2770,25 @@ class WorkspaceGraphicsBlockOverlay(QGraphicsRectItem):
         col_delta = round(delta.x() / max(1, self.editor.cell_width()))
         row_delta = round(delta.y() / max(1, self.editor.row_height))
         layout = dict(self._start_layout)
-        if self._mode != "move":
+        if self._mode != "move" and not self.editor.grid_visible:
+            rect = QRectF(self._start_rect)
+            min_width = 96
+            min_height = 64
+            if "e" in self._mode:
+                rect.setRight(max(rect.left() + min_width, self._start_rect.right() + delta.x()))
+            if "s" in self._mode:
+                rect.setBottom(max(rect.top() + min_height, self._start_rect.bottom() + delta.y()))
+            if "w" in self._mode:
+                rect.setLeft(min(rect.right() - min_width, self._start_rect.left() + delta.x()))
+            if "n" in self._mode:
+                rect.setTop(min(rect.bottom() - min_height, self._start_rect.top() + delta.y()))
+            self.editor.set_free_placement_guide(
+                rect,
+                block_id=self.block.get("id"),
+                verb="Resize block",
+            )
+            self.editor.preview_free_rect(self.block.get("id"), rect)
+        elif self._mode != "move":
             if "e" in self._mode:
                 layout["col_span"] = max(1, self._start_layout["col_span"] + col_delta)
             if "s" in self._mode:
@@ -2590,9 +2876,7 @@ class WorkspaceGraphicsMiniMap(QFrame):
             for block in self.editor.workspace.get("blocks", []):
                 if block.get("visible") is False:
                     continue
-                rect = QRectF(
-                    self.editor.layout_to_rect(validate_block_layout(block))
-                )
+                rect = QRectF(self.editor.block_to_rect(block))
                 mapped = self._map_scene_rect(rect, canvas, target)
                 painter.drawRoundedRect(mapped, 2, 2)
 
@@ -2781,7 +3065,10 @@ class GraphicsWorkspaceLayoutEditor(WorkspaceLayoutEditor):
 
     def set_placement_guide(self, layout, block_id=None, verb="Move block"):
         snapped_layout, snapped = self.snap_layout_to_alignment(layout, block_id=block_id)
-        resolved, adjusted = self.resolve_placement(snapped_layout, block_id=block_id)
+        if block_id:
+            _, resolved, adjusted = self.resolve_active_layout(block_id, snapped_layout)
+        else:
+            resolved, adjusted = self.resolve_placement(snapped_layout, block_id=block_id)
         self.placement_guide_layout = resolved
         self.placement_guide_status = "adjusted" if adjusted else "snapped" if snapped else "clear"
         self._set_interaction_state(
@@ -2846,7 +3133,7 @@ class GraphicsWorkspaceLayoutEditor(WorkspaceLayoutEditor):
             if proxy is None or (overlay is None and not self._preview_as_opened):
                 self.render()
                 return
-            rect = self.layout_to_rect(validate_block_layout(block))
+            rect = self.block_to_rect(block)
             self._set_graphics_item_rect(
                 proxy,
                 overlay,
@@ -3156,7 +3443,7 @@ class GraphicsWorkspaceLayoutEditor(WorkspaceLayoutEditor):
         for block in blocks:
             if block.get("visible") is False:
                 continue
-            rect = self.layout_to_rect(validate_block_layout(block))
+            rect = self.block_to_rect(block)
             proxy = self._snapshot_graphics_tile(block, rect)
             overlay = None
             if not self._preview_as_opened:
