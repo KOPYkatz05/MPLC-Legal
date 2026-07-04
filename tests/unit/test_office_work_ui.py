@@ -2,7 +2,7 @@ from datetime import date, datetime
 from types import SimpleNamespace
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QLabel
+from PySide6.QtWidgets import QFrame, QLabel, QPushButton, QToolButton
 
 from ui.dialogs import office_work_dialogs
 from ui.dialogs.office_work_dialogs import ProjectDialog, TaskDialog
@@ -167,6 +167,78 @@ def test_office_work_page_can_filter_to_project(qapp):
 
         assert page._project_filter_id == 7
         assert page._selected_tab == "tasks"
+    finally:
+        page.close()
+
+
+def test_office_work_tasks_render_as_three_column_board(qapp):
+    _ = qapp
+    page = OfficeWorkPage(service=FakeSecretaryWorkService())
+
+    try:
+        columns = page.findChildren(QFrame, "OfficeWorkTaskColumn")
+        headers = [
+            label.text()
+            for column in columns
+            for label in column.findChildren(QLabel, "OfficeWorkSectionTitle")
+        ]
+
+        assert headers == ["Overdue", "Today", "Later"]
+        assert len(columns) == 3
+    finally:
+        page.close()
+
+
+def test_office_work_task_board_groups_extra_sections_into_later(qapp):
+    _ = qapp
+    page = OfficeWorkPage(service=FakeSecretaryWorkService())
+
+    try:
+        grouped = {
+            "overdue": [{"id": 1, "title": "Overdue"}],
+            "today": [{"id": 2, "title": "Today"}],
+            "ready_to_review": [{"id": 3, "title": "Ready"}],
+            "this_week": [{"id": 4, "title": "Week"}],
+            "later": [
+                {
+                    "id": 5,
+                    "title": "Transfer 1 FBI",
+                    "automation_source": "process_automation",
+                    "automation_key": "transfer:fbi:2026-07-29",
+                },
+                {
+                    "id": 6,
+                    "title": "Transfer 1 Flights",
+                    "automation_source": "process_automation",
+                    "automation_key": "transfer:flights:2026-07-29",
+                },
+                {
+                    "id": 7,
+                    "title": "Transfer 2 FBI",
+                    "automation_source": "process_automation",
+                    "automation_key": "transfer:fbi:2026-09-09",
+                },
+                {
+                    "id": 8,
+                    "title": "Transfer 2 Arrivals",
+                    "automation_source": "process_automation",
+                    "automation_key": "transfer:arrivals:2026-09-09",
+                },
+                {
+                    "id": 9,
+                    "title": "Transfer 3 FBI",
+                    "automation_source": "process_automation",
+                    "automation_key": "transfer:fbi:2026-10-21",
+                },
+                {"id": 10, "title": "Manual Later"},
+            ],
+        }
+
+        board_groups = page._task_board_groups(grouped)
+
+        assert [task["id"] for task in board_groups["overdue"]] == [1]
+        assert [task["id"] for task in board_groups["today"]] == [2]
+        assert [task["id"] for task in board_groups["later"]] == [3, 4, 5, 6, 7, 8, 10]
     finally:
         page.close()
 
@@ -432,6 +504,97 @@ def test_office_work_task_row_labels_missing_follow_up(qapp):
         labels = [label.text() for label in row.findChildren(QLabel)]
 
         assert any("No follow-up date" in text for text in labels)
+    finally:
+        page.close()
+
+
+def test_office_work_task_row_sets_missing_follow_up(monkeypatch, qapp):
+    _ = qapp
+    page = OfficeWorkPage(service=FakeSecretaryWorkService())
+    edited = []
+    monkeypatch.setattr(page, "_edit_task", lambda task: edited.append(task))
+
+    try:
+        task = page.service.grouped_tasks()["overdue"][0].copy()
+        task.update({
+            "status": "WAITING",
+            "waiting_reason": "OTHER",
+            "waiting_reason_label": "Other waiting reason",
+            "waiting_follow_up_date": None,
+            "waiting_follow_up_status_label": "No follow-up date",
+        })
+
+        row = page._task_row(task)
+        buttons = {
+            button.toolTip(): button for button in row.findChildren(QToolButton)
+        }
+
+        assert set(buttons) == {
+            "More actions",
+            "Mark ready",
+            "Mark complete",
+            "Delete task",
+        }
+
+        more_menu = getattr(buttons["More actions"], "_popup_menu", None)
+        assert more_menu is not None
+        follow_up_action = next(
+            action for action in more_menu.actions()
+            if action.text() == "Set Follow-Up"
+        )
+
+        follow_up_action.trigger()
+
+        assert edited == [task]
+    finally:
+        page.close()
+
+
+def test_office_work_task_row_keeps_primary_actions_visible(qapp):
+    _ = qapp
+    page = OfficeWorkPage(service=FakeSecretaryWorkService())
+
+    try:
+        task = page.service.grouped_tasks()["overdue"][0]
+        row = page._task_row(task)
+        buttons = {
+            button.toolTip(): button for button in row.findChildren(QToolButton)
+        }
+
+        assert set(buttons) == {
+            "More actions",
+            "Mark ready",
+            "Mark complete",
+            "Delete task",
+        }
+        assert getattr(buttons["More actions"], "_popup_menu", None) is not None
+        assert [
+            action.text() for action in getattr(buttons["More actions"], "_popup_menu").actions()
+        ] == ["Review", "Edit", "Archive"]
+    finally:
+        page.close()
+
+
+def test_office_work_ready_task_moves_needs_work_to_more_menu(qapp):
+    _ = qapp
+    page = OfficeWorkPage(service=FakeSecretaryWorkService())
+
+    try:
+        task = page.service.grouped_tasks()["overdue"][0].copy()
+        task["status"] = "READY"
+        row = page._task_row(task)
+        buttons = {
+            button.toolTip(): button for button in row.findChildren(QToolButton)
+        }
+
+        assert set(buttons) == {
+            "More actions",
+            "Mark complete",
+            "Delete task",
+        }
+        assert [
+            action.text() for action in getattr(buttons["More actions"], "_popup_menu").actions()
+        ] == ["Review", "Needs Work", "Edit", "Archive"]
     finally:
         page.close()
 

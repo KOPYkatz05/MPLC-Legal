@@ -3557,6 +3557,49 @@ def test_missionary_workspace_page_renders_workspace_blocks(monkeypatch, qapp):
     assert "Portal" in _widget_texts(page)
 
 
+def test_missionary_workspace_page_honors_free_layout_geometry(monkeypatch, qapp):
+    _ = qapp
+    workspace = new_workspace("Free Page")
+    workspace["dialog_size"] = "wide"
+    workspace["blocks"] = [
+        {
+            "id": "personal",
+            "type": "personal_info",
+            "title": "Personal Information",
+            "layout": {"row": 0, "col": 0, "row_span": 2, "col_span": 4},
+            "free_layout": {"x": 12, "y": 18, "width": 420, "height": 640},
+        }
+    ]
+    missionary = SimpleNamespace(
+        id=7,
+        full_name="Test Missionary",
+        nationality="Peru",
+        passport_number="A0000000",
+        carnet_number="",
+        current_stage="INTERPOL",
+    )
+    context = SimpleNamespace(
+        missionary=missionary,
+        documents=[],
+        workflows=[],
+        tasks=[],
+        residency_rows=[],
+        missing_groups=[],
+    )
+    monkeypatch.setattr(
+        "ui.pages.missionary_workspace_page.MissionaryWorkspaceContext.load",
+        lambda selected: context,
+    )
+
+    page = MissionaryWorkspacePage()
+    page.load_workspace(missionary, workspace)
+
+    widget = page._workspace_block_widgets[0]
+    assert widget.geometry() == QRect(12, 18, 420, 640)
+    assert page.content.minimumWidth() == 1184
+    assert page.content.minimumHeight() >= 675
+
+
 def test_missionary_workspace_page_retranslates_screen_actions(qapp):
     _ = qapp
     i18n = get_i18n()

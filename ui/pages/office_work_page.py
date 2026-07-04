@@ -7,6 +7,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QPushButton,
+    QSizePolicy,
     QStackedWidget,
     QVBoxLayout,
     QWidget,
@@ -31,6 +32,7 @@ from ui.foundation import (
     create_button,
     create_card,
     create_combo_box,
+    create_pill_action_button,
     create_scroll_area,
     create_search_edit,
     fluent_icon,
@@ -62,6 +64,15 @@ def _task_priority_tone(task):
     return str(task.get("priority", "LOW")).lower()
 
 
+def _task_priority_color(task):
+    return {
+        "normal": "#0EA5AC",
+        "important": "#D97706",
+        "critical": "#DC2626",
+        "group": "#7A6EEC",
+    }.get(_task_priority_tone(task), "#71717A")
+
+
 def _format_date(value):
     if not value:
         return "No due date"
@@ -79,6 +90,21 @@ def _due_text(task):
     if days == 0:
         return "Due today"
     return f"Due in {days} day{'s' if days != 1 else ''}"
+
+
+def _transfer_date_from_automation_key(task):
+    automation_key = str(task.get("automation_key") or "")
+    if not automation_key.startswith("transfer:"):
+        return None
+
+    parts = automation_key.split(":")
+    if len(parts) < 3:
+        return None
+
+    try:
+        return date.fromisoformat(parts[-1])
+    except ValueError:
+        return None
 
 
 class OfficeWorkPage(QWidget):
@@ -471,24 +497,93 @@ class OfficeWorkPage(QWidget):
             include_done=self.task_status_filter.currentData() == "ALL",
         )
 
-        has_tasks = False
-        for group_key, label in TASK_GROUPS:
-            tasks = grouped.get(group_key, [])
-            if not tasks:
-                continue
-            has_tasks = True
-            self.task_content_layout.addWidget(
-                self._section_header(label, len(tasks))
-            )
-            for task in tasks:
-                self.task_content_layout.addWidget(self._task_row(task))
-
-        if not has_tasks:
+        board_groups = self._task_board_groups(grouped)
+        if not any(board_groups.values()):
             self.task_content_layout.addWidget(
                 self._empty_state("No tasks match the current filters.")
             )
+        else:
+            self.task_content_layout.addWidget(self._task_board(board_groups))
 
         self.task_content_layout.addStretch()
+
+    def _task_board_groups(self, grouped):
+        columns = {"overdue": [], "today": [], "later": []}
+        seen_ids = set()
+        later_transfer_dates = []
+        for task in grouped.get("later", []):
+            if task.get("automation_source") != "process_automation":
+                continue
+            transfer_date = _transfer_date_from_automation_key(task)
+            if transfer_date is not None:
+                later_transfer_dates.append(transfer_date)
+        allowed_transfer_dates = set(sorted(dict.fromkeys(later_transfer_dates))[:2])
+
+        for key in ("overdue", "today"):
+            for task in grouped.get(key, []):
+                task_id = task.get("id")
+                if task_id in seen_ids:
+                    continue
+                columns[key].append(task)
+                seen_ids.add(task_id)
+
+        for group_key, _label in TASK_GROUPS:
+            if group_key in {"overdue", "today"}:
+                continue
+            for task in grouped.get(group_key, []):
+                task_id = task.get("id")
+                if task_id in seen_ids:
+                    continue
+                if task.get("automation_source") == "process_automation":
+                    transfer_date = _transfer_date_from_automation_key(task)
+                    if (
+                        transfer_date is not None
+                        and transfer_date not in allowed_transfer_dates
+                    ):
+                        continue
+                columns["later"].append(task)
+                seen_ids.add(task_id)
+        return columns
+
+    def _task_board(self, board_groups):
+        board = QWidget()
+        board.setObjectName("OfficeWorkTaskBoard")
+        board_layout = QHBoxLayout()
+        board_layout.setContentsMargins(0, 0, 0, 0)
+        board_layout.setSpacing(12)
+        board.setLayout(board_layout)
+        board_layout.addStretch(1)
+
+        for key, label in (
+            ("overdue", "Overdue"),
+            ("today", "Today"),
+            ("later", "Later"),
+        ):
+            board_layout.addWidget(self._task_board_column(label, board_groups.get(key, [])))
+
+        board_layout.addStretch(1)
+        return board
+
+    def _task_board_column(self, label, tasks):
+        column = QFrame()
+        column.setObjectName("OfficeWorkTaskColumn")
+        column.setFixedWidth(550)
+        column.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Preferred)
+        column_layout = QVBoxLayout()
+        column_layout.setContentsMargins(10, 10, 10, 10)
+        column_layout.setSpacing(8)
+        column.setLayout(column_layout)
+
+        column_layout.addWidget(self._section_header(label, len(tasks)))
+        if tasks:
+            for task in tasks:
+                column_layout.addWidget(self._task_row(task))
+        else:
+            empty = QLabel("No tasks")
+            empty.setObjectName("OfficeWorkColumnEmpty")
+            column_layout.addWidget(empty)
+        column_layout.addStretch()
+        return column
 
     def render_projects(self):
         if not hasattr(self, "project_content_layout"):
@@ -540,26 +635,6 @@ class OfficeWorkPage(QWidget):
         self.task_content_layout.addWidget(wrapper)
 
     def _task_row(self, task):
-        card = create_card(object_name="OfficeWorkRow")
-        card.setCursor(Qt.PointingHandCursor)
-        layout = QHBoxLayout()
-        layout.setContentsMargins(12, 10, 12, 10)
-        layout.setSpacing(12)
-        card.setLayout(layout)
-
-        accent = QFrame()
-        accent.setObjectName("OfficeWorkPriorityAccent")
-        accent.setFixedWidth(4)
-        accent.setProperty("tone", _task_priority_tone(task))
-        layout.addWidget(accent)
-
-        text_stack = QVBoxLayout()
-        text_stack.setContentsMargins(0, 0, 0, 0)
-        text_stack.setSpacing(4)
-        title = QLabel(task["title"])
-        title.setObjectName("StrongText")
-        text_stack.addWidget(title)
-
         meta_parts = [
             task["priority"].title(),
             _due_text(task),
@@ -583,76 +658,138 @@ class OfficeWorkPage(QWidget):
             meta_parts.append(task["scope_label"])
         elif task.get("missionary_name"):
             meta_parts.append(task["missionary_name"])
-        meta = QLabel("  |  ".join(meta_parts))
-        meta.setObjectName("OfficeWorkMeta")
-        text_stack.addWidget(meta)
-        layout.addLayout(text_stack, stretch=1)
 
-        review_btn = create_button("Review", "primary", fixed_height=28)
-        review_btn.clicked.connect(
-            lambda _=None, task_id=task["id"]:
-            self._open_task_workspace(task_id)
-        )
-        layout.addWidget(review_btn)
+        menu_actions = [
+            {
+                "text": "Review",
+                "tooltip": "Review task",
+                "icon": "panel-top-open",
+                "fallback": "...",
+                "callback": lambda task_id=task["id"]: self._open_task_workspace(task_id),
+            }
+        ]
+        visible_actions = []
 
         if task["status"] not in {"DONE", "ARCHIVED"}:
             if task["status"] == "READY":
-                needs_work_btn = create_button(
-                    "Needs Work",
-                    "secondary",
-                    fixed_height=28,
+                menu_actions.append(
+                    {
+                        "text": "Needs Work",
+                        "tooltip": "Mark needs work",
+                        "icon": "rotate-ccw",
+                        "fallback": "!",
+                        "callback": lambda task_id=task["id"]: self._reopen_task(task_id),
+                    }
                 )
-                needs_work_btn.clicked.connect(
-                    lambda _=None, task_id=task["id"]:
-                    self._reopen_task(task_id)
-                )
-                layout.addWidget(needs_work_btn)
             else:
-                ready_btn = create_button("Ready", "secondary", fixed_height=28)
-                ready_btn.clicked.connect(
-                    lambda _=None, task_id=task["id"]:
-                    self._mark_task_ready(task_id)
+                if (
+                    task["status"] == "WAITING"
+                    and task.get("waiting_follow_up_date") is None
+                ):
+                    menu_actions.append(
+                        {
+                            "text": "Set Follow-Up",
+                            "tooltip": "Set follow-up",
+                            "icon": "calendar-plus",
+                            "fallback": "+",
+                            "callback": lambda item=task: self._edit_task(item),
+                        }
+                    )
+
+                visible_actions.append(
+                    {
+                        "text": "Ready",
+                        "tooltip": "Mark ready",
+                        "icon": "circle-dot",
+                        "fallback": "R",
+                        "callback": lambda task_id=task["id"]: self._mark_task_ready(task_id),
+                    }
                 )
-                layout.addWidget(ready_btn)
 
-            done_btn = create_button("Done", "success", fixed_height=28)
-            done_btn.clicked.connect(lambda _=None, task_id=task["id"]: self._complete_task(task_id))
-            layout.addWidget(done_btn)
+            visible_actions.append(
+                {
+                    "text": "Done",
+                    "tooltip": "Mark complete",
+                    "icon": "check",
+                    "fallback": "C",
+                    "callback": lambda task_id=task["id"]: self._complete_task(task_id),
+                }
+            )
 
-        edit_btn = create_button("Edit", "secondary", fixed_height=28)
-        edit_btn.clicked.connect(lambda _=None, item=task: self._edit_task(item))
-        layout.addWidget(edit_btn)
+        menu_actions.append(
+            {
+                "text": "Edit",
+                "tooltip": "Edit task",
+                "icon": "pencil",
+                "fallback": "E",
+                "callback": lambda item=task: self._edit_task(item),
+            }
+        )
 
         if task["status"] != "ARCHIVED":
-            archive_btn = create_button("Archive", "subtle", fixed_height=28)
-            archive_btn.clicked.connect(
-                lambda _=None, task_id=task["id"]: self._archive_task(task_id)
+            menu_actions.append(
+                {
+                    "text": "Archive",
+                    "tooltip": "Archive task",
+                    "icon": "archive",
+                    "fallback": "A",
+                    "callback": lambda task_id=task["id"]: self._archive_task(task_id),
+                }
             )
-            layout.addWidget(archive_btn)
 
-        delete_btn = create_button("Delete", "danger", fixed_height=28)
-        delete_btn.clicked.connect(
-            lambda _=None, task_id=task["id"]: self._delete_task(task_id)
+        visible_actions.append(
+            {
+                "text": "Delete",
+                "tooltip": "Delete task",
+                "icon": "x",
+                "fallback": "x",
+                "callback": lambda task_id=task["id"]: self._delete_task(task_id),
+            }
         )
-        layout.addWidget(delete_btn)
 
         if task.get("missionary_count", 0) > 1:
-            scope_btn = create_button("Missionaries", "subtle", fixed_height=28)
-            scope_btn.clicked.connect(
-                lambda _=None, item=task: self._show_linked_missionaries(item)
+            menu_actions.append(
+                {
+                    "text": "Missionaries",
+                    "tooltip": "Show linked missionaries",
+                    "icon": "users",
+                    "fallback": "M",
+                    "callback": lambda item=task: self._show_linked_missionaries(item),
+                }
             )
-            layout.addWidget(scope_btn)
         elif task.get("missionary_id"):
-            open_btn = create_button("Open Missionary", "subtle", fixed_height=28)
-            open_btn.clicked.connect(
-                lambda _=None, missionary_id=task["missionary_id"]:
-                self._open_missionary(missionary_id)
+            menu_actions.append(
+                {
+                    "text": "Open Missionary",
+                    "tooltip": "Open missionary",
+                    "icon": "external-link",
+                    "fallback": ">",
+                    "callback": lambda missionary_id=task["missionary_id"]:
+                    self._open_missionary(missionary_id),
+                }
             )
-            layout.addWidget(open_btn)
 
-        card.mousePressEvent = (
-            lambda event, task_id=task["id"]:
-            self._task_row_clicked(event, task_id)
+        actions = [
+            {
+                "text": "More",
+                "tooltip": "More actions",
+                "icon": "ellipsis-vertical",
+                "fallback_icons": ["more-vertical"],
+                "fallback": "...",
+                "menu": menu_actions,
+            },
+            *visible_actions,
+        ]
+
+        card = create_pill_action_button(
+            task["title"],
+            subtitle="  |  ".join(meta_parts),
+            actions=actions,
+            accent=_task_priority_color(task),
+            object_name="OfficeWorkTaskPill",
+        )
+        card.clicked.connect(
+            lambda task_id=task["id"]: self._open_task_workspace(task_id)
         )
         return card
 

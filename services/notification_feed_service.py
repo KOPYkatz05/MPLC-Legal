@@ -151,6 +151,9 @@ class NotificationFeedService:
         parts = []
         labels = {
             "secretary_task": "task",
+            "waiting_follow_up": "waiting follow-up",
+            "waiting_no_follow_up": "task missing follow-up",
+            "ready_task": "ready task",
             "appointment_due": "appointment",
             "document_expiration": "document",
             "missing_document": "missing document",
@@ -159,6 +162,9 @@ class NotificationFeedService:
         for key in (
             "appointment_due",
             "secretary_task",
+            "waiting_follow_up",
+            "waiting_no_follow_up",
+            "ready_task",
             "transfer_reminder",
             "document_expiration",
             "missing_document",
@@ -327,6 +333,10 @@ class NotificationFeedService:
                         & SecretaryTask.waiting_follow_up_date.isnot(None)
                         & (SecretaryTask.waiting_follow_up_date <= today)
                     )
+                    | (
+                        (SecretaryTask.status == "WAITING")
+                        & SecretaryTask.waiting_follow_up_date.is_(None)
+                    )
                     | (SecretaryTask.status == "READY")
                 ),
             )
@@ -334,6 +344,9 @@ class NotificationFeedService:
         )
         items = []
         for task in tasks:
+            task_is_due = (
+                task.due_date is not None and task.due_date <= today
+            )
             if task.status == "READY":
                 item = self._task_item_for_date(
                     session,
@@ -346,7 +359,7 @@ class NotificationFeedService:
                 if item:
                     items.append(item)
                 continue
-            if task.due_date is not None and task.due_date <= today:
+            if task_is_due:
                 item = self._task_item_for_date(
                     session,
                     task,
@@ -369,6 +382,21 @@ class NotificationFeedService:
                     settings,
                     task.waiting_follow_up_date,
                     "follow_up",
+                )
+                if item:
+                    items.append(item)
+            if (
+                task.status == "WAITING"
+                and task.waiting_follow_up_date is None
+                and not task_is_due
+            ):
+                item = self._task_item_for_date(
+                    session,
+                    task,
+                    today,
+                    settings,
+                    today,
+                    "missing_follow_up",
                 )
                 if item:
                     items.append(item)
@@ -399,6 +427,8 @@ class NotificationFeedService:
                 item_type = "ready_task"
             elif date_kind == "follow_up":
                 item_type = "waiting_follow_up"
+            elif date_kind == "missing_follow_up":
+                item_type = "waiting_no_follow_up"
             else:
                 item_type = "secretary_task"
         priority = (task.priority or "NORMAL").upper()
@@ -492,6 +522,8 @@ class NotificationFeedService:
             return f"{priority} task ready for review."
         if date_kind == "follow_up":
             return f"{priority} waiting follow-up {timing}."
+        if date_kind == "missing_follow_up":
+            return f"{priority} waiting task needs a follow-up date."
         return f"{priority} task {timing}."
 
     @staticmethod

@@ -1155,6 +1155,10 @@ class DashboardPage(QWidget):
             "missing_document": "Missing Doc",
             "appointment_due": "Appointment",
             "secretary_task": "Task",
+            "waiting_follow_up": "Follow-Up",
+            "waiting_no_follow_up": "Follow-Up",
+            "ready_task": "Task",
+            "transfer_reminder": "Task",
         }
         return labels.get(item_type, "Item")
 
@@ -1168,7 +1172,13 @@ class DashboardPage(QWidget):
 
     @staticmethod
     def _attention_action_label(item):
-        if item.get("type") == "secretary_task" and item.get("task_id"):
+        if item.get("task_id") and item.get("type") in {
+            "secretary_task",
+            "waiting_follow_up",
+            "waiting_no_follow_up",
+            "ready_task",
+            "transfer_reminder",
+        }:
             return tr("dashboard_action_review_task")
         if item.get("missionary_id"):
             return tr("dashboard_action_open_missionary")
@@ -1186,7 +1196,13 @@ class DashboardPage(QWidget):
         task_id = item.get("task_id")
         if (
             task_id
-            and item.get("type") == "secretary_task"
+            and item.get("type") in {
+                "secretary_task",
+                "waiting_follow_up",
+                "waiting_no_follow_up",
+                "ready_task",
+                "transfer_reminder",
+            }
             and self.main_window is not None
         ):
             opener = getattr(self.main_window, "open_alert_workspace", None)

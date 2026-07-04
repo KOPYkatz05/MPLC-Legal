@@ -349,6 +349,27 @@ def test_dashboard_attention_task_routes_to_alert_workspace(qapp):
     assert opened == [(55, "dashboard")]
 
 
+def test_dashboard_attention_follow_up_task_routes_to_alert_workspace(qapp):
+    _ = qapp
+    page = DashboardPage.__new__(DashboardPage)
+    opened = []
+    page.main_window = SimpleNamespace(
+        open_alert_workspace=lambda task_id, return_key="dashboard":
+        opened.append((task_id, return_key))
+    )
+
+    DashboardPage._open_attention_item(
+        page,
+        {
+            "type": "waiting_no_follow_up",
+            "task_id": 56,
+            "target": "office_work",
+        },
+    )
+
+    assert opened == [(56, "dashboard")]
+
+
 def test_dashboard_attention_action_labels_are_specific():
     i18n = get_i18n()
     original_language = i18n.get_language()
@@ -365,6 +386,19 @@ def test_dashboard_attention_action_labels_are_specific():
             )
             == "Review Task"
         )
+        assert (
+            DashboardPage._attention_action_label(
+                {
+                    "type": "waiting_no_follow_up",
+                    "task_id": 56,
+                    "target": "office_work",
+                }
+            )
+            == "Review Task"
+        )
+        assert DashboardPage._attention_type_label(
+            "waiting_no_follow_up"
+        ) == "Follow-Up"
         assert (
             DashboardPage._attention_action_label(
                 {"type": "missing_document", "missionary_id": 42}

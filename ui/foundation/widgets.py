@@ -6,9 +6,11 @@ from PySide6.QtWidgets import (
     QAbstractItemView,
     QButtonGroup,
     QFrame,
+    QGraphicsDropShadowEffect,
     QHBoxLayout,
     QHeaderView,
     QLabel,
+    QMenu,
     QPushButton,
     QToolButton,
     QSizePolicy,
@@ -20,7 +22,7 @@ from PySide6.QtWidgets import (
 
 from ui.foundation.fluent import create_button
 from ui.foundation.fluent import CardWidget, SimpleCardWidget, fluent_icon
-from ui.foundation.icons import app_icon
+from ui.foundation.icons import app_icon, lucide_icon
 
 
 @dataclass(frozen=True)
@@ -181,6 +183,157 @@ class DialogFooter(SimpleCardWidget):
 
     def add_action(self, button):
         self.layout().addWidget(button)
+
+
+class PillActionButton(QFrame):
+    clicked = Signal()
+
+    def __init__(
+        self,
+        label,
+        subtitle="",
+        actions=None,
+        accent=None,
+        object_name="PillActionButton",
+        parent=None,
+    ):
+        super().__init__(parent)
+        self.setObjectName(object_name)
+        self.setCursor(Qt.PointingHandCursor)
+        self.setAttribute(Qt.WA_StyledBackground, True)
+        self._shadow = QGraphicsDropShadowEffect(self)
+        self._shadow.setBlurRadius(0)
+        self._shadow.setOffset(0, 0)
+        self._shadow.setColor(QColor(31, 41, 55, 0))
+        self.setGraphicsEffect(self._shadow)
+
+        layout = QHBoxLayout()
+        layout.setContentsMargins(16, 7, 10, 7)
+        layout.setSpacing(10)
+        self.setLayout(layout)
+
+        if accent:
+            accent_dot = QFrame(self)
+            accent_dot.setObjectName("PillActionAccent")
+            accent_dot.setFixedSize(8, 8)
+            accent_dot.setStyleSheet(
+                f"QFrame#PillActionAccent {{ background-color: {accent}; }}"
+            )
+            layout.addWidget(accent_dot, alignment=Qt.AlignVCenter)
+
+        text_stack = QVBoxLayout()
+        text_stack.setContentsMargins(0, 0, 0, 0)
+        text_stack.setSpacing(1)
+        layout.addLayout(text_stack, stretch=1)
+
+        self.label = QLabel(label, self)
+        self.label.setObjectName("PillActionLabel")
+        self.label.setWordWrap(False)
+        text_stack.addWidget(self.label)
+
+        self.subtitle = QLabel(subtitle, self)
+        self.subtitle.setObjectName("PillActionSubtitle")
+        self.subtitle.setWordWrap(False)
+        self.subtitle.setVisible(bool(subtitle))
+        text_stack.addWidget(self.subtitle)
+
+        self.action_buttons = []
+        for action in actions or []:
+            button = self._make_icon_button(action)
+            layout.addWidget(button, alignment=Qt.AlignVCenter)
+            self.action_buttons.append(button)
+
+    def _make_icon_button(self, action):
+        name = action.get("icon") or ""
+        fallback_icons = action.get("fallback_icons") or []
+        fallback_text = action.get("fallback") or action.get("text") or ""
+        tooltip = action.get("tooltip") or action.get("text") or fallback_text
+        callback = action.get("callback")
+        menu_items = action.get("menu") or []
+
+        button = QToolButton(self)
+        button.setObjectName("PillActionIconButton")
+        button.setCursor(Qt.PointingHandCursor)
+        button.setFixedSize(26, 26)
+        button.setToolTip(tooltip)
+        button.setAccessibleName(tooltip)
+        button.setAutoRaise(True)
+        icon = self._icon_from_names([name, *fallback_icons])
+        if icon is not None and not icon.isNull():
+            button.setIcon(icon)
+            button.setIconSize(QSize(18, 18))
+        else:
+            button.setText(fallback_text)
+        if menu_items:
+            menu = QMenu(button)
+            menu.setObjectName(action.get("menu_object_name") or "WorkspaceTileContextMenu")
+            for item in menu_items:
+                menu_action = menu.addAction(item.get("text") or item.get("tooltip") or "")
+                menu_icon = self._icon_from_names(
+                    [item.get("icon") or "", *(item.get("fallback_icons") or [])]
+                )
+                if menu_icon is not None and not menu_icon.isNull():
+                    menu_action.setIcon(menu_icon)
+                item_callback = item.get("callback")
+                if item_callback is not None:
+                    menu_action.triggered.connect(
+                        lambda checked=False, fn=item_callback: fn()
+                    )
+            button._popup_menu = menu
+            button.clicked.connect(
+                lambda checked=False, btn=button, popup=menu: popup.popup(
+                    btn.mapToGlobal(btn.rect().bottomLeft())
+                )
+            )
+        if callback is not None:
+            button.clicked.connect(lambda checked=False, fn=callback: fn())
+        return button
+
+    def _icon_from_names(self, names):
+        for icon_name in names:
+            if not icon_name:
+                continue
+            icon = lucide_icon(icon_name, size=18, color="#6B7280")
+            if icon is not None and not icon.isNull():
+                return icon
+        return None
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.clicked.emit()
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
+
+    def enterEvent(self, event):
+        self._shadow.setBlurRadius(16)
+        self._shadow.setOffset(0, 4)
+        self._shadow.setColor(QColor(0, 0, 0, 26))
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self._shadow.setBlurRadius(0)
+        self._shadow.setOffset(0, 0)
+        self._shadow.setColor(QColor(31, 41, 55, 0))
+        super().leaveEvent(event)
+
+
+def create_pill_action_button(
+    label,
+    subtitle="",
+    actions=None,
+    accent=None,
+    object_name="PillActionButton",
+    parent=None,
+):
+    return PillActionButton(
+        label,
+        subtitle=subtitle,
+        actions=actions,
+        accent=accent,
+        object_name=object_name,
+        parent=parent,
+    )
 
 
 class AppShell(QWidget):

@@ -1,10 +1,9 @@
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QUrl
+from PySide6.QtCore import QRect, QSize, Qt, QUrl
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QFrame,
-    QGridLayout,
     QHBoxLayout,
     QLabel,
     QVBoxLayout,
@@ -23,8 +22,9 @@ from services.workspace_layout import (
 from ui.dialogs.document_viewer_dialog import DocumentViewerDialog
 from ui.dialogs.missionary_workspace_dialog import (
     MissionaryWorkspaceContext,
+    WORKSPACE_DIALOG_BODY_SIZES,
+    WORKSPACE_RUNTIME_ROW_HEIGHT,
     WorkspaceBlockFactory,
-    clear_layout,
     document_label,
 )
 from ui.dialogs.office_work_dialogs import TaskDialog
@@ -93,16 +93,13 @@ class MissionaryWorkspacePage(QWidget):
             transparent=True,
             single_direction=True,
         )
+        self.scroll.setWidgetResizable(False)
         tune_fluent_scrollable(self.scroll)
-        content = QWidget()
-        content.setObjectName("MissionaryWorkspacePageBody")
-        content.setAttribute(Qt.WA_StyledBackground, True)
-        self.grid = QGridLayout()
-        self.grid.setContentsMargins(18, 16, 18, 18)
-        self.grid.setHorizontalSpacing(12)
-        self.grid.setVerticalSpacing(12)
-        content.setLayout(self.grid)
-        self.scroll.setWidget(content)
+        self.content = QWidget()
+        self.content.setObjectName("MissionaryWorkspacePageBody")
+        self.content.setAttribute(Qt.WA_StyledBackground, True)
+        self._workspace_block_widgets = []
+        self.scroll.setWidget(self.content)
         root.addWidget(self.scroll, stretch=1)
 
     def load_workspace(self, missionary, workspace):
@@ -124,31 +121,69 @@ class MissionaryWorkspacePage(QWidget):
             self.title_label.setText(tr("workspace_title"))
 
     def _render_blocks(self):
-        clear_layout(self.grid)
+        self._clear_workspace_widgets()
+        body_width, body_height = self._workspace_body_size()
         if not self.missionary or self.context is None:
             empty = QLabel(tr("workspace_no_workspaces"))
             empty.setObjectName("MutedText")
-            self.grid.addWidget(empty, 0, 0, 1, WORKSPACE_GRID_COLUMNS)
+            empty.setParent(self.content)
+            empty.setGeometry(QRect(18, 16, body_width - 36, 40))
+            empty.show()
+            self._workspace_block_widgets.append(empty)
+            self.content.setMinimumSize(QSize(body_width, body_height))
+            self.content.resize(body_width, body_height)
             return
 
         factory = WorkspaceBlockFactory(self)
-        max_row = 0
-        for col in range(WORKSPACE_GRID_COLUMNS):
-            self.grid.setColumnStretch(col, 1)
+        max_bottom = body_height
         for block in self.workspace.get("blocks", []):
             if block.get("visible") is False:
                 continue
             widget = factory.build(block)
-            layout = validate_block_layout(block)
-            max_row = max(max_row, layout["row"] + layout["row_span"])
-            self.grid.addWidget(
-                widget,
-                layout["row"],
-                layout["col"],
-                layout["row_span"],
-                layout["col_span"],
-            )
-        self.grid.setRowStretch(max_row + 1, 1)
+            widget.setParent(self.content)
+            rect = self._workspace_block_rect(block)
+            widget.setGeometry(rect)
+            widget.setMinimumSize(rect.size())
+            widget.show()
+            self._workspace_block_widgets.append(widget)
+            max_bottom = max(max_bottom, rect.bottom() + 18)
+        self.content.setMinimumSize(QSize(body_width, max_bottom))
+        self.content.resize(body_width, max_bottom)
+
+    def _clear_workspace_widgets(self):
+        for widget in getattr(self, "_workspace_block_widgets", []):
+            widget.hide()
+            widget.setParent(None)
+            widget.deleteLater()
+        self._workspace_block_widgets = []
+
+    def _workspace_body_size(self):
+        return WORKSPACE_DIALOG_BODY_SIZES.get(
+            self.workspace.get("dialog_size"),
+            WORKSPACE_DIALOG_BODY_SIZES["large"],
+        )
+
+    def _workspace_block_rect(self, block):
+        body_width, _ = self._workspace_body_size()
+        free_layout = block.get("free_layout") if isinstance(block, dict) else None
+        if isinstance(free_layout, dict):
+            try:
+                return QRect(
+                    int(round(float(free_layout.get("x", 0)))),
+                    int(round(float(free_layout.get("y", 0)))),
+                    max(96, int(round(float(free_layout.get("width", 96))))),
+                    max(64, int(round(float(free_layout.get("height", 64))))),
+                )
+            except (TypeError, ValueError):
+                pass
+        layout = validate_block_layout(block)
+        cell_width = body_width / WORKSPACE_GRID_COLUMNS
+        return QRect(
+            int(round(layout["col"] * cell_width)) + 5,
+            int(round(layout["row"] * WORKSPACE_RUNTIME_ROW_HEIGHT)) + 5,
+            max(96, int(round(layout["col_span"] * cell_width)) - 10),
+            max(64, int(round(layout["row_span"] * WORKSPACE_RUNTIME_ROW_HEIGHT)) - 10),
+        )
 
     def go_back(self):
         if self.main_window is not None and hasattr(self.main_window, "stack"):

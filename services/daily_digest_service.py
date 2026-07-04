@@ -72,7 +72,12 @@ TEXT = {
     },
 }
 
-TASK_ITEM_TYPES = {"secretary_task", "waiting_follow_up", "ready_task"}
+TASK_ITEM_TYPES = {
+    "secretary_task",
+    "waiting_follow_up",
+    "waiting_no_follow_up",
+    "ready_task",
+}
 
 
 GROUP_LABELS = {
@@ -414,7 +419,11 @@ class DailyDigestService:
             return "missing"
         if item_type == "transfer_reminder":
             return "transfer"
-        if item_type in {"waiting_follow_up", "ready_task"}:
+        if item_type in {
+            "waiting_follow_up",
+            "waiting_no_follow_up",
+            "ready_task",
+        }:
             return "office"
         title = (item.get("title") or "").casefold()
         automation_key = (item.get("automation_key") or "").casefold()

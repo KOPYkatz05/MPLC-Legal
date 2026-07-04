@@ -1715,6 +1715,55 @@ QFrame#OfficeWorkFilterBar {
     border-bottom: 1px solid #ECECEC;
 }
 
+QFrame#PillActionButton,
+QFrame#OfficeWorkTaskPill {
+    background-color: #F9F7F4;
+    border: 1px solid #ECE7DF;
+    border-radius: 24px;
+}
+
+QFrame#PillActionButton:hover,
+QFrame#OfficeWorkTaskPill:hover {
+    background-color: #FFFFFF;
+    border-color: #DED8CF;
+}
+
+QFrame#PillActionAccent {
+    border-radius: 4px;
+}
+
+QLabel#PillActionLabel {
+    color: #1F2937;
+    font-size: 13px;
+    font-weight: 500;
+    background: transparent;
+}
+
+QLabel#PillActionSubtitle {
+    color: #6B7280;
+    font-size: 11px;
+    background: transparent;
+}
+
+QToolButton#PillActionIconButton {
+    background-color: transparent;
+    color: #6B7280;
+    border: none;
+    border-radius: 8px;
+    padding: 0px;
+    font-size: 12px;
+    font-weight: 700;
+}
+
+QToolButton#PillActionIconButton:hover {
+    background-color: #F1F5F9;
+    color: #374151;
+}
+
+QToolButton#PillActionIconButton:pressed {
+    background-color: #E5E7EB;
+}
+
 QFrame#OfficeWorkRow,
 QWidget#OfficeWorkRow {
     background-color: #FFFFFF;
@@ -1772,6 +1821,23 @@ QLabel#OfficeWorkSectionCount {
 
 QWidget#OfficeWorkSummaryRow {
     background: transparent;
+}
+
+QWidget#OfficeWorkTaskBoard {
+    background: transparent;
+}
+
+QFrame#OfficeWorkTaskColumn {
+    background-color: #FBFBFC;
+    border: 1px solid #ECECEC;
+    border-radius: 8px;
+}
+
+QLabel#OfficeWorkColumnEmpty {
+    color: #A1A1AA;
+    font-size: 12px;
+    background: transparent;
+    padding: 8px 4px;
 }
 
 QLabel#OfficeWorkFieldLabel {

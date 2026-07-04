@@ -112,6 +112,34 @@ def test_digest_includes_waiting_follow_up_due_tasks(monkeypatch):
     assert "Follow up with missionary" in digest["text"]
 
 
+def test_digest_includes_waiting_tasks_without_follow_up(monkeypatch):
+    today = date(2026, 6, 18)
+    session = _session(monkeypatch)
+    try:
+        session.add(
+            SecretaryTask(
+                title="Waiting task needs follow-up date",
+                status="WAITING",
+                priority="IMPORTANT",
+                waiting_reason="OTHER",
+            )
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    digest = DailyDigestService().build_digest(today=today)
+
+    assert any(
+        item["type"] == "waiting_no_follow_up"
+        and item["title"] == "Waiting task needs follow-up date"
+        for item in digest["items"]
+    )
+    assert digest["summary"]["due_today"] >= 1
+    assert digest["summary"]["tasks"] >= 1
+    assert "Waiting task needs follow-up date" in digest["text"]
+
+
 def test_digest_includes_ready_tasks_without_due_date(monkeypatch):
     today = date(2026, 6, 18)
     session = _session(monkeypatch)

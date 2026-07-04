@@ -197,6 +197,84 @@ def test_feed_includes_waiting_follow_up_due_tasks(monkeypatch):
     assert follow_ups[0]["detail"] == "Normal waiting follow-up due today."
 
 
+def test_feed_includes_waiting_tasks_without_follow_up(monkeypatch):
+    today = date(2026, 6, 22)
+    session = _session(monkeypatch)
+    try:
+        session.add(
+            SecretaryTask(
+                title="Waiting task needs check-in",
+                status="WAITING",
+                priority="IMPORTANT",
+                waiting_reason="OTHER",
+            )
+        )
+        session.add(
+            SecretaryTask(
+                title="Waiting task already scheduled",
+                status="WAITING",
+                priority="NORMAL",
+                waiting_reason="MISSIONARY",
+                waiting_follow_up_date=today + timedelta(days=1),
+            )
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    feed = NotificationFeedService(FakeSettings()).build_feed(today=today)
+    missing_follow_ups = [
+        item for item in feed
+        if item["type"] == "waiting_no_follow_up"
+    ]
+
+    assert [item["title"] for item in missing_follow_ups] == [
+        "Waiting task needs check-in"
+    ]
+    assert missing_follow_ups[0]["target_date"] == today
+    assert missing_follow_ups[0]["detail"] == (
+        "Important waiting task needs a follow-up date."
+    )
+
+
+def test_due_waiting_task_without_follow_up_is_not_duplicated(monkeypatch):
+    today = date(2026, 6, 22)
+    session = _session(monkeypatch)
+    try:
+        task = SecretaryTask(
+            title="Waiting task already due",
+            status="WAITING",
+            priority="IMPORTANT",
+            waiting_reason="OTHER",
+            due_date=today,
+        )
+        session.add(task)
+        session.commit()
+        task_id = task.id
+    finally:
+        session.close()
+
+    feed = NotificationFeedService(FakeSettings()).build_feed(today=today)
+    task_items = [
+        item for item in feed
+        if item.get("task_id") == task_id
+    ]
+
+    assert [item["type"] for item in task_items] == ["secretary_task"]
+    assert task_items[0]["detail"] == "Important task due today."
+
+
+def test_windows_summary_labels_waiting_tasks_without_follow_up():
+    summary = NotificationFeedService(FakeSettings()).windows_summary([
+        {
+            "type": "waiting_no_follow_up",
+            "fingerprint": "task:1:WAITING:missing_follow_up:2026-06-22",
+        }
+    ])
+
+    assert "1 task missing follow-up" in summary["body"]
+
+
 def test_feed_includes_ready_tasks_without_due_date_once(monkeypatch):
     today = date(2026, 6, 22)
     session = _session(monkeypatch)

@@ -60,9 +60,11 @@ from ui.foundation.widgets import (
     DialogFooter,
     FilterBar,
     PageHeader,
+    PillActionButton,
     SectionTitle,
     StatCard,
     configure_data_table,
+    create_pill_action_button,
     divider,
 )
 
@@ -86,9 +88,11 @@ __all__ = [
     "DialogFooter",
     "FilterBar",
     "PageHeader",
+    "PillActionButton",
     "SectionTitle",
     "StatCard",
     "configure_data_table",
+    "create_pill_action_button",
     "create_button",
     "create_check_box",
     "create_card",
