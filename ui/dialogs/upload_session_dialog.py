@@ -1401,23 +1401,44 @@ class UploadSessionDialog(MaskDialogBase):
         button.clicked.connect(slot)
         return button
 
-    def _set_busy(self, busy, message="", content_loading_overlay=False):
+    @staticmethod
+    def _ocr_loading_messages():
+        return [
+            tr("ocr_loading_reading_document"),
+            tr("ocr_loading_appointment_details"),
+            tr("ocr_loading_saving_extracted_data"),
+            tr("ocr_loading_large_pdf_hint"),
+        ]
+
+    def _set_busy(
+        self,
+        busy,
+        message="",
+        content_loading_overlay=False,
+        content_loading_messages=None,
+    ):
         self._busy = busy
         if _widget_alive(getattr(self, "status_label", None)) and message:
             self.status_label.setText(message)
         if content_loading_overlay and busy:
-            self._show_content_loading_overlay(message)
+            self._show_content_loading_overlay(
+                message,
+                content_loading_messages,
+            )
         elif not busy:
             self._hide_content_loading_overlay()
         if _widget_alive(getattr(self, "progress_step_files", None)):
             self.update_progress()
         self._update_action_states()
 
-    def _show_content_loading_overlay(self, message):
+    def _show_content_loading_overlay(self, message, rotating_messages=None):
         dialog = self._ensure_content_loading_dialog()
         if dialog is None:
             return
-        dialog.show_busy(message or "Reading document...")
+        dialog.show_busy(
+            message or tr("ocr_loading_reading_document"),
+            rotating_messages=rotating_messages,
+        )
 
     def _hide_content_loading_overlay(self):
         dialog = self._content_loading_dialog
@@ -1962,6 +1983,7 @@ class UploadSessionDialog(MaskDialogBase):
             True,
             f"Autodetecting {item.file_name}...",
             content_loading_overlay=True,
+            content_loading_messages=self._ocr_loading_messages(),
         )
         self._ocr_thread.start()
         return True

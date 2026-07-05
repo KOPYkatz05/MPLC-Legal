@@ -6,8 +6,10 @@ from PySide6.QtWidgets import QWidget
 from ui.dialogs import upload_session_dialog
 from ui.dialogs.upload_session_dialog import (
     UploadOcrWarmupWorker,
+    UploadQueueItem,
     UploadSessionDialog,
 )
+from ui.foundation import FluentLoadingDialog
 from services import upload_pipeline
 
 
@@ -200,3 +202,128 @@ def test_upload_ocr_warmup_worker_failure_does_not_raise(monkeypatch):
     worker.run()
 
     assert emitted == [(False, "OCR service unavailable.")]
+
+
+def test_fluent_loading_dialog_rotates_busy_messages(qapp):
+    parent = QWidget()
+    parent.resize(640, 480)
+    dialog = FluentLoadingDialog(
+        parent,
+        title="Reading document...",
+        message="Waiting...",
+    )
+
+    try:
+        dialog.show_busy(
+            "Waiting...",
+            rotating_messages=[
+                "Reading the document...",
+                "Looking for appointment details...",
+            ],
+            rotation_interval_ms=99999,
+        )
+
+        assert dialog._message_label.text() == "Reading the document..."
+
+        dialog._advance_message_rotation()
+
+        assert dialog._message_label.text() == (
+            "Looking for appointment details..."
+        )
+
+        dialog.hide_busy()
+
+        assert not dialog._message_rotation_timer.isActive()
+        assert dialog._message_rotation_messages == []
+    finally:
+        dialog.close()
+        parent.close()
+
+
+def test_upload_ocr_async_passes_dynamic_loading_messages(monkeypatch):
+    class FakeSignal:
+        def __init__(self):
+            self.callbacks = []
+
+        def connect(self, callback, *args):
+            _ = args
+            self.callbacks.append(callback)
+
+    class FakeThread:
+        Priority = SimpleNamespace(LowPriority=0)
+
+        def __init__(self, parent=None):
+            _ = parent
+            self.started = FakeSignal()
+            self.finished = FakeSignal()
+            self.started_with = None
+
+        def start(self, priority=None):
+            self.started_with = priority
+
+        def deleteLater(self):
+            pass
+
+        def quit(self):
+            pass
+
+    class FakeWorker:
+        def __init__(self, controller, index):
+            self.controller = controller
+            self.index = index
+            self.finished = FakeSignal()
+
+        def moveToThread(self, thread):
+            self.thread = thread
+
+        def run(self):
+            pass
+
+        def deleteLater(self):
+            pass
+
+    monkeypatch.setattr(upload_session_dialog, "QThread", FakeThread)
+    monkeypatch.setattr(upload_session_dialog, "UploadOcrWorker", FakeWorker)
+
+    item = UploadQueueItem(
+        file_path="passport.pdf",
+        document_type="PASSPORT",
+    )
+    captured_busy = {}
+    dialog = UploadSessionDialog.__new__(UploadSessionDialog)
+    dialog._busy = False
+    dialog._is_closing = False
+    dialog._pending_save_after_ocr = None
+    dialog._ocr_thread = None
+    dialog._ocr_worker = None
+    dialog.controller = SimpleNamespace(
+        items=[item],
+        selected_index=0,
+    )
+    dialog.persist_current_editor_settings = lambda item: None
+    dialog.refresh_queue = lambda: None
+    dialog.update_progress = lambda: None
+    dialog._refresh_selected_item_labels = lambda item: None
+    dialog.apply_ocr_banner = lambda status, text: None
+    dialog._update_action_states = lambda: None
+
+    def capture_busy(*args, **kwargs):
+        captured_busy["args"] = args
+        captured_busy["kwargs"] = kwargs
+
+    dialog._set_busy = capture_busy
+
+    started = UploadSessionDialog._run_ocr_async(dialog, 0, reason="manual")
+
+    assert started is True
+    assert captured_busy["args"] == (
+        True,
+        "Autodetecting passport.pdf...",
+    )
+    assert captured_busy["kwargs"]["content_loading_overlay"] is True
+    assert captured_busy["kwargs"]["content_loading_messages"] == [
+        "Reading the document...",
+        "Looking for appointment details...",
+        "Saving extracted data...",
+        "This can take a few seconds for large PDFs.",
+    ]

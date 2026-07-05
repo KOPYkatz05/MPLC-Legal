@@ -1,7 +1,16 @@
 from dataclasses import dataclass
 
-from PySide6.QtCore import QPointF, QRectF, QSize, Qt, Signal
-from PySide6.QtGui import QColor, QIcon, QPainter, QPalette, QPen, QPixmap
+from PySide6.QtCore import QEvent, QMimeData, QPointF, QRectF, QSize, Qt, Signal
+from PySide6.QtGui import (
+    QColor,
+    QDrag,
+    QIcon,
+    QPainter,
+    QPainterPath,
+    QPalette,
+    QPen,
+    QPixmap,
+)
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QButtonGroup,
@@ -194,6 +203,11 @@ class PillActionButton(QFrame):
         subtitle="",
         actions=None,
         accent=None,
+        leading_icon=None,
+        leading_icon_color="#DC2626",
+        drag_payload=None,
+        drag_mime_type="application/x-pill-drag",
+        drag_preview_widget=None,
         object_name="PillActionButton",
         parent=None,
     ):
@@ -201,6 +215,12 @@ class PillActionButton(QFrame):
         self.setObjectName(object_name)
         self.setCursor(Qt.PointingHandCursor)
         self.setAttribute(Qt.WA_StyledBackground, True)
+        self._drag_payload = drag_payload
+        self._drag_mime_type = drag_mime_type
+        self._drag_preview_widget = drag_preview_widget or self
+        self._drag_start_pos = None
+        self._drag_active = False
+        self._drag_watchers = []
         self._shadow = QGraphicsDropShadowEffect(self)
         self._shadow.setBlurRadius(0)
         self._shadow.setOffset(0, 0)
@@ -220,6 +240,23 @@ class PillActionButton(QFrame):
                 f"QFrame#PillActionAccent {{ background-color: {accent}; }}"
             )
             layout.addWidget(accent_dot, alignment=Qt.AlignVCenter)
+            self._drag_watchers.append(accent_dot)
+
+        if leading_icon:
+            icon_label = QLabel(self)
+            icon_label.setObjectName("PillActionLeadingIcon")
+            icon_names = (
+                list(leading_icon)
+                if isinstance(leading_icon, (list, tuple))
+                else [leading_icon]
+            )
+            icon = self._icon_from_names(icon_names, color=leading_icon_color)
+            if icon is not None and not icon.isNull():
+                icon_label.setPixmap(icon.pixmap(QSize(14, 14)))
+                icon_label.setFixedSize(14, 14)
+                icon_label.setMinimumSize(14, 14)
+                layout.addWidget(icon_label, alignment=Qt.AlignVCenter)
+                self._drag_watchers.append(icon_label)
 
         text_stack = QVBoxLayout()
         text_stack.setContentsMargins(0, 0, 0, 0)
@@ -230,18 +267,68 @@ class PillActionButton(QFrame):
         self.label.setObjectName("PillActionLabel")
         self.label.setWordWrap(False)
         text_stack.addWidget(self.label)
+        self._drag_watchers.append(self.label)
 
         self.subtitle = QLabel(subtitle, self)
         self.subtitle.setObjectName("PillActionSubtitle")
         self.subtitle.setWordWrap(False)
         self.subtitle.setVisible(bool(subtitle))
         text_stack.addWidget(self.subtitle)
+        self._drag_watchers.append(self.subtitle)
+
+        if self._drag_payload is not None:
+            self._install_drag_filters()
 
         self.action_buttons = []
         for action in actions or []:
             button = self._make_icon_button(action)
             layout.addWidget(button, alignment=Qt.AlignVCenter)
             self.action_buttons.append(button)
+
+    def _install_drag_filters(self):
+        for widget in [self, *self._drag_watchers]:
+            if widget is not None:
+                widget.installEventFilter(self)
+
+    def _start_drag(self, source_widget, point):
+        payload = self._drag_payload() if callable(self._drag_payload) else self._drag_payload
+        if payload is None:
+            return False
+
+        mime = QMimeData()
+        mime.setData(self._drag_mime_type, str(payload).encode("utf-8"))
+        drag = QDrag(self)
+        drag.setMimeData(mime)
+        preview_widget = self._drag_preview_widget or self
+        pixmap = preview_widget.grab()
+        if pixmap.isNull():
+            pixmap = QPixmap(preview_widget.size())
+            pixmap.fill(Qt.transparent)
+            preview_widget.render(pixmap)
+        if not pixmap.isNull():
+            padded = QPixmap(pixmap.width() + 18, pixmap.height() + 18)
+            padded.fill(Qt.transparent)
+            painter = QPainter(padded)
+            painter.setRenderHint(QPainter.Antialiasing, True)
+            shadow_path = QPainterPath()
+            shadow_path.addRoundedRect(5, 6, pixmap.width(), pixmap.height(), 16, 16)
+            painter.fillPath(shadow_path, QColor(15, 23, 42, 26))
+            painter.drawPixmap(0, 0, pixmap)
+            painter.end()
+            pixmap = padded
+        drag.setPixmap(pixmap)
+        try:
+            hotspot = source_widget.mapTo(preview_widget, point)
+        except Exception:
+            hotspot = preview_widget.rect().center()
+        drag.setHotSpot(hotspot)
+        self._drag_active = True
+        try:
+            drag.exec(Qt.MoveAction)
+        finally:
+            self._drag_active = False
+            self._drag_start_pos = None
+        return True
 
     def _make_icon_button(self, action):
         name = action.get("icon") or ""
@@ -289,16 +376,38 @@ class PillActionButton(QFrame):
             button.clicked.connect(lambda checked=False, fn=callback: fn())
         return button
 
-    def _icon_from_names(self, names):
+    def _icon_from_names(self, names, color="#6B7280"):
         for icon_name in names:
             if not icon_name:
                 continue
-            icon = lucide_icon(icon_name, size=18, color="#6B7280")
+            icon = lucide_icon(icon_name, size=18, color=color)
             if icon is not None and not icon.isNull():
                 return icon
         return None
 
+    def eventFilter(self, obj, event):
+        if self._drag_payload is not None and obj in {self, *self._drag_watchers}:
+            if event.type() == QEvent.MouseButtonPress and event.button() == Qt.LeftButton:
+                self._drag_start_pos = event.position().toPoint()
+            elif (
+                event.type() == QEvent.MouseMove
+                and event.buttons() & Qt.LeftButton
+                and self._drag_start_pos is not None
+                and (event.position().toPoint() - self._drag_start_pos).manhattanLength()
+                >= 8
+            ):
+                if self._start_drag(obj, event.position().toPoint()):
+                    return True
+            elif event.type() == QEvent.MouseButtonRelease and self._drag_active:
+                self._drag_start_pos = None
+                self._drag_active = False
+                return True
+        return super().eventFilter(obj, event)
+
     def mouseReleaseEvent(self, event):
+        if self._drag_active:
+            event.accept()
+            return
         if event.button() == Qt.LeftButton:
             self.clicked.emit()
             event.accept()
@@ -323,6 +432,11 @@ def create_pill_action_button(
     subtitle="",
     actions=None,
     accent=None,
+    leading_icon=None,
+    leading_icon_color="#DC2626",
+    drag_payload=None,
+    drag_mime_type="application/x-pill-drag",
+    drag_preview_widget=None,
     object_name="PillActionButton",
     parent=None,
 ):
@@ -331,6 +445,11 @@ def create_pill_action_button(
         subtitle=subtitle,
         actions=actions,
         accent=accent,
+        leading_icon=leading_icon,
+        leading_icon_color=leading_icon_color,
+        drag_payload=drag_payload,
+        drag_mime_type=drag_mime_type,
+        drag_preview_widget=drag_preview_widget,
         object_name=object_name,
         parent=parent,
     )

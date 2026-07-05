@@ -1,11 +1,12 @@
 from datetime import date
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QMimeData, Qt
 from PySide6.QtWidgets import (
     QButtonGroup,
     QFrame,
     QHBoxLayout,
     QLabel,
+    QMenu,
     QPushButton,
     QSizePolicy,
     QStackedWidget,
@@ -33,6 +34,7 @@ from ui.foundation import (
     create_card,
     create_combo_box,
     create_pill_action_button,
+    create_pill_button,
     create_scroll_area,
     create_search_edit,
     fluent_icon,
@@ -55,6 +57,14 @@ PROJECT_STATUS_LABELS = {
     "WAITING": "Waiting",
     "DONE": "Done",
     "ARCHIVED": "Archived",
+}
+
+TASK_BOARD_DRAG_MIME = "application/x-office-work-task"
+TASK_BOARD_LANES = ("not_started", "in_progress", "completed")
+TASK_BOARD_LANE_LABELS = {
+    "not_started": "Not Started",
+    "in_progress": "In-Progress",
+    "completed": "Completed",
 }
 
 
@@ -107,6 +117,81 @@ def _transfer_date_from_automation_key(task):
         return None
 
 
+class TaskBoardColumn(QFrame):
+    def __init__(self, lane_key, drop_handler, parent=None):
+        super().__init__(parent)
+        self.lane_key = lane_key
+        self._drop_handler = drop_handler
+        self.setProperty("dragOver", False)
+        self.setAcceptDrops(True)
+        self.setAttribute(Qt.WA_StyledBackground, True)
+
+    def _set_drag_over(self, active):
+        if self.property("dragOver") == active:
+            return
+        self.setProperty("dragOver", active)
+        style = self.style()
+        if style is not None:
+            style.unpolish(self)
+            style.polish(self)
+        self.update()
+
+    def _task_widgets(self):
+        widgets = []
+        layout = self.layout()
+        if layout is None:
+            return widgets
+        for index in range(layout.count()):
+            widget = layout.itemAt(index).widget()
+            if widget is not None and widget.objectName() == "OfficeWorkTaskPill":
+                widgets.append(widget)
+        return widgets
+
+    def _drop_index(self, y):
+        for index, widget in enumerate(self._task_widgets()):
+            midpoint = widget.y() + (widget.height() / 2)
+            if y < midpoint:
+                return index
+        return len(self._task_widgets())
+
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasFormat(TASK_BOARD_DRAG_MIME):
+            self._set_drag_over(True)
+            event.acceptProposedAction()
+            return
+        event.ignore()
+
+    def dragMoveEvent(self, event):
+        if event.mimeData().hasFormat(TASK_BOARD_DRAG_MIME):
+            self._set_drag_over(True)
+            event.acceptProposedAction()
+            return
+        event.ignore()
+
+    def dragLeaveEvent(self, event):
+        self._set_drag_over(False)
+        super().dragLeaveEvent(event)
+
+    def dropEvent(self, event):
+        if not event.mimeData().hasFormat(TASK_BOARD_DRAG_MIME):
+            event.ignore()
+            return
+
+        try:
+            task_id = int(bytes(event.mimeData().data(TASK_BOARD_DRAG_MIME)).decode("utf-8"))
+        except Exception:
+            event.ignore()
+            return
+
+        try:
+            self._drop_handler(task_id, self.lane_key, self._drop_index(event.position().toPoint().y()))
+            self._set_drag_over(False)
+            event.acceptProposedAction()
+        except Exception:
+            self._set_drag_over(False)
+            event.ignore()
+
+
 class OfficeWorkPage(QWidget):
     def __init__(self, main_window=None, service=None):
         super().__init__()
@@ -115,6 +200,10 @@ class OfficeWorkPage(QWidget):
         self.service = service or SecretaryWorkService()
         self._selected_tab = "tasks"
         self._project_filter_id = None
+        self._board_lane_orders = {}
+        self._board_task_lanes = {}
+        self._board_tasks_by_id = {}
+        self._projects_loaded = False
 
         self.setup_ui()
         self.load_data()
@@ -267,22 +356,10 @@ class OfficeWorkPage(QWidget):
         self.task_search.textChanged.connect(self.render_tasks)
         self.task_filter_bar.add_filter(self.task_search, stretch=1)
 
-        for label, preset in [
-            ("Today", "today"),
-            ("Overdue", "overdue"),
-            ("Follow Up", "follow_up"),
-            ("Waiting", "waiting"),
-            ("Ready", "ready"),
-            ("Appointments", "appointments"),
-            ("Critical", "critical"),
-            ("All", "all"),
-        ]:
-            preset_btn = create_button(label, "subtle", fixed_height=30)
-            preset_btn.clicked.connect(
-                lambda _=None, preset_key=preset:
-                self._apply_task_preset(preset_key)
-            )
-            self.task_filter_bar.add_filter(preset_btn)
+        self.task_filter_button = create_pill_button("Filters")
+        self.task_filter_button.setObjectName("OfficeWorkTaskFilterMenuButton")
+        self.task_filter_button.clicked.connect(self._show_task_filter_menu)
+        self.task_filter_bar.add_filter(self.task_filter_button)
 
         self.task_status_filter = create_combo_box()
         self.task_status_filter.addItem("Visible", None)
@@ -295,7 +372,6 @@ class OfficeWorkPage(QWidget):
         self.task_status_filter.currentIndexChanged.connect(
             lambda _=None: self.render_tasks()
         )
-        self.task_filter_bar.add_filter(self.task_status_filter)
 
         self.task_priority_filter = create_combo_box()
         self.task_priority_filter.addItem("All Priorities", "ALL")
@@ -304,7 +380,6 @@ class OfficeWorkPage(QWidget):
         self.task_priority_filter.currentIndexChanged.connect(
             lambda _=None: self.render_tasks()
         )
-        self.task_filter_bar.add_filter(self.task_priority_filter)
 
         self.task_type_filter = create_combo_box()
         self.task_type_filter.addItem("All Types", "ALL")
@@ -316,7 +391,6 @@ class OfficeWorkPage(QWidget):
         self.task_type_filter.currentIndexChanged.connect(
             lambda _=None: self.render_tasks()
         )
-        self.task_filter_bar.add_filter(self.task_type_filter)
 
         self.task_stage_filter = create_combo_box()
         self.task_stage_filter.addItem("All Stages", "ALL")
@@ -325,7 +399,6 @@ class OfficeWorkPage(QWidget):
         self.task_stage_filter.currentIndexChanged.connect(
             lambda _=None: self.render_tasks()
         )
-        self.task_filter_bar.add_filter(self.task_stage_filter)
 
         self.task_document_filter = create_combo_box()
         self.task_document_filter.addItem("All Documents", "ALL")
@@ -340,7 +413,6 @@ class OfficeWorkPage(QWidget):
         self.task_document_filter.currentIndexChanged.connect(
             lambda _=None: self.render_tasks()
         )
-        self.task_filter_bar.add_filter(self.task_document_filter)
 
         self.task_source_filter = create_combo_box()
         self.task_source_filter.addItem("All Sources", "ALL")
@@ -349,7 +421,6 @@ class OfficeWorkPage(QWidget):
         self.task_source_filter.currentIndexChanged.connect(
             lambda _=None: self.render_tasks()
         )
-        self.task_filter_bar.add_filter(self.task_source_filter)
 
         self.task_due_filter = create_combo_box()
         for label, value in [
@@ -364,7 +435,6 @@ class OfficeWorkPage(QWidget):
         self.task_due_filter.currentIndexChanged.connect(
             lambda _=None: self.render_tasks()
         )
-        self.task_filter_bar.add_filter(self.task_due_filter)
 
         self.task_follow_up_filter = create_combo_box()
         self.task_follow_up_filter.addItem("All Follow-Ups", "ALL")
@@ -374,7 +444,6 @@ class OfficeWorkPage(QWidget):
         self.task_follow_up_filter.currentIndexChanged.connect(
             lambda _=None: self.render_tasks()
         )
-        self.task_filter_bar.add_filter(self.task_follow_up_filter)
 
         self.task_waiting_reason_filter = create_combo_box()
         self.task_waiting_reason_filter.addItem("All Waiting Reasons", "ALL")
@@ -383,19 +452,72 @@ class OfficeWorkPage(QWidget):
         self.task_waiting_reason_filter.currentIndexChanged.connect(
             lambda _=None: self.render_tasks()
         )
-        self.task_filter_bar.add_filter(self.task_waiting_reason_filter)
 
         self.task_project_filter = create_combo_box()
         self.task_project_filter.currentIndexChanged.connect(
             lambda _=None: self._project_filter_changed()
         )
-        self.task_filter_bar.add_filter(self.task_project_filter)
 
         self.task_missionary_filter = create_combo_box()
         self.task_missionary_filter.currentIndexChanged.connect(
             lambda _=None: self.render_tasks()
         )
-        self.task_filter_bar.add_filter(self.task_missionary_filter)
+        self.task_filter_menu = None
+
+    def _show_task_filter_menu(self):
+        menu = QMenu(self)
+        menu.setObjectName("WorkspaceTileContextMenu")
+
+        quick_filters = menu.addMenu("Quick Filters")
+        quick_filters.setObjectName("WorkspaceTileContextMenu")
+        for label, preset in [
+            ("Today", "today"),
+            ("Overdue", "overdue"),
+            ("Follow Up", "follow_up"),
+            ("Waiting", "waiting"),
+            ("Ready", "ready"),
+            ("Appointments", "appointments"),
+            ("Critical", "critical"),
+            ("All", "all"),
+        ]:
+            action = quick_filters.addAction(label)
+            action.triggered.connect(
+                lambda checked=False, preset_key=preset:
+                self._apply_task_preset(preset_key)
+            )
+
+        menu.addSeparator()
+        self._add_filter_menu_group(menu, "Status", self.task_status_filter)
+        self._add_filter_menu_group(menu, "Priority", self.task_priority_filter)
+        self._add_filter_menu_group(menu, "Type", self.task_type_filter)
+        self._add_filter_menu_group(menu, "Stage", self.task_stage_filter)
+        self._add_filter_menu_group(menu, "Document", self.task_document_filter)
+        self._add_filter_menu_group(menu, "Source", self.task_source_filter)
+        self._add_filter_menu_group(menu, "Due", self.task_due_filter)
+        self._add_filter_menu_group(menu, "Follow-Up", self.task_follow_up_filter)
+        self._add_filter_menu_group(
+            menu, "Waiting Reason", self.task_waiting_reason_filter
+        )
+        self._add_filter_menu_group(menu, "Project", self.task_project_filter)
+        self._add_filter_menu_group(menu, "Missionary", self.task_missionary_filter)
+
+        self.task_filter_menu = menu
+        menu.popup(self.task_filter_button.mapToGlobal(self.task_filter_button.rect().bottomLeft()))
+
+    def _add_filter_menu_group(self, menu, title, combo):
+        submenu = menu.addMenu(title)
+        submenu.setObjectName("WorkspaceTileContextMenu")
+        current_value = combo.currentData()
+        for index in range(combo.count()):
+            label = combo.itemText(index)
+            value = combo.itemData(index)
+            action = submenu.addAction(label)
+            action.setCheckable(True)
+            action.setChecked(value == current_value)
+            action.triggered.connect(
+                lambda checked=False, widget=combo, selected=value:
+                self._set_combo_data(widget, selected)
+            )
 
     def _build_project_filters(self):
         self.project_filter_bar = FilterBar()
@@ -435,7 +557,10 @@ class OfficeWorkPage(QWidget):
         self._run_process_automation()
         self._refresh_task_filter_options()
         self.render_tasks()
-        self.render_projects()
+        if self._selected_tab == "projects":
+            self.render_projects()
+        else:
+            self._projects_loaded = False
 
     def _run_process_automation(self):
         if not self.main_window:
@@ -508,42 +633,66 @@ class OfficeWorkPage(QWidget):
         self.task_content_layout.addStretch()
 
     def _task_board_groups(self, grouped):
-        columns = {"overdue": [], "today": [], "later": []}
+        columns = {"not_started": [], "in_progress": [], "completed": []}
         seen_ids = set()
-        later_transfer_dates = []
-        for task in grouped.get("later", []):
-            if task.get("automation_source") != "process_automation":
-                continue
-            transfer_date = _transfer_date_from_automation_key(task)
-            if transfer_date is not None:
-                later_transfer_dates.append(transfer_date)
-        allowed_transfer_dates = set(sorted(dict.fromkeys(later_transfer_dates))[:2])
-
-        for key in ("overdue", "today"):
-            for task in grouped.get(key, []):
-                task_id = task.get("id")
-                if task_id in seen_ids:
-                    continue
-                columns[key].append(task)
-                seen_ids.add(task_id)
 
         for group_key, _label in TASK_GROUPS:
-            if group_key in {"overdue", "today"}:
-                continue
             for task in grouped.get(group_key, []):
                 task_id = task.get("id")
                 if task_id in seen_ids:
                     continue
-                if task.get("automation_source") == "process_automation":
-                    transfer_date = _transfer_date_from_automation_key(task)
-                    if (
-                        transfer_date is not None
-                        and transfer_date not in allowed_transfer_dates
-                    ):
-                        continue
-                columns["later"].append(task)
+                columns[self._task_board_column_key(task)].append(task)
                 seen_ids.add(task_id)
+
+        for lane in TASK_BOARD_LANES:
+            columns[lane] = sorted(
+                columns[lane],
+                key=self._task_board_sort_key,
+            )
+
+        self._board_lane_orders = {
+            lane: [task["id"] for task in tasks]
+            for lane, tasks in columns.items()
+        }
+        self._board_task_lanes = {
+            task["id"]: lane
+            for lane, tasks in columns.items()
+            for task in tasks
+        }
+        self._board_tasks_by_id = {
+            task["id"]: task
+            for tasks in columns.values()
+            for task in tasks
+        }
         return columns
+
+    def _task_board_column_key(self, task):
+        saved_lane = str(task.get("board_lane") or "").strip()
+        if saved_lane in TASK_BOARD_LANES:
+            return saved_lane
+
+        status = task.get("status")
+        if status in {"DONE", "ARCHIVED"}:
+            return "completed"
+        if status in {"READY", "WAITING"} or task.get("due_group") in {
+            "follow_up_due",
+            "needs_follow_up",
+            "scheduled_follow_up",
+            "ready_to_review",
+        }:
+            return "in_progress"
+        return "not_started"
+
+    @staticmethod
+    def _task_board_sort_key(task):
+        board_position = task.get("board_position")
+        return (
+            board_position is None,
+            board_position if board_position is not None else 0,
+            task.get("due_date") or date.max,
+            task.get("title", "").casefold(),
+            task.get("id") or 0,
+        )
 
     def _task_board(self, board_groups):
         board = QWidget()
@@ -555,17 +704,19 @@ class OfficeWorkPage(QWidget):
         board_layout.addStretch(1)
 
         for key, label in (
-            ("overdue", "Overdue"),
-            ("today", "Today"),
-            ("later", "Later"),
+            ("not_started", TASK_BOARD_LANE_LABELS["not_started"]),
+            ("in_progress", TASK_BOARD_LANE_LABELS["in_progress"]),
+            ("completed", TASK_BOARD_LANE_LABELS["completed"]),
         ):
-            board_layout.addWidget(self._task_board_column(label, board_groups.get(key, [])))
+            board_layout.addWidget(
+                self._task_board_column(key, label, board_groups.get(key, []))
+            )
 
         board_layout.addStretch(1)
         return board
 
-    def _task_board_column(self, label, tasks):
-        column = QFrame()
+    def _task_board_column(self, lane_key, label, tasks):
+        column = TaskBoardColumn(lane_key, self._handle_task_board_drop)
         column.setObjectName("OfficeWorkTaskColumn")
         column.setFixedWidth(550)
         column.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Preferred)
@@ -606,6 +757,7 @@ class OfficeWorkPage(QWidget):
                 self.project_content_layout.addWidget(self._project_row(project))
 
         self.project_content_layout.addStretch()
+        self._projects_loaded = True
 
     def _build_summary_cards(self):
         summary = self.service.summary()
@@ -786,12 +938,71 @@ class OfficeWorkPage(QWidget):
             subtitle="  |  ".join(meta_parts),
             actions=actions,
             accent=_task_priority_color(task),
+            leading_icon=(
+                ("triangle-alert", "alert-triangle")
+                if task.get("due_group") == "overdue"
+                else None
+            ),
+            leading_icon_color="#DC2626",
+            drag_payload=task["id"],
+            drag_mime_type=TASK_BOARD_DRAG_MIME,
+            drag_preview_widget=None,
             object_name="OfficeWorkTaskPill",
         )
         card.clicked.connect(
             lambda task_id=task["id"]: self._open_task_workspace(task_id)
         )
         return card
+
+    def _handle_task_board_drop(self, task_id, target_lane, target_index):
+        source_lane = self._board_task_lanes.get(task_id)
+        if source_lane is None:
+            snapshot = self._task_snapshot_by_id(task_id) or {}
+            source_lane = self._task_board_column_key(snapshot)
+
+        if source_lane not in TASK_BOARD_LANES:
+            source_lane = "not_started"
+
+        source_order = list(self._board_lane_orders.get(source_lane, []))
+        target_order = list(self._board_lane_orders.get(target_lane, []))
+
+        if task_id in source_order:
+            source_index = source_order.index(task_id)
+            source_order.remove(task_id)
+        else:
+            source_index = None
+
+        if target_lane == source_lane and task_id in target_order:
+            target_order.remove(task_id)
+            if source_index is not None and target_index > source_index:
+                target_index -= 1
+        elif task_id in target_order:
+            target_order.remove(task_id)
+
+        target_index = max(0, min(target_index, len(target_order)))
+        target_order.insert(target_index, task_id)
+
+        lane_orders = {}
+        if source_lane == target_lane:
+            lane_orders[target_lane] = target_order
+        else:
+            lane_orders[source_lane] = source_order
+            lane_orders[target_lane] = target_order
+
+        try:
+            self.service.save_task_board_orders(lane_orders)
+            self.render_tasks()
+        except Exception:
+            logger.exception("Failed to move office work task on board")
+            show_message(
+                self,
+                "Office Work",
+                "Could not save the board move.",
+                kind="warning",
+            )
+
+    def _task_snapshot_by_id(self, task_id):
+        return self._board_tasks_by_id.get(task_id)
 
     def _project_row(self, project):
         card = create_card(object_name="OfficeWorkRow")
@@ -904,6 +1115,8 @@ class OfficeWorkPage(QWidget):
     def _select_tab(self, key):
         if key == "projects":
             self.stack.setCurrentIndex(self.projects_index)
+            if not self._projects_loaded:
+                self.render_projects()
         else:
             key = "tasks"
             self.stack.setCurrentIndex(self.tasks_index)

@@ -661,6 +661,13 @@ class FluentLoadingDialog(MaskDialogBase):
         self.setWindowTitle(title)
         self.setModal(True)
         self.setWindowModality(Qt.WindowModal)
+        self._message_rotation_timer = QTimer(self)
+        self._message_rotation_timer.setInterval(2500)
+        self._message_rotation_timer.timeout.connect(
+            self._advance_message_rotation
+        )
+        self._message_rotation_messages = []
+        self._message_rotation_index = 0
 
         self.surface = setup_dialog_shell(
             self,
@@ -712,16 +719,59 @@ class FluentLoadingDialog(MaskDialogBase):
     def set_message(self, message):
         self._message_label.setText(message or "")
 
-    def show_busy(self, message=None):
+    def show_busy(
+        self,
+        message=None,
+        rotating_messages=None,
+        rotation_interval_ms=2500,
+    ):
+        self._stop_message_rotation()
         if message is not None:
             self.set_message(message)
+        if rotating_messages:
+            self._start_message_rotation(
+                rotating_messages,
+                rotation_interval_ms,
+            )
         self.show()
         self.raise_()
         self.activateWindow()
         return self
 
     def hide_busy(self):
+        self._stop_message_rotation()
         self.hide()
+
+    def hideEvent(self, event):
+        self._stop_message_rotation()
+        super().hideEvent(event)
+
+    def _start_message_rotation(self, messages, interval_ms=2500):
+        clean_messages = [message for message in messages if message]
+        if not clean_messages:
+            return
+        self._message_rotation_messages = clean_messages
+        self._message_rotation_index = 0
+        self.set_message(clean_messages[0])
+        self._message_rotation_timer.setInterval(max(250, int(interval_ms)))
+        if len(clean_messages) > 1:
+            self._message_rotation_timer.start()
+
+    def _stop_message_rotation(self):
+        self._message_rotation_timer.stop()
+        self._message_rotation_messages = []
+        self._message_rotation_index = 0
+
+    def _advance_message_rotation(self):
+        if not self._message_rotation_messages:
+            self._message_rotation_timer.stop()
+            return
+        self._message_rotation_index = (
+            self._message_rotation_index + 1
+        ) % len(self._message_rotation_messages)
+        self.set_message(
+            self._message_rotation_messages[self._message_rotation_index]
+        )
 
 
 def create_button(text, variant="secondary", fixed_height=34, parent=None, icon=None):

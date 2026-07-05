@@ -84,6 +84,64 @@ def test_create_update_complete_and_archive_task(secretary_service):
     assert archived["status"] == "ARCHIVED"
 
 
+def test_save_task_board_orders_persists_lane_and_position(secretary_service):
+    first = secretary_service.create_task("First")
+    second = secretary_service.create_task("Second")
+    third = secretary_service.create_task("Third")
+
+    secretary_service.save_task_board_orders(
+        {
+            "not_started": [second["id"], first["id"]],
+            "in_progress": [third["id"]],
+        }
+    )
+
+    session = service_module.SessionLocal()
+    try:
+        rows = {
+            task.id: task
+            for task in session.query(SecretaryTask).all()
+        }
+    finally:
+        session.close()
+
+    assert rows[first["id"]].board_lane == "not_started"
+    assert rows[first["id"]].board_position == 1000
+    assert rows[second["id"]].board_lane == "not_started"
+    assert rows[second["id"]].board_position == 0
+    assert rows[third["id"]].board_lane == "in_progress"
+    assert rows[third["id"]].board_position == 0
+    snapshots = secretary_service.list_tasks(include_done=True)
+    snapshot_map = {task["id"]: task for task in snapshots}
+    assert snapshot_map[first["id"]]["board_lane"] == "not_started"
+    assert snapshot_map[first["id"]]["board_position"] == 1000
+    assert snapshot_map[second["id"]]["board_lane"] == "not_started"
+    assert snapshot_map[second["id"]]["board_position"] == 0
+    assert snapshot_map[third["id"]]["board_lane"] == "in_progress"
+    assert snapshot_map[third["id"]]["board_position"] == 0
+
+
+def test_list_tasks_batches_related_snapshot_data(secretary_service, monkeypatch):
+    project = secretary_service.create_project("Batch Project")
+    missionary_id = _create_missionary("Batch Missionary")
+    task = secretary_service.create_task(
+        "Batch task",
+        project_id=project["id"],
+        missionary_id=missionary_id,
+    )
+
+    def _should_not_run(*args, **kwargs):
+        raise AssertionError("list_tasks should batch snapshot lookups")
+
+    monkeypatch.setattr(secretary_service, "_task_missionary_scope", _should_not_run)
+
+    snapshots = secretary_service.list_tasks(include_done=True)
+    snapshot = next(item for item in snapshots if item["id"] == task["id"])
+
+    assert snapshot["project_title"] == "Batch Project"
+    assert snapshot["missionary_name"] == "Batch Missionary"
+
+
 def test_task_status_history_tracks_creation_and_transitions(secretary_service):
     task = secretary_service.create_task("Track status")
 
@@ -1009,6 +1067,8 @@ def test_secretary_task_waiting_reason_migration(monkeypatch):
     assert "automation_source" in columns
     assert "automation_status_reason" in columns
     assert "waiting_follow_up_date" in columns
+    assert "board_lane" in columns
+    assert "board_position" in columns
     assert "group_type" in group_columns
     assert "automation_key" in group_columns
     assert "missionary_groups" in group_tables

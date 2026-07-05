@@ -131,6 +131,13 @@ class MainWindow(QMainWindow):
         self._content_overlay_spinner = None
         self._content_overlay_title = None
         self._content_overlay_subtitle = None
+        self._content_overlay_subtitle_timer = QTimer(self)
+        self._content_overlay_subtitle_timer.setInterval(2500)
+        self._content_overlay_subtitle_timer.timeout.connect(
+            self._advance_content_loading_subtitle
+        )
+        self._content_overlay_subtitles = []
+        self._content_overlay_subtitle_index = 0
         self._startup_alerts = []
 
         self.setWindowTitle(tr("app_title"))
@@ -409,16 +416,28 @@ class MainWindow(QMainWindow):
             logger.exception("Failed to open missionary workspace")
             return False
 
-    def show_content_loading_overlay(self, message="Reading document..."):
+    def show_content_loading_overlay(
+        self,
+        message="Reading document...",
+        subtitles=None,
+        subtitle_interval_ms=2500,
+    ):
         self._ensure_content_loading_overlay()
         if self._content_overlay is None:
             return
 
         self._refresh_content_loading_overlay_snapshot()
         self._content_overlay_title.setText(message or "Reading document...")
-        self._content_overlay_subtitle.setText(
-            "Please wait while OCR finishes."
-        )
+        self._stop_content_loading_subtitle_rotation()
+        if subtitles:
+            self._start_content_loading_subtitle_rotation(
+                subtitles,
+                subtitle_interval_ms,
+            )
+        else:
+            self._content_overlay_subtitle.setText(
+                tr("ocr_loading_default_subtitle")
+            )
         self._sync_content_loading_overlay_geometry()
         self._content_overlay.show()
         self._content_overlay.raise_()
@@ -427,6 +446,7 @@ class MainWindow(QMainWindow):
     def hide_content_loading_overlay(self):
         if self._content_overlay is None:
             return
+        self._stop_content_loading_subtitle_rotation()
         self._content_overlay_spinner.stop()
         self._content_overlay.hide()
 
@@ -462,7 +482,7 @@ class MainWindow(QMainWindow):
         title = QLabel("Reading document...")
         title.setObjectName("ContentLoadingOverlayTitle")
         title.setAlignment(Qt.AlignCenter)
-        subtitle = QLabel("Please wait while OCR finishes.")
+        subtitle = QLabel(tr("ocr_loading_default_subtitle"))
         subtitle.setObjectName("ContentLoadingOverlaySubtitle")
         subtitle.setAlignment(Qt.AlignCenter)
         subtitle.setWordWrap(True)
@@ -486,6 +506,41 @@ class MainWindow(QMainWindow):
         self._content_overlay_title = title
         self._content_overlay_subtitle = subtitle
         self._sync_content_loading_overlay_geometry()
+
+    def _start_content_loading_subtitle_rotation(
+        self,
+        subtitles,
+        interval_ms=2500,
+    ):
+        clean_subtitles = [subtitle for subtitle in subtitles if subtitle]
+        if not clean_subtitles:
+            return
+        self._content_overlay_subtitles = clean_subtitles
+        self._content_overlay_subtitle_index = 0
+        self._content_overlay_subtitle.setText(clean_subtitles[0])
+        self._content_overlay_subtitle_timer.setInterval(
+            max(250, int(interval_ms))
+        )
+        if len(clean_subtitles) > 1:
+            self._content_overlay_subtitle_timer.start()
+
+    def _stop_content_loading_subtitle_rotation(self):
+        self._content_overlay_subtitle_timer.stop()
+        self._content_overlay_subtitles = []
+        self._content_overlay_subtitle_index = 0
+
+    def _advance_content_loading_subtitle(self):
+        if not self._content_overlay_subtitles:
+            self._content_overlay_subtitle_timer.stop()
+            return
+        self._content_overlay_subtitle_index = (
+            self._content_overlay_subtitle_index + 1
+        ) % len(self._content_overlay_subtitles)
+        self._content_overlay_subtitle.setText(
+            self._content_overlay_subtitles[
+                self._content_overlay_subtitle_index
+            ]
+        )
 
     def _sync_content_loading_overlay_geometry(self):
         if self._content_overlay is None:

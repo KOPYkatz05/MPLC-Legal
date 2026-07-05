@@ -22,6 +22,7 @@ from utils.logger import logger
 
 VISIBLE_TASK_STATUSES = ("OPEN", "READY", "WAITING")
 VISIBLE_PROJECT_STATUSES = ("ACTIVE", "WAITING")
+TASK_BOARD_LANES = ("not_started", "in_progress", "completed")
 TASK_GROUPS = [
     ("overdue", "Overdue"),
     ("follow_up_due", "Follow Up Due"),
@@ -333,6 +334,8 @@ class SecretaryWorkService:
                 priority=_normalize_choice(priority, PRIORITIES, "NORMAL"),
                 due_date=due_date,
                 work_date=work_date,
+                board_lane=None,
+                board_position=None,
                 project_id=project_id,
                 missionary_id=linked_ids[0] if len(linked_ids) == 1 else None,
                 group_id=group_id,
@@ -415,7 +418,13 @@ class SecretaryWorkService:
                     PRIORITIES,
                     task.priority,
                 )
-            for field in ("due_date", "work_date", "project_id"):
+            for field in (
+                "due_date",
+                "work_date",
+                "project_id",
+                "board_lane",
+                "board_position",
+            ):
                 if field in updates:
                     setattr(task, field, updates[field])
             if (
@@ -490,6 +499,42 @@ class SecretaryWorkService:
         except Exception:
             session.rollback()
             logger.exception("Failed to update secretary task")
+            raise
+        finally:
+            session.close()
+
+    def save_task_board_orders(self, lane_orders):
+        session = SessionLocal()
+        try:
+            task_ids = [
+                task_id
+                for ordered_ids in lane_orders.values()
+                for task_id in ordered_ids
+            ]
+            tasks = {}
+            if task_ids:
+                rows = (
+                    session.query(SecretaryTask)
+                    .filter(SecretaryTask.id.in_(task_ids))
+                    .all()
+                )
+                tasks = {task.id: task for task in rows}
+
+            for lane, ordered_ids in lane_orders.items():
+                if lane not in TASK_BOARD_LANES:
+                    continue
+                for index, task_id in enumerate(ordered_ids):
+                    task = tasks.get(task_id)
+                    if task is None:
+                        continue
+                    task.board_lane = lane
+                    task.board_position = index * 1000
+                    task.updated_at = _now()
+
+            session.commit()
+        except Exception:
+            session.rollback()
+            logger.exception("Failed to save secretary task board order")
             raise
         finally:
             session.close()
@@ -937,7 +982,11 @@ class SecretaryWorkService:
             ).all()
 
             needle = _clean_text(search).casefold()
-            snapshots = [self._task_snapshot(task, session) for task in tasks]
+            snapshot_context = self._task_snapshot_context(session, tasks)
+            snapshots = [
+                self._task_snapshot(task, session, snapshot_context)
+                for task in tasks
+            ]
             if needle:
                 snapshots = [
                     task for task in snapshots
@@ -965,6 +1014,87 @@ class SecretaryWorkService:
             return snapshots
         finally:
             session.close()
+
+    def _task_snapshot_context(self, session, tasks):
+        task_ids = [task.id for task in tasks]
+        project_ids = sorted({
+            task.project_id for task in tasks if task.project_id
+        })
+        group_ids = sorted({task.group_id for task in tasks if task.group_id})
+        missionary_ids = sorted({
+            task.missionary_id for task in tasks if task.missionary_id
+        })
+
+        project_titles = {}
+        if project_ids:
+            project_titles = {
+                project.id: project.title
+                for project in session.query(SecretaryProject)
+                .filter(SecretaryProject.id.in_(project_ids))
+                .all()
+            }
+
+        group_types = {}
+        if group_ids:
+            group_types = {
+                group.id: group.group_type or ""
+                for group in session.query(MissionaryGroup)
+                .filter(MissionaryGroup.id.in_(group_ids))
+                .all()
+            }
+
+        task_missionary_scope = {task_id: ([], []) for task_id in task_ids}
+        missionary_name_by_id = {}
+        if task_ids:
+            rows = (
+                session.query(
+                    SecretaryTaskMissionary.task_id,
+                    Missionary.id,
+                    Missionary.full_name,
+                )
+                .join(
+                    Missionary,
+                    SecretaryTaskMissionary.missionary_id == Missionary.id,
+                )
+                .filter(SecretaryTaskMissionary.task_id.in_(task_ids))
+                .order_by(SecretaryTaskMissionary.task_id, Missionary.full_name)
+                .all()
+            )
+            for task_id, missionary_id, missionary_name in rows:
+                missionary_name_by_id[missionary_id] = missionary_name
+                ids, names = task_missionary_scope.get(task_id, ([], []))
+                task_missionary_scope[task_id] = (
+                    [*ids, missionary_id],
+                    [*names, missionary_name],
+                )
+
+        fallback_missionary_ids = [
+            missionary_id
+            for missionary_id in missionary_ids
+            if missionary_id not in missionary_name_by_id
+        ]
+        if fallback_missionary_ids:
+            for missionary in (
+                session.query(Missionary)
+                .filter(Missionary.id.in_(fallback_missionary_ids))
+                .all()
+            ):
+                missionary_name_by_id[missionary.id] = missionary.full_name
+
+        for task in tasks:
+            if task_missionary_scope[task.id][0]:
+                continue
+            if task.missionary_id and task.missionary_id in missionary_name_by_id:
+                task_missionary_scope[task.id] = (
+                    [task.missionary_id],
+                    [missionary_name_by_id[task.missionary_id]],
+                )
+
+        return {
+            "project_titles": project_titles,
+            "group_types": group_types,
+            "task_missionary_scope": task_missionary_scope,
+        }
 
     def grouped_tasks(self, **filters):
         grouped = {key: [] for key, _label in TASK_GROUPS}
@@ -995,6 +1125,10 @@ class SecretaryWorkService:
         grouped["scheduled_follow_up"] = self._sort_by_waiting_follow_up(
             grouped.get("scheduled_follow_up", [])
         )
+        for key in grouped:
+            if key in {"follow_up_due", "scheduled_follow_up"}:
+                continue
+            grouped[key] = self._sort_by_board_order(grouped.get(key, []))
         return grouped
 
     def list_calendar_tasks(self):
@@ -1088,6 +1222,19 @@ class SecretaryWorkService:
             ),
         )
 
+    @staticmethod
+    def _sort_by_board_order(tasks):
+        return sorted(
+            tasks,
+            key=lambda task: (
+                task.get("board_position") is None,
+                task.get("board_position") if task.get("board_position") is not None else 0,
+                task.get("due_date") or date.max,
+                task.get("title", "").casefold(),
+                task.get("id") or 0,
+            ),
+        )
+
     def missionary_options(self):
         session = SessionLocal()
         try:
@@ -1155,13 +1302,17 @@ class SecretaryWorkService:
             "progress": f"{done}/{total} done" if total else "0/0 done",
         }
 
-    def _task_snapshot(self, task, session):
-        project_title = ""
-        missionary_ids, missionary_names = self._task_missionary_scope(task, session)
+    def _task_snapshot(self, task, session, context=None):
+        context = context or {}
+        project_title = context.get("project_titles", {}).get(task.project_id, "")
+        missionary_ids = []
+        missionary_names = []
+        cached_scope = context.get("task_missionary_scope", {}).get(task.id)
+        if cached_scope is not None:
+            missionary_ids, missionary_names = cached_scope
+        else:
+            missionary_ids, missionary_names = self._task_missionary_scope(task, session)
         missionary_name = missionary_names[0] if len(missionary_names) == 1 else ""
-        if task.project_id:
-            project = session.query(SecretaryProject).filter_by(id=task.project_id).first()
-            project_title = project.title if project else ""
         scope_label = ""
         if len(missionary_names) == 1:
             scope_label = missionary_names[0]
@@ -1188,7 +1339,11 @@ class SecretaryWorkService:
             "missionary_count": len(missionary_ids),
             "group_id": task.group_id,
             "group_scope_label": task.group_scope_label or "",
-            "group_type": self._task_group_type(task, session),
+            "group_type": (
+                context.get("group_types", {}).get(task.group_id, "")
+                if task.group_id
+                else self._task_group_type(task, session)
+            ),
             "scope_label": scope_label,
             "is_group_task": len(missionary_ids) > 1,
             "appointment_field": task.appointment_field,
@@ -1197,6 +1352,8 @@ class SecretaryWorkService:
                 task.task_type or "CUSTOM",
                 (task.task_type or "Custom").title(),
             ),
+            "board_lane": task.board_lane or "",
+            "board_position": task.board_position,
             "related_stage": task.related_stage or "",
             "related_document_type": task.related_document_type,
             "related_document_label": document_label(

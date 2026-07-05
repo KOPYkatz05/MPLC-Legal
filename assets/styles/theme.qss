@@ -1833,6 +1833,11 @@ QFrame#OfficeWorkTaskColumn {
     border-radius: 8px;
 }
 
+QFrame#OfficeWorkTaskColumn[dragOver="true"] {
+    background-color: #F8FAFC;
+    border-color: #7DD3FC;
+}
+
 QLabel#OfficeWorkColumnEmpty {
     color: #A1A1AA;
     font-size: 12px;

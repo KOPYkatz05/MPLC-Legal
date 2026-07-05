@@ -19,6 +19,7 @@ class FakeSecretaryWorkService:
         self.reopened_tasks = []
         self.completed_projects = []
         self.archived_projects = []
+        self.saved_board_orders = None
         self.last_task_filters = {}
         self.status_history = []
 
@@ -136,6 +137,9 @@ class FakeSecretaryWorkService:
     def archive_task(self, task_id):
         self.archived_tasks.append(task_id)
 
+    def save_task_board_orders(self, lane_orders):
+        self.saved_board_orders = lane_orders
+
     def delete_task(self, task_id):
         self.deleted_tasks.append(task_id)
         return True
@@ -171,6 +175,29 @@ def test_office_work_page_can_filter_to_project(qapp):
         page.close()
 
 
+def test_office_work_filters_collapse_into_menu(qapp):
+    _ = qapp
+    page = OfficeWorkPage(service=FakeSecretaryWorkService())
+
+    try:
+        buttons = page.task_filter_bar.findChildren(QPushButton)
+        assert [button.text() for button in buttons] == ["Filters"]
+
+        page._show_task_filter_menu()
+        menu = page.task_filter_menu
+        assert menu is not None
+        submenu_titles = [
+            action.text()
+            for action in menu.actions()
+            if action.menu() is not None
+        ]
+        assert "Quick Filters" in submenu_titles
+        assert "Status" in submenu_titles
+        assert "Project" in submenu_titles
+    finally:
+        page.close()
+
+
 def test_office_work_tasks_render_as_three_column_board(qapp):
     _ = qapp
     page = OfficeWorkPage(service=FakeSecretaryWorkService())
@@ -183,62 +210,149 @@ def test_office_work_tasks_render_as_three_column_board(qapp):
             for label in column.findChildren(QLabel, "OfficeWorkSectionTitle")
         ]
 
-        assert headers == ["Overdue", "Today", "Later"]
+        assert headers == ["Not Started", "In-Progress", "Completed"]
         assert len(columns) == 3
     finally:
         page.close()
 
 
-def test_office_work_task_board_groups_extra_sections_into_later(qapp):
+def test_office_work_initial_load_defers_projects(monkeypatch, qapp):
+    _ = qapp
+    called = []
+    monkeypatch.setattr(
+        OfficeWorkPage,
+        "render_projects",
+        lambda self: called.append(True),
+    )
+
+    page = OfficeWorkPage(service=FakeSecretaryWorkService())
+
+    try:
+        assert called == []
+        assert page._projects_loaded is False
+    finally:
+        page.close()
+
+
+def test_office_work_task_board_groups_into_trello_columns(qapp):
     _ = qapp
     page = OfficeWorkPage(service=FakeSecretaryWorkService())
 
     try:
         grouped = {
-            "overdue": [{"id": 1, "title": "Overdue"}],
-            "today": [{"id": 2, "title": "Today"}],
-            "ready_to_review": [{"id": 3, "title": "Ready"}],
-            "this_week": [{"id": 4, "title": "Week"}],
+            "overdue": [{"id": 1, "title": "Overdue", "status": "OPEN"}],
+            "today": [{"id": 2, "title": "Today", "status": "OPEN"}],
+            "ready_to_review": [{"id": 3, "title": "Ready", "status": "READY"}],
+            "follow_up_due": [{"id": 4, "title": "Follow Up Due", "status": "WAITING"}],
+            "needs_follow_up": [{"id": 5, "title": "Needs Follow-Up", "status": "WAITING"}],
+            "scheduled_follow_up": [{"id": 6, "title": "Scheduled Follow-Up", "status": "WAITING"}],
+            "this_week": [{"id": 7, "title": "This Week", "status": "OPEN"}],
             "later": [
-                {
-                    "id": 5,
-                    "title": "Transfer 1 FBI",
-                    "automation_source": "process_automation",
-                    "automation_key": "transfer:fbi:2026-07-29",
-                },
-                {
-                    "id": 6,
-                    "title": "Transfer 1 Flights",
-                    "automation_source": "process_automation",
-                    "automation_key": "transfer:flights:2026-07-29",
-                },
-                {
-                    "id": 7,
-                    "title": "Transfer 2 FBI",
-                    "automation_source": "process_automation",
-                    "automation_key": "transfer:fbi:2026-09-09",
-                },
-                {
-                    "id": 8,
-                    "title": "Transfer 2 Arrivals",
-                    "automation_source": "process_automation",
-                    "automation_key": "transfer:arrivals:2026-09-09",
-                },
-                {
-                    "id": 9,
-                    "title": "Transfer 3 FBI",
-                    "automation_source": "process_automation",
-                    "automation_key": "transfer:fbi:2026-10-21",
-                },
-                {"id": 10, "title": "Manual Later"},
+                {"id": 8, "title": "Later", "status": "OPEN"},
+                {"id": 9, "title": "Done", "status": "DONE"},
             ],
         }
 
         board_groups = page._task_board_groups(grouped)
 
-        assert [task["id"] for task in board_groups["overdue"]] == [1]
-        assert [task["id"] for task in board_groups["today"]] == [2]
-        assert [task["id"] for task in board_groups["later"]] == [3, 4, 5, 6, 7, 8, 10]
+        assert [task["id"] for task in board_groups["not_started"]] == [8, 1, 7, 2]
+        assert [task["id"] for task in board_groups["in_progress"]] == [4, 5, 3, 6]
+        assert [task["id"] for task in board_groups["completed"]] == [9]
+    finally:
+        page.close()
+
+
+def test_office_work_task_board_drop_persists_order(qapp, monkeypatch):
+    _ = qapp
+    service = FakeSecretaryWorkService()
+    page = OfficeWorkPage(service=service)
+
+    try:
+        page._board_lane_orders = {
+            "not_started": [11, 12],
+            "in_progress": [21],
+            "completed": [],
+        }
+        page._board_task_lanes = {
+            11: "not_started",
+            12: "not_started",
+            21: "in_progress",
+        }
+        page._board_tasks_by_id = {
+            11: {"id": 11, "title": "Task 11", "status": "OPEN"},
+            12: {"id": 12, "title": "Task 12", "status": "OPEN"},
+            21: {"id": 21, "title": "Task 21", "status": "READY"},
+        }
+
+        monkeypatch.setattr(page, "load_data", lambda: None)
+        monkeypatch.setattr(page, "_refresh_calendar_page", lambda: None)
+
+        page._handle_task_board_drop(11, "in_progress", 1)
+
+        assert service.saved_board_orders == {
+            "not_started": [12],
+            "in_progress": [21, 11],
+        }
+    finally:
+        page.close()
+
+
+def test_office_work_task_board_drop_refreshes_without_full_reload(qapp, monkeypatch):
+    _ = qapp
+    service = FakeSecretaryWorkService()
+    page = OfficeWorkPage(service=service)
+
+    try:
+        page._board_lane_orders = {
+            "not_started": [11, 12],
+            "in_progress": [21],
+            "completed": [],
+        }
+        page._board_task_lanes = {
+            11: "not_started",
+            12: "not_started",
+            21: "in_progress",
+        }
+        page._board_tasks_by_id = {
+            11: {"id": 11, "title": "Task 11", "status": "OPEN"},
+            12: {"id": 12, "title": "Task 12", "status": "OPEN"},
+            21: {"id": 21, "title": "Task 21", "status": "READY"},
+        }
+
+        load_calls = []
+        render_calls = []
+        calendar_calls = []
+        monkeypatch.setattr(page, "load_data", lambda: load_calls.append(True))
+        monkeypatch.setattr(page, "render_tasks", lambda: render_calls.append(True))
+        monkeypatch.setattr(
+            page,
+            "_refresh_calendar_page",
+            lambda: calendar_calls.append(True),
+        )
+
+        page._handle_task_board_drop(11, "in_progress", 1)
+
+        assert load_calls == []
+        assert render_calls == [True]
+        assert calendar_calls == []
+        assert service.saved_board_orders == {
+            "not_started": [12],
+            "in_progress": [21, 11],
+        }
+    finally:
+        page.close()
+
+
+def test_office_work_task_row_shows_overdue_triangle_icon(qapp):
+    _ = qapp
+    page = OfficeWorkPage(service=FakeSecretaryWorkService())
+
+    try:
+        task = page.service.grouped_tasks()["overdue"][0]
+        row = page._task_row(task)
+        icons = row.findChildren(QLabel, "PillActionLeadingIcon")
+
+        assert icons
     finally:
         page.close()
 

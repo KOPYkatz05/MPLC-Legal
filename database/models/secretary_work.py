@@ -200,6 +200,14 @@ class SecretaryTask(Base):
         Date,
     )
 
+    board_lane = Column(
+        String,
+    )
+
+    board_position = Column(
+        Integer,
+    )
+
     project_id = Column(
         Integer,
         ForeignKey("secretary_projects.id"),
