@@ -27,6 +27,27 @@ SPANISH_MONTHS = {
     "diciembre": 12,
 }
 
+COMPACT_MONTHS = {
+    **SPANISH_MONTHS,
+    "ene": 1,
+    "feb": 2,
+    "mar": 3,
+    "abr": 4,
+    "may": 5,
+    "jun": 6,
+    "jul": 7,
+    "ago": 8,
+    "sep": 9,
+    "set": 9,
+    "oct": 10,
+    "nov": 11,
+    "dic": 12,
+    "jan": 1,
+    "apr": 4,
+    "aug": 8,
+    "dec": 12,
+}
+
 
 LABEL_FIELD_MAP = {
     "CONSTANCIA_DE_TRAMITE_CARNE_DE_EXTRANJERIA": [
@@ -811,14 +832,23 @@ class DocumentParser:
             if month:
                 self._append_date(found, seen, int(y), month, int(d))
 
+        for d, m_str, y in re.findall(
+            r"\b(\d{1,2})([a-z]{3,10})(\d{4})\b",
+            normalized,
+            re.IGNORECASE,
+        ):
+            month = COMPACT_MONTHS.get(m_str.lower())
+            if month:
+                self._append_date(found, seen, int(y), month, int(d))
+
         return found
 
     def _extract_carnet_number(self, text):
         patterns = [
-            r"\bCE[:\s#°º]*([A-Z0-9]{6,12})\b",
-            r"\bN[°º][:\s]*([A-Z0-9]{6,12})\b",
-            r"\bCARNET[:\s#°º]*([A-Z0-9]{6,12})\b",
-            r"\bEXTRANJERIA[:\s#°º]*([A-Z0-9]{6,12})\b",
+            r"\bCE[:\s#°º]*([A-Z0-9]{6,16})\b",
+            r"\bN[°º][:\s]*([A-Z0-9]{6,16})\b",
+            r"\bCARNET[:\s#°º]*([A-Z0-9]{6,16})\b",
+            r"\bEXTRANJERIA[:\s#°º]*([A-Z0-9]{6,16})\b",
         ]
 
         upper_text = self._normalize(text).upper()

@@ -1,7 +1,9 @@
+import ctypes
+import sys
 from datetime import date
 
 from PySide6.QtCore import QEvent, QRectF, QSize, Qt, QTimer
-from PySide6.QtGui import QColor, QImage, QPainter, QPen, QPixmap
+from PySide6.QtGui import QColor, QCursor, QImage, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QFrame,
     QGraphicsBlurEffect,
@@ -37,6 +39,71 @@ try:
 except Exception:
     FluentWindow = QMainWindow
     NavigationItemPosition = None
+
+
+WINDOW_RESIZE_BORDER_WIDTH = 8
+WM_NCHITTEST = 0x0084
+HTLEFT = 10
+HTRIGHT = 11
+HTTOP = 12
+HTTOPLEFT = 13
+HTTOPRIGHT = 14
+HTBOTTOM = 15
+HTBOTTOMLEFT = 16
+HTBOTTOMRIGHT = 17
+
+
+class _WindowsPoint(ctypes.Structure):
+    _fields_ = [
+        ("x", ctypes.c_long),
+        ("y", ctypes.c_long),
+    ]
+
+
+class _WindowsMessage(ctypes.Structure):
+    _fields_ = [
+        ("hwnd", ctypes.c_void_p),
+        ("message", ctypes.c_uint),
+        ("wParam", ctypes.c_size_t),
+        ("lParam", ctypes.c_ssize_t),
+        ("time", ctypes.c_ulong),
+        ("pt", _WindowsPoint),
+    ]
+
+
+def windows_message_id(message):
+    try:
+        return _WindowsMessage.from_address(int(message)).message
+    except Exception:
+        return None
+
+
+def resize_hit_test(frame_rect, global_pos, border_width=WINDOW_RESIZE_BORDER_WIDTH):
+    if frame_rect is None or global_pos is None or not frame_rect.contains(global_pos):
+        return None
+
+    left = frame_rect.left() <= global_pos.x() < frame_rect.left() + border_width
+    right = frame_rect.right() - border_width < global_pos.x() <= frame_rect.right()
+    top = frame_rect.top() <= global_pos.y() < frame_rect.top() + border_width
+    bottom = frame_rect.bottom() - border_width < global_pos.y() <= frame_rect.bottom()
+
+    if top and left:
+        return HTTOPLEFT
+    if top and right:
+        return HTTOPRIGHT
+    if bottom and left:
+        return HTBOTTOMLEFT
+    if bottom and right:
+        return HTBOTTOMRIGHT
+    if left:
+        return HTLEFT
+    if right:
+        return HTRIGHT
+    if top:
+        return HTTOP
+    if bottom:
+        return HTBOTTOM
+    return None
 
 
 class LoadingSpinner(QWidget):
@@ -141,6 +208,8 @@ class MainWindow(QMainWindow):
         self._startup_alerts = []
 
         self.setWindowTitle(tr("app_title"))
+        if sys.platform.startswith("win"):
+            self.setWindowFlag(Qt.FramelessWindowHint, True)
         self.resize(1400, 900)
 
         self.setup_ui()
@@ -199,6 +268,26 @@ class MainWindow(QMainWindow):
         ):
             self._sync_content_loading_overlay_geometry()
         return super().eventFilter(watched, event)
+
+    def changeEvent(self, event):
+        super().changeEvent(event)
+        if event.type() == QEvent.WindowStateChange and hasattr(self, "shell"):
+            title_bar = getattr(self.shell, "title_bar", None)
+            if title_bar is not None:
+                title_bar.refresh_maximize_state()
+
+    def nativeEvent(self, event_type, message):
+        if (
+            sys.platform.startswith("win")
+            and event_type in {"windows_generic_MSG", "windows_dispatcher_MSG"}
+            and windows_message_id(message) == WM_NCHITTEST
+            and not self.isMaximized()
+            and not self.isFullScreen()
+        ):
+            hit = resize_hit_test(self.frameGeometry(), QCursor.pos())
+            if hit is not None:
+                return True, hit
+        return super().nativeEvent(event_type, message)
 
     def _setup_fluent_shell(self):
         pages = [

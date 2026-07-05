@@ -485,6 +485,46 @@ QScrollArea > QWidget > QWidget {
    SIDEBAR
    ========================================== */
 
+QFrame#AppTitleBar {
+    background-color: #FBFBFC;
+    border: none;
+    border-bottom: 1px solid #ECECEC;
+}
+
+QWidget#AppShellBody {
+    background-color: #FFFFFF;
+}
+
+QFrame#AppTitleDragRegion,
+QLabel#AppTitleDragAffordance {
+    background-color: transparent;
+    border: none;
+}
+
+QLabel#AppTitleDragAffordance {
+    color: #A1A1AA;
+    font-size: 11px;
+}
+
+QToolButton#AppWindowControlButton,
+QToolButton#AppWindowCloseButton {
+    background-color: transparent;
+    border: 1px solid transparent;
+    border-radius: 7px;
+    padding: 0px;
+    margin: 2px 1px;
+}
+
+QToolButton#AppWindowControlButton:hover {
+    background-color: #F4F4F5;
+    border-color: #F4F4F5;
+}
+
+QToolButton#AppWindowCloseButton:hover {
+    background-color: #FEE2E2;
+    border-color: #FEE2E2;
+}
+
 QFrame#FluentSidebar {
     background-color: #FFFFFF;
     border: none;
@@ -1111,12 +1151,12 @@ QFrame#ReportsTopBar {
     border-bottom: 1px solid #ECECEC;
 }
 
-QFrame#ReportsNavigationPillList {
+QFrame#ReportsTabStrip {
     background-color: transparent;
     border: none;
 }
 
-QLabel#ReportsNavigationPill {
+QPushButton#ReportsTabButton {
     color: #242424;
     background-color: transparent;
     border: 1px solid transparent;
@@ -1126,10 +1166,15 @@ QLabel#ReportsNavigationPill {
     font-weight: 500;
 }
 
-QLabel#ReportsNavigationPill[active="true"] {
+QPushButton#ReportsTabButton:checked {
     background-color: #F1F1F6;
     border-color: #F1F1F6;
     color: #111111;
+}
+
+QPushButton#ReportsTabButton:hover {
+    background-color: #F8F8FA;
+    border-color: #ECECEC;
 }
 
 QLabel#ReportsTitle {
@@ -1156,16 +1201,33 @@ QWidget#ReportMetricRow {
 }
 
 QFrame#ReportAlertRow,
-QWidget#ReportAlertRow {
+QWidget#ReportAlertRow,
+QFrame#ReportProgressRow,
+QWidget#ReportProgressRow,
+QFrame#ReportEmptyState,
+QWidget#ReportEmptyState {
     background-color: #FFFFFF;
     border: 1px solid #ECECEC;
     border-radius: 7px;
 }
 
 QFrame#ReportAlertRow:hover,
-QWidget#ReportAlertRow:hover {
+QWidget#ReportAlertRow:hover,
+QFrame#ReportProgressRow:hover,
+QWidget#ReportProgressRow:hover {
     background-color: #FBFBFC;
     border-color: #DADADF;
+}
+
+QProgressBar#ReportProgressBar {
+    background-color: #F1F1F3;
+    border: none;
+    border-radius: 3px;
+}
+
+QProgressBar#ReportProgressBar::chunk {
+    background-color: #0EA5AC;
+    border-radius: 3px;
 }
 
 QLabel#ReportMeta {
@@ -1834,8 +1896,14 @@ QFrame#OfficeWorkTaskColumn {
 }
 
 QFrame#OfficeWorkTaskColumn[dragOver="true"] {
-    background-color: #F8FAFC;
-    border-color: #7DD3FC;
+    background-color: #FBFBFC;
+    border-color: rgba(15, 23, 42, 0.12);
+}
+
+QFrame#OfficeWorkTaskDropIndicator {
+    background-color: #F1F1F3;
+    border: none;
+    border-radius: 24px;
 }
 
 QLabel#OfficeWorkColumnEmpty {

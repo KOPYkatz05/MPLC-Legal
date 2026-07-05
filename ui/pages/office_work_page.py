@@ -1,6 +1,13 @@
 from datetime import date
 
-from PySide6.QtCore import QMimeData, Qt
+from PySide6.QtCore import (
+    QEasingCurve,
+    QMimeData,
+    QParallelAnimationGroup,
+    QPropertyAnimation,
+    Qt,
+)
+from PySide6.QtGui import QColor, QPainter
 from PySide6.QtWidgets import (
     QButtonGroup,
     QFrame,
@@ -117,6 +124,18 @@ def _transfer_date_from_automation_key(task):
         return None
 
 
+class TaskDropIndicator(QFrame):
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        rect = self.rect().adjusted(0, 0, -1, -1)
+        radius = min(24, rect.height() / 2)
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QColor("#E5E7EB"))
+        painter.drawRoundedRect(rect, radius, radius)
+
+
 class TaskBoardColumn(QFrame):
     def __init__(self, lane_key, drop_handler, parent=None):
         super().__init__(parent)
@@ -125,6 +144,11 @@ class TaskBoardColumn(QFrame):
         self.setProperty("dragOver", False)
         self.setAcceptDrops(True)
         self.setAttribute(Qt.WA_StyledBackground, True)
+        self._drop_indicator = None
+        self._drop_indicator_index = None
+        self._drop_indicator_animation = None
+        self._slide_animation_group = None
+        self._drag_snapshot = []
 
     def _set_drag_over(self, active):
         if self.property("dragOver") == active:
@@ -147,16 +171,123 @@ class TaskBoardColumn(QFrame):
                 widgets.append(widget)
         return widgets
 
+    def _insert_layout_widget(self, widget, layout_index):
+        layout = self.layout()
+        if layout is None:
+            return
+        layout.insertWidget(layout_index, widget)
+
+    def _clear_drop_indicator(self):
+        if self._drop_indicator_animation is not None:
+            self._drop_indicator_animation.stop()
+            self._drop_indicator_animation.deleteLater()
+            self._drop_indicator_animation = None
+        if self._slide_animation_group is not None:
+            self._slide_animation_group.stop()
+            self._slide_animation_group.deleteLater()
+            self._slide_animation_group = None
+        if self._drop_indicator is None:
+            self._drop_indicator_index = None
+            return
+        layout = self.layout()
+        if layout is not None:
+            layout.removeWidget(self._drop_indicator)
+        self._drop_indicator.deleteLater()
+        self._drop_indicator = None
+        self._drop_indicator_index = None
+
+    def _capture_drag_snapshot(self):
+        self._drag_snapshot = [
+            (widget, widget.y() + (widget.height() / 2))
+            for widget in self._task_widgets()
+        ]
+
+    def _clear_drag_snapshot(self):
+        self._drag_snapshot = []
+
+    def _task_card_height(self):
+        widgets = self._task_widgets()
+        if widgets:
+            height = widgets[0].height()
+            if height <= 0:
+                height = widgets[0].sizeHint().height()
+            return max(1, height)
+        return 64
+
+    def _show_drop_indicator(self, index):
+        layout = self.layout()
+        if layout is None:
+            return
+
+        index = max(0, min(index, len(self._task_widgets())))
+        if self._drop_indicator is not None and self._drop_indicator_index == index:
+            return
+
+        old_geometries = {
+            widget: widget.geometry()
+            for widget in self._task_widgets()
+        }
+        if self._drop_indicator is None:
+            indicator = TaskDropIndicator(self)
+            indicator.setObjectName("OfficeWorkTaskDropIndicator")
+            indicator.setAttribute(Qt.WA_StyledBackground, True)
+            indicator.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+            indicator.setProperty("visible", True)
+            self._drop_indicator = indicator
+        else:
+            indicator = self._drop_indicator
+            layout.removeWidget(indicator)
+
+        indicator.setGraphicsEffect(None)
+
+        target_height = self._task_card_height()
+        indicator.setFixedHeight(target_height)
+        indicator.setMinimumHeight(target_height)
+        indicator.setMaximumHeight(target_height)
+        indicator.show()
+        self._drop_indicator_index = index
+
+        layout_index = 1 + index
+        layout.insertWidget(layout_index, indicator)
+        layout.activate()
+
+        animation = QParallelAnimationGroup(self)
+        for widget in self._task_widgets():
+            old_geometry = old_geometries.get(widget)
+            new_geometry = widget.geometry()
+            if old_geometry is None or old_geometry == new_geometry:
+                continue
+            widget_animation = QPropertyAnimation(widget, b"geometry", animation)
+            widget_animation.setDuration(260)
+            widget_animation.setStartValue(old_geometry)
+            widget_animation.setEndValue(new_geometry)
+            widget_animation.setEasingCurve(QEasingCurve.OutCubic)
+            animation.addAnimation(widget_animation)
+
+        if animation.animationCount():
+            animation.start()
+            self._slide_animation_group = animation
+        else:
+            self._slide_animation_group = None
+
     def _drop_index(self, y):
-        for index, widget in enumerate(self._task_widgets()):
-            midpoint = widget.y() + (widget.height() / 2)
+        snapshot = self._drag_snapshot
+        source = snapshot if snapshot else [
+            (widget, widget.y() + (widget.height() / 2))
+            for widget in self._task_widgets()
+        ]
+        for index, (_widget, midpoint) in enumerate(source):
             if y < midpoint:
                 return index
-        return len(self._task_widgets())
+        return len(source)
 
     def dragEnterEvent(self, event):
         if event.mimeData().hasFormat(TASK_BOARD_DRAG_MIME):
+            self._capture_drag_snapshot()
             self._set_drag_over(True)
+            self._show_drop_indicator(
+                self._drop_index(event.position().toPoint().y())
+            )
             event.acceptProposedAction()
             return
         event.ignore()
@@ -164,12 +295,17 @@ class TaskBoardColumn(QFrame):
     def dragMoveEvent(self, event):
         if event.mimeData().hasFormat(TASK_BOARD_DRAG_MIME):
             self._set_drag_over(True)
+            self._show_drop_indicator(
+                self._drop_index(event.position().toPoint().y())
+            )
             event.acceptProposedAction()
             return
         event.ignore()
 
     def dragLeaveEvent(self, event):
         self._set_drag_over(False)
+        self._clear_drop_indicator()
+        self._clear_drag_snapshot()
         super().dragLeaveEvent(event)
 
     def dropEvent(self, event):
@@ -184,11 +320,19 @@ class TaskBoardColumn(QFrame):
             return
 
         try:
-            self._drop_handler(task_id, self.lane_key, self._drop_index(event.position().toPoint().y()))
+            self._drop_handler(
+                task_id,
+                self.lane_key,
+                self._drop_index(event.position().toPoint().y()),
+            )
             self._set_drag_over(False)
+            self._clear_drop_indicator()
+            self._clear_drag_snapshot()
             event.acceptProposedAction()
         except Exception:
             self._set_drag_over(False)
+            self._clear_drop_indicator()
+            self._clear_drag_snapshot()
             event.ignore()
 
 
@@ -787,29 +931,19 @@ class OfficeWorkPage(QWidget):
         self.task_content_layout.addWidget(wrapper)
 
     def _task_row(self, task):
-        meta_parts = [
-            task["priority"].title(),
-            _due_text(task),
-            TASK_STATUS_LABELS.get(task["status"], task["status"].title()),
-        ]
-        if task.get("waiting_reason_label"):
-            meta_parts.append(task["waiting_reason_label"])
-        if task.get("waiting_follow_up_status_label"):
-            meta_parts.append(task["waiting_follow_up_status_label"])
-        if task.get("task_type") and task.get("task_type") != "CUSTOM":
-            meta_parts.append(task.get("task_type_label", ""))
-        if task.get("related_stage"):
-            meta_parts.append(task["related_stage"].title())
+        meta_parts = [_due_text(task)]
+        meta_parts.append(TASK_STATUS_LABELS.get(task["status"], task["status"].title()))
+        scope_label = task.get("scope_label") or task.get("missionary_name")
+        if scope_label:
+            meta_parts.append(scope_label)
+
+        doc_stage_parts = []
         if task.get("related_document_label"):
-            meta_parts.append(task["related_document_label"])
-        if task.get("automation_source"):
-            meta_parts.append("Auto")
-        if task.get("project_title"):
-            meta_parts.append(task["project_title"])
-        if task.get("scope_label"):
-            meta_parts.append(task["scope_label"])
-        elif task.get("missionary_name"):
-            meta_parts.append(task["missionary_name"])
+            doc_stage_parts.append(task["related_document_label"])
+        if task.get("related_stage"):
+            doc_stage_parts.append(task["related_stage"].title())
+        if doc_stage_parts:
+            meta_parts.append(" / ".join(doc_stage_parts))
 
         menu_actions = [
             {
@@ -889,16 +1023,6 @@ class OfficeWorkPage(QWidget):
                 }
             )
 
-        visible_actions.append(
-            {
-                "text": "Delete",
-                "tooltip": "Delete task",
-                "icon": "x",
-                "fallback": "x",
-                "callback": lambda task_id=task["id"]: self._delete_task(task_id),
-            }
-        )
-
         if task.get("missionary_count", 0) > 1:
             menu_actions.append(
                 {
@@ -918,6 +1042,17 @@ class OfficeWorkPage(QWidget):
                     "fallback": ">",
                     "callback": lambda missionary_id=task["missionary_id"]:
                     self._open_missionary(missionary_id),
+                }
+            )
+
+        if task["status"] != "ARCHIVED":
+            menu_actions.append(
+                {
+                    "text": "Delete",
+                    "tooltip": "Delete task",
+                    "icon": "x",
+                    "fallback": "x",
+                    "callback": lambda task_id=task["id"]: self._delete_task(task_id),
                 }
             )
 

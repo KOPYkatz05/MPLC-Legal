@@ -383,6 +383,7 @@ def try_layout_only_ocr(
     layout_pages,
     export_settings,
 ):
+    layout_pages = _usable_layout_pages(layout_pages)
     if not layout_pages:
         return None
 
@@ -532,10 +533,13 @@ def run_ocr_on_images(
         result.raw_text = raw_text
         result.raw_text_by_page = page_texts
         parser = DocumentParser()
+        parser_layout_pages = _usable_layout_pages(
+            result.layout_pages
+        ) or page_texts
         parsed = parser.parse(
             raw_text,
             document_type,
-            layout_pages=result.layout_pages or page_texts,
+            layout_pages=parser_layout_pages,
         )
         result.parsed_data = _serialize_parsed(parsed)
 
@@ -565,6 +569,14 @@ def run_ocr_on_images(
             progress.close()
 
     return result
+
+
+def _usable_layout_pages(layout_pages):
+    usable = []
+    for page in layout_pages or []:
+        if page.get("words") or page.get("lines"):
+            usable.append(page)
+    return usable
 
 
 def extract_ocr_texts(image_paths, parent=None):

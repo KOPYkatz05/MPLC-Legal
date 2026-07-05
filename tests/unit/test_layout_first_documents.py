@@ -76,6 +76,31 @@ def _biometric_layout_pages():
     ])
 
 
+def _recojo_ocr_line_pages():
+    lines = [
+        _word("MiGRACIoNES", 191, 124, 620, 172),
+        _word("Fecha: 20-03-2025", 1829, 117, 2197, 162),
+        _word("CONSTANCIA DE CITA ELECTRONICA", 780, 278, 1770, 327),
+        _word("FECHA DE NACIMIENTO", 180, 701, 644, 746),
+        _word(":", 797, 712, 825, 742),
+        _word("03/09/2005", 887, 705, 1091, 742),
+        _word("PROGRAMACION DE CITA", 184, 822, 780, 866),
+        _word("FECHA DE CITA", 184, 1169, 489, 1217),
+        _word(":", 790, 1179, 821, 1217),
+        _word("25/03/2025", 883, 1176, 1088, 1213),
+        _word("HORARIO DE CITA", 180, 1244, 537, 1289),
+        _word("10:00 AM 10:29 AM", 884, 1244, 1241, 1296),
+    ]
+    return [
+        {
+            "page": 0,
+            "image_path": "recojo.png",
+            "text": "\n".join(line["text"] for line in lines),
+            "lines": lines,
+        }
+    ]
+
+
 def _prorroga_layout_pages():
     return _layout_pages([
         _word("Expediente", 84, 262),
@@ -109,6 +134,41 @@ def test_recojo_layout_uses_fecha_cita_not_birth_date():
 
     assert parsed == {
         "pickup_appointment_date": date(2024, 10, 12),
+    }
+
+
+def test_recojo_ocr_lines_ignore_header_date():
+    parsed = DocumentParser().parse(
+        "",
+        "CITA_RECOJO",
+        layout_pages=_recojo_ocr_line_pages(),
+    )
+
+    assert parsed == {
+        "pickup_appointment_date": date(2025, 3, 25),
+    }
+
+
+def test_carne_parser_reads_compact_issue_date_and_long_ce_number():
+    text = """
+    Emision/Date of lssue.
+    20MAR2025
+    Fecha de Nacimiento/ Date of Birth
+    03SEP2005
+    Caducidad/Date ofExpiry
+    20MAR2029
+    CEUSA0090181410
+    """
+
+    parsed = DocumentParser().parse(
+        text,
+        "CARNE_DE_EXTRANJERIA",
+        layout_pages=None,
+    )
+
+    assert parsed == {
+        "carnet_issue_date": date(2025, 3, 20),
+        "carnet_number": "USA0090181410",
     }
 
 
@@ -157,6 +217,25 @@ def test_recojo_prepare_uses_layout_without_ocr(monkeypatch):
     assert result.ocr_status == "success"
     assert result.parsed_data == {
         "pickup_appointment_date": "2024-10-12",
+    }
+
+
+def test_recojo_run_ocr_uses_lines_when_pdf_layout_is_empty(monkeypatch):
+    monkeypatch.setattr(
+        upload_pipeline,
+        "extract_ocr_texts",
+        lambda image_paths, parent=None: _recojo_ocr_line_pages(),
+    )
+
+    result = upload_pipeline.run_ocr_on_images(
+        image_paths=["recojo.png"],
+        document_type="CITA_RECOJO",
+        layout_pages=[{"page": 0, "source": "pdf_words", "words": []}],
+    )
+
+    assert result.ocr_status == "success"
+    assert result.parsed_data == {
+        "pickup_appointment_date": "2025-03-25",
     }
 
 

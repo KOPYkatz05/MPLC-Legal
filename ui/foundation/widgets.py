@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 
-from PySide6.QtCore import QEvent, QMimeData, QPointF, QRectF, QSize, Qt, Signal
+from PySide6.QtCore import QEvent, QMimeData, QPoint, QPointF, QRectF, QSize, Qt, Signal
 from PySide6.QtGui import (
     QColor,
     QDrag,
@@ -194,6 +194,177 @@ class DialogFooter(SimpleCardWidget):
         self.layout().addWidget(button)
 
 
+class _AppTitleDragRegion(QFrame):
+    def __init__(self, title_bar, parent=None):
+        super().__init__(parent)
+        self.title_bar = title_bar
+        self.setObjectName("AppTitleDragRegion")
+        self.setCursor(Qt.ArrowCursor)
+        self._drag_start_global = None
+        self._drag_start_frame = None
+
+    def mousePressEvent(self, event):
+        if event.button() != Qt.LeftButton:
+            super().mousePressEvent(event)
+            return
+
+        window = self.window()
+        self._drag_start_global = self._event_global_position(event)
+        self._drag_start_frame = window.frameGeometry().topLeft()
+
+        handle = window.windowHandle() if window is not None else None
+        started = False
+        if handle is not None and hasattr(handle, "startSystemMove"):
+            try:
+                started = bool(handle.startSystemMove())
+            except Exception:
+                started = False
+        if started:
+            self._drag_start_global = None
+            self._drag_start_frame = None
+        event.accept()
+
+    def mouseMoveEvent(self, event):
+        if (
+            event.buttons() & Qt.LeftButton
+            and self._drag_start_global is not None
+            and self._drag_start_frame is not None
+        ):
+            window = self.window()
+            current_global = self._event_global_position(event)
+            delta = current_global - self._drag_start_global
+            window.move(self._drag_start_frame + delta)
+            event.accept()
+            return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        self._drag_start_global = None
+        self._drag_start_frame = None
+        super().mouseReleaseEvent(event)
+
+    def mouseDoubleClickEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.title_bar.toggle_maximized()
+            event.accept()
+            return
+        super().mouseDoubleClickEvent(event)
+
+    @staticmethod
+    def _event_global_position(event):
+        if hasattr(event, "globalPosition"):
+            return event.globalPosition().toPoint()
+        if hasattr(event, "globalPos"):
+            return event.globalPos()
+        return QPoint()
+
+
+class AppTitleBar(QFrame):
+    def __init__(self, app_title, parent=None):
+        super().__init__(parent)
+        self.setObjectName("AppTitleBar")
+        self.setFixedHeight(34)
+        self.setAttribute(Qt.WA_StyledBackground, True)
+
+        layout = QHBoxLayout()
+        layout.setContentsMargins(8, 0, 8, 0)
+        layout.setSpacing(0)
+        self.setLayout(layout)
+
+        self.drag_region = _AppTitleDragRegion(self, self)
+        drag_layout = QHBoxLayout()
+        drag_layout.setContentsMargins(0, 0, 0, 0)
+        drag_layout.setSpacing(0)
+        self.drag_region.setLayout(drag_layout)
+
+        self.drag_affordance = QLabel(self.drag_region)
+        self.drag_affordance.setObjectName("AppTitleDragAffordance")
+        self.drag_affordance.setFixedSize(55, 34)
+        self.drag_affordance.setAlignment(Qt.AlignCenter)
+        self.drag_affordance.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self.drag_affordance.setToolTip(app_title)
+        self.drag_affordance.setAccessibleName(app_title)
+        icon = lucide_icon("grip-horizontal", size=16, color="#A1A1AA")
+        if icon is not None and not icon.isNull():
+            self.drag_affordance.setPixmap(icon.pixmap(QSize(16, 16)))
+        else:
+            self.drag_affordance.setText("...")
+        drag_layout.addWidget(self.drag_affordance)
+        drag_layout.addStretch()
+        layout.addWidget(self.drag_region, stretch=1)
+
+        self.minimize_button = self._make_window_button(
+            "minus",
+            "Minimize",
+            self._minimize_window,
+        )
+        self.maximize_button = self._make_window_button(
+            "square",
+            "Maximize",
+            self.toggle_maximized,
+        )
+        self.close_button = self._make_window_button(
+            "x",
+            "Close",
+            self._close_window,
+            object_name="AppWindowCloseButton",
+        )
+
+        layout.addWidget(self.minimize_button)
+        layout.addWidget(self.maximize_button)
+        layout.addWidget(self.close_button)
+        self.refresh_maximize_state()
+
+    def _make_window_button(
+        self,
+        icon_name,
+        tooltip,
+        callback,
+        object_name="AppWindowControlButton",
+    ):
+        button = QToolButton(self)
+        button.setObjectName(object_name)
+        button.setFixedSize(34, 30)
+        button.setToolTip(tooltip)
+        button.setAccessibleName(tooltip)
+        button.setToolButtonStyle(Qt.ToolButtonIconOnly)
+        button.setAutoRaise(True)
+        icon = lucide_icon(icon_name, size=16, color="#52525B")
+        if icon is not None and not icon.isNull():
+            button.setIcon(icon)
+            button.setIconSize(QSize(16, 16))
+        else:
+            button.setText(tooltip[:1])
+        button.clicked.connect(callback)
+        return button
+
+    def _minimize_window(self):
+        self.window().showMinimized()
+
+    def _close_window(self):
+        self.window().close()
+
+    def toggle_maximized(self):
+        window = self.window()
+        if window.isMaximized():
+            window.showNormal()
+        else:
+            window.showMaximized()
+        self.refresh_maximize_state()
+
+    def refresh_maximize_state(self):
+        if not hasattr(self, "maximize_button"):
+            return
+        maximized = self.window().isMaximized()
+        tooltip = "Restore" if maximized else "Maximize"
+        self.maximize_button.setToolTip(tooltip)
+        self.maximize_button.setAccessibleName(tooltip)
+        icon_name = "copy" if maximized else "square"
+        icon = lucide_icon(icon_name, size=16, color="#52525B")
+        if icon is not None and not icon.isNull():
+            self.maximize_button.setIcon(icon)
+
+
 class PillActionButton(QFrame):
     clicked = Signal()
 
@@ -311,7 +482,11 @@ class PillActionButton(QFrame):
             painter = QPainter(padded)
             painter.setRenderHint(QPainter.Antialiasing, True)
             shadow_path = QPainterPath()
-            shadow_path.addRoundedRect(5, 6, pixmap.width(), pixmap.height(), 16, 16)
+            radius = max(
+                1.0,
+                min(24.0, pixmap.width() / 2.0, pixmap.height() / 2.0),
+            )
+            shadow_path.addRoundedRect(5, 6, pixmap.width(), pixmap.height(), radius, radius)
             painter.fillPath(shadow_path, QColor(15, 23, 42, 26))
             painter.drawPixmap(0, 0, pixmap)
             painter.end()
@@ -323,9 +498,14 @@ class PillActionButton(QFrame):
             hotspot = preview_widget.rect().center()
         drag.setHotSpot(hotspot)
         self._drag_active = True
+        was_visible = self.isVisible()
+        if was_visible:
+            self.setVisible(False)
         try:
             drag.exec(Qt.MoveAction)
         finally:
+            if was_visible:
+                self.setVisible(True)
             self._drag_active = False
             self._drag_start_pos = None
         return True
@@ -474,10 +654,21 @@ class AppShell(QWidget):
             "settings": ("SETTING",),
         }
 
-        root = QHBoxLayout()
+        root = QVBoxLayout()
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
         self.setLayout(root)
+
+        self.title_bar = AppTitleBar(app_title, self)
+        root.addWidget(self.title_bar)
+
+        body = QWidget(self)
+        body.setObjectName("AppShellBody")
+        body_layout = QHBoxLayout()
+        body_layout.setContentsMargins(0, 0, 0, 0)
+        body_layout.setSpacing(0)
+        body.setLayout(body_layout)
+        root.addWidget(body, stretch=1)
 
         self.sidebar = QFrame()
         self.sidebar.setObjectName("FluentSidebar")
@@ -507,8 +698,8 @@ class AppShell(QWidget):
         self.stack = QStackedWidget()
         self.stack.setObjectName("ContentStack")
 
-        root.addWidget(self.sidebar)
-        root.addWidget(self.stack, stretch=1)
+        body_layout.addWidget(self.sidebar)
+        body_layout.addWidget(self.stack, stretch=1)
 
         self.sidebar_layout.addStretch()
 

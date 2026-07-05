@@ -2,12 +2,13 @@ from datetime import date, datetime
 from types import SimpleNamespace
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QFrame, QLabel, QPushButton, QToolButton
+from PySide6.QtWidgets import QFrame, QLabel, QPushButton, QToolButton, QVBoxLayout
 
 from ui.dialogs import office_work_dialogs
 from ui.dialogs.office_work_dialogs import ProjectDialog, TaskDialog
 from ui.main_window import MainWindow
-from ui.pages.office_work_page import OfficeWorkPage
+from ui.pages.office_work_page import OfficeWorkPage, TaskBoardColumn, TaskDropIndicator
+from ui.foundation import widgets as foundation_widgets
 
 
 class FakeSecretaryWorkService:
@@ -262,6 +263,90 @@ def test_office_work_task_board_groups_into_trello_columns(qapp):
         page.close()
 
 
+def test_office_work_task_board_column_shows_drop_indicator(qapp):
+    _ = qapp
+    column = TaskBoardColumn("not_started", lambda *args: None)
+    layout = QVBoxLayout()
+    column.setLayout(layout)
+
+    header = QLabel("Not Started")
+    header.setObjectName("OfficeWorkSectionTitle")
+    layout.addWidget(header)
+
+    for task_id in (1, 2):
+        pill = QFrame()
+        pill.setObjectName("OfficeWorkTaskPill")
+        pill.setFixedHeight(64)
+        layout.addWidget(pill)
+
+    column._show_drop_indicator(1)
+
+    indicator = column._drop_indicator
+    assert indicator is not None
+    assert isinstance(indicator, TaskDropIndicator)
+    assert indicator.objectName() == "OfficeWorkTaskDropIndicator"
+    assert layout.indexOf(indicator) == 2
+    assert indicator.height() == column._task_card_height()
+    assert indicator.minimumHeight() == column._task_card_height()
+    assert indicator.maximumHeight() == column._task_card_height()
+    assert column._drop_indicator_animation is None
+    assert column._slide_animation_group is not None
+    assert indicator.graphicsEffect() is None
+
+
+def test_office_work_task_board_column_uses_drag_snapshot_for_index(qapp):
+    _ = qapp
+    column = TaskBoardColumn("not_started", lambda *args: None)
+    column._drag_snapshot = [
+        (object(), 40),
+        (object(), 100),
+        (object(), 160),
+    ]
+
+    assert column._drop_index(10) == 0
+    assert column._drop_index(90) == 1
+    assert column._drop_index(140) == 2
+    assert column._drop_index(220) == 3
+
+
+def test_pill_drag_hides_source_during_drag(monkeypatch, qapp):
+    _ = qapp
+    captured = {}
+
+    class FakeDrag:
+        def __init__(self, parent):
+            captured["parent"] = parent
+
+        def setMimeData(self, mime):
+            captured["mime"] = mime
+
+        def setPixmap(self, pixmap):
+            captured["pixmap"] = pixmap
+
+        def setHotSpot(self, hotspot):
+            captured["hotspot"] = hotspot
+
+        def exec(self, action):
+            captured["action"] = action
+            captured["parent_visible_during_drag"] = captured["parent"].isVisible()
+
+    monkeypatch.setattr(foundation_widgets, "QDrag", FakeDrag)
+
+    pill = foundation_widgets.create_pill_action_button(
+        "Task",
+        drag_payload=123,
+    )
+    pill.show()
+    assert pill.isVisible() is True
+
+    assert pill._start_drag(pill, pill.rect().center()) is True
+
+    assert captured["parent_visible_during_drag"] is False
+    assert pill.isVisible() is True
+    assert captured["parent"] is pill
+    assert captured["action"] == Qt.MoveAction
+
+
 def test_office_work_task_board_drop_persists_order(qapp, monkeypatch):
     _ = qapp
     service = FakeSecretaryWorkService()
@@ -353,6 +438,33 @@ def test_office_work_task_row_shows_overdue_triangle_icon(qapp):
         icons = row.findChildren(QLabel, "PillActionLeadingIcon")
 
         assert icons
+    finally:
+        page.close()
+
+
+def test_office_work_task_row_uses_short_subtitle(qapp):
+    _ = qapp
+    page = OfficeWorkPage(service=FakeSecretaryWorkService())
+
+    try:
+        task = page.service.grouped_tasks()["overdue"][0]
+        row = page._task_row(task)
+        labels = [label.text() for label in row.findChildren(QLabel)]
+
+        assert "No due date  |  To Do  |  Passport / Interpol" in labels
+        assert all(
+            forbidden not in "  |  ".join(labels)
+            for forbidden in [
+                "Important",
+                "process_automation",
+                "Open Missionary",
+                "Waiting",
+                "Document",
+                "Project",
+                "Stage",
+                "Automation",
+            ]
+        )
     finally:
         page.close()
 
@@ -617,7 +729,8 @@ def test_office_work_task_row_labels_missing_follow_up(qapp):
         row = page._task_row(task)
         labels = [label.text() for label in row.findChildren(QLabel)]
 
-        assert any("No follow-up date" in text for text in labels)
+        assert "No due date  |  Waiting  |  Passport / Interpol" in labels
+        assert all("No follow-up date" not in text for text in labels)
     finally:
         page.close()
 
@@ -647,7 +760,6 @@ def test_office_work_task_row_sets_missing_follow_up(monkeypatch, qapp):
             "More actions",
             "Mark ready",
             "Mark complete",
-            "Delete task",
         }
 
         more_menu = getattr(buttons["More actions"], "_popup_menu", None)
@@ -679,12 +791,11 @@ def test_office_work_task_row_keeps_primary_actions_visible(qapp):
             "More actions",
             "Mark ready",
             "Mark complete",
-            "Delete task",
         }
         assert getattr(buttons["More actions"], "_popup_menu", None) is not None
         assert [
             action.text() for action in getattr(buttons["More actions"], "_popup_menu").actions()
-        ] == ["Review", "Edit", "Archive"]
+        ] == ["Review", "Edit", "Archive", "Delete"]
     finally:
         page.close()
 
@@ -704,11 +815,10 @@ def test_office_work_ready_task_moves_needs_work_to_more_menu(qapp):
         assert set(buttons) == {
             "More actions",
             "Mark complete",
-            "Delete task",
         }
         assert [
             action.text() for action in getattr(buttons["More actions"], "_popup_menu").actions()
-        ] == ["Review", "Needs Work", "Edit", "Archive"]
+        ] == ["Review", "Needs Work", "Edit", "Archive", "Delete"]
     finally:
         page.close()
 

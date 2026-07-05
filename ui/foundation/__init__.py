@@ -57,6 +57,7 @@ from ui.foundation.icons import (
 )
 from ui.foundation.widgets import (
     AppShell,
+    AppTitleBar,
     DialogFooter,
     FilterBar,
     PageHeader,
@@ -85,6 +86,7 @@ __all__ = [
     "SubtitleLabel",
     "StrongBodyLabel",
     "AppShell",
+    "AppTitleBar",
     "DialogFooter",
     "FilterBar",
     "PageHeader",
