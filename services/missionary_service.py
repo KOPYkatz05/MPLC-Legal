@@ -335,6 +335,7 @@ class MissionaryService:
         self,
         missionary_id,
         archive_group_name=None,
+        archive_reason=None,
     ):
         session = SessionLocal()
 
@@ -354,6 +355,7 @@ class MissionaryService:
                 return
 
             current_stage = missionary.current_stage
+            archive_reason = (archive_reason or "").strip() or None
 
             if missionary.folder_path:
                 destination_folder = (
@@ -367,12 +369,13 @@ class MissionaryService:
 
             missionary.status = "ARCHIVED"
 
-            if current_stage:
+            if current_stage or archive_reason:
                 session.add(
                     StageHistory(
                         missionary_id=missionary.id,
                         from_stage=current_stage,
                         to_stage="ARCHIVED",
+                        notes=archive_reason,
                     )
                 )
 

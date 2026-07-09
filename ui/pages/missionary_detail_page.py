@@ -37,6 +37,7 @@ from PySide6.QtCore import (
     Qt,
     QSize,
     QDate,
+    QTimer,
 )
 
 from services.workflow_service import WorkflowService
@@ -140,6 +141,15 @@ DETAIL_LAYOUT_TABS = {
 }
 
 
+ARCHIVE_REASON_OPTIONS = [
+    ("HEALTH", "Health"),
+    ("FAMILY", "Family"),
+    ("RETURNED_HOME", "Returned home"),
+    ("REASSIGNED", "Reassigned"),
+    ("OTHER", "Other"),
+]
+
+
 class MissionaryDetailLayoutDialog(QDialog):
     def __init__(self, layout_payload, parent=None):
         super().__init__(parent)
@@ -239,6 +249,83 @@ class MissionaryDetailLayoutDialog(QDialog):
         self.current_layout_tab = next_tab
         self.editor.set_workspace(self._layout_for_tab(next_tab))
         self.editor.select_block(None)
+
+
+class MissionaryArchiveDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("MissionaryArchiveDialog")
+        self.setWindowTitle(tr("missionary_detail_archive_reason_title"))
+        self.resize(520, 220)
+        self.archive_reason = ""
+
+        root = QVBoxLayout()
+        root.setContentsMargins(16, 14, 16, 16)
+        root.setSpacing(12)
+        self.setLayout(root)
+
+        title = SubtitleLabel(tr("missionary_detail_archive_reason_title"))
+        title.setObjectName("MissionaryArchiveDialogTitle")
+        root.addWidget(title)
+
+        helper = QLabel(tr("missionary_detail_archive_reason_hint"))
+        helper.setObjectName("MutedText")
+        helper.setWordWrap(True)
+        root.addWidget(helper)
+
+        self.reason_combo = create_combo_box("MissionaryArchiveReasonCombo")
+        self.reason_combo.addItem(
+            tr("missionary_detail_archive_reason_placeholder"),
+            "",
+        )
+        for reason_key, reason_label in ARCHIVE_REASON_OPTIONS:
+            self.reason_combo.addItem(tr(reason_label), reason_key)
+        root.addWidget(
+            self._field(
+                tr("missionary_detail_archive_reason_label"),
+                self.reason_combo,
+            )
+        )
+
+        footer = DialogFooter()
+        cancel_btn = create_button(tr("missionary_detail_cancel"), "secondary")
+        archive_btn = create_button(
+            tr("missionary_detail_archive_missionary"),
+            "primary",
+        )
+        cancel_btn.clicked.connect(self.reject)
+        archive_btn.clicked.connect(self._accept_archive)
+        footer.add_action(cancel_btn)
+        footer.add_action(archive_btn)
+        root.addWidget(footer)
+
+    def _field(self, label_text, control):
+        wrapper = QWidget()
+        layout = QVBoxLayout()
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(5)
+        wrapper.setLayout(layout)
+        label = QLabel(label_text)
+        label.setObjectName("OfficeWorkFieldLabel")
+        layout.addWidget(label)
+        layout.addWidget(control)
+        return wrapper
+
+    def _accept_archive(self):
+        reason_key = self.reason_combo.currentData()
+        if not reason_key:
+            show_message(
+                self,
+                tr("missionary_detail_archive_reason_title"),
+                tr("missionary_detail_archive_reason_required"),
+                kind="warning",
+            )
+            return
+
+        self.archive_reason = self.reason_combo.currentText()
+        self.accept()
+
+
 WORKFLOW_LIST_MIN_HEIGHT = 220
 DOCUMENTS_LIST_MIN_HEIGHT = 340
 MISSING_LIST_MIN_HEIGHT = 260
@@ -504,6 +591,9 @@ class MissionaryDetailPage(QWidget):
         self._layout_drag_accepts = {}
         self._layout_animation_group = None
         self._free_layout_session = None
+        self._upload_detail_reload_seen = False
+        self._deferred_missionaries_refresh_pending = False
+        self._deferred_stage_refresh_pending = False
         self.layout_editor_kit = EditableCanvasEditorKit(
             state=EditableCanvasState(
                 zoom=1.0,
@@ -831,6 +921,14 @@ class MissionaryDetailPage(QWidget):
 
         header.setLayout(header_layout)
 
+        self.back_button = create_button(
+            tr("common_back"),
+            "secondary",
+            fixed_height=34,
+        )
+        self.back_button.setFixedWidth(92)
+        self.back_button.clicked.connect(self._go_back)
+
         name_stage = QVBoxLayout()
 
         name_stage.setSpacing(4)
@@ -849,6 +947,8 @@ class MissionaryDetailPage(QWidget):
             self.stage_badge,
             alignment=Qt.AlignLeft,
         )
+
+        header_layout.addWidget(self.back_button)
 
         header_layout.addLayout(name_stage)
 
@@ -918,6 +1018,28 @@ class MissionaryDetailPage(QWidget):
             self.actions_menu,
         )
         self.actions_menu.addMenu(self.workspace_menu)
+        self.actions_menu.addSeparator()
+        self.move_to_menu = create_menu(
+            tr("missionary_detail_move_to"),
+            self.actions_menu,
+        )
+        self.archive_missionary_action = QAction(
+            tr("missionary_detail_archive_missionary"),
+            self.move_to_menu,
+        )
+        self.delete_missionary_action = QAction(
+            tr("missionary_detail_delete_missionary"),
+            self.move_to_menu,
+        )
+        self.move_to_menu.addAction(self.delete_missionary_action)
+        self.move_to_menu.addAction(self.archive_missionary_action)
+        self.archive_missionary_action.triggered.connect(
+            self._archive_missionary
+        )
+        self.delete_missionary_action.triggered.connect(
+            self.delete_missionary
+        )
+        self.actions_menu.addMenu(self.move_to_menu)
         self.refresh_workspace_actions()
         self.actions_button.setMenu(self.actions_menu)
 
@@ -2751,8 +2873,14 @@ class MissionaryDetailPage(QWidget):
         )
 
         if dialog.exec() == StageAdvanceDialog.Accepted:
-            self._reload_missionary()
-            self._refresh_stage_related_pages()
+            QTimer.singleShot(75, self._refresh_after_stage_advance)
+
+    def _refresh_after_stage_advance(self):
+        if not hasattr(self, "current_missionary"):
+            return
+
+        self._reload_missionary()
+        self._refresh_stage_related_pages()
 
     # ==========================================
     # UPLOAD DOCUMENT — full OCR pipeline
@@ -2762,6 +2890,7 @@ class MissionaryDetailPage(QWidget):
         if not hasattr(self, "current_missionary"):
             return
 
+        self._upload_detail_reload_seen = False
         dialog = UploadSessionDialog(
             self.current_missionary,
             parent=self,
@@ -2772,8 +2901,9 @@ class MissionaryDetailPage(QWidget):
         dialog.exec()
 
         if dialog.saved_any():
-            self._reload_missionary()
-            self._refresh_missionaries_table()
+            if not self._upload_detail_reload_seen:
+                self._reload_missionary()
+            self._refresh_missionaries_table(deferred=True)
 
         return
 
@@ -2785,6 +2915,7 @@ class MissionaryDetailPage(QWidget):
         if not hasattr(self, "current_missionary"):
             return
 
+        self._upload_detail_reload_seen = False
         dialog = UploadSessionDialog(
             self.current_missionary,
             parent=self,
@@ -2795,8 +2926,9 @@ class MissionaryDetailPage(QWidget):
         dialog.exec()
 
         if dialog.saved_any():
-            self._reload_missionary()
-            self._refresh_missionaries_table()
+            if not self._upload_detail_reload_seen:
+                self._reload_missionary()
+            self._refresh_missionaries_table(deferred=True)
 
         return
 
@@ -2811,13 +2943,27 @@ class MissionaryDetailPage(QWidget):
         )
         if current_id == missionary_id:
             self._reload_missionary()
+            self._upload_detail_reload_seen = True
 
         calendar_page = getattr(self.main_window, "calendar_page", None)
         load_data = getattr(calendar_page, "load_data", None)
         if callable(load_data):
-            load_data()
+            QTimer.singleShot(0, load_data)
 
-    def _refresh_missionaries_table(self):
+    def _refresh_missionaries_table(self, deferred=False):
+        if deferred:
+            if getattr(self, "_deferred_missionaries_refresh_pending", False):
+                return
+
+            self._deferred_missionaries_refresh_pending = True
+
+            def refresh_later():
+                self._deferred_missionaries_refresh_pending = False
+                self._refresh_missionaries_table()
+
+            QTimer.singleShot(75, refresh_later)
+            return
+
         main_window = getattr(self, "main_window", None)
         if main_window is None:
             return
@@ -2842,6 +2988,18 @@ class MissionaryDetailPage(QWidget):
             load_data()
 
     def _refresh_stage_related_pages(self):
+        if getattr(self, "_deferred_stage_refresh_pending", False):
+            return
+
+        self._deferred_stage_refresh_pending = True
+
+        def refresh_later():
+            self._deferred_stage_refresh_pending = False
+            self._refresh_stage_related_pages_now()
+
+        QTimer.singleShot(75, refresh_later)
+
+    def _refresh_stage_related_pages_now(self):
         main_window = getattr(self, "main_window", None)
         if main_window is None:
             return
@@ -3095,6 +3253,16 @@ class MissionaryDetailPage(QWidget):
         if hasattr(self, "workspace_menu"):
             self.workspace_menu.setTitle(tr("missionary_detail_open_workspace"))
             self.refresh_workspace_actions()
+        if hasattr(self, "move_to_menu"):
+            self.move_to_menu.setTitle(tr("missionary_detail_move_to"))
+        if hasattr(self, "archive_missionary_action"):
+            self.archive_missionary_action.setText(
+                tr("missionary_detail_archive_missionary")
+            )
+        if hasattr(self, "delete_missionary_action"):
+            self.delete_missionary_action.setText(
+                tr("missionary_detail_delete_missionary")
+            )
         if hasattr(self, "delete_button"):
             self.delete_button.setText(tr("missionary_detail_delete_missionary"))
         if hasattr(self, "banner_now_btn"):
@@ -3859,6 +4027,96 @@ class MissionaryDetailPage(QWidget):
         self._refresh_overview_summary(workflows, documents)
         self._load_timeline()
         self._update_advance_banner()
+
+    def _date_edit_value(self, date_edit):
+        qd = (
+            date_edit.getDate()
+            if hasattr(date_edit, "getDate")
+            else date_edit.date()
+        )
+        if qd == DATE_PLACEHOLDER or not qd.isValid():
+            return None
+        return date(qd.year(), qd.month(), qd.day())
+
+    def _displayed_date_for_field(self, field_key):
+        missionary = getattr(self, "current_missionary", None)
+        if missionary is None:
+            return None
+
+        current_value = getattr(missionary, field_key, None)
+        if current_value is not None or field_key != "visa_expiration":
+            return current_value
+
+        arrival_date = getattr(missionary, "arrival_date", None)
+        if not arrival_date:
+            return None
+
+        sources = _parse_field_sources(
+            getattr(missionary, "field_sources", None)
+        )
+        visa_source = sources.get("visa_expiration", {})
+        visa_is_manual = bool(
+            visa_source.get("label")
+            and visa_source.get("label")
+            != AUTO_DERIVED_VISA_SOURCE_LABEL
+            and visa_source.get("document_type") != "TAM"
+        )
+        if visa_is_manual:
+            return None
+
+        return add_years(arrival_date, 1)
+
+    def has_unsaved_changes(self):
+        if getattr(self, "_layout_editing", False):
+            return True
+
+        missionary = getattr(self, "current_missionary", None)
+        if missionary is None:
+            return False
+
+        for field_key, date_edit in self._date_edits.items():
+            if self._date_edit_value(date_edit) != self._displayed_date_for_field(
+                field_key
+            ):
+                return True
+
+        for field_key, text_edit in self._text_edits.items():
+            current_value = getattr(missionary, field_key, None) or ""
+            if text_edit.text() != current_value:
+                return True
+
+        if hasattr(self, "notes_text"):
+            current_notes = getattr(missionary, "notes", None) or ""
+            if self.notes_text.toPlainText() != current_notes:
+                return True
+
+        return False
+
+    def confirm_leave_detail(self):
+        if not self.has_unsaved_changes():
+            return True
+
+        response = show_message(
+            self,
+            tr("missionary_detail_back_confirm_title"),
+            tr("missionary_detail_back_confirm_message"),
+            kind="question",
+            buttons="yes_no",
+        )
+        return response in {1, 16384}
+
+    def _go_back(self, checked=False):
+        _ = checked
+        if not self.confirm_leave_detail():
+            return
+
+        opener = getattr(
+            self.main_window,
+            "return_from_missionary_detail",
+            None,
+        )
+        if callable(opener):
+            opener()
 
     def _refresh_residency_timeline(self, missionary_id):
         if not self._residency_timeline_labels:
@@ -4703,6 +4961,9 @@ class MissionaryDetailPage(QWidget):
                         f"{from_str} \u2192 {_stage_display_name(h.to_stage)}"
                     )
 
+                    if h.notes:
+                        text = f"{text}\n{h.notes}"
+
                     item = QListWidgetItem(text)
 
                     self.timeline_list.addItem(item)
@@ -4784,6 +5045,39 @@ class MissionaryDetailPage(QWidget):
         missionaries_page.load_data()
 
         self.main_window.stack.setCurrentIndex(1)
+
+    def _archive_missionary(self, checked=False):
+        _ = checked
+        if not hasattr(self, "current_missionary"):
+            return
+
+        dialog = MissionaryArchiveDialog(self)
+        if dialog.exec() != QDialog.Accepted:
+            return
+
+        try:
+            self.missionary_service.archive_missionary(
+                self.current_missionary.id,
+                archive_reason=dialog.archive_reason,
+            )
+        except Exception:
+            logger.exception("Failed to archive missionary")
+            show_message(
+                self,
+                tr("missionary_detail_archive_missionary"),
+                tr("missionary_detail_archive_failed"),
+                kind="critical",
+            )
+            return
+
+        missionaries_page = self.main_window.stack.widget(1)
+        missionaries_page.load_data()
+        self.main_window.stack.setCurrentIndex(1)
+        show_message(
+            self,
+            tr("missionary_detail_archive_missionary"),
+            tr("missionary_detail_archive_complete"),
+        )
 
     # ==========================================
     # HELPERS

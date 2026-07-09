@@ -318,7 +318,7 @@ def test_upload_ocr_async_passes_dynamic_loading_messages(monkeypatch):
     assert started is True
     assert captured_busy["args"] == (
         True,
-        "Autodetecting passport.pdf...",
+        "Reading fields from passport.pdf...",
     )
     assert captured_busy["kwargs"]["content_loading_overlay"] is True
     assert captured_busy["kwargs"]["content_loading_messages"] == [

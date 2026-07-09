@@ -35,6 +35,11 @@ test_output/
 tmp*/
 run_tmp/
 
+# Local test files
+tests/
+test_*.py
+*_test.py
+
 # OS-specific noise
 .DS_Store
 Thumbs.db

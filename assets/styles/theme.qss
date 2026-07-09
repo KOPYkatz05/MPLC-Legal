@@ -671,7 +671,7 @@ QLineEdit#SearchInput {
     background-color: #FFFFFF;
     border: 1px solid #DADADF;
     border-radius: 7px;
-    padding: 0px 12px;
+    padding: 0px 30px 0px 12px;
     font-size: 13px;
     color: #18181B;
 }
@@ -1493,7 +1493,7 @@ QFrame#CalendarDayCell {
     background-color: #FFFFFF;
     border: 1px solid #ECECEC;
     border-radius: 7px;
-    min-height: 132px;
+    min-height: 112px;
 }
 
 QFrame#CalendarDayCell[outsideMonth="true"] {
@@ -1529,31 +1529,10 @@ QLabel#CalendarDayCount {
     font-weight: 700;
 }
 
-QFrame#CalendarAppointmentChip {
-    background-color: #FBFBFC;
-    border: 1px solid #ECECEC;
-    border-radius: 7px;
-}
-
-QFrame#CalendarAppointmentChip:hover {
-    background-color: #FFFFFF;
-    border-color: #DADADF;
-}
-
-QFrame#CalendarTaskChip {
-    background-color: #FBFBFC;
-    border: 1px solid #D6F2EE;
-    border-radius: 7px;
-}
-
-QFrame#CalendarTaskChip[done="true"] {
-    background-color: #F4F4F5;
-    border-color: #E4E4E7;
-}
-
-QFrame#CalendarTaskChip:hover {
-    background-color: #FFFFFF;
-    border-color: #9BE3E6;
+QPushButton#CalendarTaskDoneButton {
+    padding: 0px 12px;
+    font-size: 11px;
+    font-weight: 700;
 }
 
 QFrame#CalendarAppointmentChipAccent {
@@ -1596,37 +1575,6 @@ QLabel#CalendarTypeBadge[tone="task"] {
     background-color: #0EA5AC;
 }
 
-QPushButton#CalendarAppointmentChipButton {
-    background-color: transparent;
-    border: none;
-    color: #18181B;
-    text-align: left;
-    padding: 0px 7px;
-    font-size: 11px;
-    font-weight: 600;
-}
-
-QPushButton#CalendarTaskChipButton {
-    background-color: transparent;
-    border: none;
-    color: #18181B;
-    text-align: left;
-    padding: 0px 7px;
-    font-size: 11px;
-    font-weight: 600;
-}
-
-QFrame#CalendarTaskChip[done="true"] QPushButton#CalendarTaskChipButton {
-    color: #71717A;
-    text-decoration: line-through;
-}
-
-QPushButton#CalendarTaskDoneButton {
-    padding: 0px 12px;
-    font-size: 11px;
-    font-weight: 700;
-}
-
 QPushButton#CalendarOverflowButton {
     background-color: transparent;
     color: #0EA5AC;
@@ -1650,6 +1598,30 @@ QLabel#CalendarHistoryDateFilter {
     padding: 3px 10px;
     font-size: 11px;
     font-weight: 700;
+}
+
+QWidget#CalendarHistoryBoard {
+    background-color: transparent;
+}
+
+QFrame#CalendarHistoryColumn,
+QWidget#CalendarHistoryColumn {
+    background-color: #FFFFFF;
+    border: 1px solid #ECECEC;
+    border-radius: 7px;
+}
+
+QFrame#CalendarHistoryColumnHeader {
+    background-color: #FFFFFF;
+    border-bottom: 1px solid #ECECEC;
+    border-top-left-radius: 7px;
+    border-top-right-radius: 7px;
+}
+
+QFrame#CalendarHistoryDayGroup {
+    background-color: #FFFFFF;
+    border: 1px solid #F1F1F1;
+    border-radius: 7px;
 }
 
 QFrame#CalendarEmptyState,
@@ -1778,16 +1750,93 @@ QFrame#OfficeWorkFilterBar {
 }
 
 QFrame#PillActionButton,
-QFrame#OfficeWorkTaskPill {
+QFrame#OfficeWorkTaskPill,
+QFrame#CalendarAppointmentChip,
+QFrame#CalendarTaskChip {
     background-color: #F9F7F4;
     border: 1px solid #ECE7DF;
     border-radius: 24px;
 }
 
 QFrame#PillActionButton:hover,
-QFrame#OfficeWorkTaskPill:hover {
+QFrame#OfficeWorkTaskPill:hover,
+QFrame#CalendarAppointmentChip:hover,
+QFrame#CalendarTaskChip:hover {
     background-color: #FFFFFF;
     border-color: #DED8CF;
+}
+
+QFrame#CalendarTaskChip[done="true"] {
+    background-color: #F4F4F5;
+    border-color: #E4E4E7;
+}
+
+QFrame#CalendarAppointmentChip,
+QFrame#CalendarTaskChip {
+    border-radius: 15px;
+}
+
+QFrame#CalendarTaskChip[done="true"] QLabel#PillActionLabel {
+    color: #71717A;
+}
+
+QMenu#CalendarDaySummaryMenu {
+    background-color: #FFFFFF;
+    color: #18181B;
+    border: 1px solid #DADADF;
+    border-radius: 7px;
+    padding: 6px;
+}
+
+QMenu#CalendarDaySummaryMenu::item {
+    background-color: transparent;
+    padding: 0px;
+    margin: 0px;
+}
+
+QMenu#CalendarDaySummaryMenu::item:selected {
+    background-color: transparent;
+}
+
+QWidget#CalendarDaySummaryPanel,
+QWidget#CalendarDaySummaryHeader,
+QWidget#CalendarDaySummaryFooter,
+QWidget#CalendarDaySummaryScroll,
+QWidget#CalendarDaySummaryScroll QWidget#DialogBody {
+    background-color: #FFFFFF;
+}
+
+QWidget#CalendarDaySummaryFooter {
+    border-top: 1px solid #ECECEC;
+}
+
+QPushButton#CalendarDayCloseButton,
+QPushButton#CalendarDayAddTaskButton {
+    border-radius: 15px;
+    padding: 0px 16px;
+    font-weight: 500;
+}
+
+QPushButton#CalendarDayCloseButton {
+    background-color: #FFFFFF;
+    color: #18181B;
+    border: 1px solid #E4E4E7;
+}
+
+QPushButton#CalendarDayCloseButton:hover {
+    background-color: #F9F7F4;
+    border-color: #DED8CF;
+}
+
+QPushButton#CalendarDayAddTaskButton {
+    background-color: #0EA5AC;
+    color: #FFFFFF;
+    border: 1px solid #0EA5AC;
+}
+
+QPushButton#CalendarDayAddTaskButton:hover {
+    background-color: #07919A;
+    border-color: #07919A;
 }
 
 QFrame#PillActionAccent {
@@ -1986,33 +2035,42 @@ QFrame#CalendarDayHeader {
 QFrame#CalendarAppointmentRow,
 QFrame#CalendarAppointmentRowAlt {
     background-color: #FFFFFF;
-    border-bottom: 1px solid #F4F4F5;
+    border: 1px solid #ECE7DF;
+    border-radius: 25px;
 }
 
 QFrame#CalendarAppointmentRowAlt {
-    background-color: #FAFAFA;
+    background-color: #F9F7F4;
 }
 
 QFrame#CalendarTaskRow,
 QFrame#CalendarTaskRowAlt {
     background-color: #FFFFFF;
-    border-bottom: 1px solid #F4F4F5;
+    border: 1px solid #ECE7DF;
+    border-radius: 25px;
 }
 
 QFrame#CalendarTaskRowAlt {
-    background-color: #FAFAFA;
+    background-color: #F9F7F4;
 }
 
 QFrame#CalendarTaskRow[done="true"],
 QFrame#CalendarTaskRowAlt[done="true"] {
     background-color: #F4F4F5;
+    border-color: #E4E4E7;
 }
 
 QFrame#CalendarAppointmentRow:hover,
 QFrame#CalendarAppointmentRowAlt:hover,
 QFrame#CalendarTaskRow:hover,
 QFrame#CalendarTaskRowAlt:hover {
-    background-color: #FBFBFC;
+    background-color: #FFFFFF;
+    border-color: #DED8CF;
+}
+
+QFrame#CalendarTaskRow[done="true"] QLabel#PillActionLabel,
+QFrame#CalendarTaskRowAlt[done="true"] QLabel#PillActionLabel {
+    color: #71717A;
 }
 
 QFrame#CalendarTypeBar {
@@ -3021,6 +3079,18 @@ QDialog#FluentLoadingSurface {
     border-radius: 20px;
 }
 
+QFrame#UploadSaveProgressTrack {
+    background-color: #ECEFF3;
+    border: 1px solid #DDE3EA;
+    border-radius: 4px;
+}
+
+QFrame#UploadSaveProgressFill {
+    background-color: #0EA5AC;
+    border: none;
+    border-radius: 4px;
+}
+
 QWidget#AppDialogSurface QFrame#PageHeader,
 QDialog#AppDialogSurface QFrame#PageHeader {
     background-color: #FFFFFF;
@@ -3449,7 +3519,7 @@ QWidget#CalendarPage QWidget#PageSurface {
 }
 
 QFrame#CalendarTopTabs {
-    background-color: #FFFFFF;
+    background-color: transparent;
     border-bottom: 1px solid #D9D9D9;
     min-height: 30px;
     max-height: 30px;
@@ -3480,6 +3550,21 @@ QPushButton#CalendarTabButton[active="true"] {
     background-color: transparent;
     color: #242424;
     border-bottom-color: #242424;
+}
+
+QFrame#CalendarSummaryCard {
+    background-color: #FFFFFF;
+    border: 1px solid #ECECEC;
+    border-radius: 7px;
+}
+
+QFrame#CalendarSummaryCard QLabel#StatCount {
+    font-size: 24px;
+    font-weight: 700;
+}
+
+QFrame#CalendarSummaryCard QLabel#StatTitle {
+    font-size: 10px;
 }
 
 QPushButton#CalendarModeButton {

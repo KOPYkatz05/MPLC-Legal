@@ -5,12 +5,25 @@ from pathlib import Path
 import fitz
 from shiboken6 import isValid as shiboken_is_valid
 
-from PySide6.QtCore import QObject, QDate, QEvent, QPoint, QSize, Qt, QThread, QTimer, Signal, Slot
+from PySide6.QtCore import (
+    QEasingCurve,
+    QObject,
+    QDate,
+    QEvent,
+    QPoint,
+    QPropertyAnimation,
+    QRect,
+    QSize,
+    Qt,
+    QThread,
+    QTimer,
+    Signal,
+    Slot,
+)
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
     QApplication,
     QAbstractItemView,
-    QCheckBox,
     QDialog,
     QFileDialog,
     QFormLayout,
@@ -28,6 +41,7 @@ from PySide6.QtWidgets import (
 
 from services.document_image_export_service import DocumentImageExportService
 from services.document_service import DocumentService
+from services.settings_service import SettingsService
 from services.upload_pipeline import (
     OCR_MODE_SUBPROCESS,
     UploadPipelineResult,
@@ -42,6 +56,8 @@ from ui.dialogs.document_rendering import (
     render_pdf_page,
 )
 from ui.foundation import (
+    BodyLabel,
+    SubtitleLabel,
     setup_dialog_shell,
     SmoothScrollDelegate,
     create_button,
@@ -221,6 +237,111 @@ class UploadOcrWarmupWorker(QObject):
         except Exception as exc:
             logger.exception("Upload OCR warm-up failed")
             self.finished.emit(False, str(exc))
+
+
+class UploadSaveProgressDialog(MaskDialogBase):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Saving Documents")
+        self.setModal(True)
+        self.setWindowModality(Qt.WindowModal)
+
+        self.surface = setup_dialog_shell(
+            self,
+            surface_width=420,
+            surface_min_width=360,
+            surface_min_height=170,
+            shell_object_name="UploadSaveProgressDialog",
+            surface_object_name="FluentLoadingSurface",
+            use_masked_shell=True,
+        )
+
+        layout = QVBoxLayout()
+        layout.setContentsMargins(22, 20, 22, 22)
+        layout.setSpacing(14)
+        self.surface.setLayout(layout)
+
+        self.title_label = SubtitleLabel("Saving Documents")
+        self.title_label.setObjectName("FluentLoadingTitle")
+        self.title_label.setAlignment(Qt.AlignCenter)
+        layout.addWidget(self.title_label)
+
+        self.message_label = BodyLabel("Preparing documents...")
+        self.message_label.setObjectName("FluentLoadingMessage")
+        self.message_label.setAlignment(Qt.AlignCenter)
+        self.message_label.setWordWrap(True)
+        layout.addWidget(self.message_label)
+
+        self.progress_track = QFrame(self.surface)
+        self.progress_track.setObjectName("UploadSaveProgressTrack")
+        self.progress_track.setFixedHeight(8)
+        self.progress_track.setAttribute(Qt.WA_StyledBackground, True)
+        self.progress_track.installEventFilter(self)
+        self.progress_fill = QFrame(self.progress_track)
+        self.progress_fill.setObjectName("UploadSaveProgressFill")
+        self.progress_fill.setAttribute(Qt.WA_StyledBackground, True)
+        self.progress_fill.setGeometry(0, 0, 0, 8)
+        self.progress_fill.show()
+        self._progress_fraction = 0.0
+        self._progress_animation = QPropertyAnimation(
+            self.progress_fill,
+            b"geometry",
+            self,
+        )
+        self._progress_animation.setDuration(180)
+        self._progress_animation.setEasingCurve(QEasingCurve.OutCubic)
+        layout.addWidget(self.progress_track)
+
+    def eventFilter(self, watched, event):
+        if watched is getattr(self, "progress_track", None) and event.type() in {
+            QEvent.Show,
+            QEvent.Resize,
+        }:
+            QTimer.singleShot(0, self._set_progress_fill_width)
+        return super().eventFilter(watched, event)
+
+    def set_progress(self, completed, total, file_name=None):
+        total = max(int(total or 0), 1)
+        completed = min(max(int(completed or 0), 0), total)
+        self._progress_fraction = completed / total
+        QTimer.singleShot(0, self._animate_progress_fill)
+
+        if file_name and completed < total:
+            message = f"Saving documents ({completed} of {total})"
+        else:
+            message = f"Saved {completed} of {total}."
+        self.message_label.setText(message)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._set_progress_fill_width(animated=False)
+
+    def _animate_progress_fill(self):
+        if not _widget_alive(getattr(self, "progress_fill", None)):
+            return
+
+        target = self._progress_fill_geometry()
+        if self._progress_animation.state() == QPropertyAnimation.Running:
+            self._progress_animation.stop()
+        self._progress_animation.setStartValue(self.progress_fill.geometry())
+        self._progress_animation.setEndValue(target)
+        self._progress_animation.start()
+
+    def _set_progress_fill_width(self, animated=True):
+        target = self._progress_fill_geometry()
+        if animated:
+            self._animate_progress_fill()
+        else:
+            self.progress_fill.setGeometry(target)
+
+    def _progress_fill_geometry(self):
+        track_width = max(self.progress_track.width(), 0)
+        fill_width = int(track_width * self._progress_fraction)
+        if self._progress_fraction > 0 and track_width > 0:
+            fill_width = max(fill_width, 2)
+        width = min(fill_width, track_width)
+        height = max(self.progress_track.height(), 8)
+        return QRect(0, 0, width, height)
 
 
 class UploadPreviewGraphicsView(QGraphicsView):
@@ -736,6 +857,11 @@ class UploadSessionDialog(MaskDialogBase):
 
     def __init__(self, missionary, initial_files=None, parent=None):
         super().__init__(parent)
+        main_window = getattr(parent, "main_window", None)
+        self.settings_service = (
+            getattr(main_window, "settings_service", None)
+            or SettingsService()
+        )
         self.controller = UploadSessionController(missionary)
         self.document = None
         self.current_pixmap = None
@@ -756,6 +882,9 @@ class UploadSessionDialog(MaskDialogBase):
         self._pending_save_after_ocr = None
         self._saving_all = False
         self._save_all_index = 0
+        self._save_all_total = 0
+        self._save_all_completed = 0
+        self._save_progress_dialog = None
         self._active_screen = None
         self._screen_changed_connected = False
         self._tracked_parent_window = None
@@ -1169,15 +1298,12 @@ class UploadSessionDialog(MaskDialogBase):
 
         ocr_tools = QHBoxLayout()
         ocr_tools.setSpacing(10)
-        self.ocr_checkbox = QCheckBox("Run OCR automatically")
-        self.ocr_checkbox.setChecked(True)
-        self.ocr_checkbox.hide()
         self.ocr_status_label = QLabel("")
         self.ocr_status_label.setObjectName("OcrStatusBanner")
         self.ocr_status_label.setProperty("status", "skipped")
         self.ocr_status_label.setWordWrap(True)
         self.ocr_status_label.hide()
-        self.autodetect_btn = create_button("Autodetect", "secondary")
+        self.autodetect_btn = create_button("AI Read", "secondary")
         self.autodetect_btn.clicked.connect(self.run_ocr_for_selected)
         ocr_tools.addStretch()
         ocr_tools.addWidget(self.autodetect_btn)
@@ -1208,8 +1334,10 @@ class UploadSessionDialog(MaskDialogBase):
         self.splitter.addWidget(self.middle_panel)
 
     def _auto_ocr_enabled(self):
-        checkbox = getattr(self, "ocr_checkbox", None)
-        return checkbox is None or checkbox.isChecked()
+        service = getattr(self, "settings_service", None)
+        if service is None:
+            return True
+        return service.get_upload_auto_ocr_enabled()
 
     def _build_preview_panel(self):
         self.right_panel = create_card(object_name="UploadSurfaceCard")
@@ -1378,8 +1506,6 @@ class UploadSessionDialog(MaskDialogBase):
         self.cancel_btn.clicked.connect(self.reject)
         self.next_btn = create_button("Next", "secondary")
         self.next_btn.clicked.connect(self.go_to_next_item)
-        self.save_current_btn = create_button("Save Current", "primary")
-        self.save_current_btn.clicked.connect(self.save_current)
         self.save_all_btn = create_button("Save All", "success")
         self.save_all_btn.clicked.connect(self.save_all)
 
@@ -1387,7 +1513,6 @@ class UploadSessionDialog(MaskDialogBase):
         footer_layout.addStretch()
         footer_layout.addWidget(self.cancel_btn)
         footer_layout.addWidget(self.next_btn)
-        footer_layout.addWidget(self.save_current_btn)
         footer_layout.addWidget(self.save_all_btn)
         root.addWidget(self.footer)
 
@@ -1497,10 +1622,6 @@ class UploadSessionDialog(MaskDialogBase):
         self._set_widget_enabled("remove_btn", can_edit)
         self._set_widget_enabled("next_btn", has_items and not self._busy)
         self._set_widget_enabled("autodetect_btn", can_autodetect)
-        self._set_widget_enabled(
-            "save_current_btn",
-            not self._busy and self._selected_item_can_save(),
-        )
         self._set_widget_enabled(
             "save_all_btn",
             not self._busy and self._has_unsaved_valid_items(),
@@ -1955,7 +2076,7 @@ class UploadSessionDialog(MaskDialogBase):
         self.refresh_queue()
         self.update_progress()
         self._refresh_selected_item_labels(item)
-        self.apply_ocr_banner("skipped", "Autodetecting fields...")
+        self.apply_ocr_banner("skipped", "Reading fields...")
 
         self._ocr_thread = QThread(self)
         self._ocr_worker = UploadOcrWorker(self.controller, index)
@@ -1981,7 +2102,7 @@ class UploadSessionDialog(MaskDialogBase):
 
         self._set_busy(
             True,
-            f"Autodetecting {item.file_name}...",
+            f"Reading fields from {item.file_name}...",
             content_loading_overlay=True,
             content_loading_messages=self._ocr_loading_messages(),
         )
@@ -2043,13 +2164,11 @@ class UploadSessionDialog(MaskDialogBase):
             self.update_progress()
             if _widget_alive(self.status_label):
                 if ok:
-                    self.status_label.setText(item.error_text or "Autodetect complete.")
+                    self.status_label.setText(item.error_text or "Reading complete.")
                 else:
-                    self.status_label.setText(error or "Autodetect failed.")
+                    self.status_label.setText(error or "Reading failed.")
 
-        if ok and pending == "current":
-            self._save_current_after_ocr()
-        elif pending == "all":
+        if pending == "all":
             self._save_all_next()
 
         self._update_action_states()
@@ -2501,51 +2620,65 @@ class UploadSessionDialog(MaskDialogBase):
         self.persist_current_editor_settings(item)
         self._run_ocr_async(self.controller.selected_index, reason="manual")
 
-    def save_current(self, checked=False):
-        item = self.controller.selected_item()
-        if item is None:
-            return
-        logger.info(
-            "Save Current clicked for index=%s file=%s type=%s stage=%s status=%s",
-            self.controller.selected_index,
-            item.file_name,
-            item.document_type,
-            item.workflow_stage,
-            item.status,
-        )
-        self.persist_current_item_state()
-        self._save_current_after_ocr()
-
-    def _save_current_after_ocr(self):
-        item = self.controller.selected_item()
-        if item is None:
-            return
-        self._set_busy(True, f"Saving {item.file_name}...")
-        save_result = self.controller.save_item(
-            item,
-            parent=self,
-            run_ocr=False,
-        )
-        logger.info(
-            "Save Current result for index=%s file=%s status=%s error=%s",
-            self.controller.selected_index,
-            item.file_name,
-            save_result.status,
-            save_result.error_text,
-        )
-        self._set_busy(False)
-        self.after_save()
-        if not self._is_closing and save_result.succeeded:
-            self.go_to_next_item()
-
     def save_all(self, checked=False):
         current = self.controller.selected_item()
         if current is not None:
             self.persist_current_item_state()
 
+        self._save_all_total = self._count_save_all_items()
+        self._save_all_completed = 0
+        if self._save_all_total <= 0:
+            self.update_progress()
+            self._update_action_states()
+            return
+
         self._saving_all = True
         self._save_all_index = 0
-        self._save_all_next()
+        self._set_busy(True, "Saving documents...")
+        self._show_save_progress_dialog()
+        self.hide()
+        QTimer.singleShot(0, self._save_all_next)
+
+    def _count_save_all_items(self):
+        total = 0
+        for item in self.controller.items:
+            if item.status in {"saved", "skipped"}:
+                continue
+            if item.duplicate_action != "skip" and not item.document_type:
+                continue
+            total += 1
+        return total
+
+    def _show_save_progress_dialog(self):
+        dialog = self._save_progress_dialog
+        if not _widget_alive(dialog):
+            parent = self.parentWidget()
+            dialog = UploadSaveProgressDialog(parent)
+            self._save_progress_dialog = dialog
+
+        dialog.set_progress(
+            self._save_all_completed,
+            self._save_all_total,
+        )
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
+
+    def _update_save_progress_dialog(self, file_name=None):
+        dialog = self._save_progress_dialog
+        if not _widget_alive(dialog):
+            return
+
+        dialog.set_progress(
+            self._save_all_completed,
+            self._save_all_total,
+            file_name=file_name,
+        )
+
+    def _hide_save_progress_dialog(self):
+        dialog = self._save_progress_dialog
+        if _widget_alive(dialog):
+            dialog.hide()
 
     def _save_all_next(self):
         if self._is_closing or not self._saving_all:
@@ -2569,6 +2702,7 @@ class UploadSessionDialog(MaskDialogBase):
             if not item.has_ocr_fields:
                 item.confirmed_data = {}
 
+            self._update_save_progress_dialog(item.file_name)
             self._set_busy(
                 True,
                 f"Saving {index + 1} of {total}: {item.file_name}...",
@@ -2578,15 +2712,20 @@ class UploadSessionDialog(MaskDialogBase):
                 parent=self,
                 run_ocr=False,
             )
-            self._set_busy(False)
+            self._save_all_completed += 1
+            self._update_save_progress_dialog()
             self.refresh_queue()
             self.update_progress()
+            QTimer.singleShot(0, self._save_all_next)
+            return
 
         self._saving_all = False
         self._save_all_index = 0
-        self.after_save(close_after=True)
+        self._set_busy(False)
+        self.after_save(close_after=True, refresh_ui=False)
+        self._hide_save_progress_dialog()
 
-    def after_save(self, close_after=False):
+    def after_save(self, close_after=False, refresh_ui=True):
         if self._is_closing:
             return
         logger.info(
@@ -2595,16 +2734,17 @@ class UploadSessionDialog(MaskDialogBase):
             getattr(self.controller.selected_item(), "file_name", None),
             getattr(self.controller.selected_item(), "status", None),
         )
-        self.refresh_queue()
-        if (
-            self.controller.selected_item() is not None
-            and self._detail_widgets_available()
-        ):
-            self.load_detail()
-        else:
-            self.clear_detail()
-        self.update_progress()
-        self._update_action_states()
+        if refresh_ui:
+            self.refresh_queue()
+            if (
+                self.controller.selected_item() is not None
+                and self._detail_widgets_available()
+            ):
+                self.load_detail()
+            else:
+                self.clear_detail()
+            self.update_progress()
+            self._update_action_states()
         self._emit_appointment_dates_updated_if_needed()
         if close_after and not self._is_closing:
             self.accept()
@@ -2677,7 +2817,7 @@ class UploadSessionDialog(MaskDialogBase):
         ocr_active = any(item.status == "ocr" for item in self.controller.items)
         if ocr_active:
             review_state = "active"
-            review_text = "Autodetecting"
+            review_text = "Reading"
         elif review:
             review_state = "active"
             review_text = f"{review} need review"

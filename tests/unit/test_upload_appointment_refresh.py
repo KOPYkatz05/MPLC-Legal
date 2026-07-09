@@ -15,6 +15,7 @@ from services.document_service import DocumentService
 from ui.dialogs.upload_session_dialog import (
     UploadSessionController,
     UploadSessionDialog,
+    UploadSaveProgressDialog,
     supported_upload_files_from_paths,
 )
 from services.upload_pipeline import UploadPipelineResult
@@ -81,6 +82,45 @@ def test_upload_drop_zone_uses_active_language(qapp):
         parent.deleteLater()
     finally:
         i18n.set_language(original_language)
+
+
+def test_upload_dialog_uses_settings_for_auto_ocr_and_hides_save_current(qapp):
+    dialog, parent = _build_upload_dialog(qapp)
+    try:
+        buttons = {
+            button.text()
+            for button in dialog.findChildren(QPushButton)
+        }
+        assert "Save Current" not in buttons
+
+        dialog.settings_service = SimpleNamespace(
+            get_upload_auto_ocr_enabled=lambda: False
+        )
+        assert dialog._auto_ocr_enabled() is False
+
+        dialog.settings_service = SimpleNamespace(
+            get_upload_auto_ocr_enabled=lambda: True
+        )
+        assert dialog._auto_ocr_enabled() is True
+    finally:
+        dialog.deleteLater()
+        parent.deleteLater()
+
+
+def test_upload_save_progress_fill_gets_visible_width(qapp):
+    parent = QWidget()
+    parent.resize(640, 360)
+    dialog = UploadSaveProgressDialog(parent)
+    try:
+        dialog.progress_track.resize(300, 8)
+        dialog.set_progress(1, 3)
+        dialog._set_progress_fill_width(animated=False)
+
+        assert dialog.progress_fill.width() > 0
+        assert dialog.progress_fill.width() <= dialog.progress_track.width()
+    finally:
+        dialog.deleteLater()
+        parent.deleteLater()
 
 
 def _quiet_after_save_ui(dialog, monkeypatch):

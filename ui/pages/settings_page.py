@@ -281,10 +281,27 @@ class SettingsPage(QWidget):
         storage_row.addStretch()
 
         body.addLayout(storage_row)
+        layout.addWidget(card)
+
+        card, body, self.upload_behavior_title, self.upload_behavior_hint_label = (
+            self._settings_card(
+                tr("settings_upload_behavior"),
+                tr("settings_upload_behavior_hint"),
+            )
+        )
+        self.auto_ocr_check = create_check_box(
+            tr("settings_auto_ocr"),
+            "UploadAutoOcrEnabled",
+        )
+        self.auto_ocr_check.setChecked(
+            self.settings_service.get_upload_auto_ocr_enabled()
+        )
+        body.addWidget(self.auto_ocr_check)
+        layout.addWidget(card)
+
         self.general_save_btn = create_button(tr("settings_save"), "primary")
         self.general_save_btn.clicked.connect(self._save)
-        body.addWidget(self._action_row(self.general_save_btn))
-        layout.addWidget(card)
+        layout.addWidget(self._action_row(self.general_save_btn))
 
         layout.addStretch()
         return self._build_tab_scroll(content)
@@ -1370,6 +1387,9 @@ class SettingsPage(QWidget):
         self.settings_service.set_storage_root(
             self.storage_input.text().strip()
         )
+        self.settings_service.set_upload_auto_ocr_enabled(
+            self.auto_ocr_check.isChecked()
+        )
         self._save_notification_settings()
         self._save_daily_digest_settings()
         if not self._save_transfer_settings(show_saved=False):
@@ -1589,6 +1609,11 @@ class SettingsPage(QWidget):
         self.hint_label.setText(tr("settings_language_hint"))
         self.storage_label.setText(tr("settings_storage_root"))
         self.storage_hint_label.setText(tr("settings_storage_root_hint"))
+        self.upload_behavior_title.setText(tr("settings_upload_behavior"))
+        self.upload_behavior_hint_label.setText(
+            tr("settings_upload_behavior_hint")
+        )
+        self.auto_ocr_check.setText(tr("settings_auto_ocr"))
         self.browse_btn.setText(tr("settings_browse"))
         self.general_save_btn.setText(tr("settings_save"))
         self.notifications_title.setText(tr("settings_notifications_title"))

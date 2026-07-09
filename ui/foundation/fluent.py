@@ -821,6 +821,8 @@ def create_search_edit(placeholder="", object_name="SearchInput", parent=None):
     if object_name and not FLUENT_AVAILABLE:
         edit.setObjectName(object_name)
     edit.setPlaceholderText(placeholder)
+    if hasattr(edit, "setClearButtonEnabled"):
+        edit.setClearButtonEnabled(True)
     return _set_fixed_height(edit, 34)
 
 

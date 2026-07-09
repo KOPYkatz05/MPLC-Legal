@@ -1,5 +1,6 @@
 import ctypes
 import sys
+from dataclasses import dataclass
 from datetime import date
 
 from PySide6.QtCore import QEvent, QRectF, QSize, Qt, QTimer
@@ -51,6 +52,13 @@ HTTOPRIGHT = 14
 HTBOTTOM = 15
 HTBOTTOMLEFT = 16
 HTBOTTOMRIGHT = 17
+
+
+@dataclass
+class NavigationContext:
+    widget: QWidget
+    nav_key: str | None
+    state: object = None
 
 
 class _WindowsPoint(ctypes.Structure):
@@ -254,6 +262,7 @@ class MainWindow(QMainWindow):
             "workspaces": "sidebar_workspaces",
             "settings": "sidebar_settings",
         }
+        self._detail_navigation_stack = []
 
         self._setup_fallback_shell()
 
@@ -366,6 +375,12 @@ class MainWindow(QMainWindow):
         self.shell.navigation_changed.connect(self._on_nav_changed)
 
     def set_current_key(self, key):
+        current_widget = getattr(self.stack, "currentWidget", lambda: None)()
+        if (
+            current_widget is getattr(self, "detail_page", None)
+        ):
+            self._detail_navigation_stack.clear()
+
         if not (FLUENT_AVAILABLE and hasattr(self, "switchTo")):
             self.shell.set_current_key(key)
             return
@@ -423,10 +438,130 @@ class MainWindow(QMainWindow):
     def go_to_calendar(self):
         self.set_current_key("appointments")
 
+    def _nav_key_for_widget(self, widget):
+        for key, nav_widget in getattr(self, "_nav_widgets", {}).items():
+            if nav_widget is widget:
+                return key
+        return None
+
+    def _capture_current_view_context(self):
+        current_widget = getattr(self.stack, "currentWidget", lambda: None)()
+        if current_widget is None:
+            return None
+
+        nav_key = self._nav_key_for_widget(current_widget)
+        snapshot = None
+        capture = getattr(current_widget, "capture_navigation_state", None)
+        if callable(capture):
+            try:
+                snapshot = capture()
+            except Exception:
+                logger.exception(
+                    "Failed to capture navigation state for %s",
+                    current_widget.objectName() or current_widget.__class__.__name__,
+                )
+        return NavigationContext(
+            widget=current_widget,
+            nav_key=nav_key,
+            state=snapshot,
+        )
+
+    def _set_current_widget_without_reload(self, widget, nav_key=None):
+        if widget is None:
+            return
+
+        if FLUENT_AVAILABLE and hasattr(self, "switchTo"):
+            self.switchTo(widget)
+            if (
+                nav_key
+                and hasattr(self, "navigationInterface")
+                and nav_key in self._nav_widgets
+            ):
+                nav_widget = self._nav_widgets.get(nav_key)
+                if nav_widget is not None:
+                    self.navigationInterface.setCurrentItem(
+                        nav_widget.objectName()
+                    )
+            return
+
+        self.stack.setCurrentWidget(widget)
+        if (
+            nav_key
+            and hasattr(self, "shell")
+            and hasattr(self.shell, "_buttons")
+            and nav_key in self.shell._buttons
+        ):
+            self.shell._buttons[nav_key].setChecked(True)
+
+    def _restore_navigation_context(self, context):
+        if context is None:
+            self._set_current_widget_without_reload(
+                self.missionaries_page,
+                "missionaries",
+            )
+            load_data = getattr(self.missionaries_page, "load_data", None)
+            if callable(load_data):
+                load_data()
+            return
+
+        widget = getattr(context, "widget", None)
+        nav_key = getattr(context, "nav_key", None)
+        state = getattr(context, "state", None)
+        if widget is None:
+            self._restore_navigation_context(None)
+            return
+
+        self._set_current_widget_without_reload(widget, nav_key)
+
+        restore = getattr(widget, "restore_navigation_state", None)
+        if callable(restore):
+            try:
+                restore(state)
+                return
+            except Exception:
+                logger.exception(
+                    "Failed to restore navigation state for %s",
+                    widget.objectName() or widget.__class__.__name__,
+                )
+
+        load_data = getattr(widget, "load_data", None)
+        if callable(load_data):
+            try:
+                load_data()
+            except Exception:
+                logger.exception(
+                    "Failed to refresh restored page %s",
+                    widget.objectName() or widget.__class__.__name__,
+                )
+
+    def _clear_detail_navigation_stack_if_detail_visible(self):
+        if getattr(self.stack, "currentWidget", lambda: None)() is getattr(
+            self,
+            "detail_page",
+            None,
+        ):
+            self._detail_navigation_stack.clear()
+
+    def return_from_missionary_detail(self):
+        detail_page = getattr(self, "detail_page", None)
+        confirm_leave = getattr(detail_page, "confirm_leave_detail", None)
+        if callable(confirm_leave) and not confirm_leave():
+            return False
+
+        if self._detail_navigation_stack:
+            context = self._detail_navigation_stack.pop()
+        else:
+            context = None
+
+        self._restore_navigation_context(context)
+        return True
+
     def open_missionary_detail(self, missionary_id):
         try:
             from database.db import SessionLocal
             from database.models.missionary import Missionary
+
+            context = self._capture_current_view_context()
 
             session = SessionLocal()
             try:
@@ -441,6 +576,9 @@ class MainWindow(QMainWindow):
                         missionary_id,
                     )
                     return False
+
+                if context is not None:
+                    self._detail_navigation_stack.append(context)
 
                 self.detail_page.load_missionary(missionary)
                 self.stack.setCurrentWidget(self.detail_page)
@@ -468,6 +606,7 @@ class MainWindow(QMainWindow):
 
     def open_alert_workspace(self, task_id, return_key="dashboard"):
         try:
+            self._clear_detail_navigation_stack_if_detail_visible()
             self.alert_workspace_page.load_task(task_id, return_key=return_key)
             self.stack.setCurrentWidget(self.alert_workspace_page)
 
@@ -489,6 +628,7 @@ class MainWindow(QMainWindow):
 
     def open_missionary_workspace(self, missionary, workspace):
         try:
+            self._clear_detail_navigation_stack_if_detail_visible()
             self.missionary_workspace_page.load_workspace(missionary, workspace)
             self.stack.setCurrentWidget(self.missionary_workspace_page)
 

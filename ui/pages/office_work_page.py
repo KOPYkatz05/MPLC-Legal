@@ -994,10 +994,10 @@ class OfficeWorkPage(QWidget):
 
             visible_actions.append(
                 {
-                    "text": "Done",
+                    "text": "",
                     "tooltip": "Mark complete",
                     "icon": "check",
-                    "fallback": "C",
+                    "fallback": "",
                     "callback": lambda task_id=task["id"]: self._complete_task(task_id),
                 }
             )

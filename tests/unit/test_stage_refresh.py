@@ -12,7 +12,7 @@ class LoadCounter:
         self.load_count += 1
 
 
-def test_detail_stage_refresh_updates_related_pages():
+def test_detail_stage_refresh_updates_related_pages(monkeypatch):
     page = MissionaryDetailPage.__new__(MissionaryDetailPage)
     missionaries_page = LoadCounter()
     dashboard_page = LoadCounter()
@@ -24,6 +24,10 @@ def test_detail_stage_refresh_updates_related_pages():
         calendar_page=calendar_page,
         reports_page=reports_page,
     )
+    monkeypatch.setattr(
+        "ui.pages.missionary_detail_page.QTimer.singleShot",
+        lambda _delay, callback: callback(),
+    )
 
     page._refresh_stage_related_pages()
 
@@ -31,6 +35,27 @@ def test_detail_stage_refresh_updates_related_pages():
     assert dashboard_page.load_count == 1
     assert calendar_page.load_count == 1
     assert reports_page.load_count == 1
+
+
+def test_stage_advance_refresh_reloads_detail_and_related_pages(monkeypatch):
+    page = MissionaryDetailPage.__new__(MissionaryDetailPage)
+    page.current_missionary = SimpleNamespace(id=7)
+    page.reload_count = 0
+    page.related_refresh_count = 0
+
+    def reload_missionary():
+        page.reload_count += 1
+
+    def refresh_related_pages():
+        page.related_refresh_count += 1
+
+    page._reload_missionary = reload_missionary
+    page._refresh_stage_related_pages = refresh_related_pages
+
+    page._refresh_after_stage_advance()
+
+    assert page.reload_count == 1
+    assert page.related_refresh_count == 1
 
 
 def test_save_dates_refreshes_missionaries_table(monkeypatch):

@@ -1,6 +1,8 @@
 from datetime import date, timedelta
 from types import SimpleNamespace
 
+from PySide6.QtWidgets import QToolButton
+
 from ui.pages import calendar_page
 from ui.pages.calendar_page import (
     AppointmentItem,
@@ -263,6 +265,99 @@ def test_calendar_page_smoke_defaults_to_calendar_month(monkeypatch, qapp):
         assert page.findChild(calendar_page.QWidget, "CalendarModeSegment") is None
         assert page.tab_stack.currentIndex() == page.calendar_index
         assert page._selected_tab == TAB_CALENDAR
+        summary_card = page.findChild(calendar_page.QFrame, "CalendarSummaryCard")
+        assert summary_card is not None
+        assert summary_card.maximumHeight() == 62
+        assert page.calendar_layout.spacing() == 6
+        assert page.calendar_layout.contentsMargins().top() == 6
+        assert page.tab_buttons[TAB_CALENDAR].property("active") is True
+        assert not hasattr(page.tab_buttons[TAB_CALENDAR], "_calendar_indicator")
+    finally:
+        page.close()
+
+
+def test_calendar_history_renders_lazily(monkeypatch, qapp):
+    appointments = [
+        _appointment(full_name="Lazy History", days_offset=1),
+    ]
+    render_calls = []
+
+    def record_history(self):
+        render_calls.append(self._selected_tab)
+
+    monkeypatch.setattr(calendar_page.CalendarPage, "_render_history", record_history)
+    page = _build_page(monkeypatch, qapp, appointments)
+
+    try:
+        assert render_calls == []
+        assert page._history_loaded is False
+
+        page._select_tab(TAB_HISTORY)
+
+        assert render_calls == [TAB_HISTORY]
+    finally:
+        page.close()
+
+
+def test_calendar_search_change_schedules_render(monkeypatch, qapp):
+    page = _build_page(monkeypatch, qapp, [_appointment()])
+    scheduled = []
+    monkeypatch.setattr(
+        page,
+        "_schedule_calendar_render",
+        lambda: scheduled.append("calendar"),
+    )
+
+    try:
+        page._calendar_search_changed("foo")
+
+        assert scheduled == ["calendar"]
+    finally:
+        page.close()
+
+
+def test_history_search_change_schedules_render(monkeypatch, qapp):
+    page = _build_page(monkeypatch, qapp, [_appointment()])
+    scheduled = []
+    monkeypatch.setattr(
+        page,
+        "_schedule_history_render",
+        lambda: scheduled.append("history"),
+    )
+
+    try:
+        page.history_search_edit.setText("foo")
+
+        assert scheduled == ["history"]
+    finally:
+        page.close()
+
+
+def test_history_filters_are_cached(monkeypatch, qapp):
+    appointments = [
+        _appointment(full_name="Cache One", days_offset=-2),
+        _appointment(full_name="Cache Two", days_offset=3),
+    ]
+    page = _build_page(monkeypatch, qapp, appointments)
+    calls = []
+
+    def record_compute(self, appointments, *, query, type_filter, status_filter):
+        calls.append((query, type_filter, status_filter, len(appointments)))
+        return list(appointments)
+
+    monkeypatch.setattr(
+        calendar_page.CalendarPage,
+        "_compute_history_filters",
+        record_compute,
+    )
+
+    try:
+        page._select_tab(TAB_HISTORY)
+        page._apply_history_filters(page._history_appointments)
+        page._apply_history_filters(page._history_appointments)
+
+        assert len(calls) == 2
+        assert calls[0] == calls[1]
     finally:
         page.close()
 
@@ -301,12 +396,16 @@ def test_calendar_shows_tasks_planned_on_work_date(monkeypatch, qapp):
         page._anchor_date = date(2026, 6, 9)
         page._render_calendar()
 
-        task_button = page.findChild(
-            calendar_page.QWidget,
-            "CalendarTaskChipButton",
+        task_pill = page.findChild(
+            calendar_page.QFrame,
+            "CalendarTaskChip",
         )
-        assert task_button is not None
-        assert "Task -" in task_button.text()
+        assert task_pill is not None
+        assert task_pill.property("done") is False
+        task_label = task_pill.findChild(calendar_page.QLabel, "PillActionLabel")
+        assert task_label is not None
+        assert task_label.text() == "Prepare cita packet"
+        assert task_pill.findChild(QToolButton, "PillActionIconButton") is not None
     finally:
         page.close()
 
@@ -325,17 +424,253 @@ def test_calendar_task_chip_uses_active_language(monkeypatch, qapp):
         page._anchor_date = date(2026, 6, 9)
         page._render_calendar()
 
-        task_button = page.findChild(
-            calendar_page.QWidget,
-            "CalendarTaskChipButton",
+        task_pill = page.findChild(
+            calendar_page.QFrame,
+            "CalendarTaskChip",
         )
 
-        assert task_button is not None
-        assert task_button.text().startswith("Tarea - ")
-        assert task_button.toolTip().startswith("Tarea: ")
+        assert task_pill is not None
+        task_label = task_pill.findChild(calendar_page.QLabel, "PillActionLabel")
+        assert task_label is not None
+        assert task_label.text() == "Prepare cita packet"
+        assert task_pill.toolTip().startswith("Tarea: ")
+        assert task_pill.findChild(QToolButton, "PillActionIconButton") is not None
     finally:
         page.close()
         i18n.set_language(original_language)
+
+
+def test_calendar_task_row_keeps_title_only_summary(monkeypatch, qapp):
+    task = _task(
+        due_date=date(2026, 6, 20),
+        work_date=date(2026, 6, 10),
+    )
+    page = _build_page(monkeypatch, qapp, [], tasks=[task])
+
+    try:
+        row = page._make_task_row(task)
+
+        assert (
+            row.findChild(calendar_page.QLabel, "PillActionLabel").text()
+            == "Prepare cita packet"
+        )
+        assert row.minimumHeight() == 50
+        assert row.maximumHeight() == 50
+        assert row.sizePolicy().horizontalPolicy() == (
+            calendar_page.QSizePolicy.Expanding
+        )
+        subtitle = row.findChild(calendar_page.QLabel, "PillActionSubtitle")
+        assert subtitle is not None
+        assert "Due" in subtitle.text()
+        assert subtitle.sizePolicy().horizontalPolicy() == (
+            calendar_page.QSizePolicy.Ignored
+        )
+        assert row.findChild(QToolButton, "PillActionIconButton") is not None
+    finally:
+        page.close()
+
+
+def test_calendar_appointment_chip_uses_shared_pill_factory(monkeypatch, qapp):
+    appointment = _appointment(full_name="Alex", appointment_type="Interpol", days_offset=2)
+    page = _build_page(monkeypatch, qapp, [appointment])
+
+    try:
+        page._anchor_date = date(2026, 6, 9)
+        page._render_calendar()
+
+        appointment_pill = page.findChild(
+            calendar_page.QFrame,
+            "CalendarAppointmentChip",
+        )
+        assert appointment_pill is not None
+        label = appointment_pill.findChild(calendar_page.QLabel, "PillActionLabel")
+        assert label is not None
+        assert label.text().startswith("Interpol - Alex")
+    finally:
+        page.close()
+
+
+def test_calendar_month_chips_use_compact_pill_geometry(monkeypatch, qapp):
+    appointment = _appointment(full_name="Alex", appointment_type="Interpol", days_offset=2)
+    task = _task(work_date=date(2026, 6, 10))
+    page = _build_page(monkeypatch, qapp, [appointment], tasks=[task])
+
+    try:
+        page._anchor_date = date(2026, 6, 9)
+        page._render_calendar()
+
+        appointment_pill = page.findChild(
+            calendar_page.QFrame,
+            "CalendarAppointmentChip",
+        )
+        task_pill = page.findChild(
+            calendar_page.QFrame,
+            "CalendarTaskChip",
+        )
+
+        assert appointment_pill is not None
+        assert task_pill is not None
+        assert appointment_pill.height() == 30
+        assert task_pill.height() == 30
+        assert appointment_pill.sizePolicy().horizontalPolicy() == (
+            calendar_page.QSizePolicy.Maximum
+        )
+        assert task_pill.sizePolicy().horizontalPolicy() == (
+            calendar_page.QSizePolicy.Maximum
+        )
+    finally:
+        page.close()
+
+
+def test_calendar_month_cell_limits_visible_pills_when_crowded(monkeypatch, qapp):
+    appointments = [
+        _appointment(full_name=f"Alex {index}", days_offset=2)
+        for index in range(4)
+    ]
+    page = _build_page(monkeypatch, qapp, appointments)
+
+    try:
+        page._anchor_date = date(2026, 6, 9)
+        page._render_calendar()
+
+        visible_pills = page.findChildren(
+            calendar_page.QFrame,
+            "CalendarAppointmentChip",
+        )
+        overflow = page.findChild(calendar_page.QPushButton, "CalendarOverflowButton")
+
+        assert len(visible_pills) == 2
+        assert overflow is not None
+        assert overflow.text() == "+2 more"
+    finally:
+        page.close()
+
+
+def test_calendar_day_summary_dialog_tracks_anchor_geometry(monkeypatch, qapp):
+    page = _build_page(monkeypatch, qapp, [])
+    anchor = calendar_page.QFrame()
+    anchor.setGeometry(50, 80, 140, 52)
+    anchor.show()
+    qapp.processEvents()
+
+    try:
+        dialog = calendar_page.CalendarDaySummaryDialog(
+            page,
+            date(2026, 6, 12),
+            [],
+            [],
+            anchor_widget=anchor,
+        )
+        try:
+            assert isinstance(dialog, calendar_page.QMenu)
+            assert dialog.objectName() == "CalendarDaySummaryMenu"
+            panel = dialog.actions()[0].defaultWidget()
+            assert panel.objectName() == "CalendarDaySummaryPanel"
+            assert panel.width() == 500
+            scroll = panel.findChild(
+                calendar_page.QWidget,
+                "CalendarDaySummaryScroll",
+            )
+            assert scroll is not None
+            assert scroll.maximumHeight() == 300
+            assert (
+                panel.findChild(calendar_page.QPushButton, "CalendarDayCloseButton")
+                is not None
+            )
+            assert (
+                panel.findChild(calendar_page.QPushButton, "CalendarDayAddTaskButton")
+                is not None
+            )
+            geometry = dialog._anchor_geometry()
+            assert geometry is not None
+            assert geometry.width() == 140
+            assert geometry.height() == 52
+        finally:
+            dialog.close()
+    finally:
+        page.close()
+
+
+def test_calendar_day_details_use_render_cache(monkeypatch, qapp):
+    appointments = [
+        _appointment(full_name="Cache Match", days_offset=1),
+        _appointment(full_name="Other Day", days_offset=4),
+    ]
+    task = _task(work_date=date(2026, 6, 10))
+    page = _build_page(monkeypatch, qapp, appointments, tasks=[task])
+
+    captured = {}
+
+    class FakeDialog:
+        def __init__(self, calendar_page, summary_date, appts, tasks, anchor_widget=None):
+            captured["summary_date"] = summary_date
+            captured["appointments"] = list(appts)
+            captured["tasks"] = list(tasks)
+            captured["anchor_widget"] = anchor_widget
+
+        def exec(self):
+            return 0
+
+    try:
+        page._anchor_date = date(2026, 6, 9)
+        page._render_calendar()
+
+        monkeypatch.setattr(
+            page,
+            "_appointments_by_date",
+            lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                AssertionError("appointment grouping recomputed")
+            ),
+        )
+        monkeypatch.setattr(
+            page,
+            "_apply_calendar_filters",
+            lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                AssertionError("calendar filter recomputed")
+            ),
+        )
+        monkeypatch.setattr(
+            page,
+            "_tasks_by_date",
+            lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                AssertionError("task grouping recomputed")
+            ),
+        )
+        monkeypatch.setattr(calendar_page, "CalendarDaySummaryDialog", FakeDialog)
+
+        page._show_calendar_day_details(date(2026, 6, 10))
+
+        assert [item.full_name for item in captured["appointments"]] == [
+            "Cache Match",
+        ]
+        assert [item["title"] for item in captured["tasks"]] == [
+            "Prepare cita packet"
+        ]
+        assert captured["summary_date"] == date(2026, 6, 10)
+    finally:
+        page.close()
+
+
+def test_calendar_day_details_opens_menu_non_blocking(monkeypatch, qapp):
+    appointments = [_appointment(full_name="Menu Person", days_offset=1)]
+    task = _task(work_date=date(2026, 6, 10))
+    page = _build_page(monkeypatch, qapp, appointments, tasks=[task])
+
+    try:
+        page._anchor_date = date(2026, 6, 9)
+        page._render_calendar()
+
+        page._show_calendar_day_details(date(2026, 6, 10))
+        qapp.processEvents()
+
+        assert isinstance(page._day_summary_menu, calendar_page.QMenu)
+        assert page._day_summary_menu.objectName() == "CalendarDaySummaryMenu"
+
+        page._day_summary_menu.hide()
+        qapp.processEvents()
+        assert page._day_summary_menu is None
+    finally:
+        page.close()
 
 
 def test_calendar_drop_updates_work_date_only(monkeypatch, qapp):
@@ -420,8 +755,8 @@ def test_done_tasks_remain_visible_with_done_property(monkeypatch, qapp):
         page._render_calendar()
 
         chip = page.findChild(calendar_page.QWidget, "CalendarTaskChip")
-        done_button = page.findChild(calendar_page.QWidget, "CalendarTaskDoneButton")
         assert chip is not None
+        done_button = chip.findChild(QToolButton, "PillActionIconButton")
         assert chip.property("done") is True
         assert done_button is None
     finally:
@@ -647,11 +982,7 @@ def test_appointment_chip_opens_missionary_detail(monkeypatch, qapp):
             lambda missionary_id: opened.append(missionary_id),
         )
         chip = page._make_calendar_chip(appointment)
-        button = chip.findChild(
-            calendar_page.QWidget,
-            "CalendarAppointmentChipButton",
-        )
-        button.click()
+        chip.clicked.emit()
 
         assert opened == [appointment.missionary_id]
     finally:
@@ -670,9 +1001,37 @@ def test_appointment_row_click_opens_missionary_detail(monkeypatch, qapp):
             lambda missionary_id: opened.append(missionary_id),
         )
         row = page._make_appointment_row(appointment)
-        row.mousePressEvent(SimpleNamespace())
+        label = row.findChild(calendar_page.QLabel, "PillActionLabel")
+        assert row.minimumHeight() == 50
+        assert row.maximumHeight() == 50
+        assert row.sizePolicy().horizontalPolicy() == (
+            calendar_page.QSizePolicy.Expanding
+        )
+        assert label is not None
+        assert label.sizePolicy().horizontalPolicy() == (
+            calendar_page.QSizePolicy.Ignored
+        )
+        row.clicked.emit()
 
         assert opened == [appointment.missionary_id]
+    finally:
+        page.close()
+
+
+def test_appointment_row_subtitle_includes_cita_type(monkeypatch, qapp):
+    appointment = _appointment(
+        appointment_type="Biometric",
+        days_offset=-2,
+    )
+    page = _build_page(monkeypatch, qapp, [appointment])
+
+    try:
+        row = page._make_appointment_row(appointment)
+        subtitle = row.findChild(calendar_page.QLabel, "PillActionSubtitle")
+
+        assert subtitle is not None
+        assert "Biometric cita" in subtitle.text()
+        assert "Stage:" not in subtitle.text()
     finally:
         page.close()
 
@@ -709,7 +1068,7 @@ def test_collect_appointments_reads_scheduled_service_without_backfill(monkeypat
     assert CalendarPage._collect_appointments(page) == []
 
 
-def test_calendar_toolbar_is_grouped_with_calendar_body(monkeypatch, qapp):
+def test_calendar_toolbar_no_longer_shows_overdue_strip(monkeypatch, qapp):
     appointments = [
         _appointment(full_name="Overdue Person", days_offset=-10),
         _appointment(full_name="Visible Person", days_offset=1),
@@ -723,17 +1082,16 @@ def test_calendar_toolbar_is_grouped_with_calendar_body(monkeypatch, qapp):
 
         assert toolbar is not None
         assert grid is not None
-        assert overdue_strip is not None
+        assert overdue_strip is None
         assert toolbar.parentWidget() is grid.parentWidget()
 
         parent_layout = toolbar.parentWidget().layout()
-        assert parent_layout.indexOf(overdue_strip) < parent_layout.indexOf(toolbar)
         assert parent_layout.indexOf(toolbar) < parent_layout.indexOf(grid)
     finally:
         page.close()
 
 
-def test_overdue_strip_opens_actionable_scheduled_overdue_details(monkeypatch, qapp):
+def test_overdue_action_opens_history_overdue_column(monkeypatch, qapp):
     appointments = [
         _appointment(full_name="Overdue One", days_offset=-10),
         _appointment(full_name="Overdue Two", days_offset=-9),
@@ -746,28 +1104,20 @@ def test_overdue_strip_opens_actionable_scheduled_overdue_details(monkeypatch, q
     try:
         page._show_overdue_calendar_details()
 
-        assert page._selected_tab == TAB_CALENDAR
-        assert page.tab_stack.currentIndex() == page.calendar_index
-        assert page._show_overdue_detail is True
-        assert (
-            page.findChild(
-                calendar_page.QWidget,
-                "CalendarCompleteAppointmentButton",
-            )
-            is not None
-        )
-        assert (
-            page.findChild(
-                calendar_page.QWidget,
-                "CalendarMissedAppointmentButton",
-            )
-            is not None
-        )
+        assert page._selected_tab == TAB_HISTORY
+        assert page.tab_stack.currentIndex() == page.history_index
+        assert page.history_status_combo.currentData() == "overdue"
+        board = page.findChild(calendar_page.QWidget, "CalendarHistoryBoard")
+        assert board is not None
+        row = page.findChild(calendar_page.QWidget, "CalendarAppointmentRow")
+        buttons = [button.toolTip() for button in row.findChildren(QToolButton)]
+        assert "Complete" in buttons
+        assert "Missed" in buttons
     finally:
         page.close()
 
 
-def test_history_uses_focus_card_for_single_missionary_search(monkeypatch, qapp):
+def test_history_uses_two_columns_for_single_missionary_search(monkeypatch, qapp):
     appointments = [
         _appointment(
             full_name="Addelyn Sylvia Holt",
@@ -787,21 +1137,18 @@ def test_history_uses_focus_card_for_single_missionary_search(monkeypatch, qapp)
         page._select_tab(TAB_HISTORY)
         page.history_search_edit.setText("Holt")
 
-        focus_card = page.history_layout.itemAt(0).widget()
-        focus_list = focus_card.findChild(
+        board = page.history_layout.itemAt(0).widget()
+        overdue_column = board.findChildren(
             calendar_page.QWidget,
-            "CalendarHistoryFocusList",
+            "CalendarHistoryColumn",
         )
-        stale_day_card = focus_card.findChild(
-            calendar_page.QWidget,
-            "CalendarDayCard",
-        )
-        assert focus_card is not None
-        assert focus_card.objectName() == "CalendarHistoryFocusCard"
-        assert focus_list is not None
-        assert focus_card.viewLayout.count() == 1
-        assert focus_list.layout().count() == 3
-        assert stale_day_card is None
+        rows = board.findChildren(calendar_page.QWidget, "CalendarAppointmentRow")
+        assert board is not None
+        assert board.objectName() == "CalendarHistoryBoard"
+        assert len(overdue_column) == 2
+        assert [row.findChild(calendar_page.QLabel, "PillActionLabel").text() for row in rows] == [
+            "Addelyn Sylvia Holt",
+        ]
     finally:
         page.close()
 
@@ -820,20 +1167,12 @@ def test_history_rows_hide_complete_and_missed_actions_for_closed_items(monkeypa
         page._select_tab(TAB_HISTORY)
         page.history_search_edit.setText("Holt")
 
-        assert (
-            page.findChild(
-                calendar_page.QWidget,
-                "CalendarCompleteAppointmentButton",
-            )
-            is None
-        )
-        assert (
-            page.findChild(
-                calendar_page.QWidget,
-                "CalendarMissedAppointmentButton",
-            )
-            is None
-        )
+        tooltips = [
+            button.toolTip()
+            for button in page.findChildren(QToolButton)
+        ]
+        assert "Complete" not in tooltips
+        assert "Missed" not in tooltips
     finally:
         page.close()
 
@@ -1112,5 +1451,12 @@ def test_calendar_page_smoke_defaults_to_calendar_month(monkeypatch, qapp):
         assert page.findChild(calendar_page.QWidget, "CalendarModeSegment") is None
         assert page.tab_stack.currentIndex() == page.calendar_index
         assert page._selected_tab == TAB_CALENDAR
+        summary_card = page.findChild(calendar_page.QFrame, "CalendarSummaryCard")
+        assert summary_card is not None
+        assert summary_card.maximumHeight() == 62
+        assert page.calendar_layout.spacing() == 6
+        assert page.calendar_layout.contentsMargins().top() == 6
+        assert page.tab_buttons[TAB_CALENDAR].property("active") is True
+        assert not hasattr(page.tab_buttons[TAB_CALENDAR], "_calendar_indicator")
     finally:
         page.close()

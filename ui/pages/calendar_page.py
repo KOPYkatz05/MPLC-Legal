@@ -2,19 +2,28 @@ from dataclasses import dataclass
 from datetime import date, timedelta
 from itertools import groupby
 
-from PySide6.QtCore import QMimeData, QSize, Qt
-from PySide6.QtGui import QColor, QDrag, QPalette, QPixmap
+from PySide6.QtCore import (
+    QMimeData,
+    QPoint,
+    QRect,
+    QSize,
+    Qt,
+    QTimer,
+)
+from PySide6.QtGui import QColor, QCursor, QPalette
 from PySide6.QtWidgets import (
     QButtonGroup,
     QFrame,
     QGridLayout,
     QHBoxLayout,
     QLabel,
+    QMenu,
     QPushButton,
     QSizePolicy,
     QStackedWidget,
     QVBoxLayout,
     QWidget,
+    QWidgetAction,
 )
 
 try:
@@ -32,15 +41,14 @@ from services.secretary_work_service import SecretaryWorkService
 from ui.dialogs.office_work_dialogs import TaskDialog
 from ui.foundation import (
     BodyLabel,
-    DialogFooter,
     FLUENT_AVAILABLE,
     InfoLevel,
     FilterBar,
-    MaskDialogBase,
     StatCard,
     StrongBodyLabel,
     SubtitleLabel,
     create_info_badge,
+    create_pill_action_button,
     create_pill_button,
     create_button,
     create_card,
@@ -49,7 +57,6 @@ from ui.foundation import (
     create_search_edit,
     fluent_icon,
     app_icon,
-    setup_dialog_shell,
     show_message,
 )
 from utils.i18n import tr
@@ -119,41 +126,78 @@ class AppointmentItem:
     appointment_id: int = 0
 
 
-class CalendarDaySummaryDialog(MaskDialogBase):
-    def __init__(self, calendar_page, summary_date, appointments, tasks):
+class CalendarDaySummaryDialog(QMenu):
+    def __init__(
+        self,
+        calendar_page,
+        summary_date,
+        appointments,
+        tasks,
+        anchor_widget=None,
+    ):
         super().__init__(calendar_page)
         self.calendar_page = calendar_page
         self.summary_date = summary_date
         self.appointments = list(appointments)
         self.tasks = list(tasks)
+        self._anchor_widget = anchor_widget
 
-        self.setWindowTitle(summary_date.strftime("%B %d, %Y"))
-        self.setModal(True)
-        self.surface = setup_dialog_shell(
-            self,
-            surface_width=720,
-            surface_min_height=420,
-            use_masked_shell=True,
-        )
+        self.setObjectName("CalendarDaySummaryMenu")
         self._build_ui()
 
+    def _anchor_geometry(self):
+        widget = self._anchor_widget
+        if widget is None or not widget.isVisible():
+            return None
+        top_left = widget.mapToGlobal(QPoint(0, 0))
+        return QRect(top_left, widget.size())
+
+    def exec(self, *args):
+        position = args[0] if args else self._menu_position()
+        self.popup(position)
+        return None
+
+    def _menu_position(self):
+        if self._anchor_widget is None or not self._anchor_widget.isVisible():
+            return QCursor.pos()
+
+        bottom_left = self._anchor_widget.mapToGlobal(
+            QPoint(0, self._anchor_widget.height())
+        )
+        screen = self._anchor_widget.screen() or self.screen()
+        available = screen.availableGeometry()
+        menu_size = self.sizeHint()
+        x = min(bottom_left.x(), available.right() - menu_size.width())
+        x = max(available.left(), x)
+        y = bottom_left.y() + 6
+        if y + menu_size.height() > available.bottom():
+            y = self._anchor_widget.mapToGlobal(QPoint(0, 0)).y() - menu_size.height() - 6
+        y = max(available.top(), y)
+        return QPoint(x, y)
+
     def _build_ui(self):
+        panel = QWidget()
+        panel.setObjectName("CalendarDaySummaryPanel")
+        panel.setAttribute(Qt.WA_StyledBackground, True)
+        panel.setFixedWidth(500)
+
         layout = QVBoxLayout()
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
-        self.surface.setLayout(layout)
+        panel.setLayout(layout)
 
         header = QWidget()
         header.setObjectName("CalendarDaySummaryHeader")
         header.setAttribute(Qt.WA_StyledBackground, True)
         header_layout = QVBoxLayout()
-        header_layout.setContentsMargins(20, 18, 20, 14)
-        header_layout.setSpacing(6)
+        header_layout.setContentsMargins(16, 14, 16, 10)
+        header_layout.setSpacing(4)
         header.setLayout(header_layout)
 
         title = SubtitleLabel(
             self.summary_date.strftime("%A, %B %d, %Y")
         )
+        title.setObjectName("CalendarDaySummaryTitle")
         header_layout.addWidget(title)
 
         subtitle = BodyLabel(tr("calendar_day_summary_subtitle"))
@@ -165,12 +209,14 @@ class CalendarDaySummaryDialog(MaskDialogBase):
         body.setObjectName("DialogBody")
         body.setAttribute(Qt.WA_StyledBackground, True)
         body_layout = QVBoxLayout()
-        body_layout.setContentsMargins(20, 18, 20, 20)
-        body_layout.setSpacing(12)
+        body_layout.setContentsMargins(14, 12, 14, 14)
+        body_layout.setSpacing(8)
         body.setLayout(body_layout)
 
         scroll = create_scroll_area(single_direction=True)
         scroll.setObjectName("CalendarDaySummaryScroll")
+        scroll.setMinimumHeight(150)
+        scroll.setMaximumHeight(300)
         scroll.setWidget(body)
         layout.addWidget(scroll, stretch=1)
 
@@ -212,20 +258,35 @@ class CalendarDaySummaryDialog(MaskDialogBase):
             empty.setWordWrap(True)
             body_layout.addWidget(empty)
 
-        footer = DialogFooter()
-        close_btn = create_button(tr("common_close"), "secondary")
-        close_btn.clicked.connect(self.reject)
-        footer.add_action(close_btn)
+        footer = QWidget()
+        footer.setObjectName("CalendarDaySummaryFooter")
+        footer.setAttribute(Qt.WA_StyledBackground, True)
+        footer_layout = QHBoxLayout()
+        footer_layout.setContentsMargins(14, 10, 14, 12)
+        footer_layout.setSpacing(8)
+        footer.setLayout(footer_layout)
+        footer_layout.addStretch()
 
-        add_task_btn = create_button(tr("calendar_add_task"), "primary")
+        close_btn = create_pill_button(tr("common_close"))
+        close_btn.setObjectName("CalendarDayCloseButton")
+        close_btn.setMinimumWidth(74)
+        close_btn.clicked.connect(self.hide)
+        footer_layout.addWidget(close_btn)
+
+        add_task_btn = create_pill_button(tr("calendar_add_task"))
         add_task_btn.setObjectName("CalendarDayAddTaskButton")
+        add_task_btn.setMinimumWidth(92)
         add_task_btn.clicked.connect(self._add_task)
-        footer.add_action(add_task_btn)
+        footer_layout.addWidget(add_task_btn)
         layout.addWidget(footer)
+
+        action = QWidgetAction(self)
+        action.setDefaultWidget(panel)
+        self.addAction(action)
 
     def _add_task(self):
         if self.calendar_page._add_task(default_work_date=self.summary_date):
-            self.accept()
+            self.hide()
 
 
 def appointment_bucket(appt_date, today):
@@ -321,6 +382,23 @@ class CalendarPage(QWidget):
         self._calendar_type_filter = "All Types"
         self._history_exact_date = None
         self._selected_tab = TAB_CALENDAR
+        self._calendar_render_cache = {}
+        self._calendar_summary_counts = {
+            "overdue": 0,
+            "today": 0,
+            "this_week": 0,
+        }
+        self._history_loaded = False
+        self._history_filter_cache = {}
+        self._day_summary_menu = None
+        self._calendar_render_timer = QTimer(self)
+        self._calendar_render_timer.setSingleShot(True)
+        self._calendar_render_timer.setInterval(120)
+        self._calendar_render_timer.timeout.connect(self._render_calendar)
+        self._history_render_timer = QTimer(self)
+        self._history_render_timer.setSingleShot(True)
+        self._history_render_timer.setInterval(120)
+        self._history_render_timer.timeout.connect(self._render_history)
 
         self.setup_ui()
         self.load_data()
@@ -433,8 +511,8 @@ class CalendarPage(QWidget):
         content = QWidget()
         content.setObjectName("PageSurface")
         self.calendar_layout = QVBoxLayout()
-        self.calendar_layout.setContentsMargins(20, 18, 20, 20)
-        self.calendar_layout.setSpacing(18)
+        self.calendar_layout.setContentsMargins(20, 6, 20, 12)
+        self.calendar_layout.setSpacing(6)
         content.setLayout(self.calendar_layout)
 
         scroll.setWidget(content)
@@ -472,7 +550,9 @@ class CalendarPage(QWidget):
         self.history_search_edit = create_search_edit(
             tr("calendar_search_missionary")
         )
-        self.history_search_edit.textChanged.connect(self._render_history)
+        self.history_search_edit.textChanged.connect(
+            self._schedule_history_render
+        )
         self.history_filter_bar.add_filter(
             self.history_search_edit,
             stretch=1,
@@ -482,7 +562,7 @@ class CalendarPage(QWidget):
         for label, value in self._appointment_type_options():
             self.history_type_combo.addItem(label, value)
         self.history_type_combo.currentIndexChanged.connect(
-            lambda _=None: self._render_history()
+            lambda _=None: self._schedule_history_render()
         )
         self.history_filter_bar.add_filter(self.history_type_combo)
 
@@ -490,11 +570,12 @@ class CalendarPage(QWidget):
         for label, value in [
             (tr("calendar_filter_all"), "all"),
             (tr("calendar_completed"), APPOINTMENT_STATUS_COMPLETED),
+            (tr("calendar_bucket_overdue"), "overdue"),
             (tr("calendar_missed"), APPOINTMENT_STATUS_MISSED),
         ]:
             self.history_status_combo.addItem(label, value)
         self.history_status_combo.currentIndexChanged.connect(
-            lambda _=None: self._render_history()
+            lambda _=None: self._schedule_history_render()
         )
         self.history_filter_bar.add_filter(self.history_status_combo)
 
@@ -505,7 +586,7 @@ class CalendarPage(QWidget):
         ]:
             self.history_sort_combo.addItem(label, value)
         self.history_sort_combo.currentIndexChanged.connect(
-            lambda _=None: self._render_history()
+            lambda _=None: self._schedule_history_render()
         )
         self.history_filter_bar.add_filter(self.history_sort_combo)
 
@@ -530,11 +611,21 @@ class CalendarPage(QWidget):
             self._appointments = self._collect_appointments()
             self._history_appointments = self._collect_history_appointments()
             self._tasks = self._collect_tasks()
+            self._calendar_summary_counts = self._build_summary_counts(
+                self._appointments
+            )
+            self._history_filter_cache = {}
             self._count_label.setText(
                 tr("calendar_scheduled_count", count=len(self._appointments))
             )
             self._render_calendar()
-            self._render_history()
+            self._history_loaded = False
+            if self._selected_tab == TAB_HISTORY:
+                self._render_history()
+            else:
+                timer = getattr(self, "_history_render_timer", None)
+                if timer is not None:
+                    timer.stop()
         except Exception:
             logger.exception("Failed to load calendar data")
 
@@ -621,6 +712,8 @@ class CalendarPage(QWidget):
             key = TAB_CALENDAR
 
         self._selected_tab = key
+        if key == TAB_HISTORY and not self._history_loaded:
+            self._render_history()
         if self.tab_control is not None:
             current_key = getattr(self.tab_control, "currentRouteKey", lambda: None)()
             if current_key != key:
@@ -631,9 +724,24 @@ class CalendarPage(QWidget):
 
     def _refresh_tab_buttons(self):
         for tab_key, button in self.tab_buttons.items():
-            button.setProperty("active", tab_key == self._selected_tab)
+            is_active = tab_key == self._selected_tab
+            button.setProperty("active", is_active)
             button.style().unpolish(button)
             button.style().polish(button)
+
+    def _schedule_calendar_render(self):
+        timer = getattr(self, "_calendar_render_timer", None)
+        if timer is None:
+            self._render_calendar()
+            return
+        timer.start()
+
+    def _schedule_history_render(self):
+        timer = getattr(self, "_history_render_timer", None)
+        if timer is None:
+            self._render_history()
+            return
+        timer.start()
 
     def _render_calendar(self):
         self._clear_layout(self.calendar_layout)
@@ -645,34 +753,34 @@ class CalendarPage(QWidget):
         )
         visible_set = set(visible_dates)
         filtered = self._apply_calendar_filters(self._appointments)
-        visible_items = [
-            item for item in filtered if item.date in visible_set
+        task_items = self._tasks_by_date(self._tasks)
+        scheduled_filtered = [
+            item for item in filtered if item.bucket != "overdue"
         ]
-        visible_tasks = [
-            task
-            for task in self._tasks
-            if task.get("work_date") in visible_set
-        ]
-
+        self._calendar_render_cache = {
+            "anchor_date": self._anchor_date,
+            "calendar_mode": self._calendar_mode,
+            "visible_dates": visible_dates,
+            "visible_set": visible_set,
+            "filtered_appointments": scheduled_filtered,
+            "appointments_by_date": self._appointments_by_date(scheduled_filtered),
+            "tasks_by_date": task_items,
+        }
         calendar_stack = QWidget()
         calendar_stack.setObjectName("CalendarStack")
         stack_layout = QVBoxLayout()
         stack_layout.setContentsMargins(0, 0, 0, 0)
-        stack_layout.setSpacing(0)
+        stack_layout.setSpacing(6)
         calendar_stack.setLayout(stack_layout)
-
-        overdue_strip = self._build_overdue_strip(filtered, visible_set)
-        if overdue_strip is not None:
-            stack_layout.addWidget(overdue_strip)
 
         stack_layout.addWidget(self._build_calendar_toolbar())
 
         grid_card = create_card()
         grid_card.setObjectName("CalendarGridCard")
         grid_layout = QGridLayout()
-        grid_layout.setContentsMargins(14, 14, 14, 14)
-        grid_layout.setHorizontalSpacing(8)
-        grid_layout.setVerticalSpacing(8)
+        grid_layout.setContentsMargins(10, 10, 10, 10)
+        grid_layout.setHorizontalSpacing(6)
+        grid_layout.setVerticalSpacing(6)
         grid_card.setLayout(grid_layout)
 
         for column, label in enumerate(WEEKDAY_LABELS):
@@ -682,8 +790,7 @@ class CalendarPage(QWidget):
             grid_layout.addWidget(header, 0, column)
             grid_layout.setColumnStretch(column, 1)
 
-        day_items = self._appointments_by_date(visible_items)
-        task_items = self._tasks_by_date(self._tasks)
+        day_items = self._calendar_render_cache["appointments_by_date"]
         today = date.today()
         for index, day in enumerate(visible_dates):
             row = index // 7 + 1
@@ -703,19 +810,20 @@ class CalendarPage(QWidget):
 
         stack_layout.addWidget(grid_card)
 
-        if self._show_overdue_detail:
-            overdue_items = [
-                item for item in filtered if item.bucket == "overdue"
-            ]
-            if overdue_items:
-                stack_layout.addWidget(self._make_overdue_detail_card(overdue_items))
         self.calendar_layout.addWidget(calendar_stack)
+
+        has_visible_items = any(
+            day_items.get(day) for day in visible_dates
+        )
+        has_visible_tasks = any(
+            task_items.get(day) for day in visible_dates
+        )
 
         if not self._appointments and not self._tasks:
             self.calendar_layout.addWidget(
                 self._make_empty_state(tr("calendar_empty_no_scheduled"))
             )
-        elif not visible_items and not visible_tasks:
+        elif not has_visible_items and not has_visible_tasks:
             self.calendar_layout.addWidget(
                 self._make_empty_state(
                     tr("calendar_empty_range")
@@ -725,25 +833,7 @@ class CalendarPage(QWidget):
         self.calendar_layout.addStretch()
 
     def _build_summary_cards(self):
-        today = date.today()
-        week_start = week_start_for(today)
-        week_dates = {
-            week_start + timedelta(days=offset)
-            for offset in range(7)
-        }
-        counts = {
-            "overdue": 0,
-            "today": 0,
-            "this_week": 0,
-        }
-
-        for item in self._appointments:
-            if item.bucket == "overdue":
-                counts["overdue"] += 1
-            if item.date == today:
-                counts["today"] += 1
-            if item.date in week_dates:
-                counts["this_week"] += 1
+        counts = self._calendar_summary_counts
 
         row = QHBoxLayout()
         row.setSpacing(10)
@@ -756,24 +846,50 @@ class CalendarPage(QWidget):
         ]
 
         for key, value, title in cards:
-            row.addWidget(
-                StatCard(
-                    value,
-                    title,
-                    color=SUMMARY_COLORS[key],
-                )
+            card = StatCard(
+                value,
+                title,
+                color=SUMMARY_COLORS[key],
             )
+            card.setObjectName("CalendarSummaryCard")
+            card.setMinimumHeight(58)
+            card.setMaximumHeight(62)
+            card.layout().setContentsMargins(14, 6, 14, 6)
+            card.layout().setSpacing(1)
+            row.addWidget(card)
 
         wrapper = QWidget()
         wrapper.setObjectName("CalendarSummaryRow")
         wrapper.setLayout(row)
         self.calendar_layout.addWidget(wrapper)
 
+    def _build_summary_counts(self, appointments):
+        today = date.today()
+        week_start = week_start_for(today)
+        week_dates = {
+            week_start + timedelta(days=offset)
+            for offset in range(7)
+        }
+        counts = {
+            "overdue": 0,
+            "today": 0,
+            "this_week": 0,
+        }
+
+        for item in appointments:
+            if item.bucket == "overdue":
+                counts["overdue"] += 1
+            if item.date == today:
+                counts["today"] += 1
+            if item.date in week_dates:
+                counts["this_week"] += 1
+        return counts
+
     def _build_calendar_toolbar(self):
         toolbar = create_card(object_name="CalendarToolbar")
         toolbar.setObjectName("CalendarToolbar")
         layout = QHBoxLayout()
-        layout.setContentsMargins(16, 12, 16, 12)
+        layout.setContentsMargins(12, 8, 12, 8)
         layout.setSpacing(8)
         toolbar.setLayout(layout)
 
@@ -811,7 +927,9 @@ class CalendarPage(QWidget):
             getattr(self, "_calendar_search_text", "")
         )
         self.calendar_search_edit.textChanged.connect(
-            self._calendar_search_changed
+            lambda _=None: self._calendar_search_changed(
+                self.calendar_search_edit.text()
+            )
         )
         layout.addWidget(self.calendar_search_edit, stretch=1)
 
@@ -873,12 +991,8 @@ class CalendarPage(QWidget):
             filtered.append(item)
         return filtered
 
-    def _build_overdue_strip(self, appointments, visible_set):
-        overdue = [
-            item
-            for item in appointments
-            if item.bucket == "overdue" and item.date not in visible_set
-        ]
+    def _build_overdue_strip(self, overdue, visible_set):
+        _ = visible_set
         if not overdue:
             return None
 
@@ -920,8 +1034,11 @@ class CalendarPage(QWidget):
         )
         cell.setProperty("today", day == today)
         cell.mousePressEvent = (
-            lambda event, filter_date=day:
-            self._show_calendar_day_details(filter_date)
+            lambda event, filter_date=day, anchor=cell:
+            self._show_calendar_day_details(
+                filter_date,
+                anchor_widget=anchor,
+            )
         )
         cell.setAcceptDrops(True)
         cell.dragEnterEvent = (
@@ -957,7 +1074,7 @@ class CalendarPage(QWidget):
         header.addStretch()
         layout.addLayout(header)
 
-        max_visible = 3
+        max_visible = 2 if mode == CALENDAR_MODE_MONTH and total_items > 3 else 3
         visible_count = 0
         for appointment in appointments[:max_visible]:
             layout.addWidget(self._make_calendar_chip(appointment))
@@ -976,8 +1093,11 @@ class CalendarPage(QWidget):
             )
             overflow.setObjectName("CalendarOverflowButton")
             overflow.clicked.connect(
-                lambda checked=False, filter_date=day:
-                self._show_calendar_day_details(filter_date)
+                lambda checked=False, filter_date=day, anchor=overflow:
+                self._show_calendar_day_details(
+                    filter_date,
+                    anchor_widget=anchor,
+                )
             )
             layout.addWidget(overflow)
 
@@ -986,78 +1106,23 @@ class CalendarPage(QWidget):
 
     def _make_calendar_chip(self, appointment, compact=False):
         text = self._calendar_chip_text(appointment, compact)
-        chip = QFrame()
-        chip.setObjectName("CalendarAppointmentChip")
-        chip.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-
-        layout = QHBoxLayout()
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
-        chip.setLayout(layout)
-
-        bar = QFrame()
-        bar.setObjectName("CalendarAppointmentChipAccent")
-        bar.setFixedWidth(4)
-        palette = bar.palette()
-        palette.setColor(QPalette.Window, QColor(appointment.color))
-        bar.setPalette(palette)
-        bar.setAutoFillBackground(True)
-        layout.addWidget(bar)
-
-        button = create_button(text, "subtle", fixed_height=26)
-        button.setObjectName("CalendarAppointmentChipButton")
-        button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        button.setToolTip(
+        pill = create_pill_action_button(
+            text,
+            accent=None,
+            leading_icon=None,
+            drag_payload=None,
+            object_name="CalendarAppointmentChip",
+        )
+        pill.setFixedHeight(30)
+        pill.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Fixed)
+        pill.setToolTip(
             f"{appointment.type} appointment for {appointment.full_name}"
         )
-        button.clicked.connect(
+        pill.clicked.connect(
             lambda checked=False, m_id=appointment.missionary_id:
             self._open_missionary(m_id)
         )
-        layout.addWidget(button, stretch=1)
-        return chip
-
-    def _enable_task_drag(self, widget, task_id, preview_widget=None):
-        if task_id is None:
-            return
-
-        preview_widget = preview_widget or widget
-        original_press = widget.mousePressEvent
-        original_move = widget.mouseMoveEvent
-
-        def mouse_press(event):
-            if event.button() == Qt.LeftButton:
-                widget._task_drag_start_pos = event.position().toPoint()
-            original_press(event)
-
-        def mouse_move(event):
-            start_pos = getattr(widget, "_task_drag_start_pos", None)
-            if (
-                start_pos is not None
-                and event.buttons() & Qt.LeftButton
-                and (event.position().toPoint() - start_pos).manhattanLength()
-                >= 8
-            ):
-                mime = QMimeData()
-                mime.setData(TASK_DRAG_MIME, str(task_id).encode("utf-8"))
-                drag = QDrag(widget)
-                drag.setMimeData(mime)
-                pixmap = QPixmap(preview_widget.size())
-                pixmap.fill(Qt.transparent)
-                preview_widget.render(pixmap)
-                drag.setPixmap(pixmap)
-                drag.setHotSpot(
-                    widget.mapTo(
-                        preview_widget,
-                        event.position().toPoint(),
-                    )
-                )
-                drag.exec(Qt.MoveAction)
-                return
-            original_move(event)
-
-        widget.mousePressEvent = mouse_press
-        widget.mouseMoveEvent = mouse_move
+        return pill
 
     def _task_drag_enter_event(self, event):
         if event.mimeData().hasFormat(TASK_DRAG_MIME):
@@ -1086,67 +1151,6 @@ class CalendarPage(QWidget):
                 kind="warning",
             )
 
-    def _make_task_chip(self, task):
-        title = task.get("title", "")
-        text = self._task_chip_text(task)
-        chip = QFrame()
-        chip.setObjectName("CalendarTaskChip")
-        chip.setProperty("done", task.get("status") == "DONE")
-        chip.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-
-        layout = QHBoxLayout()
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
-        chip.setLayout(layout)
-
-        bar = QFrame()
-        bar.setObjectName("CalendarAppointmentChipAccent")
-        bar.setProperty(
-            "tone", "group-task" if task.get("is_group_task") else "task"
-        )
-        bar.setFixedWidth(4)
-        layout.addWidget(bar)
-
-        button = create_button(text, "subtle", fixed_height=26)
-        button.setObjectName("CalendarTaskChipButton")
-        button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        scope = task.get("scope_label") or task.get("missionary_name") or ""
-        tooltip = tr(
-            "calendar_task_tooltip",
-            title=title or tr("calendar_untitled_task"),
-        )
-        if task.get("due_date"):
-            tooltip = (
-                f"{tooltip} - "
-                f"{tr('calendar_due_date', date=task['due_date'].strftime('%b %d, %Y'))}"
-            )
-        if scope:
-            tooltip = f"{tooltip} - {scope}"
-        button.setToolTip(tooltip)
-        button.clicked.connect(
-            lambda checked=False, task_data=task:
-            self._edit_task(task_data)
-        )
-        self._enable_task_drag(chip, task.get("id"), chip)
-        self._enable_task_drag(button, task.get("id"), chip)
-        layout.addWidget(button, stretch=1)
-
-        if task.get("status") != "DONE":
-            done_btn = create_button(
-                tr("common_done"),
-                "success",
-                fixed_height=28,
-            )
-            done_btn.setObjectName("CalendarTaskDoneButton")
-            done_btn.setMinimumWidth(72)
-            done_btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
-            done_btn.clicked.connect(
-                lambda checked=False, task_id=task.get("id"):
-                self._complete_task(task_id)
-            )
-            layout.addWidget(done_btn)
-        return chip
-
     def _calendar_chip_text(self, appointment, compact=False):
         limit = 28 if compact else 24
         name = appointment.full_name
@@ -1161,7 +1165,50 @@ class CalendarPage(QWidget):
         limit = 24
         if len(title) > limit:
             title = f"{title[:limit - 3]}..."
-        return tr("calendar_task_chip", title=title)
+        return title
+
+    def _make_task_chip(self, task):
+        text = self._task_chip_text(task)
+        scope = task.get("scope_label") or task.get("missionary_name") or ""
+        tooltip = tr(
+            "calendar_task_tooltip",
+            title=task.get("title", "") or tr("calendar_untitled_task"),
+        )
+        if task.get("due_date"):
+            tooltip = (
+                f"{tooltip} - "
+                f"{tr('calendar_due_date', date=task['due_date'].strftime('%b %d, %Y'))}"
+            )
+        if scope:
+            tooltip = f"{tooltip} - {scope}"
+
+        actions = []
+        if task.get("status") not in {"DONE", "ARCHIVED"}:
+            actions.append(
+                {
+                    "tooltip": tr("common_done"),
+                    "icon": "check",
+                    "fallback": "",
+                    "callback": lambda task_id=task["id"]: self._complete_task(task_id),
+                }
+            )
+
+        pill = create_pill_action_button(
+            text,
+            actions=actions,
+            drag_payload=task.get("id"),
+            drag_mime_type=TASK_DRAG_MIME,
+            object_name="CalendarTaskChip",
+        )
+        pill.setFixedHeight(30)
+        pill.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Fixed)
+        pill.setToolTip(tooltip)
+        pill.setProperty("done", task.get("status") == "DONE")
+        pill.clicked.connect(
+            lambda checked=False, task_data=task:
+            self._edit_task(task_data)
+        )
+        return pill
 
     def _appointments_by_date(self, appointments):
         grouped = {}
@@ -1211,25 +1258,25 @@ class CalendarPage(QWidget):
         self._calendar_mode = mode
         self._calendar_detail_date = None
         self._show_overdue_detail = False
-        self._render_calendar()
+        self._schedule_calendar_render()
 
     def _go_previous_range(self):
         self._calendar_detail_date = None
         self._show_overdue_detail = False
         self._anchor_date = add_months(self._anchor_date, -1)
-        self._render_calendar()
+        self._schedule_calendar_render()
 
     def _go_next_range(self):
         self._calendar_detail_date = None
         self._show_overdue_detail = False
         self._anchor_date = add_months(self._anchor_date, 1)
-        self._render_calendar()
+        self._schedule_calendar_render()
 
     def _go_today(self):
         self._anchor_date = date.today()
         self._calendar_detail_date = None
         self._show_overdue_detail = False
-        self._render_calendar()
+        self._schedule_calendar_render()
 
     def _calendar_type_changed(self):
         self._calendar_type_filter = (
@@ -1237,34 +1284,44 @@ class CalendarPage(QWidget):
         )
         self._calendar_detail_date = None
         self._show_overdue_detail = False
-        self._render_calendar()
+        self._schedule_calendar_render()
 
     def _calendar_search_changed(self, text):
         self._calendar_search_text = text
         self._calendar_detail_date = None
         self._show_overdue_detail = False
-        self._render_calendar()
+        self._schedule_calendar_render()
 
-    def _show_calendar_day_details(self, filter_date):
+    def _show_calendar_day_details(self, filter_date, anchor_widget=None):
         self._show_overdue_detail = False
-        appointments = [
-            item
-            for item in self._apply_calendar_filters(self._appointments)
-            if item.date == filter_date
-        ]
-        tasks = self._tasks_by_date(self._tasks).get(filter_date, [])
+        cache = self._calendar_render_cache or {}
+        appointments = cache.get("appointments_by_date", {}).get(filter_date, [])
+        tasks = cache.get("tasks_by_date", {}).get(filter_date, [])
         dialog = CalendarDaySummaryDialog(
             self,
             filter_date,
             appointments,
             tasks,
+            anchor_widget=anchor_widget,
         )
+        if self._day_summary_menu is not None:
+            self._day_summary_menu.hide()
+        self._day_summary_menu = dialog
+        if hasattr(dialog, "aboutToHide"):
+            dialog.aboutToHide.connect(
+                lambda menu=dialog: self._clear_day_summary_menu(menu)
+            )
         dialog.exec()
 
-    def _show_overdue_calendar_details(self):
-        self._calendar_detail_date = None
-        self._show_overdue_detail = True
-        self._render_calendar()
+    def _clear_day_summary_menu(self, menu):
+        if self._day_summary_menu is menu:
+            self._day_summary_menu = None
+
+    def _show_overdue_calendar_details(self, anchor_widget=None):
+        _ = anchor_widget
+        self._history_exact_date = None
+        self._select_combo_value(self.history_status_combo, "overdue")
+        self._select_tab(TAB_HISTORY)
 
     def _render_history(self):
         if not hasattr(self, "history_layout"):
@@ -1273,39 +1330,83 @@ class CalendarPage(QWidget):
         self._clear_layout(self.history_layout)
         self._sync_history_date_filter_ui()
 
-        filtered = self._apply_history_filters(self._history_appointments)
-        if not self._history_appointments:
+        completed_items = [
+            item
+            for item in self._apply_history_filters(self._history_appointments)
+            if item.status == APPOINTMENT_STATUS_COMPLETED
+        ]
+        overdue_items = [
+            item
+            for item in self._apply_history_filters(self._appointments)
+            if item.bucket == "overdue"
+        ]
+        has_source_items = bool(self._history_appointments or overdue_items)
+        if not has_source_items:
             self.history_layout.addWidget(
                 self._make_empty_state(tr("calendar_history_empty"))
             )
             self.history_layout.addStretch()
+            self._history_loaded = True
             return
 
-        if not filtered:
+        if not completed_items and not overdue_items:
             self.history_layout.addWidget(
                 self._make_empty_state(tr("calendar_history_no_matches"))
             )
             self.history_layout.addStretch()
+            self._history_loaded = True
             return
 
-        unique_missionaries = {item.missionary_id for item in filtered}
-        if len(unique_missionaries) == 1:
-            self.history_layout.addWidget(
-                self._make_history_list_card(filtered)
-            )
-        else:
-            self._build_history_sections(
-                filtered,
-                self.history_sort_combo.currentData() or "asc",
-            )
+        self.history_layout.addWidget(
+            self._make_history_board(completed_items, overdue_items)
+        )
         self.history_layout.addStretch()
+        self._history_loaded = True
 
     def _apply_history_filters(self, appointments):
         query = self.history_search_edit.text().strip().casefold()
         type_filter = self.history_type_combo.currentData() or "All Types"
         status_filter = self.history_status_combo.currentData() or "all"
         sort_direction = self.history_sort_combo.currentData() or "asc"
+        cache_key = (
+            id(appointments),
+            self._history_exact_date,
+            query,
+            type_filter,
+            status_filter,
+            sort_direction,
+        )
+        cache = self._history_filter_cache
+        if cache_key in cache:
+            return cache[cache_key]
 
+        filtered = self._compute_history_filters(
+            appointments,
+            query=query,
+            type_filter=type_filter,
+            status_filter=status_filter,
+        )
+        reverse = sort_direction == "desc"
+        result = sorted(
+            filtered,
+            key=lambda item: (
+                item.date,
+                item.type,
+                item.full_name.casefold(),
+            ),
+            reverse=reverse,
+        )
+        cache[cache_key] = result
+        return result
+
+    def _compute_history_filters(
+        self,
+        appointments,
+        *,
+        query,
+        type_filter,
+        status_filter,
+    ):
         filtered = []
         for item in appointments:
             if self._history_exact_date and item.date != self._history_exact_date:
@@ -1317,22 +1418,136 @@ class CalendarPage(QWidget):
             if not self._matches_status_filter(item, status_filter):
                 continue
             filtered.append(item)
-
-        reverse = sort_direction == "desc"
-        return sorted(
-            filtered,
-            key=lambda item: (
-                item.date,
-                item.type,
-                item.full_name.casefold(),
-            ),
-            reverse=reverse,
-        )
+        return filtered
 
     def _matches_status_filter(self, item, status_filter):
         if status_filter == "all":
             return True
+        if status_filter == "overdue":
+            return item.bucket == "overdue"
         return item.status == status_filter
+
+    def _make_history_board(self, completed_items, overdue_items):
+        board = QWidget()
+        board.setObjectName("CalendarHistoryBoard")
+        layout = QHBoxLayout()
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(14)
+        board.setLayout(layout)
+
+        layout.addWidget(
+            self._make_history_column(
+                tr("calendar_completed"),
+                completed_items,
+                "success",
+                tr("calendar_history_no_completed"),
+            ),
+            stretch=1,
+        )
+        layout.addWidget(
+            self._make_history_column(
+                tr("calendar_bucket_overdue"),
+                overdue_items,
+                "danger",
+                tr("calendar_history_no_overdue"),
+            ),
+            stretch=1,
+        )
+        return board
+
+    def _make_history_column(self, title_text, appointments, tone, empty_text):
+        column = create_card(object_name="CalendarHistoryColumn")
+        column.setObjectName("CalendarHistoryColumn")
+        column.setProperty("tone", tone)
+        column.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+
+        layout = QVBoxLayout()
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        column.setLayout(layout)
+
+        header = QFrame()
+        header.setObjectName("CalendarHistoryColumnHeader")
+        header.setProperty("tone", tone)
+        header_layout = QHBoxLayout()
+        header_layout.setContentsMargins(16, 14, 16, 10)
+        header_layout.setSpacing(8)
+        header.setLayout(header_layout)
+
+        title = QLabel(title_text.upper())
+        title.setObjectName("CalendarSectionTitle")
+        title.setProperty("tone", tone)
+        header_layout.addWidget(title)
+
+        count_label = QLabel(str(len(appointments)))
+        count_label.setObjectName("CalendarSectionCount")
+        count_label.setProperty("tone", tone)
+        header_layout.addWidget(count_label)
+        header_layout.addStretch()
+        layout.addWidget(header)
+
+        body = QWidget()
+        body_layout = QVBoxLayout()
+        body_layout.setContentsMargins(10, 10, 10, 12)
+        body_layout.setSpacing(10)
+        body.setLayout(body_layout)
+        layout.addWidget(body)
+
+        if not appointments:
+            empty = QLabel(empty_text)
+            empty.setObjectName("MutedText")
+            empty.setAlignment(Qt.AlignCenter)
+            empty.setWordWrap(True)
+            empty.setContentsMargins(12, 24, 12, 24)
+            body_layout.addWidget(empty)
+            body_layout.addStretch()
+            return column
+
+        for appt_date, day_items in groupby(
+            appointments,
+            key=lambda item: item.date,
+        ):
+            body_layout.addWidget(
+                self._make_history_day_group(appt_date, list(day_items), tone)
+            )
+        body_layout.addStretch()
+        return column
+
+    def _make_history_day_group(self, appt_date, appointments, tone):
+        group = QFrame()
+        group.setObjectName("CalendarHistoryDayGroup")
+        group.setProperty("tone", tone)
+        layout = QVBoxLayout()
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(6)
+        group.setLayout(layout)
+
+        header = QHBoxLayout()
+        header.setContentsMargins(8, 8, 8, 2)
+        header.setSpacing(8)
+
+        date_label = QLabel(appt_date.strftime("%A, %B %d, %Y"))
+        date_label.setObjectName("PanelTitle")
+        header.addWidget(date_label)
+        header.addStretch()
+
+        distance_label = QLabel(appointment_status_text(appointments[0]))
+        distance_label.setObjectName("AlertBadge")
+        distance_label.setProperty("tone", appointment_tone(appointments[0]))
+        header.addWidget(distance_label)
+
+        header_wrapper = QWidget()
+        header_wrapper.setLayout(header)
+        layout.addWidget(header_wrapper)
+
+        for index, appointment in enumerate(appointments):
+            layout.addWidget(
+                self._make_appointment_row(
+                    appointment,
+                    alternate=index % 2 == 1,
+                )
+            )
+        return group
 
     def _build_history_sections(self, appointments, sort_direction="asc"):
         _ = sort_direction
@@ -1658,189 +1873,115 @@ class CalendarPage(QWidget):
         return card
 
     def _make_appointment_row(self, appointment, alternate=False):
-        row = QFrame()
-        row.setObjectName(
-            "CalendarAppointmentRowAlt"
-            if alternate
-            else "CalendarAppointmentRow"
+        subtitle_parts = [
+            tr("calendar_cita_type_meta", type=appointment.type),
+            appointment_status_text(appointment),
+        ]
+        subtitle = "  |  ".join(part for part in subtitle_parts if part)
+
+        actions = [
+            {
+                "tooltip": tr("calendar_view"),
+                "icon": "panel-top-open",
+                "fallback": "",
+                "callback": lambda _=False, m_id=appointment.missionary_id:
+                self._open_missionary(m_id),
+            }
+        ]
+        if appointment.status == APPOINTMENT_STATUS_SCHEDULED:
+            actions = [
+                {
+                    "tooltip": tr("calendar_complete"),
+                    "icon": "check",
+                    "fallback": "",
+                    "callback": lambda _=False, appt=appointment:
+                    self._complete_appointment(appt),
+                },
+                {
+                    "tooltip": tr("calendar_missed"),
+                    "icon": "x",
+                    "fallback": "",
+                    "callback": lambda _=False, appt=appointment:
+                    self._miss_appointment(appt),
+                },
+                *actions,
+            ]
+
+        row = create_pill_action_button(
+            appointment.full_name,
+            subtitle=subtitle,
+            actions=actions,
+            accent=appointment.color,
+            object_name=(
+                "CalendarAppointmentRowAlt"
+                if alternate
+                else "CalendarAppointmentRow"
+            ),
         )
         row.setProperty("tone", appointment_tone(appointment))
+        row.setFixedHeight(50)
+        row.setMinimumWidth(0)
+        row.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        row.label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        row.subtitle.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         row.setCursor(Qt.PointingHandCursor)
-        row.mousePressEvent = (
-            lambda event, m_id=appointment.missionary_id:
+        row.clicked.connect(
+            lambda _=False, m_id=appointment.missionary_id:
             self._open_missionary(m_id)
         )
-
-        layout = QHBoxLayout()
-        layout.setContentsMargins(18, 11, 18, 11)
-        layout.setSpacing(12)
-        row.setLayout(layout)
-
-        bar = QFrame()
-        bar.setObjectName("CalendarTypeBar")
-        bar.setFixedWidth(4)
-        bar.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
-        palette = bar.palette()
-        palette.setColor(QPalette.Window, QColor(appointment.color))
-        bar.setPalette(palette)
-        bar.setAutoFillBackground(True)
-        layout.addWidget(bar)
-
-        type_badge = QLabel(appointment.type)
-        type_badge.setObjectName("CalendarTypeBadge")
-        type_badge.setProperty(
-            "tone", appointment_type_tone(appointment.type)
-        )
-        type_badge.setFixedWidth(86)
-        type_badge.setAlignment(Qt.AlignCenter)
-        layout.addWidget(type_badge)
-
-        text_stack = QVBoxLayout()
-        text_stack.setContentsMargins(0, 0, 0, 0)
-        text_stack.setSpacing(3)
-
-        name_label = QLabel(appointment.full_name)
-        name_label.setObjectName("StrongText")
-        text_stack.addWidget(name_label)
-
-        meta = appointment.current_stage or tr("calendar_no_current_stage")
-        meta_label = QLabel(tr("calendar_stage_meta", value=meta))
-        meta_label.setObjectName("MiniMutedText")
-        text_stack.addWidget(meta_label)
-        layout.addLayout(text_stack, stretch=1)
-
-        due_label = QLabel(appointment_status_text(appointment))
-        due_label.setObjectName("CalendarDueText")
-        due_label.setProperty("tone", appointment_tone(appointment))
-        due_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        due_label.setMinimumWidth(110)
-        layout.addWidget(due_label)
-
-        view_btn = create_button(
-            tr("calendar_view"),
-            "subtle",
-            fixed_height=28,
-        )
-        view_btn.clicked.connect(
-            lambda _=None, m_id=appointment.missionary_id:
-            self._open_missionary(m_id)
-        )
-        if appointment.status == APPOINTMENT_STATUS_SCHEDULED:
-            complete_btn = create_button(
-                tr("calendar_complete"),
-                "success",
-                fixed_height=28,
-            )
-            complete_btn.setObjectName("CalendarCompleteAppointmentButton")
-            complete_btn.clicked.connect(
-                lambda _=None, appt=appointment:
-                self._complete_appointment(appt)
-            )
-            missed_btn = create_button(
-                tr("calendar_missed"),
-                "danger",
-                fixed_height=28,
-            )
-            missed_btn.setObjectName("CalendarMissedAppointmentButton")
-            missed_btn.clicked.connect(
-                lambda _=None, appt=appointment:
-                self._miss_appointment(appt)
-            )
-            layout.addWidget(complete_btn)
-            layout.addWidget(missed_btn)
-        layout.addWidget(view_btn)
-
         return row
 
     def _make_task_row(self, task, alternate=False):
-        row = QFrame()
-        row.setObjectName(
-            "CalendarTaskRowAlt" if alternate else "CalendarTaskRow"
+        subtitle_parts = []
+        scope = task.get("scope_label") or task.get("missionary_name")
+        if scope:
+            subtitle_parts.append(scope)
+        if task.get("due_date"):
+            subtitle_parts.append(
+                tr("calendar_due_date", date=task["due_date"].strftime("%b %d, %Y"))
+            )
+        subtitle_parts.append(task.get("status", "").title())
+        subtitle = "  |  ".join(part for part in subtitle_parts if part)
+
+        actions = []
+        if task.get("status") != "DONE":
+            actions.append(
+                {
+                    "tooltip": tr("common_done"),
+                    "icon": "check",
+                    "fallback": "",
+                    "callback": lambda _=False, task_id=task["id"]:
+                    self._complete_task(task_id),
+                }
+            )
+        actions.append(
+            {
+                "tooltip": tr("calendar_edit"),
+                "icon": "pencil",
+                "fallback": "",
+                "callback": lambda _=False, task_data=task:
+                self._edit_task(task_data),
+            }
+        )
+
+        row = create_pill_action_button(
+            task.get("title", tr("calendar_untitled_task")),
+            subtitle=subtitle,
+            actions=actions,
+            accent="#0EA5AC" if not task.get("is_group_task") else "#7A6EEC",
+            object_name=("CalendarTaskRowAlt" if alternate else "CalendarTaskRow"),
         )
         row.setProperty("done", task.get("status") == "DONE")
-
-        layout = QHBoxLayout()
-        layout.setContentsMargins(18, 11, 18, 11)
-        layout.setSpacing(12)
-        row.setLayout(layout)
-
-        bar = QFrame()
-        bar.setObjectName("CalendarTypeBar")
-        bar.setProperty(
-            "tone", "group-task" if task.get("is_group_task") else "task"
-        )
-        bar.setFixedWidth(4)
-        bar.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
-        layout.addWidget(bar)
-
-        type_badge = QLabel(tr("calendar_task"))
-        type_badge.setObjectName("CalendarTypeBadge")
-        type_badge.setProperty(
-            "tone", "group-task" if task.get("is_group_task") else "task"
-        )
-        type_badge.setFixedWidth(86)
-        type_badge.setAlignment(Qt.AlignCenter)
-        layout.addWidget(type_badge)
-
-        text_stack = QVBoxLayout()
-        text_stack.setContentsMargins(0, 0, 0, 0)
-        text_stack.setSpacing(3)
-
-        title = QLabel(task.get("title", tr("calendar_untitled_task")))
-        title.setObjectName("StrongText")
-        text_stack.addWidget(title)
-
-        context = []
-        if task.get("scope_label"):
-            context.append(task["scope_label"])
-        elif task.get("missionary_name"):
-            context.append(task["missionary_name"])
-        if task.get("project_title"):
-            context.append(task["project_title"])
-        meta_text = (
-            " - ".join(context)
-            if context
-            else tr("calendar_no_linked_record")
-        )
-        if task.get("due_date"):
-            due_text = tr(
-                "calendar_due_date",
-                date=task["due_date"].strftime("%b %d, %Y"),
-            )
-            meta_text = f"{meta_text} - {due_text}" if meta_text else due_text
-        meta = QLabel(meta_text)
-        meta.setObjectName("MiniMutedText")
-        text_stack.addWidget(meta)
-        layout.addLayout(text_stack, stretch=1)
-
-        status = QLabel(
-            f"{task.get('priority', 'NORMAL').title()} / "
-            f"{task.get('status', 'OPEN').title()}"
-        )
-        status.setObjectName("CalendarDueText")
-        status.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        status.setMinimumWidth(130)
-        layout.addWidget(status)
-
-        edit_btn = create_button(tr("calendar_edit"), "subtle", fixed_height=28)
-        edit_btn.clicked.connect(
-            lambda _=None, task_data=task:
+        row.setFixedHeight(50)
+        row.setMinimumWidth(0)
+        row.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        row.label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        row.subtitle.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        row.setCursor(Qt.PointingHandCursor)
+        row.clicked.connect(
+            lambda _=False, task_data=task:
             self._edit_task(task_data)
         )
-        if task.get("status") != "DONE":
-            done_btn = create_button(
-                tr("common_done"),
-                "success",
-                fixed_height=28,
-            )
-            done_btn.setObjectName("CalendarTaskDoneButton")
-            done_btn.clicked.connect(
-                lambda _=None, task_id=task["id"]:
-                self._complete_task(task_id)
-            )
-            layout.addWidget(done_btn)
-        layout.addWidget(edit_btn)
-
         return row
 
     def _add_task(self, default_due_date=None, default_work_date=None):
@@ -2025,6 +2166,82 @@ class CalendarPage(QWidget):
             if combo.itemData(index) == value:
                 combo.setCurrentIndex(index)
                 return
+
+    def capture_navigation_state(self):
+        return {
+            "selected_tab": self._selected_tab,
+            "calendar_mode": self._calendar_mode,
+            "anchor_date": self._anchor_date,
+            "calendar_search_text": self._calendar_search_text,
+            "calendar_type_filter": self._calendar_type_filter,
+            "calendar_detail_date": self._calendar_detail_date,
+            "show_overdue_detail": self._show_overdue_detail,
+            "history_exact_date": self._history_exact_date,
+            "history_search_text": self.history_search_edit.text() if hasattr(self, "history_search_edit") else "",
+            "history_type_filter": self.history_type_combo.currentData() if hasattr(self, "history_type_combo") else "All Types",
+            "history_status_filter": self.history_status_combo.currentData() if hasattr(self, "history_status_combo") else "all",
+            "history_sort_filter": self.history_sort_combo.currentData() if hasattr(self, "history_sort_combo") else "asc",
+        }
+
+    def restore_navigation_state(self, state):
+        if not state:
+            return
+
+        controls = (
+            getattr(self, "calendar_search_edit", None),
+            getattr(self, "calendar_type_combo", None),
+            getattr(self, "history_search_edit", None),
+            getattr(self, "history_type_combo", None),
+            getattr(self, "history_status_combo", None),
+            getattr(self, "history_sort_combo", None),
+        )
+        for control in controls:
+            if control is not None and hasattr(control, "blockSignals"):
+                control.blockSignals(True)
+
+        try:
+            self._selected_tab = state.get("selected_tab", TAB_CALENDAR)
+            self._calendar_mode = state.get("calendar_mode", CALENDAR_MODE_MONTH)
+            self._anchor_date = state.get("anchor_date", date.today())
+            self._calendar_search_text = state.get("calendar_search_text", "")
+            self._calendar_type_filter = state.get("calendar_type_filter", "All Types")
+            self._calendar_detail_date = state.get("calendar_detail_date")
+            self._show_overdue_detail = state.get("show_overdue_detail", False)
+            self._history_exact_date = state.get("history_exact_date")
+
+            if hasattr(self, "calendar_search_edit"):
+                self.calendar_search_edit.setText(self._calendar_search_text)
+            if hasattr(self, "calendar_type_combo"):
+                self._select_combo_value(
+                    self.calendar_type_combo,
+                    self._calendar_type_filter,
+                )
+            if hasattr(self, "history_search_edit"):
+                self.history_search_edit.setText(
+                    state.get("history_search_text", "")
+                )
+            if hasattr(self, "history_type_combo"):
+                self._select_combo_value(
+                    self.history_type_combo,
+                    state.get("history_type_filter", "All Types"),
+                )
+            if hasattr(self, "history_status_combo"):
+                self._select_combo_value(
+                    self.history_status_combo,
+                    state.get("history_status_filter", "all"),
+                )
+            if hasattr(self, "history_sort_combo"):
+                self._select_combo_value(
+                    self.history_sort_combo,
+                    state.get("history_sort_filter", "asc"),
+                )
+        finally:
+            for control in controls:
+                if control is not None and hasattr(control, "blockSignals"):
+                    control.blockSignals(False)
+
+        self.load_data()
+        self._select_tab(self._selected_tab)
 
     def _clear_layout(self, layout):
         while layout.count():

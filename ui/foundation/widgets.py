@@ -437,12 +437,16 @@ class PillActionButton(QFrame):
         self.label = QLabel(label, self)
         self.label.setObjectName("PillActionLabel")
         self.label.setWordWrap(False)
+        self.label.setAlignment(Qt.AlignCenter)
+        self.label.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)
         text_stack.addWidget(self.label)
         self._drag_watchers.append(self.label)
 
         self.subtitle = QLabel(subtitle, self)
         self.subtitle.setObjectName("PillActionSubtitle")
         self.subtitle.setWordWrap(False)
+        self.subtitle.setAlignment(Qt.AlignCenter)
+        self.subtitle.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)
         self.subtitle.setVisible(bool(subtitle))
         text_stack.addWidget(self.subtitle)
         self._drag_watchers.append(self.subtitle)
@@ -643,6 +647,7 @@ class AppShell(QWidget):
         self.setObjectName("CentralWidget")
         self._items = []
         self._buttons = {}
+        self._system_section_started = False
         self._icon_names = {
             "dashboard": ("VIEW_DASHBOARD", "HOME"),
             "missionaries": ("PEOPLE", "CONTACT"),
@@ -707,6 +712,11 @@ class AppShell(QWidget):
         if group and self._items and self._items[-1].group != group:
             insert_at = max(1, self.sidebar_layout.count() - 1)
             self.sidebar_layout.insertWidget(insert_at, self._nav_separator())
+
+        if group == "System" and not self._system_section_started:
+            insert_at = max(1, self.sidebar_layout.count() - 1)
+            self.sidebar_layout.insertStretch(insert_at, 1)
+            self._system_section_started = True
 
         button = QToolButton(self.sidebar)
         button.setCheckable(True)

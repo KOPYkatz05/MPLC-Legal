@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from datetime import date, datetime
 
-from PySide6.QtCore import QEvent, QRectF, QTimer, Qt
+from PySide6.QtCore import QEvent, QRectF, QTimer, Qt, QItemSelectionModel
 from PySide6.QtGui import QAction, QColor, QIcon, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
@@ -1765,6 +1765,106 @@ class MissionariesPage(QWidget):
         index = combo.findData(value)
         if index >= 0:
             combo.setCurrentIndex(index)
+
+    def capture_navigation_state(self):
+        selected_ids = self._selected_missionary_ids() if hasattr(self, "table") else []
+        current_item = self.table.currentItem() if hasattr(self, "table") else None
+        current_id = current_item.data(Qt.UserRole) if current_item is not None else None
+
+        return {
+            "search_text": self.search_input.text() if hasattr(self, "search_input") else "",
+            "stage_filter": self.stage_filter.currentData() if hasattr(self, "stage_filter") else None,
+            "nationality_filter": self.nationality_filter.currentData() if hasattr(self, "nationality_filter") else None,
+            "group_filter": self.group_filter.currentData() if hasattr(self, "group_filter") else None,
+            "selected_ids": selected_ids,
+            "current_id": current_id,
+            "vertical_scroll": self.table.verticalScrollBar().value() if hasattr(self, "table") else 0,
+            "horizontal_scroll": self.table.horizontalScrollBar().value() if hasattr(self, "table") else 0,
+        }
+
+    def restore_navigation_state(self, state):
+        if not state:
+            return
+
+        controls = (
+            getattr(self, "search_input", None),
+            getattr(self, "stage_filter", None),
+            getattr(self, "nationality_filter", None),
+            getattr(self, "group_filter", None),
+        )
+        for control in controls:
+            if control is not None and hasattr(control, "blockSignals"):
+                control.blockSignals(True)
+
+        try:
+            if hasattr(self, "search_input"):
+                self.search_input.setText(state.get("search_text", ""))
+            if hasattr(self, "stage_filter"):
+                self._set_combo_data(
+                    self.stage_filter,
+                    state.get("stage_filter"),
+                )
+            if hasattr(self, "nationality_filter"):
+                self._set_combo_data(
+                    self.nationality_filter,
+                    state.get("nationality_filter"),
+                )
+            if hasattr(self, "group_filter"):
+                self._set_combo_data(
+                    self.group_filter,
+                    state.get("group_filter"),
+                )
+        finally:
+            for control in controls:
+                if control is not None and hasattr(control, "blockSignals"):
+                    control.blockSignals(False)
+
+        self.load_data()
+
+        QTimer.singleShot(
+            0,
+            lambda snapshot=state: self._restore_table_view_state(snapshot),
+        )
+
+    def _restore_table_view_state(self, state):
+        if not hasattr(self, "table"):
+            return
+
+        selected_ids = state.get("selected_ids") or []
+        current_id = state.get("current_id")
+        row_to_focus = None
+        selection_model = self.table.selectionModel()
+        if selection_model is not None:
+            selection_model.clearSelection()
+
+        for row in range(self.table.rowCount()):
+            missionary_id = self._missionary_id_for_row(row)
+            if missionary_id is None:
+                continue
+            if missionary_id in selected_ids:
+                index = self.table.model().index(row, 0)
+                if selection_model is not None:
+                    selection_model.select(
+                        index,
+                        QItemSelectionModel.Select | QItemSelectionModel.Rows,
+                    )
+                if row_to_focus is None:
+                    row_to_focus = row
+            if row_to_focus is None and missionary_id == current_id:
+                row_to_focus = row
+
+        if row_to_focus is not None:
+            index = self.table.model().index(row_to_focus, 0)
+            self.table.setCurrentIndex(index)
+            self.table.scrollTo(index)
+
+        if hasattr(self, "table"):
+            self.table.verticalScrollBar().setValue(
+                state.get("vertical_scroll", 0)
+            )
+            self.table.horizontalScrollBar().setValue(
+                state.get("horizontal_scroll", 0)
+            )
 
     # ==========================================
     # COPY CELL STATE
