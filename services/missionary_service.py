@@ -89,6 +89,61 @@ class MissionaryService:
         finally:
             session.close()
 
+    def get_archived_missionaries(self):
+        session = SessionLocal()
+
+        try:
+            missionaries = (
+                session.query(Missionary)
+                .filter_by(status="ARCHIVED")
+                .all()
+            )
+
+            archive_reasons = self._archive_reasons_for_session(
+                session,
+                [missionary.id for missionary in missionaries],
+            )
+            for missionary in missionaries:
+                missionary.archive_reason = archive_reasons.get(
+                    missionary.id,
+                    "",
+                )
+
+            logger.info("Loaded archived missionaries")
+
+            return missionaries
+
+        except Exception:
+            logger.exception("Failed to load archived missionaries")
+            return []
+
+        finally:
+            session.close()
+
+    def _archive_reasons_for_session(self, session, missionary_ids):
+        if not missionary_ids:
+            return {}
+
+        rows = (
+            session.query(StageHistory)
+            .filter(StageHistory.missionary_id.in_(missionary_ids))
+            .filter(StageHistory.to_stage == "ARCHIVED")
+            .order_by(
+                StageHistory.missionary_id,
+                StageHistory.created_at.desc(),
+                StageHistory.id.desc(),
+            )
+            .all()
+        )
+
+        reasons = {}
+        for row in rows:
+            if row.missionary_id in reasons:
+                continue
+            reasons[row.missionary_id] = row.notes or ""
+
+        return reasons
+
     def create_missionary(
         self,
         full_name,

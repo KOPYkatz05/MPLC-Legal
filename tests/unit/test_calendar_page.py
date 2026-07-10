@@ -1084,6 +1084,23 @@ def test_calendar_toolbar_no_longer_shows_overdue_strip(monkeypatch, qapp):
         assert grid is not None
         assert overdue_strip is None
         assert toolbar.parentWidget() is grid.parentWidget()
+        nav_buttons = toolbar.findChildren(
+            calendar_page.QPushButton,
+            "CalendarNavPillButton",
+        )
+        today_button = toolbar.findChild(
+            calendar_page.QPushButton,
+            "CalendarToolbarPillButton",
+        )
+        add_button = toolbar.findChild(
+            calendar_page.QPushButton,
+            "CalendarAddTaskButton",
+        )
+        assert len(nav_buttons) == 2
+        assert all(button.width() == 34 for button in nav_buttons)
+        assert today_button is not None
+        assert today_button.text() == "Today"
+        assert add_button is not None
 
         parent_layout = toolbar.parentWidget().layout()
         assert parent_layout.indexOf(toolbar) < parent_layout.indexOf(grid)

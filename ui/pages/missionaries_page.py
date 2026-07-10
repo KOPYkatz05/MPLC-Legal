@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QPushButton,
     QRadioButton,
+    QStackedWidget,
     QTableWidgetItem,
     QVBoxLayout,
     QWidget,
@@ -263,10 +264,18 @@ MISSIONARY_COLUMNS = [
     ),
 ]
 
+ARCHIVE_REASON_COLUMN = MissionaryColumn(
+    "archive_reason",
+    "Archive Reason",
+    _text_attr("archive_reason"),
+    240,
+)
+
 COLUMN_BY_KEY = {
     column.key: column
     for column in MISSIONARY_COLUMNS
 }
+COLUMN_BY_KEY[ARCHIVE_REASON_COLUMN.key] = ARCHIVE_REASON_COLUMN
 
 DEFAULT_COLUMN_KEYS = [
     column.key
@@ -1014,10 +1023,13 @@ class MissionariesPage(QWidget):
         )
 
         self._all_missionaries = []
+        self._archived_missionaries = []
         self._filtered_missionaries = []
         self._groups_by_id = {}
         self._group_members_by_id = {}
         self._last_group_filter_data = None
+        self._selected_tab = "active"
+        self._tab_buttons = {}
         self._hovered_cell = None
         self._applying_column_widths = False
         self._visible_column_keys = (
@@ -1038,6 +1050,10 @@ class MissionariesPage(QWidget):
 
         self.table.cellEntered.connect(
             self._set_hovered_cell
+        )
+
+        self.groups_table.cellDoubleClicked.connect(
+            self._open_group_from_table
         )
 
         self.search_input.textChanged.connect(
@@ -1113,8 +1129,8 @@ class MissionariesPage(QWidget):
         workspace_layout.setSpacing(12)
         workspace.setLayout(workspace_layout)
 
-        filter_bar = FilterBar()
-        filter_bar.setObjectName("MissionariesFilterBar")
+        self.filter_bar = FilterBar()
+        self.filter_bar.setObjectName("MissionariesFilterBar")
 
         self.search_input = create_line_edit(
             "Search by ID or name..."
@@ -1165,17 +1181,17 @@ class MissionariesPage(QWidget):
             "ResultLabel"
         )
 
-        filter_bar.add_filter(self.search_input)
-        filter_bar.add_filter(self.stage_filter)
-        filter_bar.add_filter(
+        self.filter_bar.add_filter(self.search_input)
+        self.filter_bar.add_filter(self.stage_filter)
+        self.filter_bar.add_filter(
             self.nationality_filter
         )
-        filter_bar.add_filter(self.group_filter)
-        filter_bar.add_spacer()
-        filter_bar.add_filter(self.create_group_button)
-        filter_bar.add_filter(self.batch_button)
+        self.filter_bar.add_filter(self.group_filter)
+        self.filter_bar.add_spacer()
+        self.filter_bar.add_filter(self.create_group_button)
+        self.filter_bar.add_filter(self.batch_button)
 
-        workspace_layout.addWidget(filter_bar)
+        workspace_layout.addWidget(self.filter_bar)
 
         # ==========================================
         # Table
@@ -1185,6 +1201,10 @@ class MissionariesPage(QWidget):
         self.table.setMouseTracking(True)
         self.table.viewport().setMouseTracking(True)
         self.table.viewport().installEventFilter(self)
+        self.table.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.table.customContextMenuRequested.connect(
+            self._show_archive_context_menu
+        )
 
         self._configure_table_columns()
         self._create_copy_button()
@@ -1201,13 +1221,13 @@ class MissionariesPage(QWidget):
             lambda value: self._position_copy_button()
         )
 
-        table_surface = QFrame()
-        table_surface.setObjectName("MissionariesTableSurface")
-        table_surface.setAttribute(Qt.WA_StyledBackground, True)
+        self.table_surface = QFrame()
+        self.table_surface.setObjectName("MissionariesTableSurface")
+        self.table_surface.setAttribute(Qt.WA_StyledBackground, True)
         table_surface_layout = QVBoxLayout()
         table_surface_layout.setContentsMargins(0, 0, 0, 0)
         table_surface_layout.setSpacing(0)
-        table_surface.setLayout(table_surface_layout)
+        self.table_surface.setLayout(table_surface_layout)
 
         table_header = QFrame()
         table_header.setObjectName("MissionariesTableHeader")
@@ -1217,16 +1237,21 @@ class MissionariesPage(QWidget):
         table_header_layout.setSpacing(10)
         table_header.setLayout(table_header_layout)
 
-        table_title = QLabel("Missionary Records")
-        table_title.setObjectName("PanelTitle")
-        table_header_layout.addWidget(table_title)
+        self.table_title = QLabel("Missionary Records")
+        self.table_title.setObjectName("PanelTitle")
+        table_header_layout.addWidget(self.table_title)
         table_header_layout.addStretch()
         table_header_layout.addWidget(self.result_label)
 
         table_surface_layout.addWidget(table_header)
         table_surface_layout.addWidget(self.table, stretch=1)
 
-        workspace_layout.addWidget(table_surface, stretch=1)
+        self.groups_surface = self._build_groups_surface()
+
+        self.view_stack = QStackedWidget()
+        self.view_stack.addWidget(self.table_surface)
+        self.view_stack.addWidget(self.groups_surface)
+        workspace_layout.addWidget(self.view_stack, stretch=1)
         outer.addWidget(workspace, stretch=1)
 
     def _build_top_bar(self):
@@ -1247,17 +1272,24 @@ class MissionariesPage(QWidget):
         tabs_layout.setSpacing(0)
         tabs.setLayout(tabs_layout)
 
-        for text, active in [
-            ("Active", True),
-            ("Groups", False),
-            ("Archive", False),
+        self._tab_buttons = {}
+        for key, text in [
+            ("active", "Active"),
+            ("groups", "Groups"),
+            ("archive", "Archive"),
         ]:
-            label = QLabel(text)
-            label.setObjectName("MissionariesTopTab")
-            label.setProperty("active", active)
-            label.setFixedHeight(30)
-            label.setAlignment(Qt.AlignCenter)
-            tabs_layout.addWidget(label)
+            button = QPushButton(text)
+            button.setObjectName("MissionariesTopTab")
+            button.setCheckable(True)
+            button.setChecked(key == self._selected_tab)
+            button.setProperty("active", key == self._selected_tab)
+            button.setFixedHeight(30)
+            button.setCursor(Qt.PointingHandCursor)
+            button.clicked.connect(
+                lambda checked=False, tab_key=key: self._select_tab(tab_key)
+            )
+            self._tab_buttons[key] = button
+            tabs_layout.addWidget(button)
         tabs_layout.addStretch()
         layout.addWidget(tabs)
 
@@ -1320,11 +1352,29 @@ class MissionariesPage(QWidget):
         )
 
     def _visible_columns(self):
-        return [
+        columns = [
             COLUMN_BY_KEY[key]
             for key in self._visible_column_keys
             if key in COLUMN_BY_KEY
+            and (
+                key != ARCHIVE_REASON_COLUMN.key
+                or self._selected_tab == "archive"
+            )
         ]
+        if (
+            self._selected_tab == "archive"
+            and ARCHIVE_REASON_COLUMN.key not in {
+                column.key for column in columns
+            }
+        ):
+            columns.append(ARCHIVE_REASON_COLUMN)
+        return columns
+
+    def _column_dialog_columns(self):
+        if self._selected_tab == "archive":
+            return [*MISSIONARY_COLUMNS, ARCHIVE_REASON_COLUMN]
+
+        return MISSIONARY_COLUMNS
 
     def _configure_table_columns(self):
         self._applying_column_widths = True
@@ -1359,6 +1409,61 @@ class MissionariesPage(QWidget):
             self._applying_column_widths = False
 
         self._apply_column_widths()
+
+    def _build_groups_surface(self):
+        surface = QFrame()
+        surface.setObjectName("MissionariesTableSurface")
+        surface.setAttribute(Qt.WA_StyledBackground, True)
+
+        layout = QVBoxLayout()
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        surface.setLayout(layout)
+
+        header = QFrame()
+        header.setObjectName("MissionariesTableHeader")
+        header.setAttribute(Qt.WA_StyledBackground, True)
+        header_layout = QHBoxLayout()
+        header_layout.setContentsMargins(16, 10, 16, 10)
+        header_layout.setSpacing(10)
+        header.setLayout(header_layout)
+
+        self.groups_title = QLabel("Missionary Groups")
+        self.groups_title.setObjectName("PanelTitle")
+        self.groups_result_label = QLabel("")
+        self.groups_result_label.setObjectName("ResultLabel")
+        header_layout.addWidget(self.groups_title)
+        header_layout.addStretch()
+        header_layout.addWidget(self.groups_result_label)
+
+        self.groups_table = create_table()
+        self.groups_table.setColumnCount(5)
+        self.groups_table.setHorizontalHeaderLabels([
+            "Group Name",
+            "Members",
+            "Description",
+            "Type",
+            "Updated",
+        ])
+        configure_data_table(
+            self.groups_table,
+            {
+                0: QHeaderView.Interactive,
+                1: QHeaderView.ResizeToContents,
+                2: QHeaderView.Stretch,
+                3: QHeaderView.Interactive,
+                4: QHeaderView.Interactive,
+            },
+            selection_mode=QAbstractItemView.SingleSelection,
+            sorting=True,
+        )
+        self.groups_table.setColumnWidth(0, 260)
+        self.groups_table.setColumnWidth(3, 160)
+        self.groups_table.setColumnWidth(4, 150)
+
+        layout.addWidget(header)
+        layout.addWidget(self.groups_table, stretch=1)
+        return surface
 
     def _create_copy_button(self):
         self.copy_button = QPushButton(
@@ -1521,6 +1626,10 @@ class MissionariesPage(QWidget):
                 self.missionary_service
                 .get_all_missionaries()
             )
+            self._archived_missionaries = (
+                self.missionary_service
+                .get_archived_missionaries()
+            )
             self._refresh_group_filter()
 
             # Update nationality filter dropdown
@@ -1541,11 +1650,12 @@ class MissionariesPage(QWidget):
 
                     existing.append(nat)
 
-            self._apply_filters()
+            self._render_selected_tab()
 
             logger.info(
                 f"Loaded "
-                f"{len(self._all_missionaries)} "
+                f"{len(self._all_missionaries)} active and "
+                f"{len(self._archived_missionaries)} archived "
                 f"missionaries into table"
             )
 
@@ -1555,6 +1665,11 @@ class MissionariesPage(QWidget):
             )
 
     def _apply_filters(self):
+        source = (
+            self._archived_missionaries
+            if self._selected_tab == "archive"
+            else self._all_missionaries
+        )
         search_text = (
             self.search_input.text().strip().lower()
         )
@@ -1568,7 +1683,9 @@ class MissionariesPage(QWidget):
         )
 
         selected_group = (
-            self.group_filter.currentData()
+            None
+            if self._selected_tab == "archive"
+            else self.group_filter.currentData()
         )
 
         group_member_ids = set(
@@ -1577,7 +1694,7 @@ class MissionariesPage(QWidget):
 
         filtered = []
 
-        for m in self._all_missionaries:
+        for m in source:
             display_id = (
                 missionary_display_id(m).lower()
             )
@@ -1621,7 +1738,7 @@ class MissionariesPage(QWidget):
         self._populate_table(filtered)
         self._filtered_missionaries = list(filtered)
 
-        total = len(self._all_missionaries)
+        total = len(source)
 
         shown = len(filtered)
 
@@ -1634,6 +1751,94 @@ class MissionariesPage(QWidget):
             self.result_label.setText(
                 f"{shown} of {total} missionaries"
             )
+
+    def _render_selected_tab(self):
+        self._sync_tab_buttons()
+
+        if self._selected_tab == "groups":
+            self.view_stack.setCurrentWidget(self.groups_surface)
+            self.filter_bar.hide()
+            self.edit_columns_button.hide()
+            self.auto_widths_button.hide()
+            self.export_button.hide()
+            self.add_button.hide()
+            if hasattr(self, "copy_button"):
+                self.copy_button.hide()
+            self._populate_groups_table()
+            return
+
+        self.view_stack.setCurrentWidget(self.table_surface)
+        self.filter_bar.show()
+        self.edit_columns_button.show()
+        self.auto_widths_button.show()
+        self.export_button.show()
+
+        is_archive = self._selected_tab == "archive"
+        self.add_button.setVisible(not is_archive)
+        self.create_group_button.setVisible(not is_archive)
+        self.batch_button.setVisible(not is_archive)
+        self.group_filter.setVisible(not is_archive)
+        self.table_title.setText(
+            "Archived Missionary Records"
+            if is_archive
+            else "Missionary Records"
+        )
+
+        self._configure_table_columns()
+        self._apply_filters()
+
+    def _select_tab(self, tab_key):
+        if tab_key not in {"active", "groups", "archive"}:
+            return
+
+        if self._selected_tab == tab_key:
+            return
+
+        self._selected_tab = tab_key
+        self._render_selected_tab()
+
+    def _sync_tab_buttons(self):
+        for key, button in getattr(self, "_tab_buttons", {}).items():
+            active = key == self._selected_tab
+            button.setChecked(active)
+            button.setProperty("active", active)
+            button.style().unpolish(button)
+            button.style().polish(button)
+
+    def _populate_groups_table(self):
+        groups = list(self._groups_by_id.values())
+        groups.sort(key=lambda group: (group.get("name") or "").casefold())
+
+        self.groups_table.setSortingEnabled(False)
+        self.groups_table.clearContents()
+        self.groups_table.setRowCount(len(groups))
+        self.groups_table.verticalHeader().setDefaultSectionSize(40)
+
+        for row, group in enumerate(groups):
+            self.groups_table.setRowHeight(row, 40)
+            values = [
+                group.get("name", ""),
+                str(group.get("member_count", 0)),
+                group.get("description", ""),
+                self._group_type_label(group),
+                _format_date(group.get("updated_at")),
+            ]
+            for column, value in enumerate(values):
+                item = MissionaryTableItem(value or "")
+                item.setData(Qt.UserRole, group.get("id"))
+                item.setData(SORT_VALUE_ROLE, value or "")
+                item.setTextAlignment(Qt.AlignVCenter | Qt.AlignLeft)
+                self.groups_table.setItem(row, column, item)
+
+        self.groups_table.setSortingEnabled(True)
+        self.groups_result_label.setText(f"{len(groups)} groups")
+
+    @staticmethod
+    def _group_type_label(group):
+        if group.get("group_type") == "TEMPORARY_AUTOMATION":
+            return "Temporary"
+
+        return group.get("group_type") or "Manual"
 
     def _populate_table(self, missionaries):
         # Disable sorting while populating to
@@ -1720,6 +1925,8 @@ class MissionariesPage(QWidget):
             self.group_filter.setCurrentIndex(index)
         self._last_group_filter_data = self.group_filter.currentData()
         self.group_filter.blockSignals(False)
+        if hasattr(self, "groups_table"):
+            self._populate_groups_table()
 
     def _add_group_edit_action(self):
         if FLUENT_AVAILABLE:
@@ -1776,6 +1983,7 @@ class MissionariesPage(QWidget):
             "stage_filter": self.stage_filter.currentData() if hasattr(self, "stage_filter") else None,
             "nationality_filter": self.nationality_filter.currentData() if hasattr(self, "nationality_filter") else None,
             "group_filter": self.group_filter.currentData() if hasattr(self, "group_filter") else None,
+            "selected_tab": self._selected_tab,
             "selected_ids": selected_ids,
             "current_id": current_id,
             "vertical_scroll": self.table.verticalScrollBar().value() if hasattr(self, "table") else 0,
@@ -1814,6 +2022,7 @@ class MissionariesPage(QWidget):
                     self.group_filter,
                     state.get("group_filter"),
                 )
+            self._selected_tab = state.get("selected_tab", "active")
         finally:
             for control in controls:
                 if control is not None and hasattr(control, "blockSignals"):
@@ -2019,7 +2228,7 @@ class MissionariesPage(QWidget):
 
     def _edit_columns(self):
         dialog = EditMissionaryColumnsDialog(
-            MISSIONARY_COLUMNS,
+            self._column_dialog_columns(),
             self._visible_column_keys,
             parent=self,
         )
@@ -2033,7 +2242,7 @@ class MissionariesPage(QWidget):
 
         self._save_visible_column_keys()
         self._configure_table_columns()
-        self._apply_filters()
+        self._render_selected_tab()
 
     def _export_excel(self):
         missionaries = list(self._filtered_missionaries)
@@ -2104,6 +2313,15 @@ class MissionariesPage(QWidget):
         )
 
     def _export_full_group(self):
+        if self._selected_tab == "archive":
+            show_message(
+                self,
+                "Active Group Required",
+                "Full group packages are exported from the Active tab.",
+                kind="warning",
+            )
+            return
+
         group_id = self.group_filter.currentData()
 
         if not group_id:
@@ -2196,6 +2414,113 @@ class MissionariesPage(QWidget):
 
         if missionary_id is not None:
             self._open_missionary_by_id(missionary_id)
+
+    def _open_group_from_table(self, row, column):
+        _ = column
+        group_id = None
+
+        for column_index in range(self.groups_table.columnCount()):
+            item = self.groups_table.item(row, column_index)
+            if item is not None:
+                group_id = item.data(Qt.UserRole)
+                break
+
+        if group_id is None:
+            return
+
+        self._select_tab("active")
+        self._set_combo_data(self.group_filter, group_id)
+        self._last_group_filter_data = group_id
+        self._apply_filters()
+
+    def _show_archive_context_menu(self, position):
+        if self._selected_tab != "archive":
+            return
+
+        index = self.table.indexAt(position)
+        if not index.isValid():
+            return
+
+        missionary_id = self._missionary_id_for_row(index.row())
+        if missionary_id is None:
+            return
+
+        self.table.selectRow(index.row())
+
+        menu = create_menu("", self)
+
+        delete_action = QAction("Delete", self)
+        recover_action = QAction("Recover", self)
+
+        delete_action.triggered.connect(
+            lambda checked=False, mid=missionary_id:
+            self._delete_archived_missionary(mid)
+        )
+        recover_action.triggered.connect(
+            lambda checked=False, mid=missionary_id:
+            self._recover_archived_missionary(mid)
+        )
+
+        menu.addAction(delete_action)
+        menu.addAction(recover_action)
+        self._archive_context_menu = menu
+        menu.exec(self.table.viewport().mapToGlobal(position))
+
+    def _delete_archived_missionary(self, missionary_id):
+        response = show_message(
+            self,
+            "Delete Archived Missionary",
+            "Move this archived missionary to Trash?",
+            kind="question",
+            buttons="yes_no",
+        )
+
+        if response not in {1, 16384}:
+            return
+
+        try:
+            self.missionary_service.delete_missionary(missionary_id)
+            self.load_data()
+            self._refresh_trash_page()
+            show_message(
+                self,
+                "Deleted",
+                "Archived missionary moved to Trash.",
+            )
+
+        except Exception:
+            logger.exception("Failed to delete archived missionary")
+            show_message(
+                self,
+                "Delete Failed",
+                "Failed to delete archived missionary.",
+                kind="critical",
+            )
+
+    def _recover_archived_missionary(self, missionary_id):
+        try:
+            self.missionary_service.restore_missionary(missionary_id)
+            self.load_data()
+            show_message(
+                self,
+                "Recovered",
+                "Missionary recovered to Active.",
+            )
+
+        except Exception:
+            logger.exception("Failed to recover archived missionary")
+            show_message(
+                self,
+                "Recover Failed",
+                "Failed to recover archived missionary.",
+                kind="critical",
+            )
+
+    def _refresh_trash_page(self):
+        trash_page = getattr(self.main_window, "trash_page", None)
+        refresh = getattr(trash_page, "load_data", None)
+        if callable(refresh):
+            refresh()
 
     def _missionary_id_for_row(self, row):
         for column in range(self.table.columnCount()):

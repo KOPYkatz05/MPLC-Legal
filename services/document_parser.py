@@ -860,11 +860,10 @@ class DocumentParser:
         return None
 
     def _clean_carnet_number(self, value):
-        value = str(value or "").strip().upper()
-        country_prefixed = re.fullmatch(r"[A-Z]{3}(\d{6,13})", value)
-        if country_prefixed:
-            return country_prefixed.group(1)
-        return value or None
+        digits = re.sub(r"\D", "", str(value or ""))
+        if len(digits) > 9:
+            digits = digits[:9]
+        return digits or None
 
     def _parse_mrz_date(self, yymmdd):
         if not yymmdd or len(yymmdd) < 6:

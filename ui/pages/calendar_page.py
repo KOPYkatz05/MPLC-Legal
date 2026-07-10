@@ -26,11 +26,6 @@ from PySide6.QtWidgets import (
     QWidgetAction,
 )
 
-try:
-    from qfluentwidgets import TransparentToolButton
-except Exception:
-    TransparentToolButton = None
-
 from database.models.appointment import (
     APPOINTMENT_STATUS_COMPLETED,
     APPOINTMENT_STATUS_MISSED,
@@ -41,7 +36,6 @@ from services.secretary_work_service import SecretaryWorkService
 from ui.dialogs.office_work_dialogs import TaskDialog
 from ui.foundation import (
     BodyLabel,
-    FLUENT_AVAILABLE,
     InfoLevel,
     FilterBar,
     StatCard,
@@ -55,7 +49,6 @@ from ui.foundation import (
     create_combo_box,
     create_scroll_area,
     create_search_edit,
-    fluent_icon,
     app_icon,
     show_message,
 )
@@ -900,11 +893,9 @@ class CalendarPage(QWidget):
         previous_btn.clicked.connect(self._go_previous_range)
         layout.addWidget(previous_btn)
 
-        today_btn = create_button(
-            tr("calendar_today"),
-            "secondary",
-            fixed_height=30,
-        )
+        today_btn = create_pill_button(tr("calendar_today"))
+        today_btn.setObjectName("CalendarToolbarPillButton")
+        today_btn.setMinimumWidth(62)
         today_btn.clicked.connect(self._go_today)
         layout.addWidget(today_btn)
 
@@ -943,12 +934,9 @@ class CalendarPage(QWidget):
         )
         layout.addWidget(self.calendar_type_combo)
 
-        add_task_btn = create_button(
-            tr("calendar_add_task"),
-            "primary",
-            fixed_height=30,
-        )
+        add_task_btn = create_pill_button(tr("calendar_add_task"))
         add_task_btn.setObjectName("CalendarAddTaskButton")
+        add_task_btn.setMinimumWidth(84)
         add_task_btn.clicked.connect(
             lambda checked=False: self._add_task()
         )
@@ -958,23 +946,15 @@ class CalendarPage(QWidget):
 
     def _make_nav_arrow_button(self, icon_name, tooltip):
         slot = "calendar.previous" if icon_name == "LEFT_ARROW" else "calendar.next"
-        lucide = app_icon(slot, size=20)
-        if lucide is not None:
-            button = create_button("", "subtle", fixed_height=30, icon=lucide)
-            button.setFixedWidth(32)
-            button.setIconSize(QSize(18, 18))
-            button.setToolTip(tooltip)
-            return button
-
-        icon = fluent_icon(icon_name)
-        if FLUENT_AVAILABLE and TransparentToolButton is not None and icon:
-            button = TransparentToolButton(icon, self)
-            button.setFixedSize(32, 30)
-        else:
-            fallback = "<" if icon_name == "LEFT_ARROW" else ">"
-            button = create_button(fallback, "subtle", fixed_height=30)
-            button.setFixedWidth(32)
-
+        fallback = "<" if icon_name == "LEFT_ARROW" else ">"
+        button = create_pill_button(fallback)
+        button.setObjectName("CalendarNavPillButton")
+        button.setFixedSize(34, 30)
+        lucide = app_icon(slot, size=18)
+        if lucide is not None and not lucide.isNull():
+            button.setIcon(lucide)
+            button.setIconSize(QSize(16, 16))
+            button.setText("")
         button.setToolTip(tooltip)
         return button
 

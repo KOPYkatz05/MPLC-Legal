@@ -149,7 +149,7 @@ def test_recojo_ocr_lines_ignore_header_date():
     }
 
 
-def test_carne_parser_reads_compact_issue_date_and_long_ce_number():
+def test_carne_parser_reads_compact_issue_date_and_trims_mrz_ce_number():
     text = """
     Emision/Date of lssue.
     20MAR2025
@@ -168,8 +168,12 @@ def test_carne_parser_reads_compact_issue_date_and_long_ce_number():
 
     assert parsed == {
         "carnet_issue_date": date(2025, 3, 20),
-        "carnet_number": "USA0090181410",
+        "carnet_number": "009018141",
     }
+
+
+def test_carne_number_cleanup_removes_letters_and_trailing_extra_digits():
+    assert DocumentParser()._clean_carnet_number("USA0090181410") == "009018141"
 
 
 def test_biometric_layout_uses_fecha_cita_not_birth_date():

@@ -49,15 +49,20 @@ QFrame#MissionariesTabStrip {
     border-bottom: 1px solid #D9D9D9;
 }
 
-QLabel#MissionariesTopTab {
+QPushButton#MissionariesTopTab {
     color: #707070;
     font-size: 12px;
     font-weight: 400;
     padding: 0px 9px 7px 9px;
     border-bottom: 1px solid transparent;
+    border-top: 0px;
+    border-left: 0px;
+    border-right: 0px;
+    border-radius: 0px;
+    background-color: transparent;
 }
 
-QLabel#MissionariesTopTab[active="true"] {
+QPushButton#MissionariesTopTab[active="true"] {
     color: #242424;
     border-bottom: 1px solid #242424;
 }
@@ -442,33 +447,6 @@ QWidget#MissionaryDetailPage QLabel#DateEmptyOverlay {
     padding-left: 8px;
     padding-right: 8px;
     background: transparent;
-}
-
-QWidget#MissionaryDetailPage QFrame[layout_editing="true"] {
-    border: 1px dashed #0EA5AC;
-    background-color: #FBFEFE;
-}
-
-QWidget#MissionaryDetailPage QFrame[layout_editing="true"]:hover {
-    border-color: #0F5F64;
-    background-color: #F5FBFC;
-}
-
-QWidget#MissionaryDetailPage QFrame#MissionaryDetailLayoutEditBanner {
-    background-color: #EEF9FA;
-    border-top: 1px solid #BDE7EA;
-    border-bottom: 1px solid #BDE7EA;
-}
-
-QWidget#MissionaryDetailPage QLabel#MissionaryDetailLayoutEditBannerTitle {
-    color: #0F5F64;
-    font-size: 13px;
-    font-weight: 700;
-}
-
-QWidget#MissionaryDetailPage QLabel#MissionaryDetailLayoutEditBannerHint {
-    color: #3F5F63;
-    font-size: 12px;
 }
 
 QScrollArea {
@@ -3596,6 +3574,45 @@ QFrame#CalendarOverdueStrip {
     background-color: #FFFFFF;
     border: 1px solid #ECECEC;
     border-radius: 7px;
+}
+
+QPushButton#CalendarToolbarPillButton,
+QPushButton#CalendarNavPillButton,
+QPushButton#CalendarAddTaskButton {
+    border-radius: 15px;
+    padding: 0px 14px;
+    font-size: 12px;
+    font-weight: 500;
+}
+
+QPushButton#CalendarNavPillButton {
+    padding: 0px;
+    font-size: 16px;
+    font-weight: 700;
+}
+
+QPushButton#CalendarToolbarPillButton,
+QPushButton#CalendarNavPillButton {
+    background-color: #FFFFFF;
+    color: #18181B;
+    border: 1px solid #E4E4E7;
+}
+
+QPushButton#CalendarToolbarPillButton:hover,
+QPushButton#CalendarNavPillButton:hover {
+    background-color: #F9F7F4;
+    border-color: #DED8CF;
+}
+
+QPushButton#CalendarAddTaskButton {
+    background-color: #0EA5AC;
+    color: #FFFFFF;
+    border: 1px solid #0EA5AC;
+}
+
+QPushButton#CalendarAddTaskButton:hover {
+    background-color: #07919A;
+    border-color: #07919A;
 }
 
 QFrame#CalendarGridCard,
