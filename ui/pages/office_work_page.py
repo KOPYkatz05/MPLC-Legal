@@ -1,4 +1,5 @@
 from datetime import date
+import time
 
 from PySide6.QtCore import (
     QEasingCurve,
@@ -6,11 +7,13 @@ from PySide6.QtCore import (
     QParallelAnimationGroup,
     QPropertyAnimation,
     Qt,
+    QTimer,
 )
 from PySide6.QtGui import QColor, QPainter
 from PySide6.QtWidgets import (
     QButtonGroup,
     QFrame,
+    QBoxLayout,
     QHBoxLayout,
     QLabel,
     QMenu,
@@ -348,6 +351,13 @@ class OfficeWorkPage(QWidget):
         self._board_task_lanes = {}
         self._board_tasks_by_id = {}
         self._projects_loaded = False
+        self._last_load_at = 0.0
+        self._office_cache_ttl_seconds = 20.0
+        self._task_layout_class = None
+        self._task_render_timer = QTimer(self)
+        self._task_render_timer.setSingleShot(True)
+        self._task_render_timer.setInterval(140)
+        self._task_render_timer.timeout.connect(self.render_tasks)
 
         self.setup_ui()
         self.load_data()
@@ -497,7 +507,7 @@ class OfficeWorkPage(QWidget):
         self.task_filter_bar.setObjectName("OfficeWorkFilterBar")
 
         self.task_search = create_search_edit("Search tasks")
-        self.task_search.textChanged.connect(self.render_tasks)
+        self.task_search.textChanged.connect(self._schedule_task_render)
         self.task_filter_bar.add_filter(self.task_search, stretch=1)
 
         self.task_filter_button = create_pill_button("Filters")
@@ -698,6 +708,7 @@ class OfficeWorkPage(QWidget):
         self.project_filter_bar.add_filter(add_project_btn)
 
     def load_data(self):
+        """Force a refresh after task or project mutations."""
         self._run_process_automation()
         self._refresh_task_filter_options()
         self.render_tasks()
@@ -705,6 +716,30 @@ class OfficeWorkPage(QWidget):
             self.render_projects()
         else:
             self._projects_loaded = False
+        self._last_load_at = time.monotonic()
+
+    def request_refresh(self):
+        """Refresh navigation only when the Office Work cache is stale."""
+        if time.monotonic() - self._last_load_at < self._office_cache_ttl_seconds:
+            return False
+        self.load_data()
+        return True
+
+    def _schedule_task_render(self, *_args):
+        self._task_render_timer.start()
+
+    @staticmethod
+    def _task_layout_class_for_width(width):
+        return "stacked" if width < 1100 else "wide"
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        layout_class = self._task_layout_class_for_width(event.size().width())
+        if layout_class == self._task_layout_class:
+            return
+        self._task_layout_class = layout_class
+        if hasattr(self, "task_content_layout"):
+            self._schedule_task_render()
 
     def _run_process_automation(self):
         if not self.main_window:
@@ -841,12 +876,14 @@ class OfficeWorkPage(QWidget):
     def _task_board(self, board_groups):
         board = QWidget()
         board.setObjectName("OfficeWorkTaskBoard")
-        board_layout = QHBoxLayout()
+        board_layout = QBoxLayout(
+            QBoxLayout.LeftToRight
+            if self._task_layout_class_for_width(self.width()) == "wide"
+            else QBoxLayout.TopToBottom
+        )
         board_layout.setContentsMargins(0, 0, 0, 0)
         board_layout.setSpacing(12)
         board.setLayout(board_layout)
-        board_layout.addStretch(1)
-
         for key, label in (
             ("not_started", TASK_BOARD_LANE_LABELS["not_started"]),
             ("in_progress", TASK_BOARD_LANE_LABELS["in_progress"]),
@@ -856,14 +893,13 @@ class OfficeWorkPage(QWidget):
                 self._task_board_column(key, label, board_groups.get(key, []))
             )
 
-        board_layout.addStretch(1)
         return board
 
     def _task_board_column(self, lane_key, label, tasks):
         column = TaskBoardColumn(lane_key, self._handle_task_board_drop)
         column.setObjectName("OfficeWorkTaskColumn")
-        column.setFixedWidth(550)
-        column.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Preferred)
+        column.setMinimumWidth(0)
+        column.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         column_layout = QVBoxLayout()
         column_layout.setContentsMargins(10, 10, 10, 10)
         column_layout.setSpacing(8)
@@ -905,9 +941,11 @@ class OfficeWorkPage(QWidget):
 
     def _build_summary_cards(self):
         summary = self.service.summary()
-        row = QHBoxLayout()
+        row = QGridLayout()
+        row.setContentsMargins(0, 0, 0, 0)
         row.setSpacing(10)
-        for key, label, color in [
+        columns = 4 if self.width() >= 1400 else (2 if self.width() >= 700 else 1)
+        for index, (key, label, color) in enumerate([
             ("open", "To Do", "#0EA5AC"),
             ("ready", "Ready", "#2563EB"),
             ("follow_up", "Follow Up", "#7C3AED"),
@@ -916,14 +954,16 @@ class OfficeWorkPage(QWidget):
             ("overdue", "Overdue", "#DC2626"),
             ("due_today", "Due Today", "#D97706"),
             ("waiting", "Waiting", "#71717A"),
-        ]:
+        ]):
             card = StatCard(summary.get(key, 0), label, color=color)
             card.setCursor(Qt.PointingHandCursor)
             card.mousePressEvent = (
                 lambda event, preset_key=key:
                 self._summary_card_clicked(event, preset_key)
             )
-            row.addWidget(card)
+            row.addWidget(card, index // columns, index % columns)
+        for column in range(columns):
+            row.setColumnStretch(column, 1)
 
         wrapper = QWidget()
         wrapper.setObjectName("OfficeWorkSummaryRow")
@@ -1084,6 +1124,14 @@ class OfficeWorkPage(QWidget):
             drag_preview_widget=None,
             object_name="OfficeWorkTaskPill",
         )
+        card.setMinimumWidth(0)
+        card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        card.label.setMinimumWidth(0)
+        card.label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        card.subtitle.setMinimumWidth(0)
+        card.subtitle.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        card.layout().setContentsMargins(10, 6, 8, 6)
+        card.layout().setSpacing(6)
         card.clicked.connect(
             lambda task_id=task["id"]: self._open_task_workspace(task_id)
         )

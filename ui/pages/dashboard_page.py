@@ -4,12 +4,26 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QHBoxLayout,
     QGridLayout,
+    QBoxLayout,
     QLabel,
     QFrame,
+    QSizePolicy,
+    QStackedLayout,
+    QGraphicsOpacityEffect,
 )
 
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QColor, QFont, QPalette
+from PySide6.QtCore import (
+    Qt,
+    Signal,
+    QTimer,
+    QPropertyAnimation,
+    QEasingCurve,
+    QObject,
+    QRunnable,
+    QThreadPool,
+    Slot,
+)
+from PySide6.QtGui import QColor, QFont, QPalette, QPainter, QPen
 
 from services.dashboard_service import (
     DashboardService,
@@ -20,7 +34,7 @@ from services.settings_service import SettingsService
 from ui.foundation import (
     SectionTitle as SectionHeader,
     StatCard,
-    create_button,
+    create_pill_button,
     create_scroll_area,
     show_message,
 )
@@ -30,6 +44,8 @@ from utils.constants import WORKFLOW_STAGES
 from utils.i18n import tr
 
 from utils.logger import logger
+
+import time
 
 
 # ==========================================
@@ -55,6 +71,22 @@ TONE_COLORS = {
 
 def _tone_from_color(color):
     return TONE_COLORS.get(str(color or "").upper(), "neutral")
+
+
+def create_button(
+    text,
+    variant="secondary",
+    fixed_height=30,
+    parent=None,
+    icon=None,
+):
+    """Dashboard-wide pill action factory using the shared Fluent helper."""
+    button = create_pill_button(text, parent=parent, icon=icon)
+    button.setObjectName("DashboardPillButton")
+    button.setProperty("dashboardTone", variant)
+    button.setFixedHeight(fixed_height)
+    button.setMinimumWidth(0)
+    return button
 
 STAGE_LABELS = {
     "INTERPOL": "Interpol",
@@ -190,6 +222,141 @@ class ListCard(SimpleCardWidget):
         self._layout.addWidget(lbl)
 
 
+class RefreshSpinner(QWidget):
+    """Small indeterminate spinner used beside the dashboard refresh action."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._angle = 0
+        self._timer = QTimer(self)
+        self._timer.setInterval(40)
+        self._timer.timeout.connect(self._advance)
+        self.setFixedSize(18, 18)
+
+    def start(self):
+        self._angle = 0
+        self._timer.start()
+        self.update()
+
+    def stop(self):
+        self._timer.stop()
+
+    def _advance(self):
+        self._angle = (self._angle + 28) % 360
+        self.update()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        pen = QPen(QColor("#0F8D94"), 2)
+        pen.setCapStyle(Qt.RoundCap)
+        painter.setPen(pen)
+        painter.drawArc(3, 3, 12, 12, -self._angle * 16, 235 * 16)
+
+
+class RefreshStatusIndicator(QWidget):
+    """Fades from a spinning refresh indicator to a confirmation checkmark."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedSize(18, 18)
+
+        layout = QStackedLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        self._spinner = RefreshSpinner(self)
+        self._check = QLabel("✓", self)
+        self._check.setAlignment(Qt.AlignCenter)
+        self._check.setStyleSheet("color: #059669; font-size: 17px; font-weight: 600;")
+        layout.addWidget(self._spinner)
+        layout.addWidget(self._check)
+        self._layout = layout
+
+        self._spinner_opacity = QGraphicsOpacityEffect(self._spinner)
+        self._spinner.setGraphicsEffect(self._spinner_opacity)
+        self._check_opacity = QGraphicsOpacityEffect(self._check)
+        self._check.setGraphicsEffect(self._check_opacity)
+        self._fade = QPropertyAnimation(self._spinner_opacity, b"opacity", self)
+        self._fade.setDuration(150)
+        self._fade.setEasingCurve(QEasingCurve.OutCubic)
+        self._fade.finished.connect(self._show_checkmark)
+        self._check_fade = QPropertyAnimation(self._check_opacity, b"opacity", self)
+        self._check_fade.setDuration(180)
+        self._check_fade.setEasingCurve(QEasingCurve.OutCubic)
+        self.hide()
+
+    def show_loading(self):
+        self._fade.stop()
+        self._check_fade.stop()
+        self._layout.setCurrentWidget(self._spinner)
+        self._spinner_opacity.setOpacity(1.0)
+        self._check_opacity.setOpacity(0.0)
+        self.show()
+        self._spinner.start()
+
+    def show_complete(self):
+        self._spinner.stop()
+        self._fade.setStartValue(self._spinner_opacity.opacity())
+        self._fade.setEndValue(0.0)
+        self._fade.start()
+
+    def _show_checkmark(self):
+        self._layout.setCurrentWidget(self._check)
+        self._check_fade.setStartValue(0.0)
+        self._check_fade.setEndValue(1.0)
+        self._check_fade.start()
+
+
+class DashboardLoadSignals(QObject):
+    finished = Signal(int, object, object, float)
+    failed = Signal(int, str)
+
+
+class DashboardLoadWorker(QRunnable):
+    def __init__(
+        self,
+        generation,
+        service,
+        digest_service,
+        digest_options,
+        settings_service=None,
+        run_automation=False,
+    ):
+        super().__init__()
+        self.generation = generation
+        self.service = service
+        self.digest_service = digest_service
+        self.digest_options = dict(digest_options)
+        self.settings_service = settings_service
+        self.run_automation = run_automation
+        self.signals = DashboardLoadSignals()
+
+    @Slot()
+    def run(self):
+        started = time.perf_counter()
+        try:
+            if self.run_automation and self.settings_service is not None:
+                from services.process_automation_service import (
+                    ProcessAutomationService,
+                )
+
+                ProcessAutomationService(
+                    settings_service=self.settings_service
+                ).run()
+            data = self.service.get_summary()
+            digest = self.digest_service.build_digest(
+                **self.digest_options,
+                items=data.get("attention_items", []),
+            )
+            self.signals.finished.emit(
+                self.generation,
+                data,
+                digest,
+                (time.perf_counter() - started) * 1000,
+            )
+        except Exception as exc:
+            self.signals.failed.emit(self.generation, str(exc))
+
+
 # ==========================================
 # DASHBOARD PAGE
 # ==========================================
@@ -199,12 +366,27 @@ class DashboardPage(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.setObjectName("DashboardPage")
 
         self.main_window = parent
         self.service = DashboardService()
         self.digest_service = DailyDigestService()
         self.startup_alerts = []
         self._automation_running = False
+        self._show_all_priorities = False
+        self._digest_expanded = False
+        self._expiring_expanded = False
+        self._missing_expanded = False
+        self._last_dashboard_data = None
+        self._last_dashboard_digest = None
+        self._dashboard_size_class = None
+        self._refresh_generation = 0
+        self._refresh_in_flight = False
+        self._refresh_requested_after_current = False
+        self._last_refresh_at = 0.0
+        self._dashboard_cache_ttl_seconds = 30.0
+        self._dashboard_workers = {}
+        self._thread_pool = QThreadPool.globalInstance()
 
         self.setup_ui()
 
@@ -224,8 +406,6 @@ class DashboardPage(QWidget):
         header_layout.setSpacing(8)
         header_bar.setLayout(header_layout)
 
-        header_layout.addWidget(self._build_dashboard_tabs())
-
         command_row = QHBoxLayout()
         command_row.setContentsMargins(0, 0, 0, 0)
         command_row.setSpacing(12)
@@ -235,6 +415,11 @@ class DashboardPage(QWidget):
 
         self.dashboard_subtitle = QLabel(tr("dashboard_loading"))
         self.dashboard_subtitle.setObjectName("DashboardSubtitle")
+        self.dashboard_subtitle.setWordWrap(True)
+        self.dashboard_subtitle.setMinimumWidth(0)
+        self.dashboard_subtitle.setSizePolicy(
+            QSizePolicy.Ignored, QSizePolicy.Preferred
+        )
 
         title_stack = QVBoxLayout()
         title_stack.setContentsMargins(0, 0, 0, 0)
@@ -250,12 +435,14 @@ class DashboardPage(QWidget):
         self.refresh_btn.setObjectName("RefreshButton")
 
         self.refresh_btn.clicked.connect(
-            self.load_data
+            self._refresh_from_button
         )
+        self.refresh_status = RefreshStatusIndicator()
 
         command_row.addLayout(title_stack)
         command_row.addStretch()
         command_row.addWidget(self.refresh_btn)
+        command_row.addWidget(self.refresh_status)
         header_layout.addLayout(command_row)
 
         outer.addWidget(header_bar)
@@ -290,7 +477,10 @@ class DashboardPage(QWidget):
 
         outer.addWidget(scroll, stretch=1)
 
-        self.load_data()
+        if self.main_window is None:
+            self.load_data()
+        else:
+            QTimer.singleShot(0, lambda: self.request_refresh(force=False))
 
     def _build_dashboard_tabs(self):
         strip = QFrame()
@@ -318,69 +508,577 @@ class DashboardPage(QWidget):
         return strip
 
     def load_data(self):
-        self._run_process_automation()
+        """Compatibility entry point: mutations request a forced refresh."""
+        if self.main_window is None:
+            self._load_data_synchronously()
+            return
+        self.request_refresh(force=True)
 
-        # Clear existing content
+    def _load_data_synchronously(self):
+        self._run_process_automation()
+        data = self.service.get_summary()
+        self._last_dashboard_data = data
+        self._last_dashboard_digest = self._build_digest_payload(data)
+        self._last_refresh_at = time.monotonic()
+        self._render_dashboard(data)
+        logger.info("Dashboard data loaded")
+
+    def request_refresh(self, force=False):
+        now = time.monotonic()
+        cache_is_fresh = (
+            self._last_dashboard_data is not None
+            and now - self._last_refresh_at < self._dashboard_cache_ttl_seconds
+        )
+        if cache_is_fresh and not force:
+            return False
+        if self._refresh_in_flight:
+            self._refresh_requested_after_current |= bool(force)
+            return False
+
+        settings_service = (
+            self.main_window.settings_service
+            if self.main_window is not None
+            and hasattr(self.main_window, "settings_service")
+            else SettingsService()
+        )
+        digest_settings = settings_service.get_daily_digest_settings()
+        digest_options = {
+            "include_overdue": digest_settings.get("include_overdue", True),
+            "detail_level": digest_settings.get("detail_level", "balanced"),
+            "language": settings_service.get_language(),
+        }
+        self._refresh_generation += 1
+        generation = self._refresh_generation
+        self._refresh_in_flight = True
+        self._automation_running = self.main_window is not None
+        self.refresh_btn.setEnabled(False)
+        self.refresh_status.show_loading()
+
+        worker = DashboardLoadWorker(
+            generation,
+            self.service,
+            self.digest_service,
+            digest_options,
+            settings_service=settings_service,
+            run_automation=self.main_window is not None,
+        )
+        worker.signals.finished.connect(self._dashboard_refresh_finished)
+        worker.signals.failed.connect(self._dashboard_refresh_failed)
+        self._dashboard_workers[generation] = worker
+        self._thread_pool.start(worker)
+        return True
+
+    @Slot(int, object, object, float)
+    def _dashboard_refresh_finished(self, generation, data, digest, elapsed_ms):
+        self._dashboard_workers.pop(generation, None)
+        if generation != self._refresh_generation:
+            return
+        self._refresh_in_flight = False
+        self._automation_running = False
+        content_changed = (
+            data != self._last_dashboard_data
+            or digest != self._last_dashboard_digest
+        )
+        self._last_dashboard_data = data
+        self._last_dashboard_digest = digest
+        self._last_refresh_at = time.monotonic()
+        self._set_dashboard_subtitle_from_digest(digest)
+        if content_changed:
+            self._render_dashboard(data)
+        self.refresh_btn.setEnabled(True)
+        self.refresh_status.show_complete()
+        logger.info("Dashboard refreshed in %.1f ms", elapsed_ms)
+        if self._refresh_requested_after_current:
+            self._refresh_requested_after_current = False
+            self.request_refresh(force=True)
+
+    @Slot(int, str)
+    def _dashboard_refresh_failed(self, generation, message):
+        self._dashboard_workers.pop(generation, None)
+        if generation != self._refresh_generation:
+            return
+        self._refresh_in_flight = False
+        self._automation_running = False
+        self.refresh_btn.setEnabled(True)
+        self.refresh_status.show_complete()
+        logger.error("Dashboard background refresh failed: %s", message)
+
+    def _refresh_from_button(self):
+        self.request_refresh(force=True)
+
+    def _render_dashboard(self, data):
         while self.content_layout.count():
             item = self.content_layout.takeAt(0)
-
             if item.widget():
                 item.widget().deleteLater()
-
-        data = self.service.get_summary()
-
         self._build_dashboard_workspace(data)
-
         self.content_layout.addStretch()
 
-        logger.info("Dashboard data loaded")
+    def _build_digest_payload(self, data=None):
+        settings_service = (
+            self.main_window.settings_service
+            if self.main_window is not None
+            and hasattr(self.main_window, "settings_service")
+            else SettingsService()
+        )
+        settings = settings_service.get_daily_digest_settings()
+        digest = self.digest_service.build_digest(
+            include_overdue=settings.get("include_overdue", True),
+            detail_level=settings.get("detail_level", "balanced"),
+            language=settings_service.get_language(),
+            items=(data or {}).get("attention_items") if data is not None else None,
+        )
+        self._set_dashboard_subtitle_from_digest(digest)
+        return digest
+
+    @staticmethod
+    def _dashboard_class_for_width(width):
+        if width < 700:
+            return "narrow"
+        if width < 1100:
+            return "compact"
+        return "wide"
+
+    def _current_dashboard_class(self):
+        return self._dashboard_size_class or self._dashboard_class_for_width(
+            self.width()
+        )
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        size_class = self._dashboard_class_for_width(event.size().width())
+        if size_class == self._dashboard_size_class:
+            return
+        self._dashboard_size_class = size_class
+        if self._last_dashboard_data is not None:
+            QTimer.singleShot(
+                0,
+                lambda: self._render_dashboard(self._last_dashboard_data),
+            )
 
     def _build_dashboard_workspace(self, data):
         self._build_startup_alert_banner()
+        self._build_focus_metrics(data)
+        self._build_priorities(data)
 
-        workspace = QWidget()
-        workspace.setObjectName("DashboardWorkspace")
-        workspace.setAttribute(Qt.WA_StyledBackground, True)
+        middle = QWidget()
+        middle.setObjectName("DashboardMiddleRow")
+        direction = (
+            QBoxLayout.LeftToRight
+            if self._current_dashboard_class() == "wide"
+            else QBoxLayout.TopToBottom
+        )
+        middle_layout = QBoxLayout(direction)
+        middle_layout.setContentsMargins(0, 0, 0, 0)
+        middle_layout.setSpacing(12)
+        middle.setLayout(middle_layout)
+        middle_layout.addWidget(self._build_upcoming_card(data), 1)
+        middle_layout.addWidget(self._build_briefing_card(), 1)
+        self.content_layout.addWidget(middle)
 
-        layout = QHBoxLayout()
+        self._build_exception_cards(data)
+        if self._expiring_expanded:
+            self._build_expiring_section(data.get("expiring", []))
+        if self._missing_expanded:
+            self._build_missing_section(data.get("missing_docs", []))
+
+    def _build_focus_metrics(self, data):
+        wrapper = QWidget()
+        wrapper.setObjectName("DashboardFocusMetrics")
+        grid = QGridLayout()
+        grid.setContentsMargins(0, 0, 0, 0)
+        grid.setSpacing(10)
+        wrapper.setLayout(grid)
+        size_class = self._current_dashboard_class()
+        columns = 4 if size_class == "wide" else (2 if size_class == "compact" else 1)
+        metrics = [
+            (data.get("total", 0), tr("dashboard_active_missionaries"), "info"),
+            (data.get("urgent_count", 0), tr("dashboard_urgent_items"), "danger"),
+            (data.get("appointments_today", 0), tr("dashboard_appointments_today"), "info"),
+            (data.get("open_task_count", 0), tr("dashboard_open_tasks"), "success"),
+        ]
+        for index, (value, title, tone) in enumerate(metrics):
+            card = SimpleCardWidget()
+            card.setObjectName("DashboardFocusMetric")
+            card.setProperty("tone", tone)
+            layout = QVBoxLayout()
+            layout.setContentsMargins(16, 12, 16, 12)
+            layout.setSpacing(2)
+            card.setLayout(layout)
+            value_label = QLabel(str(value))
+            value_label.setObjectName("DashboardFocusMetricValue")
+            value_label.setProperty("tone", tone)
+            title_label = QLabel(title)
+            title_label.setObjectName("MutedText")
+            title_label.setWordWrap(True)
+            layout.addWidget(value_label)
+            layout.addWidget(title_label)
+            grid.addWidget(card, index // columns, index % columns)
+        self.content_layout.addWidget(wrapper)
+
+    @staticmethod
+    def _priority_identity(item):
+        if item.get("task_id"):
+            return ("task", item["task_id"])
+        if item.get("fingerprint"):
+            return ("fingerprint", item["fingerprint"])
+        return (
+            item.get("type"),
+            item.get("source_id"),
+            item.get("missionary_id"),
+            item.get("title"),
+        )
+
+    def _merged_priorities(self, data):
+        items = [dict(item) for item in data.get("attention_items", [])]
+        seen = {self._priority_identity(item) for item in items}
+        for task in data.get("recommended_tasks", []):
+            item = {
+                **task,
+                "type": "secretary_task",
+                "task_id": task.get("id"),
+                "target": "office_work",
+                "title": task.get("title") or tr("dashboard_recommended_task"),
+            }
+            identity = self._priority_identity(item)
+            if identity not in seen:
+                seen.add(identity)
+                items.append(item)
+        severity_order = {"critical": 0, "warning": 1, "info": 2}
+        return sorted(
+            items,
+            key=lambda item: (
+                severity_order.get(item.get("severity"), 9),
+                item.get("days", 9999),
+                item.get("title", ""),
+            ),
+        )
+
+    def _build_priorities(self, data):
+        self.content_layout.addWidget(SectionHeader(tr("dashboard_todays_priorities")))
+        card = SimpleCardWidget()
+        card.setObjectName("DashboardPrioritiesCard")
+        layout = QVBoxLayout()
+        layout.setContentsMargins(10, 8, 10, 10)
+        layout.setSpacing(6)
+        card.setLayout(layout)
+        priorities = self._merged_priorities(data)
+        visible = priorities if self._show_all_priorities else priorities[:6]
+        if not visible:
+            empty = QLabel(tr("dashboard_no_urgent_items"))
+            empty.setObjectName("EmptyLabel")
+            layout.addWidget(empty)
+        for item in visible:
+            layout.addWidget(self._make_priority_row(item))
+        if len(priorities) > 6:
+            toggle = create_button(
+                tr("dashboard_show_less") if self._show_all_priorities
+                else tr("dashboard_view_all_priorities", count=len(priorities)),
+                "subtle",
+                fixed_height=30,
+            )
+            toggle.setObjectName("DashboardPriorityToggle")
+            toggle.setMinimumWidth(0)
+            toggle.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+            toggle.clicked.connect(self._toggle_priorities)
+            layout.addWidget(toggle, alignment=Qt.AlignRight)
+        self.content_layout.addWidget(card)
+
+    def _make_priority_row(self, item):
+        row = QFrame()
+        row.setObjectName("DashboardPriorityRow")
+        row.setProperty("severity", item.get("severity", "info"))
+        row.setAttribute(Qt.WA_StyledBackground, True)
+        direction = (
+            QBoxLayout.TopToBottom
+            if self._current_dashboard_class() == "narrow"
+            else QBoxLayout.LeftToRight
+        )
+        layout = QBoxLayout(direction)
+        layout.setContentsMargins(12, 10, 12, 10)
+        layout.setSpacing(8)
+        row.setLayout(layout)
+        text_stack = QVBoxLayout()
+        title = QLabel(item.get("who") or item.get("missionary_name") or item.get("title", ""))
+        title.setObjectName("StrongText")
+        detail = QLabel(item.get("detail") or item.get("title", ""))
+        detail.setObjectName("MutedText")
+        detail.setWordWrap(True)
+        text_stack.addWidget(title)
+        text_stack.addWidget(detail)
+        layout.addLayout(text_stack, 1)
+        badge = QLabel(self._attention_type_label(item.get("type")))
+        badge.setObjectName("DashboardPriorityBadge")
+        badge.setProperty("severity", item.get("severity", "info"))
+        badge.setAlignment(Qt.AlignCenter)
+        layout.addWidget(badge)
+        if item.get("type") == "appointment_due":
+            complete = create_button(tr("dashboard_complete"), "success", fixed_height=28)
+            complete.clicked.connect(
+                lambda checked=False, payload=item: self._complete_attention_appointment(payload)
+            )
+            missed = create_button(tr("dashboard_missed"), "danger", fixed_height=28)
+            missed.clicked.connect(
+                lambda checked=False, payload=item: self._miss_attention_appointment(payload)
+            )
+            layout.addWidget(complete)
+            layout.addWidget(missed)
+        open_btn = create_button(self._attention_action_label(item), "secondary", fixed_height=28)
+        open_btn.clicked.connect(
+            lambda checked=False, payload=item: self._open_attention_item(payload)
+        )
+        layout.addWidget(open_btn)
+        return row
+
+    def _toggle_priorities(self):
+        self._show_all_priorities = not self._show_all_priorities
+        self._render_dashboard(self._last_dashboard_data or {})
+
+    def _build_upcoming_card(self, data):
+        card = SimpleCardWidget()
+        card.setObjectName("DashboardUpcomingCard")
+        layout = QVBoxLayout()
+        layout.setContentsMargins(16, 14, 16, 14)
+        layout.setSpacing(8)
+        card.setLayout(layout)
+        title = QLabel(tr("dashboard_upcoming"))
+        title.setObjectName("PanelTitle")
+        layout.addWidget(title)
+
+        appointments = data.get("today_appointments", [])[:3]
+        tasks = data.get("today_tasks", [])[:3]
+        appointments_label = QLabel(tr("dashboard_appointments_today"))
+        appointments_label.setObjectName("SectionHeader")
+        layout.addWidget(appointments_label)
+        if appointments:
+            for item in appointments:
+                layout.addWidget(
+                    self._make_upcoming_row(
+                        item.get("name") or tr("dashboard_office"),
+                        item.get("type") or tr("dashboard_appointment"),
+                        lambda checked=False, missionary_id=item.get("missionary_id"):
+                        self._open_missionary(missionary_id),
+                    )
+                )
+        else:
+            layout.addWidget(self._muted_label(tr("dashboard_no_appointments_today")))
+
+        tasks_label = QLabel(tr("dashboard_tasks_today"))
+        tasks_label.setObjectName("SectionHeader")
+        layout.addWidget(tasks_label)
+        if tasks:
+            for item in tasks:
+                layout.addWidget(
+                    self._make_upcoming_row(
+                        item.get("title") or tr("dashboard_task"),
+                        str(item.get("status") or "").title(),
+                        lambda checked=False, task_id=item.get("id"), title=item.get("title", ""):
+                        self._open_office_task(task_id, title),
+                    )
+                )
+        else:
+            layout.addWidget(self._muted_label(tr("dashboard_no_tasks_today")))
+
+        actions = QBoxLayout(
+            QBoxLayout.TopToBottom
+            if self._current_dashboard_class() == "narrow"
+            else QBoxLayout.LeftToRight
+        )
+        calendar_btn = create_button(tr("dashboard_action_open_calendar"), "subtle", fixed_height=28)
+        calendar_btn.clicked.connect(self._open_calendar)
+        office_btn = create_button(tr("dashboard_action_office_work"), "subtle", fixed_height=28)
+        office_btn.clicked.connect(lambda: self._open_office_task(None, ""))
+        actions.addWidget(calendar_btn)
+        actions.addWidget(office_btn)
+        if self._current_dashboard_class() != "narrow":
+            actions.addStretch()
+        layout.addLayout(actions)
+        return card
+
+    def _make_upcoming_row(self, title_text, detail_text, callback):
+        row = QFrame()
+        row.setObjectName("DashboardUpcomingRow")
+        row.setAttribute(Qt.WA_StyledBackground, True)
+        direction = (
+            QBoxLayout.TopToBottom
+            if self._current_dashboard_class() == "narrow"
+            else QBoxLayout.LeftToRight
+        )
+        layout = QBoxLayout(direction)
+        layout.setContentsMargins(10, 8, 10, 8)
+        layout.setSpacing(8)
+        row.setLayout(layout)
+        title = QLabel(title_text)
+        title.setObjectName("StrongText")
+        title.setWordWrap(True)
+        detail = QLabel(detail_text)
+        detail.setObjectName("MutedText")
+        detail.setWordWrap(True)
+        open_btn = create_button(tr("dashboard_action_open"), "subtle", fixed_height=26)
+        open_btn.clicked.connect(callback)
+        layout.addWidget(title, 2)
+        layout.addWidget(detail, 1)
+        layout.addWidget(open_btn)
+        return row
+
+    @staticmethod
+    def _muted_label(text):
+        label = QLabel(text)
+        label.setObjectName("MutedText")
+        label.setWordWrap(True)
+        return label
+
+    def _build_briefing_card(self):
+        digest = self._last_dashboard_digest or {}
+        card = SimpleCardWidget()
+        card.setObjectName("DashboardBriefingCard")
+        layout = QVBoxLayout()
+        layout.setContentsMargins(16, 14, 16, 14)
+        layout.setSpacing(8)
+        card.setLayout(layout)
+        title = QLabel(tr("dashboard_daily_briefing"))
+        title.setObjectName("PanelTitle")
+        layout.addWidget(title)
+
+        items = self._flatten_digest_items(digest)
+        if items:
+            for item in items[:3]:
+                row = QFrame()
+                row.setObjectName("DashboardBriefingRow")
+                row.setProperty("severity", item.get("severity", "info"))
+                row_layout = QVBoxLayout()
+                row_layout.setContentsMargins(10, 8, 10, 8)
+                row_layout.setSpacing(2)
+                row.setLayout(row_layout)
+                headline = QLabel(item.get("action") or tr("dashboard_review_due_work"))
+                headline.setObjectName("StrongText")
+                headline.setWordWrap(True)
+                context = QLabel(item.get("who") or item.get("timing") or "")
+                context.setObjectName("MutedText")
+                context.setWordWrap(True)
+                row_layout.addWidget(headline)
+                row_layout.addWidget(context)
+                layout.addWidget(row)
+        else:
+            layout.addWidget(self._muted_label(tr("dashboard_all_clear_detail")))
+
+        if self._digest_expanded:
+            self._add_digest_details(layout, digest)
+
+        actions = QBoxLayout(
+            QBoxLayout.TopToBottom
+            if self._current_dashboard_class() == "narrow"
+            else QBoxLayout.LeftToRight
+        )
+        copy = create_button(tr("dashboard_copy_summary"), "secondary", fixed_height=30)
+        copy.clicked.connect(
+            lambda checked=False, text=digest.get("text", ""): self._copy_daily_digest(text)
+        )
+        toggle = create_button(
+            tr("dashboard_hide_full_digest") if self._digest_expanded
+            else tr("dashboard_view_full_digest"),
+            "primary",
+            fixed_height=30,
+        )
+        toggle.clicked.connect(self._toggle_digest)
+        if self._current_dashboard_class() != "narrow":
+            actions.addStretch()
+        actions.addWidget(copy)
+        actions.addWidget(toggle)
+        layout.addLayout(actions)
+        return card
+
+    def _toggle_digest(self):
+        self._digest_expanded = not self._digest_expanded
+        self._render_dashboard(self._last_dashboard_data or {})
+
+    def _build_exception_cards(self, data):
+        self.content_layout.addWidget(SectionHeader(tr("dashboard_exceptions")))
+        wrapper = QWidget()
+        wrapper.setObjectName("DashboardExceptionsRow")
+        direction = (
+            QBoxLayout.LeftToRight
+            if self._current_dashboard_class() != "narrow"
+            else QBoxLayout.TopToBottom
+        )
+        layout = QBoxLayout(direction)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(16)
-        workspace.setLayout(layout)
-
-        primary = QWidget()
-        primary.setObjectName("DashboardPrimaryColumn")
-        primary_layout = QVBoxLayout()
-        primary_layout.setContentsMargins(0, 0, 0, 0)
-        primary_layout.setSpacing(12)
-        primary.setLayout(primary_layout)
-
-        side = QWidget()
-        side.setObjectName("DashboardSideColumn")
-        side_layout = QVBoxLayout()
-        side_layout.setContentsMargins(0, 0, 0, 0)
-        side_layout.setSpacing(12)
-        side.setLayout(side_layout)
-
-        layout.addWidget(primary, stretch=7)
-        layout.addWidget(side, stretch=5)
-
-        self._build_daily_digest_section(primary_layout)
-        self._build_attention_section(
-            data.get("attention_items", []),
-            primary_layout,
+        layout.setSpacing(10)
+        wrapper.setLayout(layout)
+        layout.addWidget(
+            self._make_exception_card(
+                len(data.get("expiring", [])),
+                tr("dashboard_expiring_soon"),
+                "warning",
+                self._toggle_expiring,
+                self._expiring_expanded,
+            ),
+            1,
         )
-        primary_layout.addStretch()
-
-        self._build_recommended_section(
-            data.get("recommended_tasks", []),
-            side_layout,
+        layout.addWidget(
+            self._make_exception_card(
+                len(data.get("missing_docs", [])),
+                tr("dashboard_missing_required_documents"),
+                "danger",
+                self._toggle_missing,
+                self._missing_expanded,
+            ),
+            1,
         )
-        self._build_stat_cards(data, side_layout)
-        self._build_expiring_section(data["expiring"], side_layout)
-        self._build_missing_section(data["missing_docs"], side_layout)
-        side_layout.addStretch()
+        self.content_layout.addWidget(wrapper)
 
-        self.content_layout.addWidget(workspace)
+    def _make_exception_card(self, value, title_text, tone, callback, expanded):
+        card = SimpleCardWidget()
+        card.setObjectName("DashboardExceptionCard")
+        card.setProperty("tone", tone)
+        layout = QBoxLayout(
+            QBoxLayout.TopToBottom
+            if self._current_dashboard_class() == "narrow"
+            else QBoxLayout.LeftToRight
+        )
+        layout.setContentsMargins(16, 14, 16, 14)
+        layout.setSpacing(10)
+        card.setLayout(layout)
+        value_label = QLabel(str(value))
+        value_label.setObjectName("DashboardExceptionValue")
+        value_label.setProperty("tone", tone)
+        title = QLabel(title_text)
+        title.setObjectName("StrongText")
+        title.setWordWrap(True)
+        toggle = create_button(
+            tr("dashboard_hide_details") if expanded else tr("dashboard_view_details"),
+            "subtle",
+            fixed_height=28,
+        )
+        toggle.clicked.connect(callback)
+        layout.addWidget(value_label)
+        layout.addWidget(title, 1)
+        layout.addWidget(toggle)
+        return card
+
+    def _toggle_expiring(self):
+        self._expiring_expanded = not self._expiring_expanded
+        self._render_dashboard(self._last_dashboard_data or {})
+
+    def _toggle_missing(self):
+        self._missing_expanded = not self._missing_expanded
+        self._render_dashboard(self._last_dashboard_data or {})
+
+    def _open_calendar(self):
+        if self.main_window is not None:
+            self.main_window.set_current_key("calendar")
+
+    def _open_office_task(self, task_id, title):
+        if self.main_window is None:
+            return
+        opener = getattr(self.main_window, "open_alert_workspace", None)
+        if task_id and callable(opener):
+            opener(task_id, return_key="dashboard")
+            return
+        office_page = getattr(self.main_window, "office_work_page", None)
+        if office_page is not None and hasattr(office_page, "focus_task_context"):
+            office_page.focus_task_context(task_id=task_id, title=title)
+        self.main_window.set_current_key("office_work")
 
     def _run_process_automation(self):
         if self.main_window is None or self._automation_running:
@@ -1509,5 +2207,4 @@ class DashboardPage(QWidget):
 
     def showEvent(self, event):
         super().showEvent(event)
-
-        self.load_data()
+        self.request_refresh(force=False)

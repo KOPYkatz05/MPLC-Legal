@@ -451,6 +451,10 @@ class MissionaryDetailPage(QWidget):
         columns = max(1, columns)
         for widget in widgets:
             grid.removeWidget(widget)
+        # Clear stretch left behind by a wider layout. Empty stretched columns
+        # otherwise keep consuming space after the grid has reflowed.
+        for column in range(max(8, len(widgets))):
+            grid.setColumnStretch(column, 0)
         for index, widget in enumerate(widgets):
             grid.addWidget(widget, index // columns, index % columns)
         for column in range(columns):
@@ -459,13 +463,14 @@ class MissionaryDetailPage(QWidget):
     def _apply_responsive_layout(self, width=None):
         """Reflow detail-page sections instead of clipping on narrow screens."""
         width = self.width() if width is None else width
-        compact = width < 900
-        narrow = width < 650
+        header_compact = width < 900
+        cards_stacked = width < 1200
+        narrow = width < 700
 
         if hasattr(self, "header_layout"):
             for widget in self._header_widgets:
                 self.header_layout.removeWidget(widget)
-            if compact:
+            if header_compact:
                 self.header_layout.addWidget(self.back_button, 0, 0)
                 self.header_layout.addWidget(self.header_identity, 0, 1, 1, 2)
                 self.header_layout.addWidget(self.advance_button, 1, 0, 1, 3)
@@ -477,7 +482,7 @@ class MissionaryDetailPage(QWidget):
             self.header_layout.setColumnStretch(1, 1)
 
         direction = (
-            QBoxLayout.TopToBottom if compact else QBoxLayout.LeftToRight
+            QBoxLayout.TopToBottom if cards_stacked else QBoxLayout.LeftToRight
         )
         for layout_name in (
             "overview_work_layout",
@@ -490,10 +495,10 @@ class MissionaryDetailPage(QWidget):
 
         grid_specs = (
             ("summary_metrics_grid", "summary_metric_cards", 1 if narrow else 2),
-            ("summary_chip_grid", "summary_chip_widgets", 1 if narrow else (3 if compact else 6)),
-            ("identity_grid", "identity_field_widgets", 1 if compact else 2),
-            ("credentials_grid", "credential_field_widgets", 1 if compact else 2),
-            ("timeline_grid", "timeline_field_widgets", 1 if compact else 2),
+            ("summary_chip_grid", "summary_chip_widgets", 1 if narrow else (3 if cards_stacked else 6)),
+            ("identity_grid", "identity_field_widgets", 1 if narrow else 2),
+            ("credentials_grid", "credential_field_widgets", 1 if narrow else 2),
+            ("timeline_grid", "timeline_field_widgets", 1 if narrow else 2),
         )
         for grid_name, widgets_name, columns in grid_specs:
             grid = getattr(self, grid_name, None)
@@ -584,9 +589,10 @@ class MissionaryDetailPage(QWidget):
         badge = QLabel(text)
         badge.setObjectName(object_name)
         badge.setProperty("tone", "subtle")
-        badge.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        badge.setWordWrap(True)
+        badge.setMinimumWidth(0)
+        badge.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
         badge.setTextInteractionFlags(Qt.TextSelectableByMouse)
-        badge.adjustSize()
         return badge
 
     def _build_date_picker_shell(self, picker):
@@ -597,8 +603,8 @@ class MissionaryDetailPage(QWidget):
         shell_layout.setVerticalSpacing(0)
         shell.setLayout(shell_layout)
         shell.setFixedHeight(34)
-        shell.setFixedWidth(DATE_EDIT_MAX_WIDTH)
-        shell.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        shell.setMaximumWidth(DATE_EDIT_MAX_WIDTH)
+        shell.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 
         overlay = QLabel(tr("missionary_detail_not_set"))
         overlay.setObjectName("DateEmptyOverlay")
@@ -607,8 +613,8 @@ class MissionaryDetailPage(QWidget):
         overlay.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
         overlay.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 
-        shell_layout.addWidget(picker, 0, 0, alignment=Qt.AlignLeft)
-        shell_layout.addWidget(overlay, 0, 0, alignment=Qt.AlignLeft)
+        shell_layout.addWidget(picker, 0, 0)
+        shell_layout.addWidget(overlay, 0, 0)
 
         self._date_empty_overlays[picker] = overlay
         return shell
@@ -616,7 +622,7 @@ class MissionaryDetailPage(QWidget):
     def _configure_detail_date_picker(self, picker):
         picker.setObjectName("MissionaryDetailDatePicker")
         picker.setDate(DATE_PLACEHOLDER)
-        picker.setFixedWidth(DATE_EDIT_MAX_WIDTH)
+        picker.setMaximumWidth(DATE_EDIT_MAX_WIDTH)
         if hasattr(picker, "setMinimumDate"):
             picker.setMinimumDate(DATE_PLACEHOLDER)
         if hasattr(picker, "setSpecialValueText"):
@@ -624,7 +630,7 @@ class MissionaryDetailPage(QWidget):
         if hasattr(picker, "setDisplayFormat"):
             picker.setDisplayFormat("MMM d, yyyy")
         if hasattr(picker, "setSizePolicy"):
-            picker.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+            picker.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         if hasattr(picker, "dateChanged"):
             picker.dateChanged.connect(
                 lambda *_args, p=picker: self._sync_date_picker_state(p)
@@ -1244,11 +1250,9 @@ class MissionaryDetailPage(QWidget):
         header_row.addLayout(title_stack)
         header_row.addStretch()
 
-        self.summary_stage_chip = QLabel(
-            tr("missionary_detail_no_missionary_loaded")
-        )
-        self.summary_stage_chip.setObjectName("StageBadge")
-        header_row.addWidget(self.summary_stage_chip)
+        self.overview_stage_badge = QLabel("—")
+        self.overview_stage_badge.setObjectName("StageBadge")
+        header_row.addWidget(self.overview_stage_badge)
 
         layout.addLayout(header_row)
 
@@ -3392,6 +3396,7 @@ class MissionaryDetailPage(QWidget):
 
         stage = getattr(self.current_missionary, "current_stage", None)
         stage_display = _stage_display_name(stage)
+        self.overview_stage_badge.setText(stage_display)
         self.summary_stage_chip.setText(stage_display)
         self.summary_current_stage_card.setValue(stage_display)
 

@@ -105,22 +105,32 @@ class DailyDigestService:
         detail_level="balanced",
         language="en",
         today=None,
+        items=None,
+        settings=None,
     ):
         language = language if language in TEXT else "en"
         today = today or date.today()
 
         try:
-            settings = (
-                self.notification_feed_service
-                .settings_service
-                .get_notification_settings()
-            )
-            if not include_overdue:
-                settings["include_overdue_tasks"] = False
-            items = self.notification_feed_service.build_feed(
-                today=today,
-                settings=settings,
-            )
+            if items is None:
+                settings = settings or (
+                    self.notification_feed_service
+                    .settings_service
+                    .get_notification_settings()
+                )
+                if not include_overdue:
+                    settings["include_overdue_tasks"] = False
+                items = self.notification_feed_service.build_feed(
+                    today=today,
+                    settings=settings,
+                )
+            else:
+                items = list(items)
+                if not include_overdue:
+                    items = [
+                        item for item in items
+                        if item.get("days", 0) >= 0
+                    ]
             top_items = self._top_items(
                 items,
                 DETAIL_LIMITS.get(detail_level, DETAIL_LIMITS["balanced"]),

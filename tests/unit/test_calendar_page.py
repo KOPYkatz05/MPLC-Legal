@@ -513,10 +513,10 @@ def test_calendar_month_chips_use_compact_pill_geometry(monkeypatch, qapp):
         assert appointment_pill.height() == 30
         assert task_pill.height() == 30
         assert appointment_pill.sizePolicy().horizontalPolicy() == (
-            calendar_page.QSizePolicy.Maximum
+            calendar_page.QSizePolicy.Ignored
         )
         assert task_pill.sizePolicy().horizontalPolicy() == (
-            calendar_page.QSizePolicy.Maximum
+            calendar_page.QSizePolicy.Ignored
         )
     finally:
         page.close()

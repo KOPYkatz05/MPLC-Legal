@@ -102,7 +102,7 @@ class TrashPage(QWidget):
         layout.setSpacing(2)
         frame.setLayout(layout)
 
-        title = QLabel("Trash / Archive")
+        title = QLabel("Trash")
         title.setObjectName("TrashTitle")
         subtitle = QLabel("Restore archived records or remove them permanently.")
         subtitle.setObjectName("TrashSubtitle")

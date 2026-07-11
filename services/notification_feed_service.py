@@ -261,6 +261,9 @@ class NotificationFeedService:
                     ),
                     "missionary_id": missionary.id,
                     "target": "missionary",
+                    "stage": doc["stage"],
+                    "doc_type": doc["doc_type"],
+                    "document_label": doc["label"],
                     "days": 0,
                 })
         return items

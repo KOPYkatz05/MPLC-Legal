@@ -13,6 +13,7 @@ from PySide6.QtCore import (
 from PySide6.QtGui import QColor, QCursor, QPalette
 from PySide6.QtWidgets import (
     QButtonGroup,
+    QBoxLayout,
     QFrame,
     QGridLayout,
     QHBoxLayout,
@@ -384,6 +385,7 @@ class CalendarPage(QWidget):
         self._history_loaded = False
         self._history_filter_cache = {}
         self._day_summary_menu = None
+        self._responsive_size_class = None
         self._calendar_render_timer = QTimer(self)
         self._calendar_render_timer.setSingleShot(True)
         self._calendar_render_timer.setInterval(120)
@@ -395,6 +397,48 @@ class CalendarPage(QWidget):
 
         self.setup_ui()
         self.load_data()
+
+    @staticmethod
+    def _size_class_for_width(width):
+        if width < 700:
+            return "narrow"
+        if width < 1100:
+            return "compact"
+        return "wide"
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        size_class = self._size_class_for_width(event.size().width())
+        if size_class == self._responsive_size_class:
+            return
+        self._responsive_size_class = size_class
+        self._apply_responsive_filter_layout()
+        if hasattr(self, "calendar_layout"):
+            self._schedule_calendar_render()
+        if (
+            getattr(self, "_selected_tab", TAB_CALENDAR) == TAB_HISTORY
+            and hasattr(self, "history_layout")
+        ):
+            self._schedule_history_render()
+
+    def _current_size_class(self):
+        return self._responsive_size_class or self._size_class_for_width(
+            self.width()
+        )
+
+    def _apply_responsive_filter_layout(self):
+        filter_bar = getattr(self, "history_filter_bar", None)
+        if filter_bar is None:
+            return
+        direction = (
+            QBoxLayout.LeftToRight
+            if self._current_size_class() == "wide"
+            else QBoxLayout.TopToBottom
+        )
+        filter_bar.layout_.setDirection(direction)
+        title_layout = getattr(self, "top_title_layout", None)
+        if title_layout is not None:
+            title_layout.setDirection(direction)
 
     def setup_ui(self):
         outer = QVBoxLayout()
@@ -422,6 +466,7 @@ class CalendarPage(QWidget):
 
         self._build_calendar_tab()
         self._build_history_tab()
+        self._apply_responsive_filter_layout()
         self._select_tab(TAB_CALENDAR)
 
     def _build_top_bar(self):
@@ -435,6 +480,7 @@ class CalendarPage(QWidget):
         frame.setLayout(layout)
 
         title_row = QHBoxLayout()
+        self.top_title_layout = title_row
         title_row.setContentsMargins(0, 0, 0, 0)
         title_row.setSpacing(12)
 
@@ -445,10 +491,16 @@ class CalendarPage(QWidget):
         title.setObjectName("CalendarTitle")
         subtitle = QLabel(tr("calendar_subtitle"))
         subtitle.setObjectName("CalendarSubtitle")
+        subtitle.setWordWrap(True)
         title_stack.addWidget(title)
         title_stack.addWidget(subtitle)
 
         title_row.addLayout(title_stack, stretch=1)
+        self._count_label.setWordWrap(True)
+        self._count_label.setMinimumWidth(0)
+        self._count_label.setSizePolicy(
+            QSizePolicy.Ignored, QSizePolicy.Preferred
+        )
         title_row.addWidget(self._count_label, alignment=Qt.AlignRight)
         layout.addLayout(title_row)
 
@@ -480,6 +532,8 @@ class CalendarPage(QWidget):
             button.setObjectName("CalendarTabButton")
             button.setCheckable(True)
             button.setFixedHeight(30)
+            button.setMinimumWidth(0)
+            button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
             button.clicked.connect(
                 lambda checked=False, tab_key=key:
                 self._select_tab(tab_key)
@@ -828,7 +882,7 @@ class CalendarPage(QWidget):
     def _build_summary_cards(self):
         counts = self._calendar_summary_counts
 
-        row = QHBoxLayout()
+        row = QGridLayout()
         row.setSpacing(10)
 
         cards = [
@@ -838,7 +892,9 @@ class CalendarPage(QWidget):
             ("total", len(self._appointments), "Total Scheduled"),
         ]
 
-        for key, value, title in cards:
+        size_class = self._current_size_class()
+        columns = 4 if size_class == "wide" else (2 if size_class == "compact" else 1)
+        for index, (key, value, title) in enumerate(cards):
             card = StatCard(
                 value,
                 title,
@@ -849,7 +905,9 @@ class CalendarPage(QWidget):
             card.setMaximumHeight(62)
             card.layout().setContentsMargins(14, 6, 14, 6)
             card.layout().setSpacing(1)
-            row.addWidget(card)
+            row.addWidget(card, index // columns, index % columns)
+        for column in range(columns):
+            row.setColumnStretch(column, 1)
 
         wrapper = QWidget()
         wrapper.setObjectName("CalendarSummaryRow")
@@ -881,7 +939,7 @@ class CalendarPage(QWidget):
     def _build_calendar_toolbar(self):
         toolbar = create_card(object_name="CalendarToolbar")
         toolbar.setObjectName("CalendarToolbar")
-        layout = QHBoxLayout()
+        layout = QGridLayout()
         layout.setContentsMargins(12, 8, 12, 8)
         layout.setSpacing(8)
         toolbar.setLayout(layout)
@@ -891,25 +949,21 @@ class CalendarPage(QWidget):
             tr("calendar_previous"),
         )
         previous_btn.clicked.connect(self._go_previous_range)
-        layout.addWidget(previous_btn)
 
         today_btn = create_pill_button(tr("calendar_today"))
         today_btn.setObjectName("CalendarToolbarPillButton")
         today_btn.setMinimumWidth(62)
         today_btn.clicked.connect(self._go_today)
-        layout.addWidget(today_btn)
 
         next_btn = self._make_nav_arrow_button(
             "RIGHT_ARROW",
             tr("calendar_next"),
         )
         next_btn.clicked.connect(self._go_next_range)
-        layout.addWidget(next_btn)
 
         self.range_title_label = QLabel(self._calendar_range_title())
         self.range_title_label.setObjectName("CalendarRangeTitle")
         self.range_title_label.setAlignment(Qt.AlignCenter)
-        layout.addWidget(self.range_title_label, stretch=1)
 
         self.calendar_search_edit = create_search_edit(
             tr("calendar_search_calendar")
@@ -922,7 +976,6 @@ class CalendarPage(QWidget):
                 self.calendar_search_edit.text()
             )
         )
-        layout.addWidget(self.calendar_search_edit, stretch=1)
 
         self.calendar_type_combo = create_combo_box()
         selected_type = getattr(self, "_calendar_type_filter", "All Types")
@@ -932,7 +985,6 @@ class CalendarPage(QWidget):
         self.calendar_type_combo.currentIndexChanged.connect(
             lambda _=None: self._calendar_type_changed()
         )
-        layout.addWidget(self.calendar_type_combo)
 
         add_task_btn = create_pill_button(tr("calendar_add_task"))
         add_task_btn.setObjectName("CalendarAddTaskButton")
@@ -940,7 +992,34 @@ class CalendarPage(QWidget):
         add_task_btn.clicked.connect(
             lambda checked=False: self._add_task()
         )
-        layout.addWidget(add_task_btn)
+        size_class = self._current_size_class()
+        if size_class == "wide":
+            widgets = [
+                previous_btn,
+                today_btn,
+                next_btn,
+                self.range_title_label,
+                self.calendar_search_edit,
+                self.calendar_type_combo,
+                add_task_btn,
+            ]
+            for column, widget in enumerate(widgets):
+                layout.addWidget(widget, 0, column)
+            layout.setColumnStretch(3, 1)
+            layout.setColumnStretch(4, 1)
+        else:
+            layout.addWidget(previous_btn, 0, 0)
+            layout.addWidget(today_btn, 0, 1)
+            layout.addWidget(next_btn, 0, 2)
+            layout.addWidget(self.range_title_label, 0, 3, 1, 3)
+            layout.addWidget(self.calendar_search_edit, 1, 0, 1, 6)
+            if size_class == "narrow":
+                layout.addWidget(self.calendar_type_combo, 2, 0, 1, 3)
+                layout.addWidget(add_task_btn, 2, 3, 1, 3)
+            else:
+                layout.addWidget(self.calendar_type_combo, 1, 6)
+                layout.addWidget(add_task_btn, 1, 7)
+            layout.setColumnStretch(3, 1)
 
         return toolbar
 
@@ -1013,6 +1092,8 @@ class CalendarPage(QWidget):
             and day.month != self._anchor_date.month,
         )
         cell.setProperty("today", day == today)
+        cell.setMinimumWidth(0)
+        cell.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         cell.mousePressEvent = (
             lambda event, filter_date=day, anchor=cell:
             self._show_calendar_day_details(
@@ -1031,8 +1112,9 @@ class CalendarPage(QWidget):
         )
 
         layout = QVBoxLayout()
-        layout.setContentsMargins(10, 10, 10, 10)
-        layout.setSpacing(6)
+        cell_padding = 6 if self._current_size_class() != "wide" else 10
+        layout.setContentsMargins(cell_padding, cell_padding, cell_padding, cell_padding)
+        layout.setSpacing(4 if cell_padding == 6 else 6)
         cell.setLayout(layout)
 
         header = QHBoxLayout()
@@ -1072,6 +1154,8 @@ class CalendarPage(QWidget):
                 fixed_height=24,
             )
             overflow.setObjectName("CalendarOverflowButton")
+            overflow.setMinimumWidth(0)
+            overflow.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
             overflow.clicked.connect(
                 lambda checked=False, filter_date=day, anchor=overflow:
                 self._show_calendar_day_details(
@@ -1094,7 +1178,12 @@ class CalendarPage(QWidget):
             object_name="CalendarAppointmentChip",
         )
         pill.setFixedHeight(30)
-        pill.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Fixed)
+        pill.setMinimumWidth(0)
+        pill.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
+        pill.label.setMinimumWidth(0)
+        pill.label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        pill.layout().setContentsMargins(6, 4, 6, 4)
+        pill.layout().setSpacing(4)
         pill.setToolTip(
             f"{appointment.type} appointment for {appointment.full_name}"
         )
@@ -1181,7 +1270,14 @@ class CalendarPage(QWidget):
             object_name="CalendarTaskChip",
         )
         pill.setFixedHeight(30)
-        pill.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Fixed)
+        pill.setMinimumWidth(0)
+        pill.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
+        pill.label.setMinimumWidth(0)
+        pill.label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        pill.subtitle.setMinimumWidth(0)
+        pill.subtitle.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        pill.layout().setContentsMargins(6, 4, 6, 4)
+        pill.layout().setSpacing(4)
         pill.setToolTip(tooltip)
         pill.setProperty("done", task.get("status") == "DONE")
         pill.clicked.connect(
@@ -1410,7 +1506,12 @@ class CalendarPage(QWidget):
     def _make_history_board(self, completed_items, overdue_items):
         board = QWidget()
         board.setObjectName("CalendarHistoryBoard")
-        layout = QHBoxLayout()
+        direction = (
+            QBoxLayout.LeftToRight
+            if self._current_size_class() == "wide"
+            else QBoxLayout.TopToBottom
+        )
+        layout = QBoxLayout(direction)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(14)
         board.setLayout(layout)
@@ -2132,11 +2233,17 @@ class CalendarPage(QWidget):
         title = QLabel(message)
         title.setObjectName("PanelTitle")
         title.setAlignment(Qt.AlignCenter)
+        title.setWordWrap(True)
+        title.setMinimumWidth(0)
+        title.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         layout.addWidget(title)
 
         detail = QLabel(tr("calendar_empty_state_detail"))
         detail.setObjectName("MutedText")
         detail.setAlignment(Qt.AlignCenter)
+        detail.setWordWrap(True)
+        detail.setMinimumWidth(0)
+        detail.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         layout.addWidget(detail)
 
         return card

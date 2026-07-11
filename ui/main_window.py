@@ -406,11 +406,11 @@ class MainWindow(QMainWindow):
 
     def _on_nav_changed(self, nav_key, stack_index):
         if nav_key == "dashboard" or stack_index == 0:
-            self.dashboard_page.load_data()
+            self.dashboard_page.request_refresh(force=False)
         elif nav_key == "missionaries" or stack_index == 1:
             self.missionaries_page.load_data()
         elif nav_key == "office_work" or stack_index == 4:
-            self.office_work_page.load_data()
+            self.office_work_page.request_refresh()
         elif nav_key == "appointments" or stack_index == 5:
             self.calendar_page.load_data()
         elif nav_key == "reports" or stack_index == 6:

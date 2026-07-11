@@ -14,6 +14,7 @@ from database.models.secretary_work import SecretaryTask
 from services import dashboard_service as dashboard_module
 from services import notification_feed_service as feed_module
 from services.dashboard_service import DashboardService
+from services.notification_feed_service import NotificationFeedService
 from ui.pages import dashboard_page
 from ui.pages.dashboard_page import DashboardPage
 from utils.i18n import get_i18n
@@ -51,6 +52,7 @@ def test_dashboard_attention_includes_expiring_missing_tasks_and_appointments(
         missionary = _missionary(
             session,
             full_name="Urgent Person",
+            nationality="USA",
             visa_expiration=today - timedelta(days=2),
         )
         session.add(
@@ -75,7 +77,19 @@ def test_dashboard_attention_includes_expiring_missing_tasks_and_appointments(
     finally:
         session.close()
 
-    summary = DashboardService().get_summary()
+    feed = NotificationFeedService(
+        settings_service=SimpleNamespace(
+            get_notification_settings=lambda: {
+                "include_expiring_documents": True,
+                "include_missing_documents": True,
+                "include_appointments": True,
+                "include_office_tasks": True,
+                "dashboard_expiration_days": 60,
+                "critical_expiration_days": 7,
+            }
+        )
+    )
+    summary = DashboardService(notification_feed_service=feed).get_summary()
     items = summary["attention_items"]
     item_types = {item["type"] for item in items}
 
@@ -90,6 +104,12 @@ def test_dashboard_attention_includes_expiring_missing_tasks_and_appointments(
     assert appointment_item["appointment_id"]
     task_item = next(item for item in items if item["type"] == "secretary_task")
     assert task_item["task_id"]
+
+    assert summary["urgent_count"] >= 4
+    assert summary["appointments_today"] == 1
+    assert summary["open_task_count"] == 1
+    assert summary["today_appointments"][0]["name"] == "Urgent Person"
+    assert summary["today_tasks"][0]["title"] == "Call Migraciones"
 
 
 def test_dashboard_includes_recommended_automatic_tasks(dashboard_env):
@@ -237,8 +257,8 @@ def test_dashboard_renders_attention_section(monkeypatch, qapp):
     page = DashboardPage()
 
     try:
-        card = page.findChild(dashboard_page.QFrame, "NeedsAttentionCard")
-        row = page.findChild(dashboard_page.QFrame, "NeedsAttentionRow")
+        card = page.findChild(dashboard_page.QFrame, "DashboardPrioritiesCard")
+        row = page.findChild(dashboard_page.QFrame, "DashboardPriorityRow")
 
         assert card is not None
         assert row is not None
@@ -301,7 +321,7 @@ def test_dashboard_renders_daily_digest_section(monkeypatch, qapp):
     page = DashboardPage()
 
     try:
-        card = page.findChild(dashboard_page.QFrame, "DailyDigestCard")
+        card = page.findChild(dashboard_page.QFrame, "DashboardBriefingCard")
         assert card is not None
     finally:
         page.close()
@@ -468,7 +488,7 @@ def test_dashboard_chrome_uses_active_language(monkeypatch, qapp):
 
         assert "Panel de control" in labels
         assert "Cargando el trabajo de hoy..." in labels
-        assert {"Misión", "Proceso", "Enlace"}.issubset(labels)
+        assert not {"Misión", "Proceso", "Enlace"}.intersection(labels)
         assert "Actualizar" in buttons
     finally:
         i18n.set_language(original_language)
@@ -497,6 +517,184 @@ def test_dashboard_summary_helpers_follow_active_language():
         ) == "1 vencido(s) | 1 vence(n) hoy | 1 próximo(s)"
     finally:
         i18n.set_language(original_language)
+
+
+def test_dashboard_merges_priorities_without_duplicate_tasks(qapp):
+    _ = qapp
+    page = DashboardPage.__new__(DashboardPage)
+    priorities = DashboardPage._merged_priorities(
+        page,
+        {
+            "attention_items": [
+                {
+                    "type": "secretary_task",
+                    "task_id": 7,
+                    "title": "Due task",
+                    "severity": "warning",
+                    "days": 0,
+                }
+            ],
+            "recommended_tasks": [
+                {"id": 7, "title": "Due task", "severity": "warning", "days": 0},
+                {"id": 8, "title": "Later task", "severity": "info", "days": 2},
+            ],
+        },
+    )
+
+    assert [item.get("task_id") for item in priorities] == [7, 8]
+
+
+def test_simplified_dashboard_limits_and_expands_priorities(monkeypatch, qapp):
+    data = {
+        "total": 12,
+        "stage_counts": {},
+        "urgent_count": 8,
+        "appointments_today": 0,
+        "open_task_count": 8,
+        "today_appointments": [],
+        "today_tasks": [],
+        "expiring": [],
+        "missing_docs": [],
+        "attention_items": [
+            {
+                "type": "secretary_task",
+                "task_id": index,
+                "title": f"Task {index}",
+                "detail": "Needs review",
+                "severity": "warning",
+                "days": 0,
+                "target": "office_work",
+            }
+            for index in range(8)
+        ],
+        "recommended_tasks": [],
+    }
+
+    monkeypatch.setattr(
+        dashboard_page,
+        "DashboardService",
+        lambda: SimpleNamespace(get_summary=lambda: data),
+    )
+    monkeypatch.setattr(
+        dashboard_page,
+        "DailyDigestService",
+        lambda: SimpleNamespace(
+            build_digest=lambda **_kwargs: {
+                "summary": {"total": 0},
+                "detail_groups": [],
+                "text": "All clear",
+            }
+        ),
+    )
+    monkeypatch.setattr(
+        dashboard_page,
+        "SettingsService",
+        lambda: SimpleNamespace(
+            get_daily_digest_settings=lambda: {},
+            get_language=lambda: "en",
+        ),
+    )
+
+    page = DashboardPage()
+    try:
+        priorities_card = next(
+            page.content_layout.itemAt(index).widget()
+            for index in range(page.content_layout.count())
+            if page.content_layout.itemAt(index).widget() is not None
+            and page.content_layout.itemAt(index).widget().objectName()
+            == "DashboardPrioritiesCard"
+        )
+        assert len(priorities_card.findChildren(dashboard_page.QFrame, "DashboardPriorityRow")) == 6
+        page._toggle_priorities()
+        qapp.processEvents()
+        priorities_card = next(
+            page.content_layout.itemAt(index).widget()
+            for index in range(page.content_layout.count())
+            if page.content_layout.itemAt(index).widget() is not None
+            and page.content_layout.itemAt(index).widget().objectName()
+            == "DashboardPrioritiesCard"
+        )
+        assert len(priorities_card.findChildren(dashboard_page.QFrame, "DashboardPriorityRow")) == 8
+        assert page.findChild(dashboard_page.QFrame, "DashboardBriefingCard") is not None
+        assert page.findChild(dashboard_page.QFrame, "DashboardUpcomingCard") is not None
+        exceptions_row = next(
+            page.content_layout.itemAt(index).widget()
+            for index in range(page.content_layout.count())
+            if page.content_layout.itemAt(index).widget() is not None
+            and page.content_layout.itemAt(index).widget().objectName()
+            == "DashboardExceptionsRow"
+        )
+        assert len(exceptions_row.findChildren(dashboard_page.QFrame, "DashboardExceptionCard")) == 2
+        dashboard_buttons = page.findChildren(QPushButton)
+        assert dashboard_buttons
+        assert all(button.property("dashboardTone") for button in dashboard_buttons)
+        assert all(button.height() in {26, 28, 30, 34} for button in dashboard_buttons)
+    finally:
+        page.close()
+
+
+def test_dashboard_cache_is_instant_and_force_refresh_runs_in_background(
+    monkeypatch,
+    qapp,
+    qtbot,
+):
+    calls = []
+    data = {
+        "total": 1,
+        "stage_counts": {},
+        "urgent_count": 0,
+        "appointments_today": 0,
+        "open_task_count": 0,
+        "today_appointments": [],
+        "today_tasks": [],
+        "expiring": [],
+        "missing_docs": [],
+        "attention_items": [],
+        "recommended_tasks": [],
+    }
+
+    class FakeDashboardService:
+        def get_summary(self):
+            calls.append("summary")
+            return data
+
+    monkeypatch.setattr(dashboard_page, "DashboardService", FakeDashboardService)
+    monkeypatch.setattr(
+        dashboard_page,
+        "DailyDigestService",
+        lambda: SimpleNamespace(
+            build_digest=lambda **_kwargs: {
+                "summary": {"total": 0},
+                "detail_groups": [],
+                "text": "All clear",
+            }
+        ),
+    )
+    monkeypatch.setattr(
+        dashboard_page,
+        "SettingsService",
+        lambda: SimpleNamespace(
+            get_daily_digest_settings=lambda: {},
+            get_language=lambda: "en",
+        ),
+    )
+
+    page = DashboardPage()
+    try:
+        assert calls == ["summary"]
+        assert page.request_refresh(force=False) is False
+        assert calls == ["summary"]
+
+        renders = []
+        page._render_dashboard = lambda payload: renders.append(payload)
+        assert page.request_refresh(force=True) is True
+        assert page._refresh_in_flight is True
+        qtbot.waitUntil(lambda: not page._refresh_in_flight, timeout=3000)
+        assert calls == ["summary", "summary"]
+        assert page._last_dashboard_data["total"] == 1
+        assert renders == []
+    finally:
+        page.close()
 
 
 def test_dashboard_digest_task_routes_to_alert_workspace(qapp):

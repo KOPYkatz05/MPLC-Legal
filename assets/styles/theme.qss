@@ -832,6 +832,150 @@ QWidget#DashboardStatGrid {
     background-color: transparent;
 }
 
+QWidget#DashboardPage QPushButton[dashboardTone] {
+    min-height: 28px;
+    border-radius: 14px;
+    padding: 0px 14px;
+    font-size: 11px;
+    font-weight: 600;
+}
+
+QWidget#DashboardPage QPushButton[dashboardTone="secondary"] {
+    color: #18181B;
+    background-color: #FFFFFF;
+    border: 1px solid #DADADF;
+}
+
+QWidget#DashboardPage QPushButton[dashboardTone="secondary"]:hover {
+    background-color: #F9F7F4;
+    border-color: #C9C5BF;
+}
+
+QWidget#DashboardPage QPushButton[dashboardTone="subtle"] {
+    color: #0F5F64;
+    background-color: #F3FAF9;
+    border: 1px solid #CBE9E5;
+}
+
+QWidget#DashboardPage QPushButton[dashboardTone="subtle"]:hover {
+    color: #0B4F53;
+    background-color: #E6F7F5;
+    border-color: #99DDD5;
+}
+
+QWidget#DashboardPage QPushButton[dashboardTone="primary"] {
+    color: #FFFFFF;
+    background-color: #0EA5AC;
+    border: 1px solid #0EA5AC;
+}
+
+QWidget#DashboardPage QPushButton[dashboardTone="primary"]:hover {
+    background-color: #07919A;
+    border-color: #07919A;
+}
+
+QWidget#DashboardPage QPushButton[dashboardTone="success"] {
+    color: #047857;
+    background-color: #ECFDF5;
+    border: 1px solid #A7F3D0;
+}
+
+QWidget#DashboardPage QPushButton[dashboardTone="success"]:hover {
+    background-color: #D1FAE5;
+    border-color: #6EE7B7;
+}
+
+QWidget#DashboardPage QPushButton[dashboardTone="danger"] {
+    color: #B91C1C;
+    background-color: #FEF2F2;
+    border: 1px solid #FECACA;
+}
+
+QWidget#DashboardPage QPushButton[dashboardTone="danger"]:hover {
+    background-color: #FEE2E2;
+    border-color: #FCA5A5;
+}
+
+QWidget#DashboardFocusMetrics,
+QWidget#DashboardMiddleRow,
+QWidget#DashboardExceptionsRow {
+    background-color: transparent;
+}
+
+QFrame#DashboardFocusMetric,
+QWidget#DashboardFocusMetric,
+QFrame#DashboardPrioritiesCard,
+QWidget#DashboardPrioritiesCard,
+QFrame#DashboardUpcomingCard,
+QWidget#DashboardUpcomingCard,
+QFrame#DashboardBriefingCard,
+QWidget#DashboardBriefingCard,
+QFrame#DashboardExceptionCard,
+QWidget#DashboardExceptionCard {
+    background-color: #FFFFFF;
+    border: 1px solid #E5E7EB;
+    border-radius: 9px;
+}
+
+QLabel#DashboardFocusMetricValue,
+QLabel#DashboardExceptionValue {
+    color: #0F5F64;
+    font-size: 24px;
+    font-weight: 700;
+    background: transparent;
+}
+
+QLabel#DashboardFocusMetricValue[tone="danger"],
+QLabel#DashboardExceptionValue[tone="danger"] {
+    color: #DC2626;
+}
+
+QLabel#DashboardFocusMetricValue[tone="warning"],
+QLabel#DashboardExceptionValue[tone="warning"] {
+    color: #D97706;
+}
+
+QLabel#DashboardFocusMetricValue[tone="success"],
+QLabel#DashboardExceptionValue[tone="success"] {
+    color: #059669;
+}
+
+QFrame#DashboardPriorityRow,
+QFrame#DashboardUpcomingRow,
+QFrame#DashboardBriefingRow {
+    background-color: #FAFAFA;
+    border: 1px solid #F0F1F2;
+    border-radius: 7px;
+}
+
+QFrame#DashboardPriorityRow:hover,
+QFrame#DashboardUpcomingRow:hover {
+    background-color: #FFFFFF;
+    border-color: #CBD5E1;
+}
+
+QLabel#DashboardPriorityBadge {
+    color: #0F5F64;
+    background-color: #E6F7F5;
+    border: 1px solid #99DDD5;
+    border-radius: 7px;
+    padding: 3px 8px;
+    font-size: 10px;
+    font-weight: 600;
+}
+
+QLabel#DashboardPriorityBadge[severity="critical"] {
+    color: #B91C1C;
+    background-color: #FEF2F2;
+    border-color: #FCA5A5;
+}
+
+QLabel#DashboardPriorityBadge[severity="warning"] {
+    color: #B45309;
+    background-color: #FFFBEB;
+    border-color: #FCD34D;
+}
+
 QFrame#DailyDigestCard,
 QWidget#DailyDigestCard,
 QFrame#NeedsAttentionCard,
