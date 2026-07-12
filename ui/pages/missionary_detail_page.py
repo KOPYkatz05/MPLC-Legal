@@ -65,6 +65,7 @@ from ui.foundation import (
     create_list_widget,
     create_menu,
     create_plain_text_edit,
+    create_pill_button,
     create_scroll_area,
     create_text_edit,
     show_message,
@@ -94,6 +95,19 @@ from ui.widgets.missionary_block_widgets import (
 DATE_PLACEHOLDER = QDate(1900, 1, 1)
 DATE_EDIT_MAX_WIDTH = 300
 OVERVIEW_CONTENT_SPACING = 16
+
+
+def create_detail_pill_button(
+    text,
+    variant="secondary",
+    fixed_height=34,
+    parent=None,
+    icon=None,
+):
+    button = create_pill_button(text, parent=parent, icon=icon)
+    button.setFixedHeight(fixed_height)
+    button.setProperty("detailTone", variant)
+    return button
 
 
 ARCHIVE_REASON_OPTIONS = [
@@ -475,7 +489,6 @@ class MissionaryDetailPage(QWidget):
                 self.header_layout.addWidget(self.header_identity, 0, 1, 1, 2)
                 self.header_layout.addWidget(self.advance_button, 1, 0, 1, 3)
                 self.header_layout.addWidget(self.actions_button, 2, 0, 1, 3)
-                self.header_layout.addWidget(self.delete_button, 3, 0, 1, 3)
             else:
                 for column, widget in enumerate(self._header_widgets):
                     self.header_layout.addWidget(widget, 0, column)
@@ -820,7 +833,7 @@ class MissionaryDetailPage(QWidget):
         header.setLayout(header_layout)
         self.header_layout = header_layout
 
-        self.back_button = create_button(
+        self.back_button = create_detail_pill_button(
             tr("common_back"),
             "secondary",
             fixed_height=34,
@@ -853,7 +866,7 @@ class MissionaryDetailPage(QWidget):
             QSizePolicy.Expanding, QSizePolicy.Preferred
         )
 
-        self.advance_button = create_button(
+        self.advance_button = create_detail_pill_button(
             tr("missionary_detail_advance_stage"),
             "success",
         )
@@ -866,7 +879,7 @@ class MissionaryDetailPage(QWidget):
             self._advance_stage
         )
 
-        self.actions_button = create_button(
+        self.actions_button = create_detail_pill_button(
             tr("missionary_detail_actions"),
             "secondary",
         )
@@ -915,21 +928,11 @@ class MissionaryDetailPage(QWidget):
         self.refresh_workspace_actions()
         self.actions_button.setMenu(self.actions_menu)
 
-        self.delete_button = create_button(
-            tr("missionary_detail_delete_missionary"),
-            "danger",
-        )
-
-        self.delete_button.clicked.connect(
-            self.delete_missionary
-        )
-
         self._header_widgets = [
             self.back_button,
             self.header_identity,
             self.advance_button,
             self.actions_button,
-            self.delete_button,
         ]
         for column, widget in enumerate(self._header_widgets):
             header_layout.addWidget(widget, 0, column)
@@ -972,7 +975,7 @@ class MissionaryDetailPage(QWidget):
         self.banner_text.setObjectName("SuccessBannerText")
         self.banner_text.setWordWrap(True)
 
-        self.banner_now_btn = create_button(
+        self.banner_now_btn = create_detail_pill_button(
             tr("missionary_detail_advance_now"),
             "success",
             fixed_height=30,
@@ -1151,7 +1154,7 @@ class MissionaryDetailPage(QWidget):
         self.docs_helper.setWordWrap(True)
         layout.addWidget(self.docs_helper)
 
-        self.upload_button = create_button(
+        self.upload_button = create_detail_pill_button(
             tr("missionary_detail_upload_document"),
             "primary",
             fixed_height=30,
@@ -1518,7 +1521,7 @@ class MissionaryDetailPage(QWidget):
         folder_action_layout.setContentsMargins(0, 0, 0, 0)
         folder_action_layout.setSpacing(8)
         folder_action_row.setLayout(folder_action_layout)
-        self.folder_open_btn = create_button(
+        self.folder_open_btn = create_detail_pill_button(
             tr("missionary_detail_open_folder"),
             "subtle",
             fixed_height=28,
@@ -1638,7 +1641,10 @@ class MissionaryDetailPage(QWidget):
         secondary_row_layout.addWidget(residency_card, 1, Qt.AlignTop)
         content_layout.addWidget(secondary_row)
 
-        self.save_dates_btn = create_button(tr("save_details"), "primary")
+        self.save_dates_btn = create_detail_pill_button(
+            tr("save_details"),
+            "primary",
+        )
         self.save_dates_btn.setFixedWidth(160)
         self.save_dates_btn.clicked.connect(self._save_dates)
 
@@ -1735,7 +1741,7 @@ class MissionaryDetailPage(QWidget):
         header.addWidget(self.open_tasks_title)
         header.addStretch()
 
-        add_btn = create_button(
+        add_btn = create_detail_pill_button(
             tr("missionary_detail_add_task"),
             "primary",
             fixed_height=30,
@@ -1744,7 +1750,7 @@ class MissionaryDetailPage(QWidget):
         add_btn.clicked.connect(self._add_missionary_task)
         header.addWidget(add_btn)
 
-        office_btn = create_button(
+        office_btn = create_detail_pill_button(
             tr("missionary_detail_open_office_work"),
             "secondary",
             fixed_height=30,
@@ -1807,7 +1813,7 @@ class MissionaryDetailPage(QWidget):
             self.notes_text, stretch=1
         )
 
-        self.save_notes_btn = create_button(
+        self.save_notes_btn = create_detail_pill_button(
             tr("missionary_detail_save_notes"),
             "primary",
         )
@@ -1828,8 +1834,8 @@ class MissionaryDetailPage(QWidget):
             self.advance_banner.setVisible(False)
             return
 
-        stage = (
-            self.current_missionary.current_stage
+        stage = self.workflow_service.get_earliest_incomplete_stage(
+            self.current_missionary.id
         )
 
         if not stage:
@@ -2261,8 +2267,6 @@ class MissionaryDetailPage(QWidget):
             self.delete_missionary_action.setText(
                 tr("missionary_detail_delete_missionary")
             )
-        if hasattr(self, "delete_button"):
-            self.delete_button.setText(tr("missionary_detail_delete_missionary"))
         if hasattr(self, "banner_now_btn"):
             self.banner_now_btn.setText(tr("missionary_detail_advance_now"))
         if hasattr(self, "docs_helper"):
@@ -3585,7 +3589,7 @@ class MissionaryDetailPage(QWidget):
         copy.addLayout(title_row)
         copy.addWidget(hint)
 
-        action_button = create_button(
+        action_button = create_detail_pill_button(
             tr("missionary_detail_update_status"),
             "subtle",
             fixed_height=28,
@@ -3635,6 +3639,7 @@ class MissionaryDetailPage(QWidget):
             on_notes=lambda doc_data: self._open_document_notes(doc_data.id),
             on_open=lambda doc_data: self._open_document_file(doc_data.id),
             on_delete=lambda doc_data: self._delete_document(doc_data.id),
+            pill_actions=True,
         )
 
     def _build_missing_stage_widget(self, stage_name, missing_docs, is_current=False):

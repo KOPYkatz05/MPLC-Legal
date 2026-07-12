@@ -199,20 +199,53 @@ def test_office_work_filters_collapse_into_menu(qapp):
         page.close()
 
 
-def test_office_work_tasks_render_as_three_column_board(qapp):
+def test_office_work_tasks_render_as_two_column_board(qapp):
     _ = qapp
     page = OfficeWorkPage(service=FakeSecretaryWorkService())
 
     try:
-        columns = page.findChildren(QFrame, "OfficeWorkTaskColumn")
+        board = page.task_content_layout.itemAt(0).widget()
+        columns = board.findChildren(QFrame, "OfficeWorkTaskColumn")
         headers = [
             label.text()
             for column in columns
             for label in column.findChildren(QLabel, "OfficeWorkSectionTitle")
         ]
 
-        assert headers == ["Not Started", "In-Progress", "Completed"]
-        assert len(columns) == 3
+        assert headers == ["Not Started", "In-Progress"]
+        assert len(columns) == 2
+    finally:
+        page.close()
+
+
+def test_office_work_completed_tab_renders_completed_lane(qapp):
+    _ = qapp
+    service = FakeSecretaryWorkService()
+    original_grouped_tasks = service.grouped_tasks
+
+    def grouped_tasks(**filters):
+        grouped = original_grouped_tasks(**filters)
+        if filters.get("status") == "DONE":
+            grouped["later"] = [{"id": 9, "title": "Done", "status": "DONE"}]
+        return grouped
+
+    service.grouped_tasks = grouped_tasks
+    page = OfficeWorkPage(service=service)
+
+    try:
+        page._select_tab("completed")
+        board = page.task_content_layout.itemAt(0).widget()
+        columns = board.findChildren(QFrame, "OfficeWorkTaskColumn")
+        headers = [
+            label.text()
+            for column in columns
+            for label in column.findChildren(QLabel, "OfficeWorkSectionTitle")
+        ]
+
+        assert page._selected_tab == "completed"
+        assert headers == ["Completed"]
+        assert page.service.last_task_filters["status"] == "DONE"
+        assert page.service.last_task_filters["include_done"] is True
     finally:
         page.close()
 
@@ -758,7 +791,6 @@ def test_office_work_task_row_sets_missing_follow_up(monkeypatch, qapp):
 
         assert set(buttons) == {
             "More actions",
-            "Mark ready",
             "Mark complete",
         }
 
@@ -789,7 +821,6 @@ def test_office_work_task_row_keeps_primary_actions_visible(qapp):
 
         assert set(buttons) == {
             "More actions",
-            "Mark ready",
             "Mark complete",
         }
         assert getattr(buttons["More actions"], "_popup_menu", None) is not None
@@ -835,23 +866,14 @@ def test_office_work_task_presets_drive_existing_filters(qapp):
         assert page.task_follow_up_filter.currentData() == "due"
         assert page.service.last_task_filters["waiting_follow_up"] == "due"
 
-        page._summary_card_clicked(
-            SimpleNamespace(button=lambda: Qt.LeftButton),
-            "missing_follow_up",
-        )
+        page._apply_task_preset("missing_follow_up")
         assert page.task_follow_up_filter.currentData() == "missing"
         assert page.service.last_task_filters["waiting_follow_up"] == "missing"
 
-        page._summary_card_clicked(
-            SimpleNamespace(button=lambda: Qt.LeftButton),
-            "open",
-        )
+        page._apply_task_preset("open")
         assert page.task_status_filter.currentData() == "OPEN"
 
-        page._summary_card_clicked(
-            SimpleNamespace(button=lambda: Qt.LeftButton),
-            "upcoming_follow_up",
-        )
+        page._apply_task_preset("upcoming_follow_up")
         assert page.task_follow_up_filter.currentData() == "upcoming"
         assert page.service.last_task_filters["waiting_follow_up"] == "upcoming"
 

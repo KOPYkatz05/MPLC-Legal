@@ -44,6 +44,10 @@ except Exception:
 
 WINDOW_RESIZE_BORDER_WIDTH = 8
 WM_NCHITTEST = 0x0084
+WM_WINDOWPOSCHANGED = 0x0047
+WM_EXITSIZEMOVE = 0x0232
+HTCAPTION = 2
+HTMAXBUTTON = 9
 HTLEFT = 10
 HTRIGHT = 11
 HTTOP = 12
@@ -52,6 +56,16 @@ HTTOPRIGHT = 14
 HTBOTTOM = 15
 HTBOTTOMLEFT = 16
 HTBOTTOMRIGHT = 17
+GWL_STYLE = -16
+WS_MINIMIZEBOX = 0x00020000
+WS_THICKFRAME = 0x00040000
+WS_SYSMENU = 0x00080000
+WS_MAXIMIZEBOX = 0x00010000
+SWP_NOSIZE = 0x0001
+SWP_NOMOVE = 0x0002
+SWP_NOZORDER = 0x0004
+SWP_NOACTIVATE = 0x0010
+SWP_FRAMECHANGED = 0x0020
 
 
 @dataclass
@@ -112,6 +126,50 @@ def resize_hit_test(frame_rect, global_pos, border_width=WINDOW_RESIZE_BORDER_WI
     if bottom:
         return HTBOTTOM
     return None
+
+
+def title_bar_hit_test(global_pos, drag_rect=None, maximize_rect=None):
+    """Return native Windows title-bar zones for the custom app chrome."""
+    if global_pos is None:
+        return None
+    if maximize_rect is not None and maximize_rect.contains(global_pos):
+        return HTMAXBUTTON
+    if drag_rect is not None and drag_rect.contains(global_pos):
+        return HTCAPTION
+    return None
+
+
+def native_snap_window_style(style):
+    """Keep custom chrome while advertising normal window capabilities to Windows."""
+    return style | WS_THICKFRAME | WS_MAXIMIZEBOX | WS_MINIMIZEBOX | WS_SYSMENU
+
+
+def enable_native_snap_for_window(window):
+    if not sys.platform.startswith("win") or window is None:
+        return False
+    try:
+        hwnd = int(window.winId())
+        user32 = ctypes.windll.user32
+        current_style = user32.GetWindowLongW(hwnd, GWL_STYLE)
+        desired_style = native_snap_window_style(current_style)
+        if desired_style != current_style:
+            user32.SetWindowLongW(hwnd, GWL_STYLE, desired_style)
+            user32.SetWindowPos(
+                hwnd,
+                0,
+                0,
+                0,
+                0,
+                0,
+                SWP_NOMOVE
+                | SWP_NOSIZE
+                | SWP_NOZORDER
+                | SWP_NOACTIVATE
+                | SWP_FRAMECHANGED,
+            )
+        return True
+    except (AttributeError, OSError, TypeError, ValueError):
+        return False
 
 
 class LoadingSpinner(QWidget):
@@ -214,10 +272,14 @@ class MainWindow(QMainWindow):
         self._content_overlay_subtitles = []
         self._content_overlay_subtitle_index = 0
         self._startup_alerts = []
+        self._native_layout_refresh_pending = False
 
         self.setWindowTitle(tr("app_title"))
         if sys.platform.startswith("win"):
             self.setWindowFlag(Qt.FramelessWindowHint, True)
+            self.setWindowFlag(Qt.WindowSystemMenuHint, True)
+            self.setWindowFlag(Qt.WindowMinMaxButtonsHint, True)
+            self.setWindowFlag(Qt.WindowCloseButtonHint, True)
         self.resize(1400, 900)
 
         self.setup_ui()
@@ -228,6 +290,46 @@ class MainWindow(QMainWindow):
 
         QTimer.singleShot(0, lambda: log_top_level_windows("main-window-created"))
         QTimer.singleShot(800, self._load_startup_alerts)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        if sys.platform.startswith("win"):
+            enable_native_snap_for_window(self)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._schedule_native_layout_refresh()
+
+    def _schedule_native_layout_refresh(self):
+        if self._native_layout_refresh_pending:
+            return
+        self._native_layout_refresh_pending = True
+        QTimer.singleShot(0, self._refresh_native_window_layout)
+
+    def _refresh_native_window_layout(self):
+        self._native_layout_refresh_pending = False
+        shell = getattr(self, "shell", None)
+        if shell is None:
+            return
+
+        for widget in (shell, getattr(shell, "stack", None)):
+            layout = widget.layout() if widget is not None else None
+            if layout is not None:
+                layout.invalidate()
+                layout.activate()
+
+        stack = getattr(shell, "stack", None)
+        current_page = stack.currentWidget() if stack is not None else None
+        if current_page is not None:
+            current_page.updateGeometry()
+            layout = current_page.layout()
+            if layout is not None:
+                layout.invalidate()
+                layout.activate()
+
+            column_refresher = getattr(current_page, "_apply_column_widths", None)
+            if callable(column_refresher):
+                column_refresher()
 
     def refresh_workspace_actions(self):
         if hasattr(self, "detail_page") and hasattr(
@@ -286,14 +388,31 @@ class MainWindow(QMainWindow):
                 title_bar.refresh_maximize_state()
 
     def nativeEvent(self, event_type, message):
+        message_id = windows_message_id(message)
         if (
             sys.platform.startswith("win")
             and event_type in {"windows_generic_MSG", "windows_dispatcher_MSG"}
-            and windows_message_id(message) == WM_NCHITTEST
-            and not self.isMaximized()
+            and message_id in {WM_WINDOWPOSCHANGED, WM_EXITSIZEMOVE}
+        ):
+            self._schedule_native_layout_refresh()
+        if (
+            sys.platform.startswith("win")
+            and event_type in {"windows_generic_MSG", "windows_dispatcher_MSG"}
+            and message_id == WM_NCHITTEST
             and not self.isFullScreen()
         ):
-            hit = resize_hit_test(self.frameGeometry(), QCursor.pos())
+            global_pos = QCursor.pos()
+            hit = None
+            if not self.isMaximized():
+                hit = resize_hit_test(self.frameGeometry(), global_pos)
+            if hit is None:
+                title_bar = getattr(getattr(self, "shell", None), "title_bar", None)
+                if title_bar is not None:
+                    hit = title_bar_hit_test(
+                        global_pos,
+                        title_bar.global_drag_rect(),
+                        title_bar.global_maximize_rect(),
+                    )
             if hit is not None:
                 return True, hit
         return super().nativeEvent(event_type, message)
@@ -410,7 +529,11 @@ class MainWindow(QMainWindow):
         elif nav_key == "missionaries" or stack_index == 1:
             self.missionaries_page.load_data()
         elif nav_key == "office_work" or stack_index == 4:
-            self.office_work_page.request_refresh()
+            refresher = getattr(self.office_work_page, "request_refresh", None)
+            if callable(refresher):
+                refresher()
+            else:
+                self.office_work_page.load_data()
         elif nav_key == "appointments" or stack_index == 5:
             self.calendar_page.load_data()
         elif nav_key == "reports" or stack_index == 6:

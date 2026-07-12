@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, timedelta
 from itertools import groupby
 
@@ -2143,7 +2143,7 @@ class CalendarPage(QWidget):
                     type=appointment.type,
                 ),
             )
-            self.load_data()
+            self._apply_completed_appointment(appointment)
         except Exception:
             logger.exception("Failed to complete appointment")
             show_message(
@@ -2152,6 +2152,36 @@ class CalendarPage(QWidget):
                 tr("calendar_appointment_complete_failed"),
                 kind="critical",
             )
+
+    def _apply_completed_appointment(self, appointment):
+        """Update calendar state after completion without a full data reload."""
+        completed = replace(
+            appointment,
+            status=APPOINTMENT_STATUS_COMPLETED,
+        )
+        appointment_id = appointment.appointment_id
+        self._appointments = [
+            item
+            for item in self._appointments
+            if item.appointment_id != appointment_id
+        ]
+        self._history_appointments = [
+            item
+            for item in self._history_appointments
+            if item.appointment_id != appointment_id
+        ]
+        self._history_appointments.insert(0, completed)
+        self._calendar_summary_counts = self._build_summary_counts(
+            self._appointments
+        )
+        self._history_filter_cache = {}
+        self._count_label.setText(
+            tr("calendar_scheduled_count", count=len(self._appointments))
+        )
+        self._render_calendar()
+        self._history_loaded = False
+        if self._selected_tab == TAB_HISTORY:
+            self._render_history()
 
     def _miss_appointment(self, appointment):
         if not appointment.appointment_id:

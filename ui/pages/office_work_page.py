@@ -39,7 +39,6 @@ from services.secretary_work_service import (
 from ui.dialogs.office_work_dialogs import ProjectDialog, TaskDialog
 from ui.foundation import (
     FilterBar,
-    StatCard,
     create_button,
     create_card,
     create_combo_box,
@@ -373,9 +372,13 @@ class OfficeWorkPage(QWidget):
 
         self.stack = QStackedWidget()
         self.stack.setObjectName("OfficeWorkStack")
+        self.stack.setMinimumWidth(0)
+        self.stack.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Expanding)
 
         workspace = QFrame()
         workspace.setObjectName("OfficeWorkWorkspace")
+        workspace.setMinimumWidth(0)
+        workspace.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Expanding)
         workspace.setAttribute(Qt.WA_StyledBackground, True)
         workspace_layout = QVBoxLayout()
         workspace_layout.setContentsMargins(12, 12, 24, 24)
@@ -397,7 +400,8 @@ class OfficeWorkPage(QWidget):
         layout.setSpacing(8)
         frame.setLayout(layout)
 
-        top_row = QHBoxLayout()
+        top_row = QBoxLayout(QBoxLayout.LeftToRight)
+        self.top_row_layout = top_row
         top_row.setContentsMargins(0, 0, 0, 0)
         top_row.setSpacing(12)
 
@@ -405,10 +409,13 @@ class OfficeWorkPage(QWidget):
         title_stack.setContentsMargins(0, 0, 0, 0)
         title_stack.setSpacing(2)
 
-        title = QLabel("Office Work")
+        title = QLabel("Tasks")
         title.setObjectName("OfficeWorkTitle")
-        subtitle = QLabel("Track secretary tasks, projects, and follow-up work.")
+        subtitle = QLabel("Track tasks, projects, and follow-up work.")
         subtitle.setObjectName("OfficeWorkSubtitle")
+        subtitle.setWordWrap(True)
+        subtitle.setMinimumWidth(0)
+        subtitle.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         title_stack.addWidget(title)
         title_stack.addWidget(subtitle)
 
@@ -442,7 +449,11 @@ class OfficeWorkPage(QWidget):
         self.tab_buttons = {}
         self.tab_button_group = QButtonGroup(self)
         self.tab_button_group.setExclusive(True)
-        for key, title in [("tasks", "Tasks"), ("projects", "Projects")]:
+        for key, title in [
+            ("tasks", "Tasks"),
+            ("completed", "Completed"),
+            ("projects", "Projects"),
+        ]:
             button = QPushButton(title)
             button.setObjectName("OfficeWorkTopTab")
             button.setCheckable(True)
@@ -738,6 +749,12 @@ class OfficeWorkPage(QWidget):
         if layout_class == self._task_layout_class:
             return
         self._task_layout_class = layout_class
+        if hasattr(self, "top_row_layout"):
+            self.top_row_layout.setDirection(
+                QBoxLayout.TopToBottom
+                if layout_class == "stacked"
+                else QBoxLayout.LeftToRight
+            )
         if hasattr(self, "task_content_layout"):
             self._schedule_task_render()
 
@@ -783,11 +800,11 @@ class OfficeWorkPage(QWidget):
             return
 
         self._clear_layout(self.task_content_layout)
-        self._build_summary_cards()
 
+        completed_tab = self._selected_tab == "completed"
         grouped = self.service.grouped_tasks(
             search=self.task_search.text(),
-            status=self.task_status_filter.currentData(),
+            status="DONE" if completed_tab else self.task_status_filter.currentData(),
             priority=self.task_priority_filter.currentData(),
             project_id=self._project_filter_id,
             missionary_id=self.task_missionary_filter.currentData(),
@@ -798,13 +815,17 @@ class OfficeWorkPage(QWidget):
             automation_state=self.task_source_filter.currentData(),
             waiting_follow_up=self.task_follow_up_filter.currentData(),
             waiting_reason=self.task_waiting_reason_filter.currentData(),
-            include_done=self.task_status_filter.currentData() == "ALL",
+            include_done=completed_tab,
         )
 
         board_groups = self._task_board_groups(grouped)
         if not any(board_groups.values()):
             self.task_content_layout.addWidget(
-                self._empty_state("No tasks match the current filters.")
+                self._empty_state(
+                    "No completed tasks match the current filters."
+                    if completed_tab
+                    else "No tasks match the current filters."
+                )
             )
         else:
             self.task_content_layout.addWidget(self._task_board(board_groups))
@@ -876,6 +897,8 @@ class OfficeWorkPage(QWidget):
     def _task_board(self, board_groups):
         board = QWidget()
         board.setObjectName("OfficeWorkTaskBoard")
+        board.setMinimumWidth(0)
+        board.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         board_layout = QBoxLayout(
             QBoxLayout.LeftToRight
             if self._task_layout_class_for_width(self.width()) == "wide"
@@ -884,11 +907,15 @@ class OfficeWorkPage(QWidget):
         board_layout.setContentsMargins(0, 0, 0, 0)
         board_layout.setSpacing(12)
         board.setLayout(board_layout)
-        for key, label in (
-            ("not_started", TASK_BOARD_LANE_LABELS["not_started"]),
-            ("in_progress", TASK_BOARD_LANE_LABELS["in_progress"]),
-            ("completed", TASK_BOARD_LANE_LABELS["completed"]),
-        ):
+        lanes = (
+            (("completed", TASK_BOARD_LANE_LABELS["completed"]),)
+            if self._selected_tab == "completed"
+            else (
+                ("not_started", TASK_BOARD_LANE_LABELS["not_started"]),
+                ("in_progress", TASK_BOARD_LANE_LABELS["in_progress"]),
+            )
+        )
+        for key, label in lanes:
             board_layout.addWidget(
                 self._task_board_column(key, label, board_groups.get(key, []))
             )
@@ -899,7 +926,7 @@ class OfficeWorkPage(QWidget):
         column = TaskBoardColumn(lane_key, self._handle_task_board_drop)
         column.setObjectName("OfficeWorkTaskColumn")
         column.setMinimumWidth(0)
-        column.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        column.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         column_layout = QVBoxLayout()
         column_layout.setContentsMargins(10, 10, 10, 10)
         column_layout.setSpacing(8)
@@ -938,37 +965,6 @@ class OfficeWorkPage(QWidget):
 
         self.project_content_layout.addStretch()
         self._projects_loaded = True
-
-    def _build_summary_cards(self):
-        summary = self.service.summary()
-        row = QGridLayout()
-        row.setContentsMargins(0, 0, 0, 0)
-        row.setSpacing(10)
-        columns = 4 if self.width() >= 1400 else (2 if self.width() >= 700 else 1)
-        for index, (key, label, color) in enumerate([
-            ("open", "To Do", "#0EA5AC"),
-            ("ready", "Ready", "#2563EB"),
-            ("follow_up", "Follow Up", "#7C3AED"),
-            ("upcoming_follow_up", "Upcoming", "#0891B2"),
-            ("missing_follow_up", "No Follow-Up", "#A16207"),
-            ("overdue", "Overdue", "#DC2626"),
-            ("due_today", "Due Today", "#D97706"),
-            ("waiting", "Waiting", "#71717A"),
-        ]):
-            card = StatCard(summary.get(key, 0), label, color=color)
-            card.setCursor(Qt.PointingHandCursor)
-            card.mousePressEvent = (
-                lambda event, preset_key=key:
-                self._summary_card_clicked(event, preset_key)
-            )
-            row.addWidget(card, index // columns, index % columns)
-        for column in range(columns):
-            row.setColumnStretch(column, 1)
-
-        wrapper = QWidget()
-        wrapper.setObjectName("OfficeWorkSummaryRow")
-        wrapper.setLayout(row)
-        self.task_content_layout.addWidget(wrapper)
 
     def _task_row(self, task):
         meta_parts = [_due_text(task)]
@@ -1021,16 +1017,6 @@ class OfficeWorkPage(QWidget):
                             "callback": lambda item=task: self._edit_task(item),
                         }
                     )
-
-                visible_actions.append(
-                    {
-                        "text": "Ready",
-                        "tooltip": "Mark ready",
-                        "icon": "circle-dot",
-                        "fallback": "R",
-                        "callback": lambda task_id=task["id"]: self._mark_task_ready(task_id),
-                    }
-                )
 
             visible_actions.append(
                 {
@@ -1125,7 +1111,8 @@ class OfficeWorkPage(QWidget):
             object_name="OfficeWorkTaskPill",
         )
         card.setMinimumWidth(0)
-        card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        card.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
+        card.setProperty("compactLayout", True)
         card.label.setMinimumWidth(0)
         card.label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         card.subtitle.setMinimumWidth(0)
@@ -1189,7 +1176,11 @@ class OfficeWorkPage(QWidget):
 
     def _project_row(self, project):
         card = create_card(object_name="OfficeWorkRow")
-        layout = QHBoxLayout()
+        layout = QBoxLayout(
+            QBoxLayout.TopToBottom
+            if self._task_layout_class_for_width(self.width()) == "stacked"
+            else QBoxLayout.LeftToRight
+        )
         layout.setContentsMargins(12, 10, 12, 10)
         layout.setSpacing(12)
         card.setLayout(layout)
@@ -1199,6 +1190,9 @@ class OfficeWorkPage(QWidget):
         text_stack.setSpacing(4)
         title = QLabel(project["title"])
         title.setObjectName("StrongText")
+        title.setWordWrap(True)
+        title.setMinimumWidth(0)
+        title.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         text_stack.addWidget(title)
 
         task_breakdown = self._project_task_breakdown(project)
@@ -1212,6 +1206,9 @@ class OfficeWorkPage(QWidget):
             ])
         )
         meta.setObjectName("OfficeWorkMeta")
+        meta.setWordWrap(True)
+        meta.setMinimumWidth(0)
+        meta.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         text_stack.addWidget(meta)
         layout.addLayout(text_stack, stretch=1)
 
@@ -1301,10 +1298,12 @@ class OfficeWorkPage(QWidget):
             if not self._projects_loaded:
                 self.render_projects()
         else:
-            key = "tasks"
+            key = "completed" if key == "completed" else "tasks"
             self.stack.setCurrentIndex(self.tasks_index)
 
         self._selected_tab = key
+        if key in {"tasks", "completed"}:
+            self.render_tasks()
         if self.tab_control is not None:
             current_key = getattr(self.tab_control, "currentRouteKey", lambda: None)()
             if current_key != key:
@@ -1367,10 +1366,6 @@ class OfficeWorkPage(QWidget):
         elif preset == "all":
             pass
         self.render_tasks()
-
-    def _summary_card_clicked(self, event, preset):
-        if event.button() == Qt.LeftButton:
-            self._apply_task_preset(preset)
 
     def focus_task_context(self, task_id=None, title=""):
         if task_id is not None:

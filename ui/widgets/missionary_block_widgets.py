@@ -1,7 +1,12 @@
-from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QVBoxLayout
+from PySide6.QtCore import QSize, Qt
+from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QToolButton, QVBoxLayout
 
-from ui.foundation import create_button, create_card, create_info_badge
+from ui.foundation import (
+    app_icon,
+    create_button,
+    create_card,
+    create_info_badge,
+)
 from utils.constants import DOCUMENTS
 from utils.language_helper import ui_text as tr
 
@@ -162,6 +167,7 @@ def build_document_card(
     on_open=None,
     on_delete=None,
     show_thumbnail=True,
+    pill_actions=False,
 ):
     card = create_card()
     card.setMinimumHeight(104)
@@ -219,15 +225,55 @@ def build_document_card(
     actions.setContentsMargins(0, 0, 0, 0)
     actions.setSpacing(8)
     actions.addStretch()
-    for text_key, tone, callback in (
-        ("missionary_detail_view", "primary", on_view),
-        ("missionary_detail_notes", "secondary", on_notes),
-        ("missionary_detail_open", "subtle", on_open),
-        ("delete_document", "danger", on_delete),
+    for text_key, tone, icon_slot, fallback_icons, callback in (
+        ("missionary_detail_view", "primary", "document.view", ("eye",), on_view),
+        (
+            "missionary_detail_notes",
+            "secondary",
+            "document.notes",
+            ("notebook-pen", "notebook-text"),
+            on_notes,
+        ),
+        (
+            "missionary_detail_open",
+            "subtle",
+            "document.open",
+            ("external-link",),
+            on_open,
+        ),
+        (
+            "delete_document",
+            "danger",
+            "document.delete",
+            ("trash-2", "trash"),
+            on_delete,
+        ),
     ):
         if callback is None:
             continue
-        button = create_button(tr(text_key), tone, fixed_height=28)
+        if pill_actions:
+            tooltip = tr(text_key)
+            button = QToolButton()
+            button.setObjectName("PillActionIconButton")
+            button.setProperty("detailTone", tone)
+            button.setCursor(Qt.PointingHandCursor)
+            button.setFixedSize(26, 26)
+            button.setToolTip(tooltip)
+            button.setAccessibleName(tooltip)
+            button.setAutoRaise(True)
+            icon = app_icon(
+                icon_slot,
+                fallback_names=fallback_icons,
+                size=18,
+                color="#6B7280",
+            )
+            if icon is not None and not icon.isNull():
+                button.setIcon(icon)
+                button.setIconSize(QSize(18, 18))
+            else:
+                button.setText(tooltip[:1])
+        else:
+            button = create_button(tr(text_key), tone, fixed_height=28)
         button.clicked.connect(lambda checked=False, cb=callback: cb(doc))
         actions.addWidget(button)
     layout.addLayout(actions)

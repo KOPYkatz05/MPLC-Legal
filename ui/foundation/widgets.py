@@ -1,6 +1,8 @@
 from dataclasses import dataclass
+import ctypes
+import sys
 
-from PySide6.QtCore import QEvent, QMimeData, QPoint, QPointF, QRectF, QSize, Qt, Signal
+from PySide6.QtCore import QEvent, QMimeData, QPoint, QPointF, QRect, QRectF, QSize, Qt, Signal
 from PySide6.QtGui import (
     QColor,
     QDrag,
@@ -32,6 +34,25 @@ from PySide6.QtWidgets import (
 from ui.foundation.fluent import create_button
 from ui.foundation.fluent import CardWidget, SimpleCardWidget, fluent_icon
 from ui.foundation.icons import app_icon, lucide_icon
+
+
+WM_SYSCOMMAND = 0x0112
+SC_MOVE = 0xF010
+HTCAPTION = 2
+
+
+def start_native_system_move(window):
+    """Begin a real Windows caption drag so snap zones are owned by the OS."""
+    if not sys.platform.startswith("win") or window is None:
+        return False
+    try:
+        hwnd = int(window.winId())
+        user32 = ctypes.windll.user32
+        user32.ReleaseCapture()
+        user32.SendMessageW(hwnd, WM_SYSCOMMAND, SC_MOVE | HTCAPTION, 0)
+        return True
+    except (AttributeError, OSError, TypeError, ValueError):
+        return False
 
 
 @dataclass(frozen=True)
@@ -212,9 +233,9 @@ class _AppTitleDragRegion(QFrame):
         self._drag_start_global = self._event_global_position(event)
         self._drag_start_frame = window.frameGeometry().topLeft()
 
+        started = start_native_system_move(window)
         handle = window.windowHandle() if window is not None else None
-        started = False
-        if handle is not None and hasattr(handle, "startSystemMove"):
+        if not started and handle is not None and hasattr(handle, "startSystemMove"):
             try:
                 started = bool(handle.startSystemMove())
             except Exception:
@@ -314,6 +335,18 @@ class AppTitleBar(QFrame):
         layout.addWidget(self.maximize_button)
         layout.addWidget(self.close_button)
         self.refresh_maximize_state()
+
+    @staticmethod
+    def _global_widget_rect(widget):
+        if widget is None or not widget.isVisible():
+            return QRect()
+        return QRect(widget.mapToGlobal(QPoint(0, 0)), widget.size())
+
+    def global_drag_rect(self):
+        return self._global_widget_rect(self.drag_region)
+
+    def global_maximize_rect(self):
+        return self._global_widget_rect(self.maximize_button)
 
     def _make_window_button(
         self,
@@ -464,6 +497,15 @@ class PillActionButton(QFrame):
         for widget in [self, *self._drag_watchers]:
             if widget is not None:
                 widget.installEventFilter(self)
+
+    def minimumSizeHint(self):
+        hint = super().minimumSizeHint()
+        if self.property("compactLayout"):
+            # Board cards may be placed in narrow responsive columns. Their
+            # labels are elided by the layout, so text length must not impose a
+            # page-wide minimum width.
+            return QSize(0, hint.height())
+        return hint
 
     def _start_drag(self, source_widget, point):
         payload = self._drag_payload() if callable(self._drag_payload) else self._drag_payload
@@ -702,6 +744,12 @@ class AppShell(QWidget):
 
         self.stack = QStackedWidget()
         self.stack.setObjectName("ContentStack")
+        # QStackedWidget normally propagates the largest minimum-size hint from
+        # every page, including hidden pages. That can prevent Windows from
+        # snapping the main window onto smaller displays. Let the shell shrink
+        # and leave overflow/scrolling decisions to the active page.
+        self.stack.setMinimumSize(0, 0)
+        self.stack.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Ignored)
 
         body_layout.addWidget(self.sidebar)
         body_layout.addWidget(self.stack, stretch=1)

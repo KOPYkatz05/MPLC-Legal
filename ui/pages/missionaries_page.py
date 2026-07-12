@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
     QDialog,
     QFileDialog,
     QFrame,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QListWidgetItem,
@@ -35,7 +36,6 @@ from services.group_package_export_service import (
 )
 from services.settings_service import SettingsService
 from ui.foundation import (
-    FilterBar,
     DialogFooter,
     FLUENT_AVAILABLE,
     MaskDialogBase,
@@ -1111,7 +1111,7 @@ class MissionariesPage(QWidget):
         )
 
         self.auto_widths_button = create_button(
-            "Auto Fit Widths",
+            "Fit Columns",
             "secondary",
         )
 
@@ -1129,8 +1129,14 @@ class MissionariesPage(QWidget):
         workspace_layout.setSpacing(12)
         workspace.setLayout(workspace_layout)
 
-        self.filter_bar = FilterBar()
+        self.filter_bar = QFrame()
         self.filter_bar.setObjectName("MissionariesFilterBar")
+        self.filter_bar.setAttribute(Qt.WA_StyledBackground, True)
+        self._filter_layout = QGridLayout()
+        self._filter_layout.setContentsMargins(18, 12, 18, 12)
+        self._filter_layout.setHorizontalSpacing(12)
+        self._filter_layout.setVerticalSpacing(8)
+        self.filter_bar.setLayout(self._filter_layout)
 
         self.search_input = create_line_edit(
             "Search by ID or name..."
@@ -1181,15 +1187,14 @@ class MissionariesPage(QWidget):
             "ResultLabel"
         )
 
-        self.filter_bar.add_filter(self.search_input)
-        self.filter_bar.add_filter(self.stage_filter)
-        self.filter_bar.add_filter(
-            self.nationality_filter
-        )
-        self.filter_bar.add_filter(self.group_filter)
-        self.filter_bar.add_spacer()
-        self.filter_bar.add_filter(self.create_group_button)
-        self.filter_bar.add_filter(self.batch_button)
+        self._filter_widgets = [
+            self.search_input,
+            self.stage_filter,
+            self.nationality_filter,
+            self.group_filter,
+            self.create_group_button,
+            self.batch_button,
+        ]
 
         workspace_layout.addWidget(self.filter_bar)
 
@@ -1253,6 +1258,7 @@ class MissionariesPage(QWidget):
         self.view_stack.addWidget(self.groups_surface)
         workspace_layout.addWidget(self.view_stack, stretch=1)
         outer.addWidget(workspace, stretch=1)
+        QTimer.singleShot(0, self._update_responsive_layout)
 
     def _build_top_bar(self):
         top_bar = QFrame()
@@ -1293,7 +1299,7 @@ class MissionariesPage(QWidget):
         tabs_layout.addStretch()
         layout.addWidget(tabs)
 
-        command_row = QHBoxLayout()
+        command_row = QGridLayout()
         command_row.setContentsMargins(0, 0, 0, 0)
         command_row.setSpacing(12)
 
@@ -1308,16 +1314,67 @@ class MissionariesPage(QWidget):
         title_stack.addWidget(title)
         title_stack.addWidget(subtitle)
 
-        command_row.addLayout(title_stack)
-        command_row.addStretch()
-        command_row.addWidget(self.edit_columns_button)
-        command_row.addWidget(self.auto_widths_button)
-        command_row.addWidget(self.export_button)
-        command_row.addWidget(self.add_button)
+        title_widget = QWidget()
+        title_widget.setLayout(title_stack)
+        self._command_layout = command_row
+        self._command_title = title_widget
+        self._command_buttons = [
+            self.edit_columns_button,
+            self.auto_widths_button,
+            self.export_button,
+            self.add_button,
+        ]
 
         layout.addLayout(command_row)
 
         return top_bar
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._update_responsive_layout()
+
+    def _update_responsive_layout(self):
+        """Reflow page controls to fit the current screen/window width."""
+        if not hasattr(self, "_filter_layout"):
+            return
+
+        width = self.width()
+        compact = width < 960
+        very_compact = width < 680
+
+        for widget in self._command_buttons:
+            self._command_layout.removeWidget(widget)
+        self._command_layout.removeWidget(self._command_title)
+        self._command_layout.addWidget(
+            self._command_title, 0, 0, 1, 4 if compact else 1
+        )
+        if compact:
+            button_columns = 2 if very_compact else 4
+            for index, button in enumerate(self._command_buttons):
+                self._command_layout.addWidget(
+                    button,
+                    1 + index // button_columns,
+                    index % button_columns,
+                )
+        else:
+            for column, button in enumerate(self._command_buttons, start=1):
+                self._command_layout.addWidget(button, 0, column)
+            self._command_layout.setColumnStretch(0, 1)
+
+        for widget in self._filter_widgets:
+            self._filter_layout.removeWidget(widget)
+        if very_compact:
+            columns = 2
+        elif compact:
+            columns = 3
+        else:
+            columns = 6
+        for index, widget in enumerate(self._filter_widgets):
+            self._filter_layout.addWidget(
+                widget, index // columns, index % columns
+            )
+        self._filter_layout.setColumnStretch(0, 1)
+        self.search_input.setMaximumWidth(16777215 if compact else 280)
 
     # ==========================================
     # COLUMN SETTINGS

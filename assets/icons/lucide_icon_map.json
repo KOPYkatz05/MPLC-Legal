@@ -21,5 +21,9 @@
   "action.open": ["external-link"],
   "action.refresh": ["refresh-cw"],
   "action.save": ["save"],
-  "action.upload": ["upload"]
+  "action.upload": ["upload"],
+  "document.view": ["eye"],
+  "document.notes": ["notebook-pen", "notebook-text"],
+  "document.open": ["external-link"],
+  "document.delete": ["trash-2", "trash"]
 }

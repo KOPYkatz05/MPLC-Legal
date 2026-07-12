@@ -1,19 +1,27 @@
 from types import SimpleNamespace
 
 from PySide6.QtCore import QPoint, QRect, Qt
-from PySide6.QtWidgets import QMainWindow
+from PySide6.QtWidgets import QMainWindow, QSizePolicy, QWidget
 
 from ui.foundation import AppShell, AppTitleBar
 from ui.main_window import (
     HTBOTTOM,
     HTBOTTOMLEFT,
     HTBOTTOMRIGHT,
+    HTCAPTION,
     HTLEFT,
+    HTMAXBUTTON,
     HTRIGHT,
     HTTOP,
     HTTOPLEFT,
     HTTOPRIGHT,
+    WS_MAXIMIZEBOX,
+    WS_MINIMIZEBOX,
+    WS_SYSMENU,
+    WS_THICKFRAME,
+    native_snap_window_style,
     resize_hit_test,
+    title_bar_hit_test,
 )
 
 
@@ -68,6 +76,18 @@ def test_app_shell_creates_custom_title_bar(qapp):
     assert shell.title_bar.drag_region.objectName() == "AppTitleDragRegion"
     assert shell.title_bar.minimize_button.objectName() == "AppWindowControlButton"
     assert shell.title_bar.close_button.objectName() == "AppWindowCloseButton"
+
+
+def test_app_shell_hidden_pages_do_not_force_a_large_window_minimum(qapp):
+    _ = qapp
+    shell = AppShell("Mission Legal Tracker")
+    large_page = QWidget()
+    large_page.setMinimumWidth(1400)
+    shell.stack.addWidget(large_page)
+
+    assert shell.stack.sizePolicy().horizontalPolicy() == QSizePolicy.Ignored
+    assert shell.stack.minimumWidth() == 0
+    assert shell.minimumSizeHint().width() < 400
 
 
 def test_app_title_bar_window_buttons_call_parent_window(qapp):
@@ -138,3 +158,21 @@ def test_main_window_resize_hit_test_ignores_content_area():
 
     assert resize_hit_test(rect, QPoint(250, 250)) is None
     assert resize_hit_test(rect, QPoint(80, 250)) is None
+
+
+def test_title_bar_hit_test_exposes_native_caption_and_snap_layout_button():
+    drag_rect = QRect(100, 100, 500, 34)
+    maximize_rect = QRect(500, 102, 34, 30)
+
+    assert title_bar_hit_test(QPoint(250, 115), drag_rect, maximize_rect) == HTCAPTION
+    assert title_bar_hit_test(QPoint(510, 115), drag_rect, maximize_rect) == HTMAXBUTTON
+    assert title_bar_hit_test(QPoint(700, 115), drag_rect, maximize_rect) is None
+
+
+def test_native_snap_style_restores_windows_resize_and_window_capabilities():
+    style = native_snap_window_style(0)
+
+    assert style & WS_THICKFRAME
+    assert style & WS_MAXIMIZEBOX
+    assert style & WS_MINIMIZEBOX
+    assert style & WS_SYSMENU

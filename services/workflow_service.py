@@ -83,6 +83,34 @@ class WorkflowService:
 
         return workflows
 
+    @staticmethod
+    def get_earliest_incomplete_stage(missionary_id, session=None):
+        """Return the first unfinished workflow stage in the defined order."""
+        owns_session = session is None
+        session = session or SessionLocal()
+
+        try:
+            workflows = (
+                session.query(WorkflowStage)
+                .filter_by(missionary_id=missionary_id)
+                .all()
+            )
+            statuses = {
+                workflow.stage_name: workflow.status
+                for workflow in workflows
+            }
+            return next(
+                (
+                    stage_name
+                    for stage_name in WORKFLOW_STAGES
+                    if statuses.get(stage_name) != "COMPLETED"
+                ),
+                None,
+            )
+        finally:
+            if owns_session:
+                session.close()
+
     def update_workflow_status(
         self,
         workflow_id,
@@ -165,36 +193,13 @@ class WorkflowService:
             if not missionary:
                 return
 
-            workflows = (
-                session.query(WorkflowStage)
-                .filter_by(
-                    missionary_id=missionary_id
+            current_stage = (
+                self.get_earliest_incomplete_stage(
+                    missionary_id,
+                    session=session,
                 )
-                .all()
+                or "NEW"
             )
-
-            current_stage = "NEW"
-
-            for workflow in workflows:
-                if workflow.status in [
-                    "IN PROGRESS",
-                    "WAITING",
-                    "BLOCKED",
-                ]:
-                    current_stage = (
-                        workflow.stage_name
-                    )
-
-                    break
-
-            if current_stage == "NEW":
-                for workflow in workflows:
-                    if workflow.status == (
-                        "COMPLETED"
-                    ):
-                        current_stage = (
-                            workflow.stage_name
-                        )
 
             missionary.current_stage = (
                 current_stage

@@ -37,6 +37,7 @@ from utils.constants import (
 from utils.logger import logger
 from services.onedrive_service import OneDriveService
 from services.expiration_rules import apply_stage_completion_expiration
+from services.workflow_service import WorkflowService
 
 
 class StageAdvanceDialog(MaskDialogBase):
@@ -74,7 +75,8 @@ class StageAdvanceDialog(MaskDialogBase):
 
     def _load_data(self):
         self.current_stage = (
-            self.missionary.current_stage
+            WorkflowService.get_earliest_incomplete_stage(self.missionary.id)
+            or self.missionary.current_stage
             or WORKFLOW_STAGES[0]
         )
 
