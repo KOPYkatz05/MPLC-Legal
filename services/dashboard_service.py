@@ -1,6 +1,7 @@
 from datetime import date, timedelta
 
 from database.db import SessionLocal
+from services.remote_service import RemoteServiceMixin
 
 from database.models.missionary import Missionary
 from database.models.appointment import Appointment, APPOINTMENT_STATUS_SCHEDULED
@@ -23,7 +24,9 @@ from utils.logger import logger
 VISIBLE_TASK_STATUSES = ("OPEN", "READY", "WAITING")
 
 
-class DashboardService:
+class DashboardService(RemoteServiceMixin):
+    REMOTE_SERVICE = "dashboard"
+    REMOTE_METHODS = frozenset({"get_summary"})
     def __init__(self, notification_feed_service=None):
         self.notification_feed_service = (
             notification_feed_service or NotificationFeedService()

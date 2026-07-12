@@ -6,6 +6,7 @@ import zipfile
 from pathlib import Path
 
 from database.db import SessionLocal
+from services.api_client import MissionLegalApiClient
 from database.models.missionary import Missionary
 from database.models.secretary_work import MissionaryGroup, MissionaryGroupMember
 from services.export_service import ExportService
@@ -32,9 +33,14 @@ class GroupPackageExportResult:
 
 class GroupPackageExportService:
     def __init__(self, export_service=None):
+        self.api_client = MissionLegalApiClient.from_environment()
         self.export_service = export_service or ExportService()
 
     def export_group_package(self, group_id, output_zip_path):
+        if self.api_client is not None:
+            return self.api_client.download(
+                f"/v1/exports/groups/{group_id}", output_zip_path
+            )
         group_name, missionaries = self._load_group_missionaries(group_id)
         return self.export_missionaries_package(
             group_name,

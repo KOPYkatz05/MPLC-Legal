@@ -681,44 +681,29 @@ class MainWindow(QMainWindow):
 
     def open_missionary_detail(self, missionary_id):
         try:
-            from database.db import SessionLocal
-            from database.models.missionary import Missionary
+            from services.missionary_service import MissionaryService
 
             context = self._capture_current_view_context()
+            missionary = MissionaryService().get_missionary(missionary_id)
+            if missionary is None:
+                logger.warning("Missionary ID %s not found", missionary_id)
+                return False
 
-            session = SessionLocal()
-            try:
-                missionary = (
-                    session.query(Missionary)
-                    .filter_by(id=missionary_id)
-                    .first()
-                )
-                if missionary is None:
-                    logger.warning(
-                        "Missionary ID %s not found",
-                        missionary_id,
-                    )
-                    return False
+            if context is not None:
+                self._detail_navigation_stack.append(context)
 
-                if context is not None:
-                    self._detail_navigation_stack.append(context)
+            self.detail_page.load_missionary(missionary)
+            self.stack.setCurrentWidget(self.detail_page)
 
-                self.detail_page.load_missionary(missionary)
-                self.stack.setCurrentWidget(self.detail_page)
+            if (
+                FLUENT_AVAILABLE
+                and hasattr(self, "navigationInterface")
+                and "missionaries" in self._nav_widgets
+            ):
+                widget = self._nav_widgets["missionaries"]
+                self.navigationInterface.setCurrentItem(widget.objectName())
 
-                if (
-                    FLUENT_AVAILABLE
-                    and hasattr(self, "navigationInterface")
-                    and "missionaries" in self._nav_widgets
-                ):
-                    widget = self._nav_widgets["missionaries"]
-                    self.navigationInterface.setCurrentItem(
-                        widget.objectName()
-                    )
-
-                return True
-            finally:
-                session.close()
+            return True
 
         except Exception:
             logger.exception(

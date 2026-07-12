@@ -18,22 +18,15 @@ from ui.foundation import (
     setup_dialog_shell,
     show_message,
 )
-from database.db import SessionLocal
-
-from database.models.missionary import Missionary
-
-from database.models.workflow import WorkflowStage
-
-from database.models.stage_history import StageHistory
-
 from utils.constants import (
     WORKFLOW_STAGES,
     required_documents_for_missionary,
 )
 
 from utils.logger import logger
-from services.onedrive_service import OneDriveService
-from services.expiration_rules import apply_stage_completion_expiration
+from services.document_service import DocumentService
+from services.missionary_service import MissionaryService
+from services.workflow_service import WorkflowService
 
 
 class BatchStageAdvanceDialog(QDialog):
@@ -55,24 +48,18 @@ class BatchStageAdvanceDialog(QDialog):
         self.setup_ui()
 
     def _load_data(self):
-        session = SessionLocal()
+        missionary_service = MissionaryService()
+        document_service = DocumentService()
+        self.missionaries = []
 
-        try:
-            self.missionaries = []
+        for missionary_id in self.missionary_ids:
+            missionary = missionary_service.get_missionary(missionary_id)
+            if missionary:
+                self.missionaries.append(missionary)
 
-            for mid in self.missionary_ids:
-                m = (
-                    session.query(Missionary)
-                    .filter_by(id=mid)
-                    .first()
-                )
+        self.stage_statuses = []
 
-                if m:
-                    self.missionaries.append(m)
-
-            self.stage_statuses = []
-
-            for m in self.missionaries:
+        for m in self.missionaries:
                 stage = m.current_stage
 
                 idx = WORKFLOW_STAGES.index(stage)
@@ -88,30 +75,9 @@ class BatchStageAdvanceDialog(QDialog):
                     m,
                 )
 
-                docs = (
-                    session.query(
-                        WorkflowStage
-                    )
-                    .filter_by(
-                        missionary_id=m.id
-                    )
-                    .all()
-                )
-
-                # Check uploaded documents
-                from database.models.document import (
-                    Document,
-                )
-
                 uploaded = {
                     d.document_type
-                    for d in (
-                        session.query(Document)
-                        .filter_by(
-                            missionary_id=m.id
-                        )
-                        .all()
-                    )
+                    for d in document_service.get_documents(m.id)
                 }
 
                 all_uploaded = all(
@@ -135,8 +101,6 @@ class BatchStageAdvanceDialog(QDialog):
                     ),
                 })
 
-        finally:
-            session.close()
 
     def setup_ui(self):
         layout = QVBoxLayout()
@@ -260,7 +224,6 @@ class BatchStageAdvanceDialog(QDialog):
                 row, 0,
                 QTableWidgetItem(m.full_name),
             )
-
             table.setItem(
                 row, 1,
                 QTableWidgetItem(
@@ -370,87 +333,19 @@ class BatchStageAdvanceDialog(QDialog):
             if confirm not in {1, 16384}:
                 return
 
-        session = SessionLocal()
-
         try:
-            onedrive_service = OneDriveService()
-
+            WorkflowService().advance_missionaries(
+                [status["missionary"].id for status in self.stage_statuses]
+            )
             for status in self.stage_statuses:
-                stored_missionary = status["missionary"]
-
-                m = (
-                    session.query(Missionary)
-                    .filter_by(id=stored_missionary.id)
-                    .first()
-                )
-
-                if not m:
-                    continue
-
-                stage = status["stage"]
-
-                next_stage = status["next_stage"]
-
-                workflows = (
-                    session.query(WorkflowStage)
-                    .filter_by(
-                        missionary_id=m.id
-                    )
-                    .all()
-                )
-
-                wf_map = {
-                    w.stage_name: w
-                    for w in workflows
-                }
-
-                curr_wf = wf_map.get(stage)
-
-                if curr_wf:
-                    curr_wf.status = "COMPLETED"
-
-                apply_stage_completion_expiration(m, stage)
-
-                if next_stage:
-                    m.current_stage = next_stage
-
-                    next_wf = wf_map.get(next_stage)
-
-                    if next_wf:
-                        next_wf.status = "IN PROGRESS"
-
-                    # Record history
-                    history = StageHistory(
-                        missionary_id=m.id,
-                        from_stage=stage,
-                        to_stage=next_stage,
-                    )
-
-                    session.add(history)
-
-                else:
-                    m.status = "ARCHIVED"
-                    if m.folder_path:
-                        new_folder = (
-                            onedrive_service
-                            .archive_missionary_folder(
-                                m.folder_path
-                            )
-                        )
-                        m.folder_path = str(new_folder)
-
                 logger.info(
-                    f"Batch advanced {m.full_name} "
-                    f"from {stage} to {next_stage}"
+                    f"Batch advanced {status['missionary'].full_name} "
+                    f"from {status['stage']} to {status['next_stage']}"
                 )
-
-            session.commit()
 
             self.accept()
 
         except Exception:
-            session.rollback()
-
             logger.exception(
                 "Batch advance failed"
             )
@@ -461,6 +356,3 @@ class BatchStageAdvanceDialog(QDialog):
                 "Failed to advance stages.",
                 kind="critical",
             )
-
-        finally:
-            session.close()

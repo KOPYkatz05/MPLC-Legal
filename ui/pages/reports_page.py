@@ -16,14 +16,8 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QFont, QPalette
 
-from database.db import SessionLocal
+from services.reports_data_service import ReportsDataService
 
-from database.models.missionary import Missionary
-
-from database.models.document import Document
-
-from database.models.stage_history import StageHistory
-from database.models.secretary_work import SecretaryTask
 from ui.foundation import StatCard, create_card, create_scroll_area
 
 from utils.constants import (
@@ -464,25 +458,16 @@ class ReportsPage(QWidget):
             button.setChecked(key == self._selected_tab)
 
     def _build_snapshot(self):
-        session = SessionLocal()
-
+        data = ReportsDataService().get_data()
         try:
             today = date.today()
             month_start = today.replace(day=1)
             month_label = month_start.strftime("%B %Y")
 
-            active = (
-                session.query(Missionary)
-                .filter_by(status="ACTIVE")
-                .all()
-            )
-            docs = session.query(Document).all()
-            history = session.query(StageHistory).all()
-            tasks = (
-                session.query(SecretaryTask)
-                .filter(SecretaryTask.completed_at.isnot(None))
-                .all()
-            )
+            active = data["missionaries"]
+            docs = data["documents"]
+            history = data["stage_history"]
+            tasks = data["completed_tasks"]
 
             stage_counts = {
                 stage: 0
@@ -567,9 +552,9 @@ class ReportsPage(QWidget):
                     for row in coverage
                 ),
             }
-
         finally:
-            session.close()
+            pass
+
 
     def _render_selected_tab(self):
         self._clear_content()

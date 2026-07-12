@@ -2,8 +2,11 @@ import json
 import shutil
 
 from pathlib import Path
+from database.runtime import get_client_data_dir
 
 from database.db import SessionLocal
+from services.api_client import MissionLegalApiClient
+from services.remote_service import RemoteServiceMixin
 
 from database.models.document import (
     Document,
@@ -16,8 +19,19 @@ from services.workflow_validator import (
 )
 
 
-class DocumentService:
+class DocumentService(RemoteServiceMixin):
+    REMOTE_SERVICE = "documents"
+    REMOTE_METHODS = frozenset({
+        "document_type_exists",
+        "delete_document_by_type",
+        "delete_document_by_id",
+        "update_document_notes",
+    })
     def __init__(self):
+        self.api_client = MissionLegalApiClient.from_environment()
+        if self.api_client is not None:
+            self.onedrive_service = None
+            return
         self.workflow_validator = (
             WorkflowValidator()
         )
@@ -32,6 +46,22 @@ class DocumentService:
         ocr_confirmed_data=None,
         notes=None,
     ):
+        if self.api_client is not None:
+            payload = self.api_client.upload(
+                "/v1/documents/upload",
+                file_path=source_file,
+                data={
+                    "missionary_id": str(missionary.id),
+                    "document_type": document_type,
+                    "workflow_stage": workflow_stage or "GENERAL",
+                    "ocr_raw_data": ocr_raw_data or "",
+                    "ocr_confirmed_data": ocr_confirmed_data or "",
+                    "notes": notes or "",
+                },
+            )
+            from services.api_client import RemoteRecord
+
+            return self._materialize(RemoteRecord(payload))
         if not document_type:
             raise ValueError("document_type is required")
 
@@ -146,6 +176,16 @@ class DocumentService:
         return destination_path, new_file_name
 
     def get_documents(self, missionary_id):
+        if self.api_client is not None:
+            payload = self.api_client.get(
+                "/v1/rpc/documents/get_documents",
+                params={"missionary_id": missionary_id},
+            )
+            # Dedicated GET is used instead of RPC POST so document content can
+            # subsequently be cached using stable document identifiers.
+            from services.api_client import RemoteRecord
+
+            return [self._materialize(RemoteRecord(item)) for item in payload["items"]]
         session = SessionLocal()
 
         try:
@@ -181,6 +221,14 @@ class DocumentService:
 
         finally:
             session.close()
+
+    def _materialize(self, document):
+        cache_root = get_client_data_dir() / "DocumentCache" / str(document.missionary_id)
+        suffix = Path(getattr(document, "file_path", "")).suffix or ".bin"
+        destination = cache_root / f"{document.id}{suffix}"
+        self.api_client.download(f"/v1/documents/{document.id}/content", destination)
+        document.file_path = str(destination)
+        return document
 
     def document_type_exists(
         self,
@@ -327,6 +375,11 @@ class DocumentService:
         self,
         document_id,
     ):
+        if self.api_client is not None:
+            payload = self.api_client.get(f"/v1/documents/{document_id}")
+            from services.api_client import RemoteRecord
+
+            return self._materialize(RemoteRecord(payload))
         session = SessionLocal()
 
         try:

@@ -7,7 +7,7 @@ from sqlalchemy import ForeignKey
 
 from sqlalchemy.sql import func
 
-from database.db import Base
+from database.base import Base
 
 
 class Document(Base):

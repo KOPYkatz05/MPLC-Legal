@@ -17,6 +17,7 @@ from database.models.missionary import Missionary
 from services.document_parser import DocumentParser
 from services.document_image_export_service import DocumentImageExportService
 from services.document_service import DocumentService
+from services.api_client import MissionLegalApiClient
 from services.expiration_rules import set_entry_based_expiration
 from services.image_processing_service import ImageProcessingService
 from services.residency_service import ResidencyService
@@ -843,6 +844,12 @@ def finalize_ocr_ingestion(
 
 
 def _get_current_stage(missionary_id, fallback):
+    from services.missionary_service import MissionaryService
+
+    remote = MissionLegalApiClient.from_environment()
+    if remote is not None:
+        missionary = MissionaryService().get_missionary(missionary_id)
+        return getattr(missionary, "current_stage", None) or fallback
     session = SessionLocal()
     try:
         missionary = (
@@ -914,6 +921,17 @@ def apply_missionary_updates(
     confirmed_data,
     auto_update_fields=None,
 ):
+    remote = MissionLegalApiClient.from_environment()
+    if remote is not None:
+        payload = remote.post(
+            f"/v1/documents/{document_id}/apply-updates",
+            json={
+                "document_type": document_type,
+                "confirmed_data": confirmed_data or {},
+                "auto_update_fields": auto_update_fields,
+            },
+        )
+        return payload["updated_fields"]
     auto_update_fields = auto_update_fields or DOCUMENTS.get(
         document_type, {}
     ).get("auto_updates", [])

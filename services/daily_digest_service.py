@@ -2,6 +2,7 @@ from collections import Counter, defaultdict
 from datetime import date
 
 from database.db import SessionLocal
+from services.remote_service import RemoteServiceMixin
 from database.models.appointment import APPOINTMENT_STATUS_SCHEDULED, Appointment
 from database.models.missionary import Missionary
 from database.models.secretary_work import SecretaryTask, SecretaryTaskMissionary
@@ -92,7 +93,9 @@ GROUP_LABELS = {
 }
 
 
-class DailyDigestService:
+class DailyDigestService(RemoteServiceMixin):
+    REMOTE_SERVICE = "daily-digest"
+    REMOTE_METHODS = frozenset({"build_digest"})
     def __init__(self, notification_feed_service=None):
         self.notification_feed_service = (
             notification_feed_service or NotificationFeedService()

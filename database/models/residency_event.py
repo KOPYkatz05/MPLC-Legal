@@ -6,7 +6,7 @@ from sqlalchemy import String
 
 from sqlalchemy.sql import func
 
-from database.db import Base
+from database.base import Base
 
 
 class ResidencyEvent(Base):

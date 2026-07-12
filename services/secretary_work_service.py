@@ -1,6 +1,7 @@
 from datetime import date, datetime, timedelta
 
 from database.db import SessionLocal
+from services.remote_service import RemoteServiceMixin
 from database.models.document import Document
 from database.models.missionary import Missionary
 from database.models.secretary_work import (
@@ -163,7 +164,34 @@ def task_due_group(due_date, today=None):
     return "later"
 
 
-class SecretaryWorkService:
+class SecretaryWorkService(RemoteServiceMixin):
+    REMOTE_SERVICE = "secretary-work"
+    REMOTE_METHODS = frozenset({
+        "create_project",
+        "update_project",
+        "complete_project",
+        "archive_project",
+        "list_projects",
+        "create_task",
+        "update_task",
+        "save_task_board_orders",
+        "complete_task",
+        "mark_task_ready",
+        "reopen_task",
+        "archive_task",
+        "delete_task",
+        "get_task_workspace",
+        "get_task_status_history",
+        "archive_obsolete_automatic_tasks",
+        "create_or_update_automatic_task",
+        "list_tasks",
+        "grouped_tasks",
+        "list_calendar_tasks",
+        "summary",
+        "missionary_options",
+        "group_options",
+        "project_options",
+    })
     def create_project(
         self,
         title,

@@ -18,16 +18,6 @@ from ui.foundation import (
     setup_dialog_shell,
     show_message,
 )
-from database.db import SessionLocal
-
-from database.models.document import Document
-
-from database.models.workflow import WorkflowStage
-
-from database.models.missionary import Missionary
-
-from database.models.stage_history import StageHistory
-
 from utils.constants import (
     WORKFLOW_STAGES,
     DOCUMENTS,
@@ -35,8 +25,7 @@ from utils.constants import (
 )
 
 from utils.logger import logger
-from services.onedrive_service import OneDriveService
-from services.expiration_rules import apply_stage_completion_expiration
+from services.document_service import DocumentService
 from services.workflow_service import WorkflowService
 
 
@@ -75,7 +64,7 @@ class StageAdvanceDialog(MaskDialogBase):
 
     def _load_data(self):
         self.current_stage = (
-            WorkflowService.get_earliest_incomplete_stage(self.missionary.id)
+            WorkflowService().get_earliest_incomplete_stage(self.missionary.id)
             or self.missionary.current_stage
             or WORKFLOW_STAGES[0]
         )
@@ -84,7 +73,6 @@ class StageAdvanceDialog(MaskDialogBase):
             idx = WORKFLOW_STAGES.index(
                 self.current_stage
             )
-
             self.next_stage = (
                 WORKFLOW_STAGES[idx + 1]
                 if idx + 1 < len(WORKFLOW_STAGES)
@@ -94,23 +82,8 @@ class StageAdvanceDialog(MaskDialogBase):
         else:
             self.next_stage = WORKFLOW_STAGES[0]
 
-        session = SessionLocal()
-
-        try:
-            docs = (
-                session.query(Document)
-                .filter_by(
-                    missionary_id=self.missionary.id
-                )
-                .all()
-            )
-
-            self.uploaded_types = {
-                d.document_type for d in docs
-            }
-
-        finally:
-            session.close()
+        docs = DocumentService().get_documents(self.missionary.id)
+        self.uploaded_types = {document.document_type for document in docs}
 
         required = required_documents_for_missionary(
             self.current_stage,
@@ -394,87 +367,12 @@ class StageAdvanceDialog(MaskDialogBase):
             if confirm not in {1, 16384}:
                 return
 
-        session = SessionLocal()
-
         try:
-            missionary = (
-                session.query(Missionary)
-                .filter_by(
-                    id=self.missionary.id
-                )
-                .first()
-            )
-
-            workflows = (
-                session.query(WorkflowStage)
-                .filter_by(
-                    missionary_id=self.missionary.id
-                )
-                .all()
-            )
-
-            wf_map = {
-                w.stage_name: w for w in workflows
-            }
-
-            # Mark current stage COMPLETED
-            curr_wf = wf_map.get(
-                self.current_stage
-            )
-
-            if curr_wf:
-                curr_wf.status = "COMPLETED"
-
-            apply_stage_completion_expiration(
-                missionary,
-                self.current_stage,
-            )
-
-            # Advance missionary stage
-            if self.next_stage:
-                missionary.current_stage = (
-                    self.next_stage
-                )
-
-                next_wf = wf_map.get(
-                    self.next_stage
-                )
-
-                if next_wf:
-                    next_wf.status = "IN PROGRESS"
-
-                # Record history
-                history = StageHistory(
-                    missionary_id=missionary.id,
-                    from_stage=self.current_stage,
-                    to_stage=self.next_stage,
-                )
-
-                session.add(history)
-
-            else:
-                missionary.status = "ARCHIVED"
-                if missionary.folder_path:
-                    new_folder = (
-                        OneDriveService()
-                        .archive_missionary_folder(
-                            missionary.folder_path
-                        )
-                    )
-                    missionary.folder_path = str(new_folder)
-
-                history = StageHistory(
-                    missionary_id=missionary.id,
-                    from_stage=self.current_stage,
-                    to_stage="ARCHIVED",
-                )
-
-                session.add(history)
-
-            session.commit()
+            if not WorkflowService().advance_missionary(self.missionary.id):
+                raise RuntimeError("Missionary could not be advanced")
 
             logger.info(
-                f"Advanced {missionary.full_name} "
+                f"Advanced {self.missionary.full_name} "
                 f"from {self.current_stage} "
                 f"to {self.next_stage}"
             )
@@ -482,8 +380,6 @@ class StageAdvanceDialog(MaskDialogBase):
             self.accept()
 
         except Exception:
-            session.rollback()
-
             logger.exception(
                 "Failed to advance missionary stage"
             )
@@ -495,6 +391,3 @@ class StageAdvanceDialog(MaskDialogBase):
                 "Check logs for details.",
                 kind="critical",
             )
-
-        finally:
-            session.close()

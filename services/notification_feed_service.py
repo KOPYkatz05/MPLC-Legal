@@ -2,6 +2,7 @@ from collections import Counter
 from datetime import date, timedelta
 
 from database.db import SessionLocal
+from services.remote_service import RemoteServiceMixin
 from database.models.appointment import APPOINTMENT_STATUS_SCHEDULED, Appointment
 from database.models.document import Document
 from database.models.missionary import Missionary
@@ -42,7 +43,14 @@ def notification_sort_key(item):
     )
 
 
-class NotificationFeedService:
+class NotificationFeedService(RemoteServiceMixin):
+    REMOTE_SERVICE = "notifications"
+    REMOTE_METHODS = frozenset({
+        "build_feed",
+        "expiring_documents",
+        "missing_documents",
+        "startup_items",
+    })
     def __init__(self, settings_service=None):
         self.settings_service = settings_service or SettingsService()
 

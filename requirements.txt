@@ -1,6 +1,12 @@
 PySide6
 PySide6-Fluent-Widgets
 SQLAlchemy
+cryptography
+fastapi
+uvicorn
+httpx
+pywin32; platform_system == "Windows"
+python-multipart
 openpyxl
 python-dotenv
 setuptools

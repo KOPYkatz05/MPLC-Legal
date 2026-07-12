@@ -274,16 +274,19 @@ PASSPORT_COUNTRY_CODES = (
 
 
 def get_storage_root():
+    # Explicit process configuration must win for the Windows service,
+    # packaged clients, tests, and recovery tooling. QSettings belongs to the
+    # interactive desktop profile and may point at another user's OneDrive.
+    env_root = os.environ.get("MISSIONS_ROOT")
+    if env_root:
+        return Path(env_root)
+
     saved_root = QSettings(ORG, APP).value(
         STORAGE_ROOT_KEY,
         None,
     )
     if saved_root:
         return Path(saved_root)
-
-    env_root = os.environ.get("MISSIONS_ROOT")
-    if env_root:
-        return Path(env_root)
 
     return DEFAULT_STORAGE_ROOT
 

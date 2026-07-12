@@ -1,4 +1,5 @@
 from database.db import SessionLocal
+from services.remote_service import RemoteServiceMixin
 from database.models.missionary import Missionary
 from database.models.secretary_work import MissionaryGroup, MissionaryGroupMember
 from services.secretary_work_service import SecretaryWorkError
@@ -23,7 +24,15 @@ def _unique_ids(values):
     return ids
 
 
-class MissionaryGroupService:
+class MissionaryGroupService(RemoteServiceMixin):
+    REMOTE_SERVICE = "missionary-groups"
+    REMOTE_METHODS = frozenset({
+        "create_group",
+        "update_group",
+        "list_groups",
+        "missionary_ids_for_group",
+        "missionaries_for_group",
+    })
     def create_group(
         self,
         name,

@@ -24,8 +24,6 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from database.db import SessionLocal
-from database.models.missionary import Missionary
 from services.secretary_work_service import (
     PRIORITIES,
     PROJECT_STATUSES,

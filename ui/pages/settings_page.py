@@ -32,6 +32,7 @@ from types import SimpleNamespace
 from services.email_digest_service import EmailDigestService
 from services.scheduler_service import SchedulerService
 from services.settings_service import SettingsService
+from services.api_client import MissionLegalApiClient
 from services.workspace_service import (
     WorkspaceService,
     new_block,
@@ -65,6 +66,7 @@ class SettingsPage(QWidget):
             if main_window
             else SettingsService()
         )
+        self.api_client = MissionLegalApiClient.from_environment()
         self.workspace_service = (
             getattr(main_window, "workspace_service", None)
             if main_window
@@ -273,10 +275,23 @@ class SettingsPage(QWidget):
             760,
         )
         self.storage_input.setText(self.settings_service.get_storage_root())
+        if self.api_client is not None:
+            try:
+                server_configuration = self.api_client.get(
+                    "/v1/server/configuration"
+                )
+                self.storage_input.setText(
+                    server_configuration.get("mission_storage_root") or ""
+                )
+            except Exception:
+                logger.exception("Could not load server storage configuration")
+            self.storage_input.setReadOnly(True)
         storage_row.addWidget(self.storage_input)
 
         self.browse_btn = create_button(tr("settings_browse"), "secondary")
         self.browse_btn.clicked.connect(self._browse_storage_root)
+        if self.api_client is not None:
+            self.browse_btn.setEnabled(False)
         storage_row.addWidget(self.browse_btn)
         storage_row.addStretch()
 
@@ -1384,9 +1399,10 @@ class SettingsPage(QWidget):
     def _save(self):
         lang = self.lang_combo.currentData()
         self.settings_service.set_language(lang)
-        self.settings_service.set_storage_root(
-            self.storage_input.text().strip()
-        )
+        if self.api_client is None:
+            self.settings_service.set_storage_root(
+                self.storage_input.text().strip()
+            )
         self.settings_service.set_upload_auto_ocr_enabled(
             self.auto_ocr_check.isChecked()
         )

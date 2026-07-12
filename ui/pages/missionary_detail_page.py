@@ -3512,27 +3512,14 @@ class MissionaryDetailPage(QWidget):
         latest = getattr(self.current_missionary, "created_at", None)
 
         try:
-            from database.db import SessionLocal
-            from database.models.stage_history import StageHistory
-
-            session = SessionLocal()
-            try:
-                history = (
-                    session.query(StageHistory)
-                    .filter_by(
-                        missionary_id=self.current_missionary.id
-                    )
-                    .order_by(StageHistory.created_at.desc())
-                    .first()
+            history = WorkflowService().get_stage_history(self.current_missionary.id)
+            first = history[0] if history else None
+            if first and first.created_at:
+                latest = (
+                    first.created_at
+                    if latest is None or first.created_at > latest
+                    else latest
                 )
-                if history and history.created_at:
-                    latest = (
-                        history.created_at
-                        if latest is None or history.created_at > latest
-                        else latest
-                    )
-            finally:
-                session.close()
         except Exception:
             logger.exception("Failed to collect latest activity")
 
@@ -3835,36 +3822,18 @@ class MissionaryDetailPage(QWidget):
             return
 
         try:
-            from database.db import SessionLocal
+            history = WorkflowService().get_stage_history(self.current_missionary.id)
 
-            from database.models.stage_history import (
-                StageHistory,
-            )
-
-            session = SessionLocal()
-
-            try:
-                history = (
-                    session.query(StageHistory)
-                    .filter_by(
-                        missionary_id=self.current_missionary.id
-                    )
-                    .order_by(
-                        StageHistory.created_at.desc()
-                    )
-                    .all()
+            if not history:
+                empty = QListWidgetItem(
+                    tr("missionary_detail_no_stage_transitions")
                 )
 
-                if not history:
-                    empty = QListWidgetItem(
-                        tr("missionary_detail_no_stage_transitions")
-                    )
+                self.timeline_list.addItem(empty)
 
-                    self.timeline_list.addItem(empty)
+                return
 
-                    return
-
-                for h in history:
+            for h in history:
                     date_str = (
                         h.created_at.strftime(
                             "%b %d, %Y %H:%M"
@@ -3890,9 +3859,6 @@ class MissionaryDetailPage(QWidget):
                     item = QListWidgetItem(text)
 
                     self.timeline_list.addItem(item)
-
-            finally:
-                session.close()
 
         except Exception:
             logger.exception(
@@ -4007,27 +3973,11 @@ class MissionaryDetailPage(QWidget):
     # ==========================================
 
     def _reload_missionary(self):
-        from database.db import SessionLocal
-        from database.models.missionary import (
-            Missionary as MissionaryModel,
+        refreshed = self.missionary_service.get_missionary(
+            self.current_missionary.id
         )
-
-        session = SessionLocal()
-
-        try:
-            refreshed = (
-                session.query(MissionaryModel)
-                .filter_by(
-                    id=self.current_missionary.id
-                )
-                .first()
-            )
-
-            if refreshed:
-                self.load_missionary(refreshed)
-
-        finally:
-            session.close()
+        if refreshed:
+            self.load_missionary(refreshed)
 
     def format_date(self, date_value):
         if not date_value:

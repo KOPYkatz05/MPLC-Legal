@@ -1,23 +1,40 @@
-from sqlalchemy import create_engine
-from sqlalchemy.orm import declarative_base
+from sqlalchemy import create_engine, event
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import sessionmaker
 import uuid
 
-DATABASE_URL = "sqlite:///data/app.db"
+from database.runtime import ensure_runtime_directories, get_database_path, sqlite_url
+from database.base import Base
+
+
+ensure_runtime_directories()
+DATABASE_PATH = get_database_path()
+DATABASE_URL = sqlite_url(DATABASE_PATH)
 
 engine = create_engine(
     DATABASE_URL,
-    echo=False
+    echo=False,
+    connect_args={"timeout": 30},
+    pool_pre_ping=True,
 )
+
+
+@event.listens_for(engine, "connect")
+def _configure_sqlite_connection(dbapi_connection, _connection_record):
+    cursor = dbapi_connection.cursor()
+    try:
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.execute("PRAGMA busy_timeout=30000")
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.execute("PRAGMA synchronous=FULL")
+    finally:
+        cursor.close()
 
 SessionLocal = sessionmaker(
     bind=engine,
     autoflush=False,
     autocommit=False
 )
-
-Base = declarative_base()
-
 
 def init_db():
     from database.models.missionary import Missionary
@@ -38,6 +55,10 @@ def init_db():
     Base.metadata.create_all(bind=engine)
 
     _run_migrations()
+
+    from database.schema import record_schema_version
+
+    record_schema_version(engine)
 
 
 def _run_migrations():
@@ -205,8 +226,23 @@ def _run_migrations():
                 from sqlalchemy import text
                 conn.execute(text(sql))
                 conn.commit()
-            except Exception:
-                pass
+            except OperationalError as exc:
+                message = str(getattr(exc, "orig", exc)).lower()
+                if (
+                    "duplicate column name" in message
+                    or "already exists" in message
+                    # Targeted migration tests and recovery tools may operate on
+                    # a partial legacy schema. init_db() creates the complete
+                    # model schema before this runner executes in production.
+                    or "no such table" in message
+                    or "no such column" in message
+                ):
+                    conn.rollback()
+                    continue
+                conn.rollback()
+                raise RuntimeError(
+                    f"Database migration failed: {sql.strip()[:100]}"
+                ) from exc
 
         try:
             from sqlalchemy import text

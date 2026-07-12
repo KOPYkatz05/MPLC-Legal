@@ -1,6 +1,7 @@
 from datetime import datetime
 
 from database.db import SessionLocal
+from services.remote_service import RemoteServiceMixin
 from database.models.appointment import (
     APPOINTMENT_STATUS_COMPLETED,
     APPOINTMENT_STATUS_MISSED,
@@ -50,7 +51,16 @@ APPOINTMENT_HISTORY_STATUSES = (
 )
 
 
-class AppointmentService:
+class AppointmentService(RemoteServiceMixin):
+    REMOTE_SERVICE = "appointments"
+    REMOTE_METHODS = frozenset({
+        "sync_from_missionary_dates",
+        "list_scheduled_appointments",
+        "list_history_appointments",
+        "backfill_all",
+        "complete_appointment",
+        "miss_appointment",
+    })
     def __init__(self):
         self.secretary_work_service = SecretaryWorkService()
 

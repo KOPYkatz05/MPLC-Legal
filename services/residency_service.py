@@ -1,6 +1,7 @@
 from datetime import datetime
 
 from database.db import SessionLocal
+from services.remote_service import RemoteServiceMixin
 from database.models.missionary import Missionary
 from database.models.residency_event import ResidencyEvent
 from services.expiration_rules import add_years
@@ -21,7 +22,15 @@ def calculate_residency_expiration(
     return add_years(arrival_date, years)
 
 
-class ResidencyService:
+class ResidencyService(RemoteServiceMixin):
+    REMOTE_SERVICE = "residency"
+    REMOTE_METHODS = frozenset({
+        "get_approved_prorroga_count",
+        "approve_initial_residency",
+        "approve_next_prorroga",
+        "sync_residency_expiration",
+        "get_residency_timeline",
+    })
     def get_approved_prorroga_count(self, missionary_id):
         session = SessionLocal()
         try:

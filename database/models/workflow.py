@@ -3,7 +3,7 @@ from sqlalchemy import Integer
 from sqlalchemy import String
 from sqlalchemy import ForeignKey
 
-from database.db import Base
+from database.base import Base
 
 
 class WorkflowStage(Base):

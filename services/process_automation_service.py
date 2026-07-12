@@ -1,6 +1,7 @@
 from datetime import date, timedelta
 
 from database.db import SessionLocal
+from services.remote_service import RemoteServiceMixin
 from database.models.document import Document
 from database.models.missionary import Missionary
 from database.models.secretary_work import SecretaryTask
@@ -25,7 +26,9 @@ def _week_key(value):
     return f"{year}-W{week:02d}"
 
 
-class ProcessAutomationService:
+class ProcessAutomationService(RemoteServiceMixin):
+    REMOTE_SERVICE = "automation"
+    REMOTE_METHODS = frozenset({"run"})
     def __init__(self, settings_service=None, secretary_work_service=None):
         self.settings_service = settings_service or SettingsService()
         self.secretary_work_service = (

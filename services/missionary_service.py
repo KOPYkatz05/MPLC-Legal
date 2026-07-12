@@ -32,6 +32,7 @@ from services.appointment_service import (
 )
 
 from utils.logger import logger
+from services.api_client import MissionLegalApiClient, RemoteRecord, json_value
 
 
 class MissionaryCodeError(ValueError):
@@ -55,6 +56,11 @@ def missionary_display_id(missionary):
 
 class MissionaryService:
     def __init__(self):
+        self.api_client = MissionLegalApiClient.from_environment()
+        if self.api_client is not None:
+            self.onedrive_service = None
+            self.workflow_service = None
+            return
         self.onedrive_service = (
             OneDriveService()
         )
@@ -64,6 +70,11 @@ class MissionaryService:
         )
 
     def get_all_missionaries(self):
+        if self.api_client is not None:
+            payload = self.api_client.get(
+                "/v1/missionaries", params={"status_filter": "ACTIVE"}
+            )
+            return [RemoteRecord(item) for item in payload["items"]]
         session = SessionLocal()
 
         try:
@@ -89,7 +100,22 @@ class MissionaryService:
         finally:
             session.close()
 
+    def get_missionary(self, missionary_id):
+        if self.api_client is not None:
+            payload = self.api_client.get(f"/v1/missionaries/{missionary_id}")
+            return RemoteRecord(payload)
+        session = SessionLocal()
+        try:
+            return session.query(Missionary).filter_by(id=missionary_id).first()
+        finally:
+            session.close()
+
     def get_archived_missionaries(self):
+        if self.api_client is not None:
+            payload = self.api_client.get(
+                "/v1/missionaries", params={"status_filter": "ARCHIVED"}
+            )
+            return [RemoteRecord(item) for item in payload["items"]]
         session = SessionLocal()
 
         try:
@@ -154,6 +180,20 @@ class MissionaryService:
         arrival_date=None,
         visa_expiration=None,
     ):
+        if self.api_client is not None:
+            payload = self.api_client.post(
+                "/v1/missionaries",
+                json={
+                    "full_name": full_name,
+                    "missionary_code": missionary_code,
+                    "preferred_name": preferred_name,
+                    "nationality": nationality,
+                    "passport_number": passport_number,
+                    "arrival_date": json_value(arrival_date),
+                    "visa_expiration": json_value(visa_expiration),
+                },
+            )
+            return RemoteRecord(payload)
         session = SessionLocal()
 
         try:
@@ -250,6 +290,16 @@ class MissionaryService:
         missionary_id,
         field_updates,
     ):
+        if self.api_client is not None:
+            payload = self.api_client.patch(
+                f"/v1/missionaries/{missionary_id}",
+                json={
+                    "fields": {
+                        key: json_value(value) for key, value in field_updates.items()
+                    }
+                },
+            )
+            return payload["updated"]
         session = SessionLocal()
 
         try:
@@ -298,6 +348,7 @@ class MissionaryService:
                 f"{missionary.full_name}: "
                 f"{list(field_updates.keys())}"
             )
+            return True
 
         except Exception:
             session.rollback()
@@ -316,6 +367,10 @@ class MissionaryService:
         self,
         missionary_id
     ):
+        if self.api_client is not None:
+            return self.api_client.post(
+                f"/v1/missionaries/{missionary_id}/trash"
+            )["trashed"]
         session = SessionLocal()
 
         try:
@@ -372,6 +427,7 @@ class MissionaryService:
                 f"Soft deleted missionary: "
                 f"{missionary.full_name}"
             )
+            return True
 
         except Exception:
             session.rollback()
@@ -392,6 +448,11 @@ class MissionaryService:
         archive_group_name=None,
         archive_reason=None,
     ):
+        if self.api_client is not None:
+            return self.api_client.post(
+                f"/v1/missionaries/{missionary_id}/archive",
+                json={"reason": archive_reason},
+            )["archived"]
         session = SessionLocal()
 
         try:
@@ -440,6 +501,7 @@ class MissionaryService:
                 f"Archived missionary: "
                 f"{missionary.full_name}"
             )
+            return True
 
         except Exception:
             session.rollback()
@@ -463,6 +525,12 @@ class MissionaryService:
         missionary_ids,
         group_name,
     ):
+        if self.api_client is not None:
+            payload = self.api_client.post(
+                "/v1/missionaries/archive-group",
+                json={"missionary_ids": missionary_ids, "group_name": group_name},
+            )
+            return Path(payload["package_path"])
         group_name = (group_name or "").strip()
 
         if not group_name:
@@ -552,6 +620,11 @@ class MissionaryService:
         return value.strip(" .") or "Archived Group"
 
     def get_trashed(self):
+        if self.api_client is not None:
+            payload = self.api_client.get(
+                "/v1/missionaries", params={"status_filter": "TRASH"}
+            )
+            return [RemoteRecord(item) for item in payload["items"]]
         session = SessionLocal()
 
         try:
@@ -573,6 +646,10 @@ class MissionaryService:
             session.close()
 
     def restore_missionary(self, missionary_id):
+        if self.api_client is not None:
+            return self.api_client.post(
+                f"/v1/missionaries/{missionary_id}/restore"
+            )["restored"]
         session = SessionLocal()
 
         try:
@@ -606,6 +683,7 @@ class MissionaryService:
                 f"Restored missionary: "
                 f"{missionary.full_name}"
             )
+            return True
 
         except Exception:
             session.rollback()
@@ -620,6 +698,10 @@ class MissionaryService:
             session.close()
 
     def hard_delete(self, missionary_id):
+        if self.api_client is not None:
+            return self.api_client.delete(
+                f"/v1/missionaries/{missionary_id}"
+            )["deleted"]
         session = SessionLocal()
 
         try:
@@ -706,6 +788,7 @@ class MissionaryService:
                 f"Permanently deleted missionary "
                 f"ID {missionary_id}"
             )
+            return True
 
         except Exception:
             session.rollback()

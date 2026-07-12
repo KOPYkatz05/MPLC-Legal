@@ -1,6 +1,7 @@
 from datetime import date, timedelta
 
 from database.db import SessionLocal
+from services.remote_service import RemoteServiceMixin
 
 from database.models.missionary import Missionary
 
@@ -9,7 +10,9 @@ from services.expiration_rules import should_track_expiration_field
 from utils.logger import logger
 
 
-class AlertService:
+class AlertService(RemoteServiceMixin):
+    REMOTE_SERVICE = "alerts"
+    REMOTE_METHODS = frozenset({"get_expiring_soon", "get_overdue", "get_all_alerts"})
 
     EXPIRATION_FIELDS = [
         ("visa_expiration", "Visa"),

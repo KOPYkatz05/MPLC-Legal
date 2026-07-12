@@ -8,7 +8,7 @@ from sqlalchemy.orm import relationship
 
 from sqlalchemy.sql import func
 
-from database.db import Base
+from database.base import Base
 
 
 TASK_STATUSES = ("OPEN", "READY", "WAITING", "DONE", "ARCHIVED")

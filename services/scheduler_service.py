@@ -8,9 +8,12 @@ TASK_NAME = "Mission Legal Daily Digest"
 
 class SchedulerService:
     def install_daily_digest_task(self, digest_time):
-        main_path = Path(__file__).resolve().parents[1] / "main.py"
         python_path = Path(sys.executable).resolve()
-        command = f'"{python_path}" "{main_path}" --send-daily-digest'
+        if getattr(sys, "frozen", False):
+            command = f'"{python_path}" --send-daily-digest'
+        else:
+            main_path = Path(__file__).resolve().parents[1] / "main.py"
+            command = f'"{python_path}" "{main_path}" --send-daily-digest'
         result = subprocess.run(
             [
                 "schtasks",

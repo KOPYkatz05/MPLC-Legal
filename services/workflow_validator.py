@@ -1,4 +1,5 @@
 from database.db import SessionLocal
+from services.remote_service import RemoteServiceMixin
 
 from database.models.workflow import (
     WorkflowStage,
@@ -20,7 +21,9 @@ from utils.constants import (
 from utils.logger import logger
 
 
-class WorkflowValidator:
+class WorkflowValidator(RemoteServiceMixin):
+    REMOTE_SERVICE = "workflow-validation"
+    REMOTE_METHODS = frozenset({"validate_workflows", "get_missing_documents"})
     def validate_workflows(
         self,
         missionary_id
