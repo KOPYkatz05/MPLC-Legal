@@ -1,11 +1,13 @@
 import argparse
+import shutil
 import socket
 from pathlib import Path
 
 from PySide6.QtCore import QSettings
 
-from config import APP, ORG
+from app_identity import APP, ORG
 from services.api_client import MissionLegalApiClient
+from database.runtime import get_client_data_dir
 
 
 def main():
@@ -24,9 +26,18 @@ def main():
     health = client.health()
     client.validate_compatibility(health)
     paired = client.pair(args.pairing_code, args.device_name)
+
+    configuration_dir = get_client_data_dir() / "Configuration"
+    configuration_dir.mkdir(parents=True, exist_ok=True)
+    saved_certificate = configuration_dir / "mission-legal-ca.pem"
+    if certificate != saved_certificate.resolve():
+        temporary = saved_certificate.with_suffix(".pem.tmp")
+        shutil.copy2(certificate, temporary)
+        temporary.replace(saved_certificate)
+
     settings = QSettings(ORG, APP)
     settings.setValue("server/url", args.server.rstrip("/"))
-    settings.setValue("server/ca_certificate", str(certificate))
+    settings.setValue("server/ca_certificate", str(saved_certificate))
     settings.sync()
     print(
         f"Paired device {paired['device_id']} with API {health['api_version']} "

@@ -12,7 +12,26 @@ def main():
     parser.add_argument("--create-pairing-code", action="store_true")
     parser.add_argument("--list-devices", action="store_true")
     parser.add_argument("--revoke-device")
+    parser.add_argument("--send-daily-digest", action="store_true")
+    parser.add_argument("--package-smoke-test", action="store_true")
     args = parser.parse_args()
+
+    if args.package_smoke_test:
+        from utils.package_smoke import run_server_package_smoke_test
+
+        return run_server_package_smoke_test()
+
+    if args.send_daily_digest:
+        from database.db import init_db
+        from services.email_digest_service import EmailDigestService
+
+        init_db()
+        result = EmailDigestService().send_daily_digest()
+        if result.get("sent"):
+            print("Daily digest email sent.")
+            return 0
+        print(f"Daily digest email not sent: {result.get('reason')}")
+        return 1
 
     from server.configuration import load_server_configuration
 
@@ -72,4 +91,6 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    result = main()
+    if isinstance(result, int):
+        raise SystemExit(result)

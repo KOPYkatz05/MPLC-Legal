@@ -1,17 +1,32 @@
 import logging
+import os
+import sys
+from logging.handlers import RotatingFileHandler
 
-from pathlib import Path
+from utils.runtime_paths import runtime_logs_dir
 
 
-LOGS_FOLDER = Path("logs")
+LOGS_FOLDER = runtime_logs_dir()
 
-LOGS_FOLDER.mkdir(
-    exist_ok=True
-)
+LOG_ROLE = os.environ.get("MISSION_LEGAL_LOG_ROLE", "").strip().lower()
+if LOG_ROLE == "ocr-worker":
+    LOG_FILE = LOGS_FOLDER / "ocr-worker.log"
+elif os.environ.get("MISSION_LEGAL_SERVER_PROCESS") == "1":
+    LOG_FILE = LOGS_FOLDER / "server.log"
+else:
+    LOG_FILE = LOGS_FOLDER / "app.log"
 
-LOG_FILE = (
-    LOGS_FOLDER / "app.log"
-)
+
+LOG_HANDLERS = [
+    RotatingFileHandler(
+        LOG_FILE,
+        maxBytes=5 * 1024 * 1024,
+        backupCount=5,
+        encoding="utf-8",
+    )
+]
+if sys.stderr is not None:
+    LOG_HANDLERS.append(logging.StreamHandler())
 
 
 logging.basicConfig(
@@ -23,14 +38,7 @@ logging.basicConfig(
         "%(message)s"
     ),
 
-    handlers=[
-        logging.FileHandler(
-            LOG_FILE,
-            encoding="utf-8"
-        ),
-
-        logging.StreamHandler()
-    ]
+    handlers=LOG_HANDLERS,
 )
 
 

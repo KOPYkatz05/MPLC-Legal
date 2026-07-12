@@ -628,14 +628,25 @@ def _extract_ocr_texts_in_process(image_paths, parent=None):
 
 def _extract_ocr_texts_subprocess(image_paths):
     output_path = _temporary_json_path()
-    command = [
-        sys.executable,
-        "-m",
-        "services.ocr_worker",
-        "--output",
-        str(output_path),
-        *[str(path) for path in image_paths],
-    ]
+    if getattr(sys, "frozen", False):
+        command = [
+            sys.executable,
+            "--ocr-worker",
+            "--output",
+            str(output_path),
+            *[str(path) for path in image_paths],
+        ]
+        worker_cwd = None
+    else:
+        command = [
+            sys.executable,
+            "-m",
+            "services.ocr_worker",
+            "--output",
+            str(output_path),
+            *[str(path) for path in image_paths],
+        ]
+        worker_cwd = str(Path(__file__).resolve().parents[1])
 
     popen_kwargs = {}
     if os.name == "nt":
@@ -661,7 +672,7 @@ def _extract_ocr_texts_subprocess(image_paths):
             )
             completed = subprocess.run(
                 command,
-                cwd=str(Path(__file__).resolve().parents[1]),
+                cwd=worker_cwd,
                 capture_output=True,
                 text=True,
                 timeout=OCR_SUBPROCESS_TIMEOUT_SECONDS,

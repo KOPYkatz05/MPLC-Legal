@@ -4,8 +4,8 @@ import sys
 
 from PySide6.QtCore import QSettings
 
-ORG = "MissionLegal"
-APP = "MissionLegalTracker"
+from app_identity import APP, ORG
+
 STORAGE_ROOT_KEY = "storage/root"
 
 DEFAULT_STORAGE_ROOT = Path(
@@ -317,4 +317,6 @@ def ensure_storage_root(root=None):
 
 
 # Backward-compatible name. Prefer get_storage_root() for runtime lookups.
-MISSIONS_ROOT = ensure_storage_root()
+# Directory creation is intentionally deferred until a storage operation so a
+# paired client import never touches a developer- or server-specific path.
+MISSIONS_ROOT = get_storage_root()

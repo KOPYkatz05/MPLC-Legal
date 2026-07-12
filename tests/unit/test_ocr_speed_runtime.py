@@ -120,6 +120,36 @@ def test_extract_ocr_texts_subprocess_hides_windows_worker(monkeypatch):
         assert "startupinfo" not in captured["kwargs"]
 
 
+def test_frozen_ocr_subprocess_dispatches_through_packaged_app(monkeypatch):
+    captured = {}
+
+    def fake_run(command, **kwargs):
+        captured["command"] = command
+        captured["kwargs"] = kwargs
+        output_path = command[command.index("--output") + 1]
+        with open(output_path, "w", encoding="utf-8") as handle:
+            handle.write('{"pages": [{"text": "packaged"}]}')
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(upload_pipeline.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(
+        upload_pipeline.sys,
+        "executable",
+        r"C:\Program Files\Mission Legal\MissionLegal.exe",
+    )
+    monkeypatch.setattr(upload_pipeline.subprocess, "run", fake_run)
+
+    assert upload_pipeline._extract_ocr_texts_subprocess(["page.png"]) == [
+        {"text": "packaged"}
+    ]
+    assert captured["command"][:2] == [
+        r"C:\Program Files\Mission Legal\MissionLegal.exe",
+        "--ocr-worker",
+    ]
+    assert "-m" not in captured["command"]
+    assert captured["kwargs"]["cwd"] is None
+
+
 def test_in_process_ocr_reuses_cached_service(monkeypatch):
     class FakeOcrService:
         def __init__(self):

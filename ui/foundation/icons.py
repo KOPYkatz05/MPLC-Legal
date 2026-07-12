@@ -1,12 +1,11 @@
 import json
-from pathlib import Path
 
 from PySide6.QtGui import QColor, QIcon, QPixmap
 
+from utils.runtime_paths import resource_path
 
-ICON_MAP_PATH = (
-    Path(__file__).resolve().parents[2] / "assets" / "icons" / "lucide_icon_map.json"
-)
+
+ICON_MAP_PATH = resource_path("assets", "icons", "lucide_icon_map.json")
 DEFAULT_ICON_COLOR = "#242424"
 
 _factory_cache = {}

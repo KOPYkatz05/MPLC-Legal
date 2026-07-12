@@ -5,6 +5,8 @@ import socket
 import subprocess
 from pathlib import Path
 
+from app_identity import APP, ORG
+
 
 def main():
     parser = argparse.ArgumentParser(description="Configure the main Mission Legal server")
@@ -76,6 +78,7 @@ def main():
 
         credential_path = get_client_data_dir() / "Configuration" / "api-device.json"
         if not credential_path.exists():
+            credential_path.parent.mkdir(parents=True, exist_ok=True)
             registered = DeviceCredentialStore().register(
                 f"{socket.gethostname()} desktop"
             )
@@ -90,7 +93,7 @@ def main():
                 encoding="utf-8",
             )
             temporary.replace(credential_path)
-        settings = QSettings("MissionLegal", "MissionLegalTracker")
+        settings = QSettings(ORG, APP)
         settings.setValue(
             "server/url", f"https://{socket.gethostname()}:{args.port}"
         )

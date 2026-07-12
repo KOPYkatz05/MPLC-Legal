@@ -5,13 +5,15 @@ import os
 import sys
 from pathlib import Path
 
+os.environ.setdefault("MISSION_LEGAL_LOG_ROLE", "ocr-worker")
+
 from utils.logger import logger
+from utils.runtime_paths import runtime_logs_dir
 from services.ocr_service import OCRService
 
 
 def _enable_fault_log():
-    logs_dir = Path("logs")
-    logs_dir.mkdir(exist_ok=True)
+    logs_dir = runtime_logs_dir()
     fault_path = logs_dir / f"ocr_worker_fault_{os.getpid()}.log"
     fault_file = fault_path.open("a", encoding="utf-8")
     faulthandler.enable(file=fault_file, all_threads=True)

@@ -53,7 +53,7 @@ class MissionLegalApiClient:
         if not base_url:
             try:
                 from PySide6.QtCore import QSettings
-                from config import APP, ORG
+                from app_identity import APP, ORG
 
                 settings = QSettings(ORG, APP)
                 base_url = settings.value("server/url", None)

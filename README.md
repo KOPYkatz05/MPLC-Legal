@@ -48,3 +48,22 @@ Restore a dated OneDrive snapshot from an elevated PowerShell window. The script
 .\scripts\restore_database_backup.ps1 `
   -Snapshot "C:\path\to\OneDrive\Mission Legal Database Backups\mission-legal_....db"
 ```
+
+## Windows package builds
+
+Repeatable PyInstaller `onedir` definitions now build a client folder and a
+server folder without including the live database or document storage. The
+client folder includes the pairing utility, OCR runtime, and OCR models; the
+server folder includes the setup, management, and Windows service executables.
+
+Install the pinned runtime and build dependencies, then build both roles:
+
+```powershell
+.\venv\Scripts\python.exe -m pip install -r requirements_lock.txt
+.\venv\Scripts\python.exe -m pip install -r requirements_build.txt
+.\deployment\build_windows.ps1
+```
+
+See [deployment/README.md](deployment/README.md) for artifact layout, role-specific
+commands, and the clean-Windows validation checklist. These are raw folder
+packages; installer and automatic-update definitions are the next release phase.

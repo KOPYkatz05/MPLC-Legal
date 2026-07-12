@@ -1,17 +1,12 @@
 import sys
 import argparse
 
-from pathlib import Path
 from utils.pycache_cleanup import cleanup_pycache
+from utils.runtime_paths import is_frozen, resource_path
 
 
 def load_stylesheet(app):
-    theme_path = (
-        Path(__file__).parent
-        / "assets"
-        / "styles"
-        / "theme.qss"
-    )
+    theme_path = resource_path("assets", "styles", "theme.qss")
 
     if theme_path.exists():
         with open(theme_path, "r", encoding="utf-8") as f:
@@ -19,10 +14,13 @@ def load_stylesheet(app):
 
 
 def main():
-    project_root = Path(__file__).resolve().parent
     import os
 
-    os.chdir(project_root)
+    # Source runs historically use the repository as their working directory.
+    # A frozen app lives under Program Files, so it must never rely on that
+    # read-only directory for logs, configuration, or other runtime output.
+    if not is_frozen():
+        os.chdir(resource_path())
 
     parser = argparse.ArgumentParser(
         description=(
@@ -60,8 +58,29 @@ def main():
         action="store_true",
         help="Send the configured daily digest email and exit.",
     )
+    parser.add_argument(
+        "--ocr-worker",
+        nargs=argparse.REMAINDER,
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--package-smoke-test",
+        action="store_true",
+        help=argparse.SUPPRESS,
+    )
 
     args = parser.parse_args()
+
+    if args.ocr_worker is not None:
+        os.environ["MISSION_LEGAL_LOG_ROLE"] = "ocr-worker"
+        from services.ocr_worker import main as ocr_worker_main
+
+        return ocr_worker_main(args.ocr_worker)
+
+    if args.package_smoke_test:
+        from utils.package_smoke import run_client_package_smoke_test
+
+        return run_client_package_smoke_test()
 
     if args.clean_pycache:
         removed = cleanup_pycache(
@@ -79,6 +98,14 @@ def main():
         return
 
     if args.send_daily_digest:
+        if (
+            is_frozen()
+            and os.environ.get("MISSION_LEGAL_ALLOW_LOCAL_DATABASE") != "1"
+        ):
+            print(
+                "Daily digest jobs must run from the Mission Legal server package."
+            )
+            return 2
         os.environ["MISSION_LEGAL_SERVER_PROCESS"] = "1"
         from database.models.missionary import Missionary  # noqa: F401
         from database.models.workflow import WorkflowStage  # noqa: F401
@@ -97,24 +124,40 @@ def main():
         print(f"Daily digest email not sent: {result.get('reason')}")
         return
 
+    from PySide6.QtCore import QCoreApplication
     from PySide6.QtWidgets import QApplication, QMessageBox
+    from app_identity import APP, ORG
+    from version import APP_VERSION
 
-    # IMPORTANT:
-    # Import models BEFORE init_db()
-    from database.models.missionary import Missionary  # noqa: F401
-    from database.models.workflow import WorkflowStage  # noqa: F401
-    from database.models.document import Document  # noqa: F401
-    from database.models.stage_history import StageHistory  # noqa: F401
-
-    from ui.main_window import MainWindow
+    QCoreApplication.setOrganizationName(ORG)
+    QCoreApplication.setApplicationName(APP)
+    QCoreApplication.setApplicationVersion(APP_VERSION)
 
     app = QApplication(sys.argv)
 
-    from database.db import init_db
     from services.api_client import MissionLegalApiClient
 
     api_client = MissionLegalApiClient.from_environment()
     if api_client is None:
+        if (
+            is_frozen()
+            and os.environ.get("MISSION_LEGAL_ALLOW_LOCAL_DATABASE") != "1"
+        ):
+            QMessageBox.critical(
+                None,
+                "Mission Legal Is Not Paired",
+                "This computer has not been paired with the Mission Legal "
+                "server. Run MissionLegalClientSetup.exe, then open the app "
+                "again.",
+            )
+            return
+
+        # IMPORTANT: import models before creating or migrating local tables.
+        from database.models.missionary import Missionary  # noqa: F401
+        from database.models.workflow import WorkflowStage  # noqa: F401
+        from database.models.document import Document  # noqa: F401
+        from database.models.stage_history import StageHistory  # noqa: F401
+        from database.db import init_db
         from database.runtime import get_database_path
         from services.database_backup_service import DatabaseBackupService
 
@@ -122,6 +165,10 @@ def main():
             DatabaseBackupService().create_snapshot(reason="pre-migration")
         init_db()
     else:
+        # Modules imported by the UI expose both local and remote services. Mark
+        # this process before importing them so database.db cannot create a
+        # writable client-side SQLite database as an import side effect.
+        os.environ["MISSION_LEGAL_REMOTE_CLIENT"] = "1"
         while True:
             try:
                 health = api_client.health()
@@ -143,6 +190,8 @@ def main():
                 dialog.exec()
                 if dialog.clickedButton() is not retry:
                     return
+
+    from ui.main_window import MainWindow
 
     load_stylesheet(app)
 
@@ -197,4 +246,6 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    result = main()
+    if isinstance(result, int):
+        raise SystemExit(result)

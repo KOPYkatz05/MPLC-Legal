@@ -4,6 +4,7 @@ import time
 from pathlib import Path
 
 from utils.logger import logger
+from utils.runtime_paths import is_frozen, resource_path
 
 
 DEFAULT_PADDLE_MODEL_DIRS = {
@@ -20,6 +21,21 @@ DEFAULT_PADDLE_MODEL_DIRS = {
     ),
 }
 
+BUNDLED_PADDLE_MODEL_DIRS = {
+    "det_model_dir": ("ocr_models", "det"),
+    "rec_model_dir": ("ocr_models", "rec"),
+    "cls_model_dir": ("ocr_models", "cls"),
+}
+
+
+def default_paddle_model_dirs():
+    if is_frozen():
+        return {
+            key: resource_path(*parts)
+            for key, parts in BUNDLED_PADDLE_MODEL_DIRS.items()
+        }
+    return dict(DEFAULT_PADDLE_MODEL_DIRS)
+
 
 class OCRService:
     def __init__(self):
@@ -34,18 +50,19 @@ class OCRService:
             from paddleocr import PaddleOCR
             logger.info("OCR_SERVICE_IMPORT_PADDLEOCR_DONE pid=%s", os.getpid())
 
+            defaults = default_paddle_model_dirs()
             model_dirs = {
                 "det_model_dir": self._resolve_model_dir(
                     "PADDLEOCR_DET_MODEL_DIR",
-                    DEFAULT_PADDLE_MODEL_DIRS["det_model_dir"],
+                    defaults["det_model_dir"],
                 ),
                 "rec_model_dir": self._resolve_model_dir(
                     "PADDLEOCR_REC_MODEL_DIR",
-                    DEFAULT_PADDLE_MODEL_DIRS["rec_model_dir"],
+                    defaults["rec_model_dir"],
                 ),
                 "cls_model_dir": self._resolve_model_dir(
                     "PADDLEOCR_CLS_MODEL_DIR",
-                    DEFAULT_PADDLE_MODEL_DIRS["cls_model_dir"],
+                    defaults["cls_model_dir"],
                 ),
             }
             logger.info(

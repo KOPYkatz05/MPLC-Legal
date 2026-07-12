@@ -1,42 +1,62 @@
+import os
+import uuid
+
 from sqlalchemy import create_engine, event
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import sessionmaker
-import uuid
 
 from database.runtime import ensure_runtime_directories, get_database_path, sqlite_url
 from database.base import Base
 
 
-ensure_runtime_directories()
-DATABASE_PATH = get_database_path()
-DATABASE_URL = sqlite_url(DATABASE_PATH)
-
-engine = create_engine(
-    DATABASE_URL,
-    echo=False,
-    connect_args={"timeout": 30},
-    pool_pre_ping=True,
-)
+REMOTE_CLIENT = os.environ.get("MISSION_LEGAL_REMOTE_CLIENT") == "1"
 
 
-@event.listens_for(engine, "connect")
-def _configure_sqlite_connection(dbapi_connection, _connection_record):
-    cursor = dbapi_connection.cursor()
-    try:
-        cursor.execute("PRAGMA foreign_keys=ON")
-        cursor.execute("PRAGMA busy_timeout=30000")
-        cursor.execute("PRAGMA journal_mode=WAL")
-        cursor.execute("PRAGMA synchronous=FULL")
-    finally:
-        cursor.close()
+def _remote_database_error():
+    raise RuntimeError(
+        "Direct database access is disabled in a paired Mission Legal client."
+    )
 
-SessionLocal = sessionmaker(
-    bind=engine,
-    autoflush=False,
-    autocommit=False
-)
+
+if REMOTE_CLIENT:
+    DATABASE_PATH = None
+    DATABASE_URL = None
+    engine = None
+    SessionLocal = _remote_database_error
+else:
+    ensure_runtime_directories()
+    DATABASE_PATH = get_database_path()
+    DATABASE_URL = sqlite_url(DATABASE_PATH)
+
+    engine = create_engine(
+        DATABASE_URL,
+        echo=False,
+        connect_args={"timeout": 30},
+        pool_pre_ping=True,
+    )
+
+    @event.listens_for(engine, "connect")
+    def _configure_sqlite_connection(dbapi_connection, _connection_record):
+        cursor = dbapi_connection.cursor()
+        try:
+            cursor.execute("PRAGMA foreign_keys=ON")
+            cursor.execute("PRAGMA busy_timeout=30000")
+            cursor.execute("PRAGMA journal_mode=WAL")
+            cursor.execute("PRAGMA synchronous=FULL")
+        finally:
+            cursor.close()
+
+    SessionLocal = sessionmaker(
+        bind=engine,
+        autoflush=False,
+        autocommit=False,
+    )
+
 
 def init_db():
+    if REMOTE_CLIENT:
+        _remote_database_error()
+
     from database.models.missionary import Missionary
     from database.models.workflow import WorkflowStage
     from database.models.document import Document

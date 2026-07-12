@@ -1,3 +1,4 @@
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -8,6 +9,12 @@ TASK_NAME = "Mission Legal Daily Digest"
 
 class SchedulerService:
     def install_daily_digest_task(self, digest_time):
+        if os.environ.get("MISSION_LEGAL_REMOTE_CLIENT") == "1":
+            raise RuntimeError(
+                "Daily digest scheduling is managed on the main Mission Legal "
+                "server computer."
+            )
+
         python_path = Path(sys.executable).resolve()
         if getattr(sys, "frozen", False):
             command = f'"{python_path}" --send-daily-digest'

@@ -1,5 +1,6 @@
 import os
 import socket
+import sys
 from pathlib import Path
 
 
@@ -93,9 +94,16 @@ else:
 
 
 def main():
-    _servicemanager, _event, _service, service_util = _require_pywin32()
+    service_manager, _event, _service, service_util = _require_pywin32()
     if "MissionLegalWindowsService" not in globals():
         raise RuntimeError("Windows service class is unavailable")
+
+    if getattr(sys, "frozen", False) and len(sys.argv) == 1:
+        service_manager.Initialize()
+        service_manager.PrepareToHostSingle(MissionLegalWindowsService)
+        service_manager.StartServiceCtrlDispatcher()
+        return
+
     service_util.HandleCommandLine(MissionLegalWindowsService)
 
 

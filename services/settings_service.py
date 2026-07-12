@@ -3,7 +3,8 @@ from datetime import date, datetime, timedelta
 
 from PySide6.QtCore import QSettings
 
-from config import APP, ORG, get_storage_root, set_storage_root
+from app_identity import APP, ORG
+from config import get_storage_root, set_storage_root
 from utils.i18n import get_i18n
 
 

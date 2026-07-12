@@ -3,15 +3,16 @@ PySide6-Fluent-Widgets
 SQLAlchemy
 cryptography
 fastapi
-uvicorn
 httpx
+keyring
+openpyxl
 pywin32; platform_system == "Windows"
 python-multipart
-openpyxl
 python-dotenv
 setuptools
-keyring
 iconipy==0.5.1
+uvicorn
+winotify==1.1.0
 
 paddleocr==2.8.1
 paddlepaddle==2.6.2
@@ -19,10 +20,3 @@ paddlepaddle==2.6.2
 PyMuPDF
 opencv-python
 numpy
-numpy
-opencv-python
-PyMuPDF
-PySide6
-python-dotenv
-SQLAlchemy
-openpyxl

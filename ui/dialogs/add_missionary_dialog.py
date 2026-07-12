@@ -30,6 +30,7 @@ from ui.foundation import (
 )
 
 from utils.logger import logger
+from utils.runtime_paths import resource_path
 
 try:
     from qfluentwidgets import (
@@ -56,11 +57,7 @@ except Exception:
 
 
 def _load_country_names_by_code():
-    data_path = (
-        Path(__file__).resolve().parents[2]
-        / "data"
-        / "country_names_by_code.json"
-    )
+    data_path = resource_path("data", "country_names_by_code.json")
 
     names = {}
 
