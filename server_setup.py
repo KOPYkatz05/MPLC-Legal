@@ -5,8 +5,6 @@ import socket
 import subprocess
 from pathlib import Path
 
-from app_identity import APP, ORG
-
 
 def main():
     parser = argparse.ArgumentParser(description="Configure the main Mission Legal server")
