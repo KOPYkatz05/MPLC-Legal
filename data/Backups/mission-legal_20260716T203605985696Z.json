@@ -1,0 +1,10 @@
+{
+  "app_version": "0.1.0",
+  "created_at": "2026-07-16T20:36:05.985696+00:00",
+  "database": "app.db",
+  "hostname": "WF-RRMV686",
+  "reason": "server-migration",
+  "schema_version": 1,
+  "sha256": "3778a72cc23141c2325260d7b8e9c774d4fa10659ba428623cb5db1e565b8c1a",
+  "size": 23949312
+}

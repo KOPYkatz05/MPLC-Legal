@@ -1,0 +1,10 @@
+{
+  "app_version": "0.1.0",
+  "created_at": "2026-07-15T11:33:53.225602+00:00",
+  "database": "app.db",
+  "hostname": "WF-RRMV686",
+  "reason": "clean-exit",
+  "schema_version": 1,
+  "sha256": "76147f773fe9c4b6e18c860679280eb098202ec74b9e3889fc117de40cd952c5",
+  "size": 23949312
+}
