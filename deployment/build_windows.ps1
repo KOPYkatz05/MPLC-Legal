@@ -72,7 +72,13 @@ if ($Target -in @("All", "Client")) {
     $ClientExe = Join-Path $ClientDir "MissionLegal.exe"
     $ClientDiagnosticsExe = Join-Path $ClientDir "MissionLegalDiagnostics.exe"
     $ClientSetupExe = Join-Path $ClientDir "MissionLegalClientSetup.exe"
-    foreach ($Path in @($ClientExe, $ClientDiagnosticsExe, $ClientSetupExe)) {
+    $ClientUpdateWorkerExe = Join-Path $ClientDir "MissionLegalUpdateWorker.exe"
+    foreach ($Path in @(
+        $ClientExe,
+        $ClientDiagnosticsExe,
+        $ClientSetupExe,
+        $ClientUpdateWorkerExe
+    )) {
         if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
             throw "Expected client artifact is missing: $Path"
         }
@@ -100,6 +106,10 @@ if ($Target -in @("All", "Client")) {
     & $ClientSetupExe --help | Out-Null
     if ($LASTEXITCODE -ne 0) {
         throw "The packaged client setup utility failed its CLI smoke test."
+    }
+    & $ClientUpdateWorkerExe --help | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        throw "The packaged client update worker failed its CLI smoke test."
     }
 }
 

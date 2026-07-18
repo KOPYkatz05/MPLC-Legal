@@ -5,9 +5,14 @@ from datetime import date, datetime
 from pathlib import Path
 
 import httpx
+from packaging.version import InvalidVersion, Version
 
 from database.runtime import get_client_data_dir
-from version import API_VERSION, SCHEMA_VERSION
+from version import (
+    APP_VERSION,
+    MAX_SUPPORTED_SERVER_API_VERSION,
+    MIN_SUPPORTED_SERVER_API_VERSION,
+)
 
 
 KEYRING_SERVICE = "MissionLegalLocalAPI"
@@ -22,7 +27,28 @@ class ApiAuthenticationError(RuntimeError):
 
 
 class ApiCompatibilityError(RuntimeError):
-    pass
+    """Describe why a client/server pair cannot communicate safely."""
+
+    CLIENT_UPDATE_REQUIRED = "client-update-required"
+    SERVER_UPDATE_REQUIRED = "server-update-required"
+    INVALID_METADATA = "invalid-metadata"
+
+    def __init__(
+        self,
+        message,
+        *,
+        reason=INVALID_METADATA,
+        required_client_version=None,
+    ):
+        super().__init__(message)
+        self.reason = str(reason)
+        self.required_client_version = (
+            str(required_client_version) if required_client_version else None
+        )
+
+    @property
+    def client_update_required(self):
+        return self.reason == self.CLIENT_UPDATE_REQUIRED
 
 
 class MissionLegalApiClient:
@@ -151,16 +177,77 @@ class MissionLegalApiClient:
 
     @staticmethod
     def validate_compatibility(payload):
-        if str(payload.get("api_version")) != API_VERSION:
+        if not isinstance(payload, dict):
             raise ApiCompatibilityError(
-                f"Client API {API_VERSION} is incompatible with server API "
-                f"{payload.get('api_version')}"
+                "Server compatibility metadata is invalid",
+                reason=ApiCompatibilityError.INVALID_METADATA,
             )
-        if int(payload.get("schema_version", -1)) != SCHEMA_VERSION:
+
+        server_api = str(payload.get("api_version", "")).strip()
+        if not server_api:
             raise ApiCompatibilityError(
-                f"Client schema {SCHEMA_VERSION} is incompatible with server schema "
-                f"{payload.get('schema_version')}"
+                "Server compatibility metadata is missing",
+                reason=ApiCompatibilityError.INVALID_METADATA,
             )
+
+        try:
+            server_api_number = int(server_api)
+            minimum_api = int(MIN_SUPPORTED_SERVER_API_VERSION)
+            maximum_api = int(MAX_SUPPORTED_SERVER_API_VERSION)
+        except (TypeError, ValueError) as exc:
+            raise ApiCompatibilityError(
+                "Server API compatibility metadata is invalid",
+                reason=ApiCompatibilityError.INVALID_METADATA,
+            ) from exc
+
+        minimum_client = payload.get("minimum_client_version")
+        installed_version = Version(APP_VERSION)
+        required_version = None
+        if minimum_client:
+            try:
+                required_version = Version(str(minimum_client))
+            except InvalidVersion as exc:
+                raise ApiCompatibilityError(
+                    "Server client-version compatibility metadata is invalid",
+                    reason=ApiCompatibilityError.INVALID_METADATA,
+                ) from exc
+
+        if server_api_number < minimum_api:
+            raise ApiCompatibilityError(
+                f"The server API is incompatible. This client supports API "
+                f"{minimum_api} through "
+                f"{maximum_api}, but the server uses API {server_api}. "
+                "Update Mission Legal Server on the main computer.",
+                reason=ApiCompatibilityError.SERVER_UPDATE_REQUIRED,
+            )
+
+        if server_api_number > maximum_api:
+            if required_version is None or required_version <= installed_version:
+                raise ApiCompatibilityError(
+                    "The server uses a newer API but does not identify a newer "
+                    "compatible client version. Repair or update Mission Legal "
+                    "Server on the main computer.",
+                    reason=ApiCompatibilityError.INVALID_METADATA,
+                )
+            raise ApiCompatibilityError(
+                f"The server API is incompatible. This client supports API "
+                f"{minimum_api} through "
+                f"{maximum_api}, but the server uses API {server_api}.",
+                reason=ApiCompatibilityError.CLIENT_UPDATE_REQUIRED,
+                required_client_version=required_version,
+            )
+
+        if required_version is not None and installed_version < required_version:
+            raise ApiCompatibilityError(
+                f"Mission Legal {required_version} or newer is required. "
+                f"This computer is running {installed_version}.",
+                reason=ApiCompatibilityError.CLIENT_UPDATE_REQUIRED,
+                required_client_version=required_version,
+            )
+
+        # The database schema is an implementation detail of the authoritative
+        # server. Remote clients intentionally validate the API contract rather
+        # than requiring the server's internal schema number to match.
         return True
 
     def pair(self, code, device_name):

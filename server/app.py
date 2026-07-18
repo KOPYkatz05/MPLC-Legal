@@ -24,10 +24,25 @@ from server.security import DeviceCredentialStore, PairingCodeStore
 from server.serialization import model_snapshot, serialize_result
 from services.remote_service import decode_remote_value
 from services.database_backup_service import DatabaseBackupService
-from version import API_VERSION, APP_VERSION
+from version import (
+    API_VERSION,
+    APP_VERSION,
+    MAX_SUPPORTED_SERVER_API_VERSION,
+    MIN_SUPPORTED_CLIENT_VERSION,
+    MIN_SUPPORTED_SERVER_API_VERSION,
+)
 
 
 logger = logging.getLogger(__name__)
+
+
+def _compatibility_payload():
+    return {
+        "api_version": API_VERSION,
+        "minimum_server_api_version": MIN_SUPPORTED_SERVER_API_VERSION,
+        "maximum_server_api_version": MAX_SUPPORTED_SERVER_API_VERSION,
+        "minimum_client_version": MIN_SUPPORTED_CLIENT_VERSION,
+    }
 
 
 class PairingRequest(BaseModel):
@@ -232,8 +247,8 @@ def create_app(device_store=None, pairing_store=None, manage_lifecycle=True):
         return {
             "status": "ok",
             "app_version": APP_VERSION,
-            "api_version": API_VERSION,
             "schema_version": get_schema_version(engine),
+            **_compatibility_payload(),
         }
 
     @app.post("/pair", status_code=status.HTTP_201_CREATED)
@@ -249,8 +264,9 @@ def create_app(device_store=None, pairing_store=None, manage_lifecycle=True):
     def session(device=Depends(authenticated_device)):
         return {
             "device": device,
-            "api_version": API_VERSION,
+            "app_version": APP_VERSION,
             "schema_version": get_schema_version(engine),
+            **_compatibility_payload(),
         }
 
     @app.get("/v1/server/configuration")

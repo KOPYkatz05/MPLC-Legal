@@ -1,0 +1,14 @@
+{
+  "vpkVersion": "1.2.0",
+  "vpkPackageUrl": "https://api.nuget.org/v3-flatcontainer/vpk/1.2.0/vpk.1.2.0.nupkg",
+  "vpkPackageSha256": "C3A2D80CEF556DCD0DBD27B3C0363C642D79842BE6B6955DE116D30BFE2F399F",
+  "vpkTargetFramework": "net8.0",
+  "packId": "MissionLegal.MissionLegalTracker",
+  "packTitle": "Mission Legal",
+  "packAuthors": "MissionLegal",
+  "mainExe": "MissionLegal.exe",
+  "runtime": "win-x64",
+  "channel": "stable",
+  "shortcuts": "Desktop,StartMenuRoot",
+  "deltaMode": "BestSpeed"
+}

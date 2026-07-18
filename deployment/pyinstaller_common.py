@@ -27,6 +27,7 @@ CLIENT_HIDDEN_IMPORTS = [
     "skimage",
     "sqlalchemy.dialects.sqlite.pysqlite",
     "tqdm",
+    "velopack",
     "win32cred",
     "winotify",
     "yaml",

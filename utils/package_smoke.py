@@ -73,6 +73,7 @@ def run_client_package_smoke_test():
             "fitz",
             "cv2",
             "openpyxl",
+            "velopack",
             "winotify",
             "PySide6.QtWebEngineWidgets",
             "PySide6.QtWebChannel",

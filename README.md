@@ -26,6 +26,11 @@ Create a ten-minute, one-use pairing code:
 
 Copy only the generated `mission-legal-ca.pem` certificate to the additional computer. Never copy either private-key file. Pair the additional computer:
 
+With the packaged client, open Mission Legal from its installed shortcut. The
+first-run connection window asks for the server address, public CA certificate,
+six-digit code, and computer name. The command below remains available for a
+source checkout or automated deployment:
+
 ```powershell
 python client_setup.py `
   --server "https://MAIN-COMPUTER:8765" `
@@ -49,21 +54,34 @@ Restore a dated OneDrive snapshot from an elevated PowerShell window. The script
   -Snapshot "C:\path\to\OneDrive\Mission Legal Database Backups\mission-legal_....db"
 ```
 
-## Windows package builds
+## Windows installers and automatic updates
 
-Repeatable PyInstaller `onedir` definitions now build a client folder and a
-server folder without including the live database or document storage. The
-client folder includes the pairing utility, OCR runtime, and OCR models; the
-server folder includes the setup, management, and Windows service executables.
+The Windows release pipeline builds a per-user client installer with a Velopack
+automatic-update feed and an elevated server installer with a verified
+pre-upgrade database backup gate. Neither package includes the live database,
+private keys, or document storage.
 
-Install the pinned runtime and build dependencies, then build both roles:
+After installing the pinned Python/build dependencies and Inno Setup 6 or 7,
+create an unsigned development release with:
+
+First set `APP_VERSION` in `version.py` to a new, unpublished version. Client
+release versions are immutable once they are published.
 
 ```powershell
 .\venv\Scripts\python.exe -m pip install -r requirements_lock.txt
 .\venv\Scripts\python.exe -m pip install -r requirements_build.txt
-.\deployment\build_windows.ps1
+.\deployment\build_release.ps1 `
+  -UpdateUrl 'https://updates.example.org/mission-legal/client/' `
+  -InstallVpk
 ```
 
-See [deployment/README.md](deployment/README.md) for artifact layout, role-specific
-commands, and the clean-Windows validation checklist. These are raw folder
-packages; installer and automatic-update definitions are the next release phase.
+The release command builds the raw PyInstaller folders once, packages both
+installers, and writes a SHA-256 summary under `dist\<APP_VERSION>`. It does not
+upload or publish artifacts. Production releases use `-RequireSigning`, which
+requires signing configuration for both installers.
+
+See [deployment/README.md](deployment/README.md) for the full build and
+clean-Windows validation flow, [deployment/CLIENT_RELEASES.md](deployment/CLIENT_RELEASES.md)
+for client update-feed publishing, and
+[deployment/installer/SERVER_INSTALLER.md](deployment/installer/SERVER_INSTALLER.md)
+for server installation and upgrade behavior.

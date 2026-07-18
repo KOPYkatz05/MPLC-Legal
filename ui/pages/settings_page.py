@@ -54,6 +54,7 @@ from ui.widgets.workspace_layout_editor import WorkspaceLayoutEditor
 from utils.constants import DOCUMENTS
 from utils.language_helper import ui_text as tr
 from utils.logger import logger
+from version import APP_VERSION
 
 
 class SettingsPage(QWidget):
@@ -74,6 +75,9 @@ class SettingsPage(QWidget):
         ) or WorkspaceService()
         self._workspaces = []
         self._selected_workspace_id = None
+        self._update_coordinator = None
+        self._update_status = "not-configured"
+        self._update_progress = 0
         self.setup_ui()
 
     def setup_ui(self):
@@ -312,6 +316,42 @@ class SettingsPage(QWidget):
             self.settings_service.get_upload_auto_ocr_enabled()
         )
         body.addWidget(self.auto_ocr_check)
+        layout.addWidget(card)
+
+        card, body, self.updates_title, self.updates_hint_label = (
+            self._settings_card(
+                tr("settings_updates_title"),
+                tr("settings_updates_hint"),
+            )
+        )
+        self.update_version_label = QLabel(
+            tr("settings_updates_current_version", version=APP_VERSION)
+        )
+        self.update_version_label.setObjectName("SettingsCardHint")
+        body.addWidget(self.update_version_label)
+
+        self.automatic_updates_check = create_check_box(
+            tr("settings_updates_automatic"),
+            "AutomaticUpdatesEnabled",
+        )
+        self.automatic_updates_check.setChecked(
+            self.settings_service.get_automatic_updates_enabled()
+        )
+        body.addWidget(self.automatic_updates_check)
+
+        self.update_status_label = QLabel()
+        self.update_status_label.setObjectName("SettingsCardHint")
+        self.update_status_label.setWordWrap(True)
+        body.addWidget(self.update_status_label)
+
+        self.check_updates_btn = create_button(
+            tr("settings_updates_check"),
+            "secondary",
+        )
+        self.check_updates_btn.clicked.connect(self._check_for_updates)
+        self.check_updates_btn.setEnabled(False)
+        body.addWidget(self._action_row(self.check_updates_btn))
+        self._render_update_status()
         layout.addWidget(card)
 
         self.general_save_btn = create_button(tr("settings_save"), "primary")
@@ -1406,6 +1446,9 @@ class SettingsPage(QWidget):
         self.settings_service.set_upload_auto_ocr_enabled(
             self.auto_ocr_check.isChecked()
         )
+        self.settings_service.set_automatic_updates_enabled(
+            self.automatic_updates_check.isChecked()
+        )
         self._save_notification_settings()
         self._save_daily_digest_settings()
         if not self._save_transfer_settings(show_saved=False):
@@ -1426,6 +1469,64 @@ class SettingsPage(QWidget):
         )
         if folder:
             self.storage_input.setText(folder)
+
+    def bind_update_coordinator(self, coordinator):
+        self._update_coordinator = coordinator
+        self.check_updates_btn.setEnabled(bool(coordinator and coordinator.enabled))
+        if coordinator is None or not coordinator.enabled:
+            self._update_status = "not-configured"
+            self._render_update_status()
+            return
+        coordinator.status_changed.connect(self._set_update_status)
+        coordinator.progress_changed.connect(self._set_update_progress)
+        coordinator.update_ready.connect(self._set_ready_update_version)
+        self._update_status = "idle"
+        self._render_update_status()
+
+    def _check_for_updates(self):
+        coordinator = self._update_coordinator or getattr(
+            self.main_window,
+            "update_coordinator",
+            None,
+        )
+        if coordinator is None:
+            self._set_update_status("not-configured")
+            return
+        coordinator.check_for_updates(manual=True)
+
+    def _set_update_status(self, status):
+        self._update_status = str(status or "idle")
+        self._render_update_status()
+
+    def _set_update_progress(self, progress):
+        self._update_progress = max(0, min(100, int(progress)))
+        self._update_status = "downloading"
+        self._render_update_status()
+
+    def _set_ready_update_version(self, version):
+        self._ready_update_version = str(version)
+
+    def _render_update_status(self):
+        if not hasattr(self, "update_status_label"):
+            return
+        if self._update_status == "downloading":
+            text = tr(
+                "settings_updates_status_downloading",
+                progress=self._update_progress,
+            )
+        else:
+            key = {
+                "not-configured": "settings_updates_status_not_configured",
+                "disabled": "settings_updates_status_disabled",
+                "idle": "settings_updates_status_idle",
+                "checking": "settings_updates_status_checking",
+                "current": "settings_updates_status_current",
+                "ready": "settings_updates_status_ready",
+                "applying": "settings_updates_status_applying",
+                "failed": "settings_updates_status_failed",
+            }.get(self._update_status, "settings_updates_status_idle")
+            text = tr(key)
+        self.update_status_label.setText(text)
 
     def _daily_digest_values(self):
         return {
@@ -1630,6 +1731,14 @@ class SettingsPage(QWidget):
             tr("settings_upload_behavior_hint")
         )
         self.auto_ocr_check.setText(tr("settings_auto_ocr"))
+        self.updates_title.setText(tr("settings_updates_title"))
+        self.updates_hint_label.setText(tr("settings_updates_hint"))
+        self.update_version_label.setText(
+            tr("settings_updates_current_version", version=APP_VERSION)
+        )
+        self.automatic_updates_check.setText(tr("settings_updates_automatic"))
+        self.check_updates_btn.setText(tr("settings_updates_check"))
+        self._render_update_status()
         self.browse_btn.setText(tr("settings_browse"))
         self.general_save_btn.setText(tr("settings_save"))
         self.notifications_title.setText(tr("settings_notifications_title"))

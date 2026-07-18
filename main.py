@@ -1,3 +1,10 @@
+from client_bootstrap import run_client_bootstrap
+
+
+# Velopack install/update hooks must run before argument parsing, Qt creation,
+# logging, database imports, or any other application startup work.
+run_client_bootstrap()
+
 import sys
 import argparse
 
@@ -68,6 +75,12 @@ def main():
         action="store_true",
         help=argparse.SUPPRESS,
     )
+    parser.add_argument(
+        "--installed-update-smoke-test",
+        nargs=2,
+        metavar=("EXPECTED_VERSION", "RESULT_FILE"),
+        help=argparse.SUPPRESS,
+    )
 
     args = parser.parse_args()
 
@@ -81,6 +94,11 @@ def main():
         from utils.package_smoke import run_client_package_smoke_test
 
         return run_client_package_smoke_test()
+
+    if args.installed_update_smoke_test is not None:
+        from utils.installed_update_smoke import run_installed_update_smoke_test
+
+        return run_installed_update_smoke_test(*args.installed_update_smoke_test)
 
     if args.clean_pycache:
         removed = cleanup_pycache(
@@ -124,8 +142,8 @@ def main():
         print(f"Daily digest email not sent: {result.get('reason')}")
         return
 
-    from PySide6.QtCore import QCoreApplication
-    from PySide6.QtWidgets import QApplication, QMessageBox
+    from PySide6.QtCore import QCoreApplication, QTimer
+    from PySide6.QtWidgets import QApplication, QDialog, QMessageBox
     from app_identity import APP, ORG
     from version import APP_VERSION
 
@@ -135,23 +153,36 @@ def main():
 
     app = QApplication(sys.argv)
 
-    from services.api_client import MissionLegalApiClient
+    from services.api_client import ApiCompatibilityError, MissionLegalApiClient
 
-    api_client = MissionLegalApiClient.from_environment()
-    if api_client is None:
-        if (
-            is_frozen()
-            and os.environ.get("MISSION_LEGAL_ALLOW_LOCAL_DATABASE") != "1"
-        ):
+    def pair_installed_client():
+        from ui.dialogs.client_pairing_dialog import ClientPairingDialog
+
+        load_stylesheet(app)
+        pairing_dialog = ClientPairingDialog()
+        if pairing_dialog.exec() != QDialog.Accepted:
+            return None
+        paired_client = MissionLegalApiClient.from_environment()
+        if paired_client is None:
             QMessageBox.critical(
                 None,
-                "Mission Legal Is Not Paired",
-                "This computer has not been paired with the Mission Legal "
-                "server. Run MissionLegalClientSetup.exe, then open the app "
-                "again.",
+                "Mission Legal Pairing Was Not Saved",
+                "Windows did not retain the new server connection. Reopen "
+                "Mission Legal and pair this computer again.",
             )
+        return paired_client
+
+    api_client = MissionLegalApiClient.from_environment()
+    if (
+        api_client is None
+        and is_frozen()
+        and os.environ.get("MISSION_LEGAL_ALLOW_LOCAL_DATABASE") != "1"
+    ):
+        api_client = pair_installed_client()
+        if api_client is None:
             return
 
+    if api_client is None:
         # IMPORTANT: import models before creating or migrating local tables.
         from database.models.missionary import Missionary  # noqa: F401
         from database.models.workflow import WorkflowStage  # noqa: F401
@@ -176,6 +207,28 @@ def main():
                 session = api_client.session()
                 api_client.validate_compatibility(session)
                 break
+            except ApiCompatibilityError as exc:
+                if exc.client_update_required:
+                    from ui.update_coordinator import offer_required_client_update
+
+                    offer_required_client_update(
+                        str(exc),
+                        required_client_version=exc.required_client_version,
+                    )
+                else:
+                    title = (
+                        "Mission Legal Server Update Required"
+                        if exc.reason == ApiCompatibilityError.SERVER_UPDATE_REQUIRED
+                        else "Mission Legal Compatibility Error"
+                    )
+                    QMessageBox.critical(
+                        None,
+                        title,
+                        f"{exc}\n\n"
+                        "Update or repair Mission Legal Server on the main "
+                        "computer, then reopen this app.",
+                    )
+                return
             except Exception as exc:
                 dialog = QMessageBox()
                 dialog.setIcon(QMessageBox.Warning)
@@ -186,9 +239,21 @@ def main():
                     "Start the main computer and server, then choose Retry."
                 )
                 retry = dialog.addButton("Retry", QMessageBox.AcceptRole)
+                change_connection = None
+                if is_frozen():
+                    change_connection = dialog.addButton(
+                        "Change connection",
+                        QMessageBox.ActionRole,
+                    )
                 dialog.addButton("Exit", QMessageBox.RejectRole)
                 dialog.exec()
-                if dialog.clickedButton() is not retry:
+                clicked = dialog.clickedButton()
+                if clicked is change_connection:
+                    api_client = pair_installed_client()
+                    if api_client is None:
+                        return
+                    continue
+                if clicked is not retry:
                     return
 
     from ui.main_window import MainWindow
@@ -220,6 +285,23 @@ def main():
         api_connection_state().unavailable.connect(show_server_wait)
 
     window.showMaximized()
+
+    try:
+        from ui.update_coordinator import ClientUpdateCoordinator
+
+        window.update_coordinator = ClientUpdateCoordinator(window)
+        window.settings_page.bind_update_coordinator(window.update_coordinator)
+        if window.update_coordinator.enabled:
+            QTimer.singleShot(
+                2500,
+                window.update_coordinator.start_automatic_check,
+            )
+    except Exception:
+        import logging
+
+        logging.getLogger(__name__).exception(
+            "Client automatic updates could not be initialized"
+        )
 
     exit_code = app.exec()
 

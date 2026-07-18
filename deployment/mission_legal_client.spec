@@ -41,6 +41,19 @@ setup_analysis = Analysis(
     noarchive=False,
     optimize=0,
 )
+update_worker_analysis = Analysis(
+    [str(REPO_ROOT / "client_update_worker.py")],
+    pathex=[str(REPO_ROOT)],
+    binaries=[],
+    datas=[],
+    hiddenimports=["velopack"],
+    hookspath=hook_paths,
+    hooksconfig={},
+    runtime_hooks=[],
+    excludes=[],
+    noarchive=False,
+    optimize=0,
+)
 
 client_pyz = PYZ(client_analysis.pure)
 client_exe = EXE(
@@ -82,15 +95,32 @@ setup_exe = EXE(
     upx=False,
     console=True,
 )
+update_worker_pyz = PYZ(update_worker_analysis.pure)
+update_worker_exe = EXE(
+    update_worker_pyz,
+    update_worker_analysis.scripts,
+    [],
+    exclude_binaries=True,
+    name="MissionLegalUpdateWorker",
+    debug=False,
+    bootloader_ignore_signals=False,
+    strip=False,
+    upx=False,
+    console=False,
+    disable_windowed_traceback=False,
+)
 
 bundle = COLLECT(
     client_exe,
     diagnostic_exe,
     setup_exe,
+    update_worker_exe,
     client_analysis.binaries,
     client_analysis.datas,
     setup_analysis.binaries,
     setup_analysis.datas,
+    update_worker_analysis.binaries,
+    update_worker_analysis.datas,
     strip=False,
     upx=False,
     name="MissionLegalClient",

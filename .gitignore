@@ -43,6 +43,7 @@ run_tmp/
 tests/
 test_*.py
 *_test.py
+!deployment/installer/test_server_installer.py
 
 # OS-specific noise
 .DS_Store

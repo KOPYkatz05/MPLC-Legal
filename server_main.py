@@ -13,6 +13,14 @@ def main():
     parser.add_argument("--list-devices", action="store_true")
     parser.add_argument("--revoke-device")
     parser.add_argument("--send-daily-digest", action="store_true")
+    parser.add_argument(
+        "--backup-before-upgrade",
+        action="store_true",
+        help=(
+            "Create and verify a local database snapshot, then exit. "
+            "Installers use this as a mandatory pre-upgrade gate."
+        ),
+    )
     parser.add_argument("--package-smoke-test", action="store_true")
     args = parser.parse_args()
 
@@ -32,6 +40,20 @@ def main():
             return 0
         print(f"Daily digest email not sent: {result.get('reason')}")
         return 1
+
+    if args.backup_before_upgrade:
+        from database.runtime import get_database_path
+        from services.database_backup_service import DatabaseBackupService
+
+        database_path = get_database_path()
+        if not database_path.exists():
+            print("No existing database was found; no upgrade snapshot is required.")
+            return 0
+        backup_service = DatabaseBackupService()
+        result = backup_service.create_snapshot(reason="pre-upgrade", mirror=False)
+        DatabaseBackupService.verify(result["path"])
+        print(f"Verified pre-upgrade snapshot: {result['path']}")
+        return 0
 
     from server.configuration import load_server_configuration
 

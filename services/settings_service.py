@@ -20,6 +20,7 @@ TRANSFER_DATE_KEY = "transfer_management/next_transfer_wednesday"
 WINDOWS_NOTIFICATION_DATE_KEY = "notifications/windows_last_date"
 WINDOWS_NOTIFICATION_FINGERPRINT_KEY = "notifications/windows_last_fingerprint"
 UPLOAD_AUTO_OCR_KEY = "upload/auto_ocr_enabled"
+AUTOMATIC_UPDATES_KEY = "updates/automatic_checks_enabled"
 NOTIFICATION_DEFAULTS = {
     "startup_popup_enabled": True,
     "dashboard_expiration_days": 60,
@@ -127,6 +128,15 @@ class SettingsService:
 
     def set_upload_auto_ocr_enabled(self, enabled):
         self._settings.setValue(UPLOAD_AUTO_OCR_KEY, bool(enabled))
+
+    def get_automatic_updates_enabled(self):
+        return _bool_value(
+            self._settings.value(AUTOMATIC_UPDATES_KEY, True),
+            True,
+        )
+
+    def set_automatic_updates_enabled(self, enabled):
+        self._settings.setValue(AUTOMATIC_UPDATES_KEY, bool(enabled))
 
     def get_next_transfer_wednesday(self):
         return _parse_iso_date(
