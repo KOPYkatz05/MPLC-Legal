@@ -61,10 +61,18 @@ SignedUninstaller=no
 
 [Files]
 ; Keep preflight tools first so solid compression does not delay extraction.
+#ifdef SignToolName
+Source: "{#MaintenanceExe}"; DestName: "MissionLegalServerMaintenance.exe"; Flags: dontcopy noencryption signonce
+Source: "{#ServerPackageDir}\MissionLegalServer.exe"; DestDir: "{app}"; Flags: ignoreversion signonce
+Source: "{#ServerPackageDir}\MissionLegalServerSetup.exe"; DestDir: "{app}"; Flags: ignoreversion signonce
+Source: "{#ServerPackageDir}\MissionLegalService.exe"; DestDir: "{app}"; Flags: ignoreversion signonce
+Source: "{#ServerPackageDir}\*"; DestDir: "{app}"; Excludes: "MissionLegalServer.exe,MissionLegalServerSetup.exe,MissionLegalService.exe"; Flags: ignoreversion recursesubdirs createallsubdirs
+#else
 Source: "{#MaintenanceExe}"; DestName: "MissionLegalServerMaintenance.exe"; Flags: dontcopy noencryption
+Source: "{#ServerPackageDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+#endif
 Source: "server_installer_actions.ps1"; Flags: dontcopy noencryption
 Source: "server_installer_rollback.ps1"; Flags: dontcopy noencryption
-Source: "{#ServerPackageDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "server_installer_actions.ps1"; DestDir: "{app}\InstallerSupport"; Flags: ignoreversion
 Source: "server_installer_rollback.ps1"; DestDir: "{app}\InstallerSupport"; Flags: ignoreversion
 
@@ -91,8 +99,12 @@ var
   InstallCompleted: Boolean;
   ServiceStateFile: String;
   BinarySnapshotDir: String;
+  DatabaseRollbackReceiptPath: String;
   BinarySnapshotCaptured: Boolean;
   BinaryRollbackRestored: Boolean;
+  DatabaseBackupCaptured: Boolean;
+  DatabaseRollbackRestored: Boolean;
+  RollbackFailedClosed: Boolean;
   PriorInstallVersion: String;
   HasPriorRegisteredInstall: Boolean;
   ServerConfiguredBeforeInstall: Boolean;
@@ -349,47 +361,48 @@ begin
 end;
 
 function PreviousVersion: String;
-var
-  RegistryPath: String;
 begin
-  RegistryPath := 'Software\Microsoft\Windows\CurrentVersion\Uninstall\' +
-    ServerAppId + '_is1';
-  if not RegQueryStringValue(HKLM64, RegistryPath, 'DisplayVersion', Result) then
+  { Use the value captured before setup writes any candidate-version registry
+    entries. The same exact version is bound into backup and restore receipts. }
+  Result := PriorInstallVersion;
+  if Result = '' then
     Result := 'unknown';
 end;
 
 function RunBackupGate: Boolean;
 var
-  InstalledServer: String;
   Parameters: String;
   MaintenancePath: String;
 begin
-  { Prefer the product's own verified backup command on every release that has
-    it. The standalone helper below is needed for the first upgrade from legacy
-    packages and for an existing ProgramData database with no registered app. }
-  InstalledServer := ExpandConstant('{app}\MissionLegalServer.exe');
-  if FileExists(InstalledServer) then
-  begin
-    if RunProcess(
-      InstalledServer,
-      '--backup-before-upgrade',
-      'Packaged server database backup gate') then
-    begin
-      Result := True;
-      Exit;
-    end;
-    Log('The installed package does not provide a usable backup gate; ' +
-      'running the legacy-safe standalone maintenance gate.');
-  end;
-
+  { Always use the maintenance helper carried by the candidate installer. It
+    has no application-startup or migration dependencies and emits one stable,
+    versioned metadata contract for both legacy and current upgrades. }
   MaintenancePath := ExpandConstant('{tmp}\MissionLegalServerMaintenance.exe');
   Parameters := 'pre-upgrade-backup' +
     ' --database ' + QuoteArgument(ExpandConstant('{commonappdata}\MissionLegal\app.db')) +
     ' --backup-dir ' + QuoteArgument(ExpandConstant('{commonappdata}\MissionLegal\Backups\Installer')) +
+    ' --receipt ' + QuoteArgument(DatabaseRollbackReceiptPath) +
     ' --from-version ' + QuoteArgument(PreviousVersion) +
     ' --to-version ' + QuoteArgument('{#AppVersion}') +
     ' --log-file ' + QuoteArgument(ExpandConstant('{commonappdata}\MissionLegal\Logs\installer-maintenance.log'));
   Result := RunProcess(MaintenancePath, Parameters, 'Verified database backup gate');
+end;
+
+function RunDatabaseRollback: Boolean;
+var
+  Parameters: String;
+  MaintenancePath: String;
+begin
+  MaintenancePath := ExpandConstant('{tmp}\MissionLegalServerMaintenance.exe');
+  Parameters := 'restore-pre-upgrade-backup' +
+    ' --database ' + QuoteArgument(ExpandConstant('{commonappdata}\MissionLegal\app.db')) +
+    ' --backup-dir ' + QuoteArgument(ExpandConstant('{commonappdata}\MissionLegal\Backups\Installer')) +
+    ' --receipt ' + QuoteArgument(DatabaseRollbackReceiptPath) +
+    ' --from-version ' + QuoteArgument(PreviousVersion) +
+    ' --to-version ' + QuoteArgument('{#AppVersion}') +
+    ' --log-file ' + QuoteArgument(ExpandConstant('{commonappdata}\MissionLegal\Logs\installer-maintenance.log'));
+  Result := RunProcess(MaintenancePath, Parameters,
+    'Verified authoritative database rollback');
 end;
 
 function ServiceWasRunning: Boolean;
@@ -436,6 +449,13 @@ function RestorePriorInstallation: Boolean;
 var
   ServiceScript: String;
 begin
+  if RollbackFailedClosed then
+  begin
+    Log('Rollback previously failed closed; setup will not retry recovery or ' +
+      'start a server executable automatically.');
+    Result := False;
+    Exit;
+  end;
   if BinaryRollbackRestored or (not BinarySnapshotCaptured) then
   begin
     Result := True;
@@ -443,11 +463,44 @@ begin
   end;
   ServiceScript := ExpandConstant('{tmp}\server_installer_actions.ps1');
   if ServiceWasAbsent then
-    RunServiceAction(ServiceScript, 'Remove', False)
-  else
-    RunServiceAction(ServiceScript, 'Stop', False);
+  begin
+    if not RunServiceAction(ServiceScript, 'Remove', False) then
+    begin
+      RollbackFailedClosed := True;
+      Log('ERROR: The candidate service could not be removed before rollback. ' +
+        'Setup will not start any server executable.');
+      Result := False;
+      Exit;
+    end;
+  end
+  else if not RunServiceAction(ServiceScript, 'Stop', False) then
+  begin
+    RollbackFailedClosed := True;
+    Log('ERROR: The candidate service could not be stopped before rollback. ' +
+      'Setup will not start any server executable.');
+    Result := False;
+    Exit;
+  end;
+  if not DatabaseRollbackRestored then
+  begin
+    if (not DatabaseBackupCaptured) or
+      (DatabaseRollbackReceiptPath = '') or
+      (not RunDatabaseRollback) then
+    begin
+      RollbackFailedClosed := True;
+      Log('ERROR: The authoritative database could not be restored from the ' +
+        'verified backup receipt. The prior service will remain stopped. ' +
+        'Receipt: ' + DatabaseRollbackReceiptPath + '.');
+      Result := False;
+      Exit;
+    end;
+    DatabaseRollbackRestored := True;
+    Log('Verified authoritative database rollback completed before binary and ' +
+      'service recovery.');
+  end;
   if not RunRollbackAction('Restore') then
   begin
+    RollbackFailedClosed := True;
     Log('ERROR: The previous application binaries could not be restored. ' +
       'The verified snapshot remains at ' + BinarySnapshotDir + '.');
     Result := False;
@@ -546,6 +599,10 @@ begin
   ServiceStateFile := ExpandConstant('{tmp}\mission-legal-service-state.txt');
   BinarySnapshotDir := ExpandConstant(
     '{commonappdata}\MissionLegal\Backups\InstallerBinaries\rollback-{#AppVersion}');
+  if DatabaseRollbackReceiptPath = '' then
+    DatabaseRollbackReceiptPath := ExpandConstant(
+      '{commonappdata}\MissionLegal\Backups\Installer\installer-attempt-') +
+      ExtractFileName(ExpandConstant('{tmp}')) + '.json';
   ServerConfiguredBeforeInstall := IsServerConfigured;
   try
     ExtractTemporaryFile('server_installer_actions.ps1');
@@ -570,13 +627,14 @@ begin
       'No application files were changed. Review the setup log and retry.';
     Exit;
   end;
-  if not RunBackupGate then
+  if (not DatabaseBackupCaptured) and (not RunBackupGate) then
   begin
     Result := 'The authoritative database did not pass the verified pre-upgrade ' +
       'backup gate. No application files were changed. Review the installer ' +
       'maintenance log under ProgramData\MissionLegal\Logs and retry.';
     Exit;
   end;
+  DatabaseBackupCaptured := True;
   if not RunRollbackAction('Capture') then
   begin
     Result := 'Setup could not create and verify an independent rollback copy of ' +
@@ -630,7 +688,8 @@ begin
     ScriptPath := ExpandConstant('{tmp}\server_installer_actions.ps1');
     if not FileExists(ScriptPath) then
       ScriptPath := ExpandConstant('{app}\InstallerSupport\server_installer_actions.ps1');
-    if FileExists(ScriptPath) and ServiceWasRunning and (not BinaryRollbackRestored) then
+    if FileExists(ScriptPath) and ServiceWasRunning and
+      (not BinaryRollbackRestored) and (not RollbackFailedClosed) then
       RunServiceAction(ScriptPath, 'StartOnly', False);
   end;
 end;

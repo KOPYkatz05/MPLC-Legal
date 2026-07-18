@@ -563,16 +563,19 @@ def main():
     from server.configuration import load_server_configuration, save_server_configuration
     from server.security import PairingCodeStore
     from server.security import DeviceCredentialStore
+    from server.data_acl import protect_sensitive_server_data, publish_public_ca
     from server.tls import generate_local_tls
     from database.runtime import get_app_data_dir, get_client_data_dir, get_database_path
     from services.database_backup_service import DatabaseBackupService
 
+    app_data_dir = get_app_data_dir()
     backup_dir = Path(args.onedrive_backup_dir).expanduser().resolve()
     mission_root = Path(args.mission_storage_root).expanduser().resolve()
     if not mission_root.is_dir():
         parser.error(f"Mission storage root does not exist: {mission_root}")
 
     _assert_windows_host_prerequisites()
+    protect_sensitive_server_data(app_data_dir)
     backup_dir.mkdir(parents=True, exist_ok=True)
     _ensure_system_modify_access(mission_root)
     _ensure_system_modify_access(backup_dir)
@@ -605,6 +608,7 @@ def main():
     config_path = save_server_configuration(configuration)
     _configure_firewall_rule(args.port)
     tls_paths = generate_local_tls(overwrite=args.overwrite_certificates)
+    published_ca = publish_public_ca(tls_paths["ca_cert"], app_data_dir)
 
     if destination_database.exists():
         backup_service = DatabaseBackupService(mirror_dir=backup_dir)
@@ -638,16 +642,16 @@ def main():
         settings.setValue(
             "server/url", f"https://{socket.gethostname()}:{args.port}"
         )
-        settings.setValue("server/ca_certificate", str(tls_paths["ca_cert"]))
+        settings.setValue("server/ca_certificate", str(published_ca))
         settings.sync()
 
     pairing = PairingCodeStore().create() if args.create_pairing_code else None
     installed_service_started = _finish_installed_service_setup(
-        get_app_data_dir(),
+        app_data_dir,
     )
 
     print(f"Server configuration: {config_path}")
-    print(f"Client CA certificate: {tls_paths['ca_cert']}")
+    print(f"Client CA certificate: {published_ca}")
     print(f"OneDrive backup directory: {backup_dir}")
     print(f"Mission document root: {mission_root}")
     print(f"Authoritative database: {destination_database}")

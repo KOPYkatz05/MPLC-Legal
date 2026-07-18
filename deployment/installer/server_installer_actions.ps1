@@ -22,8 +22,17 @@ Set-StrictMode -Version Latest
 $ServiceName = "MissionLegalServer"
 $FirewallRuleName = "MissionLegalServerHTTPS"
 $FirewallRuleDisplayName = "Mission Legal Server HTTPS"
+$DataDir = [IO.Path]::GetFullPath(
+    [Environment]::ExpandEnvironmentVariables($DataDir)
+)
 $ServiceExe = [IO.Path]::GetFullPath((Join-Path $InstallDir "MissionLegalService.exe"))
 $LogPath = Join-Path $DataDir "Logs\installer-service.log"
+$PublicCaDirectory = Join-Path $DataDir "Public"
+$PublicCaPath = Join-Path $PublicCaDirectory "mission-legal-ca.pem"
+$PrivateCaPath = Join-Path $DataDir "Configuration\tls\mission-legal-ca.pem"
+$SystemSid = [Security.Principal.SecurityIdentifier]::new("S-1-5-18")
+$AdministratorsSid = [Security.Principal.SecurityIdentifier]::new("S-1-5-32-544")
+$UsersSid = [Security.Principal.SecurityIdentifier]::new("S-1-5-32-545")
 
 function Write-InstallerLog {
     param([string]$Message)
@@ -31,6 +40,9 @@ function Write-InstallerLog {
     $Line = "{0} {1}" -f [DateTimeOffset]::UtcNow.ToString("o"), $Message
     Write-Output $Line
     try {
+        if (-not (Test-Path -LiteralPath $DataDir -PathType Container)) {
+            return
+        }
         $Parent = Split-Path -Parent $LogPath
         New-Item -ItemType Directory -Force -Path $Parent | Out-Null
         Add-Content -LiteralPath $LogPath -Value $Line -Encoding UTF8
@@ -69,6 +81,282 @@ function Get-ConfiguredServerPort {
         throw "Configured server port is outside the valid TCP range: $Port"
     }
     return $Port
+}
+
+function Assert-NormalServerDataItem {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][bool]$Directory
+    )
+
+    $PathType = if ($Directory) { "Container" } else { "Leaf" }
+    if (-not (Test-Path -LiteralPath $Path -PathType $PathType)) {
+        throw "Required server-data ACL target is missing or has the wrong type: $Path"
+    }
+    $Item = Get-Item -LiteralPath $Path -Force -ErrorAction Stop
+    if (($Item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw "Refusing to apply a server-data ACL through a reparse point: $Path"
+    }
+}
+
+function New-ExactServerDataAcl {
+    param(
+        [Parameter(Mandatory = $true)][bool]$Directory,
+        [Parameter(Mandatory = $true)][bool]$PublicRead
+    )
+
+    $Acl = if ($Directory) {
+        [Security.AccessControl.DirectorySecurity]::new()
+    }
+    else {
+        [Security.AccessControl.FileSecurity]::new()
+    }
+    $Acl.SetOwner($AdministratorsSid)
+    $Acl.SetAccessRuleProtection($true, $false)
+    $Inheritance = if ($Directory) {
+        [Security.AccessControl.InheritanceFlags]::ContainerInherit -bor
+        [Security.AccessControl.InheritanceFlags]::ObjectInherit
+    }
+    else {
+        [Security.AccessControl.InheritanceFlags]::None
+    }
+    foreach ($Sid in @($SystemSid, $AdministratorsSid)) {
+        $Rule = [Security.AccessControl.FileSystemAccessRule]::new(
+            $Sid,
+            [Security.AccessControl.FileSystemRights]::FullControl,
+            $Inheritance,
+            [Security.AccessControl.PropagationFlags]::None,
+            [Security.AccessControl.AccessControlType]::Allow
+        )
+        [void]$Acl.AddAccessRule($Rule)
+    }
+    if ($PublicRead) {
+        $Rule = [Security.AccessControl.FileSystemAccessRule]::new(
+            $UsersSid,
+            [Security.AccessControl.FileSystemRights]::ReadAndExecute,
+            $Inheritance,
+            [Security.AccessControl.PropagationFlags]::None,
+            [Security.AccessControl.AccessControlType]::Allow
+        )
+        [void]$Acl.AddAccessRule($Rule)
+    }
+    return $Acl
+}
+
+function Assert-ExactServerDataAcl {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][bool]$Directory,
+        [Parameter(Mandatory = $true)][bool]$PublicRead
+    )
+
+    Assert-NormalServerDataItem -Path $Path -Directory $Directory
+    $Acl = Get-Acl -LiteralPath $Path -ErrorAction Stop
+    if (-not $Acl.AreAccessRulesProtected) {
+        throw "Server-data ACL inheritance remains enabled: $Path"
+    }
+    $Owner = $Acl.GetOwner([Security.Principal.SecurityIdentifier])
+    if ($Owner.Value -cne $AdministratorsSid.Value) {
+        throw "Server-data ACL owner is not Builtin Administrators: $Path"
+    }
+    $AllowedSids = @($SystemSid.Value, $AdministratorsSid.Value)
+    if ($PublicRead) {
+        $AllowedSids += $UsersSid.Value
+    }
+    $RightsBySid = @{}
+    $Rules = @($Acl.GetAccessRules(
+        $true,
+        $true,
+        [Security.Principal.SecurityIdentifier]
+    ))
+    foreach ($Rule in $Rules) {
+        $SidValue = [string]$Rule.IdentityReference.Value
+        if ($Rule.AccessControlType -ne [Security.AccessControl.AccessControlType]::Allow) {
+            throw "Server-data ACL contains a deny rule: $Path"
+        }
+        if ($SidValue -cnotin $AllowedSids) {
+            throw "Server-data ACL grants access to unexpected SID '$SidValue': $Path"
+        }
+        if ($Rule.IsInherited) {
+            throw "Server-data ACL still contains an inherited rule: $Path"
+        }
+        if (-not $RightsBySid.ContainsKey($SidValue)) {
+            $RightsBySid[$SidValue] = [long]0
+        }
+        $RightsBySid[$SidValue] = (
+            [long]$RightsBySid[$SidValue] -bor [long]$Rule.FileSystemRights
+        )
+    }
+    $FullControl = [long][Security.AccessControl.FileSystemRights]::FullControl
+    foreach ($Sid in @($SystemSid, $AdministratorsSid)) {
+        if (
+            -not $RightsBySid.ContainsKey($Sid.Value) -or
+            (($RightsBySid[$Sid.Value] -band $FullControl) -ne $FullControl)
+        ) {
+            throw "Server-data ACL is missing FullControl for '$($Sid.Value)': $Path"
+        }
+    }
+    if ($PublicRead) {
+        $ReadAndExecute = [long][Security.AccessControl.FileSystemRights]::ReadAndExecute
+        if (
+            -not $RightsBySid.ContainsKey($UsersSid.Value) -or
+            (($RightsBySid[$UsersSid.Value] -band $ReadAndExecute) -ne $ReadAndExecute)
+        ) {
+            throw "Public CA ACL is missing Builtin Users read access: $Path"
+        }
+        $WriteMask = (
+            [long][Security.AccessControl.FileSystemRights]::Write -bor
+            [long][Security.AccessControl.FileSystemRights]::Modify -bor
+            [long][Security.AccessControl.FileSystemRights]::Delete -bor
+            [long][Security.AccessControl.FileSystemRights]::ChangePermissions -bor
+            [long][Security.AccessControl.FileSystemRights]::TakeOwnership
+        )
+        if (($RightsBySid[$UsersSid.Value] -band $WriteMask) -ne 0) {
+            throw "Public CA ACL grants Builtin Users write-capable access: $Path"
+        }
+    }
+}
+
+function Set-ExactServerDataAcl {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][bool]$Directory,
+        [Parameter(Mandatory = $true)][bool]$PublicRead
+    )
+
+    Assert-NormalServerDataItem -Path $Path -Directory $Directory
+    $Acl = New-ExactServerDataAcl -Directory $Directory -PublicRead $PublicRead
+    Set-Acl -LiteralPath $Path -AclObject $Acl -ErrorAction Stop
+    Assert-ExactServerDataAcl `
+        -Path $Path `
+        -Directory $Directory `
+        -PublicRead $PublicRead
+}
+
+function Get-SensitiveServerDataItems {
+    $Items = New-Object System.Collections.Generic.List[object]
+    $Queue = New-Object System.Collections.Generic.Queue[string]
+    $Queue.Enqueue($DataDir)
+    while ($Queue.Count -gt 0) {
+        $Current = $Queue.Dequeue()
+        Assert-NormalServerDataItem -Path $Current -Directory $true
+        $Items.Add([pscustomobject]@{ Path = $Current; Directory = $true })
+        foreach ($Child in @(Get-ChildItem -LiteralPath $Current -Force -ErrorAction Stop)) {
+            if (($Child.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+                throw "Refusing to apply a server-data ACL through a reparse point: $($Child.FullName)"
+            }
+            if ($Child.FullName.Equals($PublicCaDirectory, [StringComparison]::OrdinalIgnoreCase)) {
+                continue
+            }
+            if ($Child.PSIsContainer) {
+                $Queue.Enqueue($Child.FullName)
+            }
+            else {
+                $Items.Add([pscustomobject]@{
+                    Path = $Child.FullName
+                    Directory = $false
+                })
+            }
+        }
+    }
+    return @($Items)
+}
+
+function Protect-MissionLegalServerData {
+    if (-not (Test-Path -LiteralPath $DataDir)) {
+        New-Item -ItemType Directory -Path $DataDir -Force -ErrorAction Stop |
+            Out-Null
+    }
+    $Items = @(Get-SensitiveServerDataItems)
+    foreach ($Item in $Items) {
+        Set-ExactServerDataAcl `
+            -Path $Item.Path `
+            -Directory $Item.Directory `
+            -PublicRead $false
+    }
+    foreach ($Item in $Items) {
+        Assert-ExactServerDataAcl `
+            -Path $Item.Path `
+            -Directory $Item.Directory `
+            -PublicRead $false
+    }
+    Write-InstallerLog (
+        "Verified protected Builtin Administrators/LocalSystem-only ACLs " +
+        "for sensitive server data at $DataDir."
+    )
+}
+
+function Publish-MissionLegalPublicCa {
+    param([switch]$AllowMissing)
+
+    if (-not (Test-Path -LiteralPath $PrivateCaPath -PathType Leaf)) {
+        if ($AllowMissing) {
+            Write-InstallerLog "Public CA publication is deferred until server TLS configuration exists."
+            return $null
+        }
+        throw "Server CA certificate is missing after healthy startup: $PrivateCaPath"
+    }
+    Assert-NormalServerDataItem -Path $PrivateCaPath -Directory $false
+    if (-not (Test-Path -LiteralPath $PublicCaDirectory)) {
+        New-Item -ItemType Directory -Path $PublicCaDirectory -ErrorAction Stop |
+            Out-Null
+    }
+    Set-ExactServerDataAcl `
+        -Path $PublicCaDirectory `
+        -Directory $true `
+        -PublicRead $false
+
+    $Temporary = Join-Path $PublicCaDirectory ".mission-legal-ca.pem.tmp"
+    foreach ($Child in @(Get-ChildItem -LiteralPath $PublicCaDirectory -Force -ErrorAction Stop)) {
+        if (($Child.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw "Public CA directory contains a reparse point: $($Child.FullName)"
+        }
+        if (
+            -not $Child.FullName.Equals($PublicCaPath, [StringComparison]::OrdinalIgnoreCase) -and
+            -not $Child.FullName.Equals($Temporary, [StringComparison]::OrdinalIgnoreCase)
+        ) {
+            throw "Public CA directory contains an unexpected item: $($Child.FullName)"
+        }
+        if ($Child.PSIsContainer) {
+            throw "Public CA directory contains an unexpected directory: $($Child.FullName)"
+        }
+        Set-ExactServerDataAcl `
+            -Path $Child.FullName `
+            -Directory $false `
+            -PublicRead $false
+    }
+    if (Test-Path -LiteralPath $Temporary) {
+        Remove-Item -LiteralPath $Temporary -Force -ErrorAction Stop
+    }
+    Copy-Item `
+        -LiteralPath $PrivateCaPath `
+        -Destination $Temporary `
+        -ErrorAction Stop
+    Set-ExactServerDataAcl `
+        -Path $Temporary `
+        -Directory $false `
+        -PublicRead $false
+    if (Test-Path -LiteralPath $PublicCaPath) {
+        [IO.File]::Replace($Temporary, $PublicCaPath, $null)
+    }
+    else {
+        [IO.File]::Move($Temporary, $PublicCaPath)
+    }
+    Set-ExactServerDataAcl `
+        -Path $PublicCaPath `
+        -Directory $false `
+        -PublicRead $true
+    Set-ExactServerDataAcl `
+        -Path $PublicCaDirectory `
+        -Directory $true `
+        -PublicRead $true
+    $SourceHash = (Get-FileHash -LiteralPath $PrivateCaPath -Algorithm SHA256).Hash
+    $PublishedHash = (Get-FileHash -LiteralPath $PublicCaPath -Algorithm SHA256).Hash
+    if ($SourceHash -cne $PublishedHash) {
+        throw "Published CA certificate does not match the protected server CA certificate."
+    }
+    Write-InstallerLog "Published and verified the read-only client CA certificate at $PublicCaPath."
+    return $PublicCaPath
 }
 
 function Grant-SystemModifyAccess {
@@ -405,6 +693,10 @@ function Remove-MissionLegalService {
     throw "Service deletion did not finish before timeout."
 }
 
+if ($Action -in @("InstallOrUpdate", "StartAndVerify", "StartOnly")) {
+    # Secure the root before the first ProgramData log write or service action.
+    Protect-MissionLegalServerData
+}
 Write-InstallerLog "Beginning installer service action '$Action' for version $AppVersion."
 switch ($Action) {
     "Stop" {
@@ -414,13 +706,16 @@ switch ($Action) {
         Install-OrUpdateService
         Grant-ConfiguredStorageAccess
         Set-MissionLegalFirewallRule -Port (Get-ConfiguredServerPort)
+        $null = Publish-MissionLegalPublicCa -AllowMissing
     }
     "StartAndVerify" {
         Start-ServiceAndWait
         Test-ServerHealth
+        $null = Publish-MissionLegalPublicCa
     }
     "StartOnly" {
         Start-ServiceAndWait
+        $null = Publish-MissionLegalPublicCa -AllowMissing
     }
     "Remove" {
         Remove-MissionLegalService

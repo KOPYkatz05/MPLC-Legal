@@ -37,8 +37,10 @@ MISSION_LEGAL_VPK_SIGN_PARAMS so certificate selection is not hard-coded here.
 [CmdletBinding()]
 param(
     [string]$Version,
+    [string]$PythonPath = "$PSScriptRoot\..\venv\Scripts\python.exe",
     [string]$Channel,
     [string]$InputDir,
+    [string]$ProvenanceManifestPath,
     [string]$OutputDir,
     [string]$VpkPath,
     [switch]$InstallVpk,
@@ -46,6 +48,7 @@ param(
     [ValidateSet("http", "github")]
     [string]$PreviousReleaseProvider,
     [string]$PreviousReleaseDirectory,
+    [switch]$InitialRelease,
     [string]$UpdateUrl,
     [ValidateSet("http", "github")]
     [string]$UpdateProvider = "http",
@@ -59,6 +62,7 @@ param(
     [string]$SignExclude,
     [ValidateRange(1, 100)]
     [int]$SignParallel = 10,
+    [string]$ExpectedSignerThumbprint,
     [switch]$RequireSigning,
     [switch]$ValidateOnly
 )
@@ -68,6 +72,11 @@ $ErrorActionPreference = "Stop"
 
 $RepoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot "..")).Path
 $ConfigPath = Join-Path $PSScriptRoot "client_release.json"
+$ReleaseSafetyPath = Join-Path $PSScriptRoot "release_safety.ps1"
+if (-not (Test-Path -LiteralPath $ReleaseSafetyPath -PathType Leaf)) {
+    throw "Release safety helpers are missing: $ReleaseSafetyPath"
+}
+. $ReleaseSafetyPath
 
 function Get-RepoPath {
     param(
@@ -140,6 +149,30 @@ function Get-ConfiguredVersion {
     return $Match.Groups["version"].Value
 }
 
+function Get-ConfiguredApiVersion {
+    $VersionText = Get-Content -LiteralPath (Join-Path $RepoRoot "version.py") -Raw
+    $Match = [regex]::Match(
+        $VersionText,
+        '(?m)^API_VERSION\s*=\s*["''](?<version>[^"'']+)["'']\s*$'
+    )
+    if (-not $Match.Success) {
+        throw "Could not read API_VERSION from version.py."
+    }
+    return $Match.Groups["version"].Value
+}
+
+function Get-ConfiguredSchemaVersion {
+    $VersionText = Get-Content -LiteralPath (Join-Path $RepoRoot "version.py") -Raw
+    $Match = [regex]::Match(
+        $VersionText,
+        '(?m)^SCHEMA_VERSION\s*=\s*(?<version>[0-9]+)\s*$'
+    )
+    if (-not $Match.Success) {
+        throw "Could not read SCHEMA_VERSION from version.py."
+    }
+    return [int]$Match.Groups["version"].Value
+}
+
 function Assert-SemVer {
     param(
         [Parameter(Mandatory = $true)]
@@ -208,7 +241,8 @@ function Assert-SafeFeedAsset {
         [string]$ReleaseRoot,
         [Parameter(Mandatory = $true)]
         [string]$ExpectedPackId,
-        [switch]$VerifyHash
+        [switch]$VerifyHash,
+        [switch]$RequireSha256
     )
 
     $PackageId = [string]$Asset.PackageId
@@ -217,11 +251,7 @@ function Assert-SafeFeedAsset {
     }
 
     $FileName = [string]$Asset.FileName
-    if (
-        [string]::IsNullOrWhiteSpace($FileName) -or
-        [IO.Path]::IsPathRooted($FileName) -or
-        -not $FileName.Equals([IO.Path]::GetFileName($FileName), [StringComparison]::Ordinal)
-    ) {
+    if (-not (Test-MissionLegalSafeWindowsLeafName $FileName)) {
         throw "Release feed contains an unsafe asset file name: '$FileName'."
     }
 
@@ -234,7 +264,16 @@ function Assert-SafeFeedAsset {
         throw "Release package is empty: $AssetPath"
     }
 
-    if ($null -ne $Asset.Size -and [int64]$Asset.Size -ne $AssetFile.Length) {
+    $SizeProperty = $Asset.PSObject.Properties |
+        Where-Object { $_.Name -ieq 'Size' } |
+        Select-Object -First 1
+    if ($RequireSha256 -and (
+        $null -eq $SizeProperty -or
+        [int64]$SizeProperty.Value -le 0
+    )) {
+        throw "Release feed asset '$FileName' is missing a valid positive size."
+    }
+    if ($null -ne $SizeProperty -and [int64]$SizeProperty.Value -ne $AssetFile.Length) {
         throw "Release feed size does not match '$FileName'."
     }
 
@@ -247,6 +286,12 @@ function Assert-SafeFeedAsset {
     $Sha256Property = $Asset.PSObject.Properties |
         Where-Object { $_.Name -ieq "SHA256" } |
         Select-Object -First 1
+    if ($RequireSha256 -and (
+        $null -eq $Sha256Property -or
+        [string]$Sha256Property.Value -notmatch '^[0-9A-Fa-f]{64}$'
+    )) {
+        throw "Release feed asset '$FileName' is missing a valid SHA-256 digest."
+    }
     if (
         $VerifyHash -and
         $null -ne $Sha256Property -and
@@ -270,7 +315,12 @@ function Test-ReleaseArtifacts {
         [Parameter(Mandatory = $true)]
         [string]$ExpectedPackId,
         [bool]$ExpectDelta,
-        [bool]$ExpectSignature
+        [bool]$ExpectSignature,
+        [bool]$VerifyAllHashes,
+        [bool]$RequireSha256,
+        [string]$ExpectedSignerThumbprint,
+        [string]$SignatureTemporaryRoot,
+        [bool]$RequireTimestamp
     )
 
     $FeedPath = Join-Path $ReleaseRoot "releases.$ReleaseChannel.json"
@@ -288,7 +338,8 @@ function Test-ReleaseArtifacts {
             -Asset $Asset `
             -ReleaseRoot $ReleaseRoot `
             -ExpectedPackId $ExpectedPackId `
-            -VerifyHash:$IsCurrent
+            -VerifyHash:($IsCurrent -or $VerifyAllHashes) `
+            -RequireSha256:$RequireSha256
     }
 
     $CurrentAssets = @($Assets | Where-Object {
@@ -312,11 +363,7 @@ function Test-ReleaseArtifacts {
         throw "Velopack latest-assets manifest must contain exactly one installer: $LatestAssetsPath"
     }
     $SetupName = [string]$InstallerEntries[0].RelativeFileName
-    if (
-        [string]::IsNullOrWhiteSpace($SetupName) -or
-        [IO.Path]::IsPathRooted($SetupName) -or
-        -not $SetupName.Equals([IO.Path]::GetFileName($SetupName), [StringComparison]::Ordinal)
-    ) {
+    if (-not (Test-MissionLegalSafeWindowsLeafName $SetupName)) {
         throw "Velopack latest-assets manifest contains an unsafe installer file name: '$SetupName'."
     }
     $SetupPath = Join-Path $ReleaseRoot $SetupName
@@ -327,10 +374,28 @@ function Test-ReleaseArtifacts {
         throw "Velopack per-user installer is empty: $SetupPath"
     }
 
+    $SignatureEvidence = @()
     if ($ExpectSignature) {
-        $Signature = Get-AuthenticodeSignature -LiteralPath $SetupPath
-        if ($Signature.Status -ne [System.Management.Automation.SignatureStatus]::Valid) {
-            throw "Installer Authenticode signature is not valid: $($Signature.Status) - $($Signature.StatusMessage)"
+        if ([string]::IsNullOrWhiteSpace($SignatureTemporaryRoot)) {
+            throw "SignatureTemporaryRoot is required when signed client artifacts are validated."
+        }
+        New-Item -ItemType Directory -Force -Path $SignatureTemporaryRoot | Out-Null
+        $InstallerEvidence = Assert-MissionLegalAuthenticodeSignature `
+            -Path $SetupPath `
+            -ExpectedSignerThumbprint $ExpectedSignerThumbprint `
+            -RequireTimestamp:$RequireTimestamp
+        $InstallerEvidence['artifact_role'] = 'client_installer'
+        $SignatureEvidence += $InstallerEvidence
+
+        $FullPackagePath = Join-Path $ReleaseRoot ([string]$FullAssets[0].FileName)
+        $PackageEvidence = @(Assert-MissionLegalClientPackageSignatures `
+            -PackagePath $FullPackagePath `
+            -TemporaryRoot $SignatureTemporaryRoot `
+            -ExpectedSignerThumbprint $ExpectedSignerThumbprint `
+            -RequireTimestamp:$RequireTimestamp)
+        foreach ($Evidence in $PackageEvidence) {
+            $Evidence['artifact_role'] = 'client_packaged_executable'
+            $SignatureEvidence += $Evidence
         }
     }
 
@@ -339,6 +404,7 @@ function Test-ReleaseArtifacts {
         Feed = $FeedPath
         FullPackage = (Join-Path $ReleaseRoot ([string]$FullAssets[0].FileName))
         DeltaPackages = @($DeltaAssets | ForEach-Object { Join-Path $ReleaseRoot ([string]$_.FileName) })
+        SignatureEvidence = @($SignatureEvidence)
     }
 }
 
@@ -534,6 +600,58 @@ function Write-ClientUpdateConfig {
     return $ConfigPath
 }
 
+function Get-PublishedHttpFeedAssets {
+    param(
+        [Parameter(Mandatory = $true)][string]$BaseUrl,
+        [Parameter(Mandatory = $true)][string]$ReleaseChannel
+    )
+
+    $BaseUri = [Uri]::new($BaseUrl)
+    if (-not $BaseUri.AbsoluteUri.EndsWith('/', [StringComparison]::Ordinal)) {
+        $BaseUri = [Uri]::new($BaseUri.AbsoluteUri + '/')
+    }
+    $FeedUri = [Uri]::new($BaseUri, "releases.$ReleaseChannel.json")
+    Add-Type -AssemblyName System.Net.Http
+    $Handler = [Net.Http.HttpClientHandler]::new()
+    $Handler.AllowAutoRedirect = $false
+    $Client = [Net.Http.HttpClient]::new($Handler)
+    try {
+        $Response = $Client.GetAsync($FeedUri).GetAwaiter().GetResult()
+        try {
+            if ($Response.StatusCode -eq [Net.HttpStatusCode]::NotFound) {
+                return @()
+            }
+            if ($Response.StatusCode -ne [Net.HttpStatusCode]::OK) {
+                throw (
+                    "Initial-release history check returned $([int]$Response.StatusCode) " +
+                    "$($Response.ReasonPhrase) for $FeedUri."
+                )
+            }
+            $Json = $Response.Content.ReadAsStringAsync().GetAwaiter().GetResult()
+            try {
+                $Feed = $Json | ConvertFrom-Json
+            }
+            catch {
+                throw "Published initial-release history is not valid JSON: $FeedUri"
+            }
+            $AssetsProperty = $Feed.PSObject.Properties | Where-Object {
+                $_.Name -ieq 'Assets'
+            } | Select-Object -First 1
+            if ($null -eq $AssetsProperty) {
+                throw "Published initial-release history has no Assets collection: $FeedUri"
+            }
+            return @($AssetsProperty.Value)
+        }
+        finally {
+            $Response.Dispose()
+        }
+    }
+    finally {
+        $Client.Dispose()
+        $Handler.Dispose()
+    }
+}
+
 if (-not (Test-Path -LiteralPath $ConfigPath -PathType Leaf)) {
     throw "Client release configuration is missing: $ConfigPath"
 }
@@ -583,8 +701,11 @@ if (
     throw "Configured mainExe must be an executable file name, not a path: $MainExe"
 }
 
+$ConfiguredVersion = Get-ConfiguredVersion
+$ConfiguredApiVersion = Get-ConfiguredApiVersion
+$ConfiguredSchemaVersion = Get-ConfiguredSchemaVersion
 if ([string]::IsNullOrWhiteSpace($Version)) {
-    $Version = Get-ConfiguredVersion
+    $Version = $ConfiguredVersion
 }
 Assert-SemVer $Version
 
@@ -599,8 +720,9 @@ if ([string]::IsNullOrWhiteSpace($OutputDir)) {
     $OutputDir = Join-Path $RepoRoot "dist\client-releases\$Channel"
 }
 $OutputDir = Get-RepoPath $OutputDir
-New-Item -ItemType Directory -Force -Path $OutputDir | Out-Null
-$OutputDir = (Resolve-Path -LiteralPath $OutputDir).Path
+$OutputDir = [IO.Path]::GetFullPath($OutputDir)
+New-Item -ItemType Directory -Force -Path (Split-Path -Parent $OutputDir) | Out-Null
+$FinalOutputDir = $OutputDir
 
 if ([string]::IsNullOrWhiteSpace($SignParams) -and -not [string]::IsNullOrWhiteSpace($env:MISSION_LEGAL_VPK_SIGN_PARAMS)) {
     $SignParams = $env:MISSION_LEGAL_VPK_SIGN_PARAMS
@@ -618,8 +740,14 @@ $HasSigning = (
     -not [string]::IsNullOrWhiteSpace($SignTemplate) -or
     -not [string]::IsNullOrWhiteSpace($AzureTrustedSignFile)
 )
-if ($RequireSigning -and -not $HasSigning) {
+if ($RequireSigning -and -not $ValidateOnly -and -not $HasSigning) {
     throw "A production release requires signing. Supply a signing mode or MISSION_LEGAL_VPK_SIGN_PARAMS."
+}
+if ($RequireSigning -and [string]::IsNullOrWhiteSpace($ExpectedSignerThumbprint)) {
+    throw "A production release requires ExpectedSignerThumbprint to bind signatures to the approved certificate."
+}
+if (-not [string]::IsNullOrWhiteSpace($ExpectedSignerThumbprint)) {
+    $ExpectedSignerThumbprint = Get-NormalizedCertificateThumbprint $ExpectedSignerThumbprint
 }
 
 if ($ValidateOnly) {
@@ -636,12 +764,26 @@ if ($ValidateOnly) {
         -ReleaseVersion $Version `
         -ExpectedPackId $PackId `
         -ExpectDelta:$HasPriorValidationRelease `
-        -ExpectSignature:$HasSigning
+        -ExpectSignature:($HasSigning -or $RequireSigning) `
+        -VerifyAllHashes:$RequireSigning `
+        -RequireSha256:$RequireSigning `
+        -ExpectedSignerThumbprint $ExpectedSignerThumbprint `
+        -SignatureTemporaryRoot (Join-Path $RepoRoot "build\release-validation") `
+        -RequireTimestamp:$RequireSigning
     Write-Host "Client release artifacts are valid:"
     Write-Host "  Installer: $($Result.Setup)"
     Write-Host "  Feed:      $($Result.Feed)"
     Write-Host "  Full:      $($Result.FullPackage)"
     return
+}
+
+$PythonPath = [IO.Path]::GetFullPath($PythonPath)
+if (-not (Test-Path -LiteralPath $PythonPath -PathType Leaf)) {
+    throw "Python executable for provenance verification was not found: $PythonPath"
+}
+$ProvenanceHelper = Join-Path $PSScriptRoot "package_provenance.py"
+if (-not (Test-Path -LiteralPath $ProvenanceHelper -PathType Leaf)) {
+    throw "Package provenance helper is missing: $ProvenanceHelper"
 }
 
 if ([string]::IsNullOrWhiteSpace($InputDir)) {
@@ -657,13 +799,95 @@ if (-not (Test-Path -LiteralPath $UpdateWorkerPath -PathType Leaf)) {
     throw "The isolated client update worker is missing from the PyInstaller folder: $UpdateWorkerPath"
 }
 
+if ([string]::IsNullOrWhiteSpace($ProvenanceManifestPath)) {
+    $InputParent = Split-Path -Parent $InputDir
+    $InputName = Split-Path -Leaf $InputDir
+    $ProvenanceManifestPath = Join-Path $InputParent "$InputName.provenance.json"
+}
+$ProvenanceManifestPath = Resolve-ExistingFile `
+    -Path $ProvenanceManifestPath `
+    -Description "Client raw-package provenance manifest"
+$ProvenanceArguments = @(
+    $ProvenanceHelper,
+    "verify",
+    "--repo-root", $RepoRoot,
+    "--package-dir", $InputDir,
+    "--manifest-path", $ProvenanceManifestPath,
+    "--expected-role", "client",
+    "--expected-app-version", $Version,
+    "--expected-api-version", $ConfiguredApiVersion,
+    "--expected-schema-version", [string]$ConfiguredSchemaVersion,
+    "--required-windows-version-exe", "MissionLegal.exe",
+    "--required-windows-version-exe", "MissionLegalDiagnostics.exe",
+    "--required-windows-version-exe", "MissionLegalClientSetup.exe",
+    "--required-windows-version-exe", "MissionLegalUpdateWorker.exe"
+)
+function Assert-ClientRawPackageProvenance {
+    & $PythonPath -B @ProvenanceArguments
+    if ($LASTEXITCODE -ne 0) {
+        throw (
+            "Client raw package does not match its provenance manifest. " +
+            "Rebuild it with deployment\build_windows.ps1 -Target Client."
+        )
+    }
+}
+Assert-ClientRawPackageProvenance
+if ($RequireSigning) {
+    try {
+        $VerifiedProvenance = Get-Content -LiteralPath $ProvenanceManifestPath -Raw | ConvertFrom-Json
+    }
+    catch {
+        throw "Could not read the verified client provenance for production policy checks: $ProvenanceManifestPath"
+    }
+    if ([bool]$VerifiedProvenance.source.git_dirty) {
+        throw (
+            "A signed production client release requires package provenance from a clean Git commit. " +
+            "Commit the release source and rebuild the raw client package."
+        )
+    }
+}
+
 if ((Test-PathInside -Candidate $OutputDir -Parent $InputDir) -or (Test-PathInside -Candidate $InputDir -Parent $OutputDir)) {
     throw "Input and output directories must not contain one another. Input: $InputDir Output: $OutputDir"
 }
 
-$ForbiddenFiles = @(Get-ChildItem -LiteralPath $InputDir -Recurse -File | Where-Object {
-    $_.Extension -in @(".db", ".sqlite", ".sqlite3", ".key") -or
-    $_.Name -in @("server-key.pem", "ca-key.pem")
+function Test-ForbiddenPackagedState {
+    param([Parameter(Mandatory = $true)][System.IO.FileInfo]$File)
+
+    $Name = $File.Name.ToLowerInvariant()
+    $Extension = $File.Extension.ToLowerInvariant()
+    if ($Extension -in @(".db", ".sqlite", ".sqlite3", ".key", ".pfx", ".p12")) {
+        return $true
+    }
+    if ($Name -match '\.(db|sqlite|sqlite3)-(wal|shm|journal)$') {
+        return $true
+    }
+    if ($Name -in @(
+        "api-device.json",
+        "devices.json",
+        "pairing.json",
+        "pairing-transaction.json",
+        "server.json",
+        "workspaces.json"
+    )) {
+        return $true
+    }
+    if ($Name -match '^pairing[-_.].*(journal|pointer|transaction).*(\.json|\.lock)$') {
+        return $true
+    }
+    if ($Extension -eq ".pem") {
+        if ($Name -match '(^|[-_.])key\.pem$') {
+            return $true
+        }
+        if (Select-String -LiteralPath $File.FullName -Pattern '-----BEGIN .*PRIVATE KEY-----' -Quiet) {
+            return $true
+        }
+    }
+    return $false
+}
+
+$ForbiddenFiles = @(Get-ChildItem -LiteralPath $InputDir -Recurse -Force -File | Where-Object {
+    Test-ForbiddenPackagedState -File $_
 })
 if ($ForbiddenFiles.Count -gt 0) {
     $Names = ($ForbiddenFiles | Select-Object -First 10 -ExpandProperty FullName) -join ", "
@@ -681,10 +905,30 @@ if ($RequireSigning) {
     if (
         -not [Uri]::TryCreate($UpdateUrl, [UriKind]::Absolute, [ref]$ProductionUpdateUri) -or
         $ProductionUpdateUri.Scheme -ne "https" -or
-        $ProductionUpdateUri.Host -in @("localhost", "127.0.0.1", "::1")
+        $ProductionUpdateUri.Host -in @("localhost", "127.0.0.1", "::1") -or
+        -not [string]::IsNullOrWhiteSpace($ProductionUpdateUri.UserInfo) -or
+        -not [string]::IsNullOrWhiteSpace($ProductionUpdateUri.Query) -or
+        -not [string]::IsNullOrWhiteSpace($ProductionUpdateUri.Fragment)
     ) {
         throw "A signed production release requires a non-loopback HTTPS update source."
     }
+}
+
+if ($InitialRelease -and (
+    -not [string]::IsNullOrWhiteSpace($PreviousReleaseUrl) -or
+    -not [string]::IsNullOrWhiteSpace($PreviousReleaseDirectory)
+)) {
+    throw "InitialRelease cannot be combined with a previous-release source."
+}
+if (
+    $RequireSigning -and
+    -not $InitialRelease -and
+    [string]::IsNullOrWhiteSpace($PreviousReleaseUrl) -and
+    [string]::IsNullOrWhiteSpace($PreviousReleaseDirectory)
+) {
+    $PreviousReleaseUrl = $UpdateUrl
+    $PreviousReleaseProvider = $UpdateProvider
+    Write-Host "Production history source defaults to the published update feed: $PreviousReleaseUrl"
 }
 
 if (-not [string]::IsNullOrWhiteSpace($PreviousReleaseUrl) -and -not [string]::IsNullOrWhiteSpace($PreviousReleaseDirectory)) {
@@ -702,26 +946,76 @@ if (
 ) {
     $PreviousReleaseProvider = $UpdateProvider
 }
+if ($RequireSigning -and $InitialRelease) {
+    if ($UpdateProvider -eq 'http') {
+        $PublishedInitialAssets = @(Get-PublishedHttpFeedAssets `
+            -BaseUrl $UpdateUrl `
+            -ReleaseChannel $Channel)
+        if ($PublishedInitialAssets.Count -gt 0) {
+            throw "InitialRelease was requested, but the published HTTPS feed already contains assets."
+        }
+    }
+    else {
+        # vpk's public GitHub reader is the authoritative history probe for a
+        # repository-backed feed. The downloaded feed must remain empty below.
+        $PreviousReleaseUrl = $UpdateUrl
+        $PreviousReleaseProvider = 'github'
+    }
+}
 
-$FeedPath = Join-Path $OutputDir "releases.$Channel.json"
-$ExistingAssets = @(Get-FeedAssets -FeedPath $FeedPath -AllowMissing)
+$ReleaseLock = Enter-MissionLegalReleaseLock `
+    -LockPath (Join-Path $RepoRoot "build\release-locks\client-$Channel.lock")
+$TransactionOutputDir = $null
+try {
+Repair-MissionLegalInterruptedReleaseTransaction -FinalDirectory $FinalOutputDir
+$FinalFeedPath = Join-Path $FinalOutputDir "releases.$Channel.json"
+$ExistingAssets = @(Get-FeedAssets -FeedPath $FinalFeedPath -AllowMissing)
 foreach ($Asset in $ExistingAssets) {
     Assert-SafeFeedAsset `
         -Asset $Asset `
-        -ReleaseRoot $OutputDir `
-        -ExpectedPackId $PackId
+        -ReleaseRoot $FinalOutputDir `
+        -ExpectedPackId $PackId `
+        -VerifyHash:$RequireSigning `
+        -RequireSha256:$RequireSigning
 }
 if (@($ExistingAssets | Where-Object {
     ([string]$_.PackageId).Equals($PackId, [StringComparison]::Ordinal) -and
     ([string]$_.Version).Equals($Version, [StringComparison]::OrdinalIgnoreCase)
 }).Count -gt 0) {
-    throw "Release $PackId $Version already exists in $FeedPath. Bump APP_VERSION instead of replacing a published version."
+    throw "Release $PackId $Version already exists in $FinalFeedPath. Bump APP_VERSION instead of replacing a published version."
+}
+if ($InitialRelease -and $ExistingAssets.Count -gt 0) {
+    throw "InitialRelease requires an empty local channel; existing feed assets were found."
+}
+if ($RequireSigning) {
+    $PublishedVersions = @($ExistingAssets | Where-Object {
+        ([string]$_.PackageId).Equals($PackId, [StringComparison]::Ordinal) -and
+        ([string]$_.Type) -ieq 'Full'
+    } | ForEach-Object { [string]$_.Version } | Select-Object -Unique)
+    Assert-MissionLegalVersionIsNewer `
+        -CandidateVersion $Version `
+        -ExistingVersions $PublishedVersions `
+        -SourceDescription "the existing $Channel client feed"
 }
 $DuplicateFullPattern = '^' + [regex]::Escape($PackId) + '-' + [regex]::Escape($Version) + '(?:-' + [regex]::Escape($Channel) + ')?-full\.nupkg$'
-$DuplicateFull = Get-ChildItem -LiteralPath $OutputDir -File | Where-Object { $_.Name -match $DuplicateFullPattern } | Select-Object -First 1
+$DuplicateFull = if (Test-Path -LiteralPath $FinalOutputDir -PathType Container) {
+    Get-ChildItem -LiteralPath $FinalOutputDir -File |
+        Where-Object { $_.Name -match $DuplicateFullPattern } |
+        Select-Object -First 1
+}
+else {
+    $null
+}
 if ($null -ne $DuplicateFull) {
     throw "Release package already exists without a matching clean feed entry: $($DuplicateFull.FullName)"
 }
+
+$TransactionOutputDir = New-MissionLegalReleaseTransaction `
+    -FinalDirectory $FinalOutputDir `
+    -Label "$Channel-$Version" `
+    -CopyExisting
+$OutputDir = $TransactionOutputDir
+$FeedPath = Join-Path $OutputDir "releases.$Channel.json"
 
 $Vpk = Resolve-Vpk `
     -RequiredVersion $RequiredVpkVersion `
@@ -807,7 +1101,12 @@ foreach ($Asset in $AssetsBeforePack) {
     Assert-SafeFeedAsset `
         -Asset $Asset `
         -ReleaseRoot $OutputDir `
-        -ExpectedPackId $PackId
+        -ExpectedPackId $PackId `
+        -VerifyHash:$RequireSigning `
+        -RequireSha256:$RequireSigning
+}
+if ($InitialRelease -and $AssetsBeforePack.Count -gt 0) {
+    throw "InitialRelease history probe found published or local feed assets."
 }
 if (@($AssetsBeforePack | Where-Object {
     ([string]$_.PackageId).Equals($PackId, [StringComparison]::Ordinal) -and
@@ -819,6 +1118,16 @@ $HadPreviousFull = @($AssetsBeforePack | Where-Object {
     ([string]$_.PackageId).Equals($PackId, [StringComparison]::Ordinal) -and
     ([string]$_.Type) -ieq "Full"
 }).Count -gt 0
+if ($RequireSigning) {
+    $PublishedVersions = @($AssetsBeforePack | Where-Object {
+        ([string]$_.PackageId).Equals($PackId, [StringComparison]::Ordinal) -and
+        ([string]$_.Type) -ieq 'Full'
+    } | ForEach-Object { [string]$_.Version } | Select-Object -Unique)
+    Assert-MissionLegalVersionIsNewer `
+        -CandidateVersion $Version `
+        -ExistingVersions $PublishedVersions `
+        -SourceDescription 'the cloned/downloaded published client history'
+}
 
 if (-not [string]::IsNullOrWhiteSpace($ReleaseNotesPath)) {
     $ReleaseNotesPath = Resolve-ExistingFile -Path $ReleaseNotesPath -Description "Release notes"
@@ -835,12 +1144,19 @@ if (-not [string]::IsNullOrWhiteSpace($AzureTrustedSignFile)) {
         -Description "Azure Trusted Signing metadata"
 }
 
-$EmbeddedUpdateConfig = Write-ClientUpdateConfig `
-    -DestinationDirectory $InputDir `
-    -SourceUrl $UpdateUrl `
-    -Provider $UpdateProvider `
-    -IncludePrereleases:$Prerelease
-Write-Host "Embedded client update source: $EmbeddedUpdateConfig"
+$EmbeddedUpdateConfigPath = Join-Path $InputDir "mission-legal-update.json"
+$HadOriginalUpdateConfig = Test-Path -LiteralPath $EmbeddedUpdateConfigPath -PathType Leaf
+$OriginalUpdateConfigBytes = $null
+if ($HadOriginalUpdateConfig) {
+    $OriginalUpdateConfigBytes = [IO.File]::ReadAllBytes($EmbeddedUpdateConfigPath)
+}
+try {
+    $EmbeddedUpdateConfig = Write-ClientUpdateConfig `
+        -DestinationDirectory $InputDir `
+        -SourceUrl $UpdateUrl `
+        -Provider $UpdateProvider `
+        -IncludePrereleases:$Prerelease
+    Write-Host "Embedded client update source: $EmbeddedUpdateConfig"
 
 $PackArguments = @(
     "--yes", "--skip-updates", "pack",
@@ -888,13 +1204,102 @@ Invoke-Vpk `
     -Arguments $PackArguments `
     -Operation "packing the client release"
 
-$Result = Test-ReleaseArtifacts `
-    -ReleaseRoot $OutputDir `
-    -ReleaseChannel $Channel `
-    -ReleaseVersion $Version `
-    -ExpectedPackId $PackId `
-    -ExpectDelta:$HadPreviousFull `
-    -ExpectSignature:$HasSigning
+    $Result = Test-ReleaseArtifacts `
+        -ReleaseRoot $OutputDir `
+        -ReleaseChannel $Channel `
+        -ReleaseVersion $Version `
+        -ExpectedPackId $PackId `
+        -ExpectDelta:$HadPreviousFull `
+        -ExpectSignature:($HasSigning -or $RequireSigning) `
+        -VerifyAllHashes:$RequireSigning `
+        -RequireSha256:$RequireSigning `
+        -ExpectedSignerThumbprint $ExpectedSignerThumbprint `
+        -SignatureTemporaryRoot (Join-Path $RepoRoot "build\release-validation") `
+        -RequireTimestamp:$RequireSigning
+}
+finally {
+    if ($HadOriginalUpdateConfig) {
+        $RestorePath = "$EmbeddedUpdateConfigPath.$PID.provenance-restore.tmp"
+        try {
+            [IO.File]::WriteAllBytes($RestorePath, $OriginalUpdateConfigBytes)
+            Move-Item -LiteralPath $RestorePath -Destination $EmbeddedUpdateConfigPath -Force
+        }
+        finally {
+            if (Test-Path -LiteralPath $RestorePath -PathType Leaf) {
+                Remove-Item -LiteralPath $RestorePath -Force
+            }
+        }
+    }
+    else {
+        Remove-Item -LiteralPath $EmbeddedUpdateConfigPath -Force -ErrorAction SilentlyContinue
+    }
+    Assert-ClientRawPackageProvenance
+}
+
+$ClientReleaseManifestName = "$PackId-$Version-$Channel-release.json"
+$ClientReleaseManifestPath = Join-Path $OutputDir $ClientReleaseManifestName
+if (Test-Path -LiteralPath $ClientReleaseManifestPath) {
+    throw "Immutable client release manifest already exists: $ClientReleaseManifestPath"
+}
+$ClientReleaseArtifacts = [Collections.Generic.List[object]]::new()
+foreach ($ReleaseArtifact in @(
+    @{ Path = $Result.Setup; Kind = 'installer' },
+    @{ Path = $Result.Feed; Kind = 'update_feed' },
+    @{ Path = (Join-Path $OutputDir "assets.$Channel.json"); Kind = 'latest_assets' },
+    @{ Path = $Result.FullPackage; Kind = 'full' }
+)) {
+    $ReleaseFile = Get-Item -LiteralPath $ReleaseArtifact.Path
+    $ClientReleaseArtifacts.Add([ordered]@{
+        kind = $ReleaseArtifact.Kind
+        filename = $ReleaseFile.Name
+        sha256 = (Get-FileHash -LiteralPath $ReleaseFile.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+        size = $ReleaseFile.Length
+    }) | Out-Null
+}
+foreach ($DeltaPath in @($Result.DeltaPackages)) {
+    $DeltaFile = Get-Item -LiteralPath $DeltaPath
+    $ClientReleaseArtifacts.Add([ordered]@{
+        kind = 'delta'
+        filename = $DeltaFile.Name
+        sha256 = (Get-FileHash -LiteralPath $DeltaFile.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+        size = $DeltaFile.Length
+    }) | Out-Null
+}
+$ClientReleaseManifest = [ordered]@{
+    format_version = 1
+    app_version = $Version
+    channel = $Channel
+    pack_id = $PackId
+    built_at = [DateTimeOffset]::UtcNow.ToString('o')
+    production_signing_required = [bool]$RequireSigning
+    expected_signer_thumbprint = if ($RequireSigning) { $ExpectedSignerThumbprint } else { $null }
+    raw_package_provenance = [ordered]@{
+        filename = [IO.Path]::GetFileName($ProvenanceManifestPath)
+        sha256 = (Get-FileHash -LiteralPath $ProvenanceManifestPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    }
+    signatures = @($Result.SignatureEvidence)
+    artifacts = @($ClientReleaseArtifacts)
+}
+Write-MissionLegalJsonAtomic `
+    -Value $ClientReleaseManifest `
+    -Path $ClientReleaseManifestPath `
+    -Depth 20 `
+    -RequireAbsent | Out-Null
+
+$CommittedOutputDir = Complete-MissionLegalReleaseTransaction `
+    -TransactionDirectory $TransactionOutputDir `
+    -FinalDirectory $FinalOutputDir
+$TransactionOutputDir = $null
+$Result = [pscustomobject]@{
+    Setup = Join-Path $CommittedOutputDir ([IO.Path]::GetFileName($Result.Setup))
+    Feed = Join-Path $CommittedOutputDir ([IO.Path]::GetFileName($Result.Feed))
+    FullPackage = Join-Path $CommittedOutputDir ([IO.Path]::GetFileName($Result.FullPackage))
+    DeltaPackages = @($Result.DeltaPackages | ForEach-Object {
+        Join-Path $CommittedOutputDir ([IO.Path]::GetFileName([string]$_))
+    })
+    SignatureEvidence = @($Result.SignatureEvidence)
+    VersionManifest = Join-Path $CommittedOutputDir $ClientReleaseManifestName
+}
 
 Write-Host "Mission Legal client release completed:"
 Write-Host "  Installer: $($Result.Setup)"
@@ -905,4 +1310,16 @@ if ($Result.DeltaPackages.Count -gt 0) {
 }
 elseif (-not $HadPreviousFull) {
     Write-Host "  Delta:     first release; no previous full package was available"
+}
+}
+finally {
+    if (
+        -not [string]::IsNullOrWhiteSpace([string]$TransactionOutputDir) -and
+        (Test-Path -LiteralPath $TransactionOutputDir -PathType Container)
+    ) {
+        Remove-Item -LiteralPath $TransactionOutputDir -Recurse -Force -ErrorAction SilentlyContinue
+    }
+    if ($null -ne $ReleaseLock) {
+        $ReleaseLock.Dispose()
+    }
 }

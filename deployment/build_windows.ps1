@@ -23,9 +23,33 @@ if ($LASTEXITCODE -ne 0) {
     throw "Build dependencies are missing. Run: $PythonPath -m pip install -r requirements_build.txt"
 }
 
-$AppVersion = (& $PythonPath -c "from version import APP_VERSION; print(APP_VERSION)").Trim()
-if ($LASTEXITCODE -ne 0 -or -not $AppVersion) {
-    throw "Could not read APP_VERSION from version.py."
+$VersionPayloadText = (& $PythonPath -B -c "import json,sys; sys.path.insert(0,sys.argv[1]); from version import API_VERSION, APP_VERSION, SCHEMA_VERSION; print(json.dumps({'app_version':APP_VERSION,'api_version':API_VERSION,'schema_version':SCHEMA_VERSION}))" $RepoRoot).Trim()
+if ($LASTEXITCODE -ne 0 -or -not $VersionPayloadText) {
+    throw "Could not read release versions from version.py."
+}
+try {
+    $VersionPayload = $VersionPayloadText | ConvertFrom-Json
+}
+catch {
+    throw "version.py returned invalid release-version metadata: $VersionPayloadText"
+}
+$AppVersion = [string]$VersionPayload.app_version
+$ApiVersion = [string]$VersionPayload.api_version
+$SchemaVersion = [int]$VersionPayload.schema_version
+if (-not $AppVersion -or -not $ApiVersion -or $SchemaVersion -lt 1) {
+    throw "version.py returned incomplete release-version metadata."
+}
+
+$ProvenanceHelper = Join-Path $PSScriptRoot "package_provenance.py"
+if (-not (Test-Path -LiteralPath $ProvenanceHelper -PathType Leaf)) {
+    throw "Package provenance helper is missing: $ProvenanceHelper"
+}
+$DependencyLock = Join-Path $RepoRoot "requirements_lock.txt"
+$BuildDependencyLock = Join-Path $RepoRoot "requirements_build.txt"
+foreach ($LockPath in @($DependencyLock, $BuildDependencyLock)) {
+    if (-not (Test-Path -LiteralPath $LockPath -PathType Leaf)) {
+        throw "Required dependency lock is missing: $LockPath"
+    }
 }
 
 $DistRoot = [IO.Path]::GetFullPath((Join-Path $RepoRoot "dist\$AppVersion"))
@@ -63,6 +87,65 @@ function Invoke-PyInstallerBuild {
     }
 }
 
+function New-PackageProvenance {
+    param(
+        [Parameter(Mandatory = $true)][ValidateSet("client", "server")][string]$Role,
+        [Parameter(Mandatory = $true)][string]$PackageDir,
+        [Parameter(Mandatory = $true)][string]$ManifestPath,
+        [Parameter(Mandatory = $true)][string]$SmokeResultPath,
+        [Parameter(Mandatory = $true)][string[]]$WindowsVersionExecutables,
+        [string]$ResolvedOcrModelRoot
+    )
+
+    $ProvenanceArguments = @(
+        $ProvenanceHelper,
+        "create",
+        "--repo-root", $RepoRoot,
+        "--package-dir", $PackageDir,
+        "--manifest-path", $ManifestPath,
+        "--role", $Role,
+        "--app-version", $AppVersion,
+        "--api-version", $ApiVersion,
+        "--schema-version", [string]$SchemaVersion,
+        "--smoke-result", $SmokeResultPath,
+        "--dependency-lock", $DependencyLock,
+        "--dependency-lock", $BuildDependencyLock,
+        "--tool-package", "PyInstaller",
+        "--tool-package", "pyinstaller-hooks-contrib"
+    )
+    if ($WindowsVersionExecutables.Count -lt 1) {
+        throw "$Role package provenance requires PyInstaller executable version checks."
+    }
+    foreach ($Executable in $WindowsVersionExecutables) {
+        $ProvenanceArguments += @("--windows-version-exe", $Executable)
+    }
+    if ($Role -eq "client") {
+        if ([string]::IsNullOrWhiteSpace($ResolvedOcrModelRoot)) {
+            throw "Client package provenance requires the resolved OCR model root."
+        }
+        $ProvenanceArguments += @(
+            "--tool-package", "PySide6",
+            "--tool-package", "paddleocr",
+            "--tool-package", "paddlepaddle",
+            "--tool-package", "velopack",
+            "--ocr-model-root", $ResolvedOcrModelRoot
+        )
+    }
+    else {
+        $ProvenanceArguments += @(
+            "--tool-package", "cryptography",
+            "--tool-package", "fastapi",
+            "--tool-package", "SQLAlchemy",
+            "--tool-package", "uvicorn"
+        )
+    }
+
+    & $PythonPath -B @ProvenanceArguments
+    if ($LASTEXITCODE -ne 0) {
+        throw "Could not create verified $Role package provenance: $ManifestPath"
+    }
+}
+
 if ($Target -in @("All", "Client")) {
     $ResolvedModelRoot = (Resolve-Path -LiteralPath $OcrModelRoot).Path
     $env:MISSION_LEGAL_BUILD_OCR_MODEL_ROOT = $ResolvedModelRoot
@@ -87,14 +170,24 @@ if ($Target -in @("All", "Client")) {
     New-Item -ItemType Directory -Force -Path $ClientRuntime | Out-Null
     $env:MISSION_LEGAL_CLIENT_DATA_DIR = $ClientRuntime
     $env:MISSION_LEGAL_SMOKE_PROGRESS = Join-Path $ClientRuntime "progress.log"
-    if (Test-Path -LiteralPath $env:MISSION_LEGAL_SMOKE_PROGRESS -PathType Leaf) {
-        Remove-Item -LiteralPath $env:MISSION_LEGAL_SMOKE_PROGRESS -Force
+    $ClientSmokeOutput = Join-Path $ClientRuntime "smoke-result.stdout.log"
+    $ClientSmokeError = Join-Path $ClientRuntime "smoke-result.stderr.log"
+    foreach ($SmokePath in @(
+        $env:MISSION_LEGAL_SMOKE_PROGRESS,
+        $ClientSmokeOutput,
+        $ClientSmokeError
+    )) {
+        if (Test-Path -LiteralPath $SmokePath -PathType Leaf) {
+            Remove-Item -LiteralPath $SmokePath -Force
+        }
     }
     $ClientSmoke = Start-Process `
         -FilePath $ClientDiagnosticsExe `
         -ArgumentList "--package-smoke-test" `
         -WorkingDirectory $ClientDir `
         -WindowStyle Hidden `
+        -RedirectStandardOutput $ClientSmokeOutput `
+        -RedirectStandardError $ClientSmokeError `
         -PassThru
     if (-not $ClientSmoke.WaitForExit(180000)) {
         Stop-Process -Id $ClientSmoke.Id -Force
@@ -111,6 +204,19 @@ if ($Target -in @("All", "Client")) {
     if ($LASTEXITCODE -ne 0) {
         throw "The packaged client update worker failed its CLI smoke test."
     }
+    $ClientManifest = Join-Path $DistRoot "MissionLegalClient.provenance.json"
+    New-PackageProvenance `
+        -Role "client" `
+        -PackageDir $ClientDir `
+        -ManifestPath $ClientManifest `
+        -SmokeResultPath $ClientSmokeOutput `
+        -WindowsVersionExecutables @(
+            "MissionLegal.exe",
+            "MissionLegalDiagnostics.exe",
+            "MissionLegalClientSetup.exe",
+            "MissionLegalUpdateWorker.exe"
+        ) `
+        -ResolvedOcrModelRoot $ResolvedModelRoot
 }
 
 if ($Target -in @("All", "Server")) {
@@ -129,17 +235,47 @@ if ($Target -in @("All", "Server")) {
     New-Item -ItemType Directory -Force -Path $ServerRuntime | Out-Null
     $env:MISSION_LEGAL_SMOKE_DATA_DIR = $ServerRuntime
     $env:MISSION_LEGAL_SMOKE_PROGRESS = Join-Path $ServerRuntime "progress.log"
-    if (Test-Path -LiteralPath $env:MISSION_LEGAL_SMOKE_PROGRESS -PathType Leaf) {
-        Remove-Item -LiteralPath $env:MISSION_LEGAL_SMOKE_PROGRESS -Force
+    $ServerSmokeOutput = Join-Path $ServerRuntime "smoke-result.stdout.log"
+    $ServerSmokeError = Join-Path $ServerRuntime "smoke-result.stderr.log"
+    foreach ($SmokePath in @(
+        $env:MISSION_LEGAL_SMOKE_PROGRESS,
+        $ServerSmokeOutput,
+        $ServerSmokeError
+    )) {
+        if (Test-Path -LiteralPath $SmokePath -PathType Leaf) {
+            Remove-Item -LiteralPath $SmokePath -Force
+        }
     }
-    & $ServerExe --package-smoke-test
-    if ($LASTEXITCODE -ne 0) {
+    $ServerSmoke = Start-Process `
+        -FilePath $ServerExe `
+        -ArgumentList "--package-smoke-test" `
+        -WorkingDirectory $ServerDir `
+        -WindowStyle Hidden `
+        -RedirectStandardOutput $ServerSmokeOutput `
+        -RedirectStandardError $ServerSmokeError `
+        -PassThru
+    if (-not $ServerSmoke.WaitForExit(180000)) {
+        Stop-Process -Id $ServerSmoke.Id -Force
+        throw "The packaged server smoke test timed out. See $env:MISSION_LEGAL_SMOKE_PROGRESS"
+    }
+    if ($ServerSmoke.ExitCode -ne 0) {
         throw "The packaged server smoke test failed."
     }
     & $ServerSetupExe --help | Out-Null
     if ($LASTEXITCODE -ne 0) {
         throw "The packaged server setup utility failed its CLI smoke test."
     }
+    $ServerManifest = Join-Path $DistRoot "MissionLegalServer.provenance.json"
+    New-PackageProvenance `
+        -Role "server" `
+        -PackageDir $ServerDir `
+        -ManifestPath $ServerManifest `
+        -SmokeResultPath $ServerSmokeOutput `
+        -WindowsVersionExecutables @(
+            "MissionLegalServer.exe",
+            "MissionLegalServerSetup.exe",
+            "MissionLegalService.exe"
+        )
 }
 
 Write-Host "Mission Legal $AppVersion package build completed: $DistRoot"

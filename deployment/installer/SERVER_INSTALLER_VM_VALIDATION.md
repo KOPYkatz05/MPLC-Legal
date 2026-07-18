@@ -122,6 +122,7 @@ packaged setup creates the backup root.
 | Deferred first install | On a pristine machine, the baseline installer lays down registered binaries and the uninstaller but leaves the service, managed firewall rule, `app.db`, and `server.json` absent. The installed `MissionLegalServerSetup.exe` then creates the configured roots and automatically finalizes service registration, firewall policy, startup, and health. |
 | Service policy | The service runs as `LocalSystem`, uses delayed automatic start, has non-crash recovery actions, and points at the exact non-reparse service executable under InstallDir. |
 | Network and health | Exactly one enabled inbound Private-only TCP rule uses the fixed managed identity and configured port. Every running state reports the expected version through both loopback and the selected Private-profile IPv4 `/health` endpoint. |
+| ProgramData ACLs | Candidate-pristine, same-version, successful-upgrade, downgrade, uninstall-preservation, reinstall, and final-uninstall states recursively prove that sensitive ProgramData grants access only to the LocalSystem and Builtin Administrators SIDs. A temporary non-administrator local account is then used to prove that `app.db`, server/device configuration, a backup database, and both TLS private keys cannot be read, while the published public CA can be read but not written. The account and its generated password are never retained in evidence, and account removal is verified after every probe. |
 | Seeded fixture | The baseline API creates a real row. The harness stops the service, copies `app.db` without external SQLite tooling, verifies its hash, uninstalls, archives ProgramData, and returns to a no-ProgramData product state. |
 | Candidate pristine migration | The actual `UpgradeArtifact`, not the baseline artifact, is installed on pristine/no-ProgramData state. Its deferred state is proven, packaged setup receives the seeded fixture with `--existing-database`, the fixture source hash remains unchanged, and the original row ID is read through HTTPS. This catches the empty-database-before-migration failure mode. The candidate is then uninstalled and its ProgramData is archived. |
 | Same-version rejection | Running the already-installed `UpgradeArtifact` again exits nonzero and leaves the complete installed-file inventory, version, service, firewall, database, TLS/configuration, device credential, and seeded row unchanged. |
@@ -129,17 +130,20 @@ packaged setup creates the backup root.
 | Mission-root behavior | The LocalSystem service creates a missionary directory and performs API-driven archive/restore directory relocation. A sentinel written by the harness moves with that directory and remains hash-identical. This proves folder creation and relocation; it does not claim that LocalSystem modified the sentinel contents. |
 | Backup-root behavior | The service creates a mirrored SQLite backup; its metadata and SHA-256 are verified. |
 | Preflight failure | Blocking the database-backup preflight makes setup exit nonzero before replacement and leaves the exact baseline tree, service, firewall, authoritative database, TLS/configuration, credentials, record, and document intact. |
-| Real post-copy rollback | A separately authorized watcher observes a service executable at the exact InstallDir whose SHA-256 differs from the baseline while the exact immutable `UpgradeArtifact` process is running. It truncates only that installed candidate, never the installer artifact. Setup must exit nonzero and restore the exact baseline file inventory/fingerprint, service binary, registration, version, running state, Private firewall rule, health, database, credentials, TLS/configuration, row, and document. |
+| Real post-copy rollback | A separately authorized watcher observes a service executable at the exact InstallDir whose SHA-256 differs from the baseline while the exact immutable `UpgradeArtifact` process is running. While holding that candidate executable exclusively so it cannot start, the watcher appends an authorized mutation to the authoritative database and then truncates only the installed candidate binary, never the installer artifact. Setup must exit nonzero. The attempt receipt must bind the baseline source hash to the verified snapshot hash and prove sidecar cleanup; the installer log must prove database restoration completed before the prior-service start action. The restored baseline schema version and both pre-upgrade API rows are verified along with the exact baseline file inventory/fingerprint, service binary, registration, version, running state, Private firewall rule, health, credentials, TLS/configuration, and document. |
 | Successful upgrade | Setup exits zero, health reports the upgrade version, the original API credential and row still work, and a new pre-upgrade database backup from the baseline version matches its metadata. |
 | Downgrade protection | Running the older artifact exits nonzero and leaves the complete upgraded install tree and persistent state unchanged. |
 | Uninstall/reinstall | Uninstall removes service, exact managed firewall rule, registration, and binaries while preserving ProgramData and external roots. Reinstall uses that retained state, accepts the original device credential, and is followed by a final data-preserving uninstall. |
 
 The post-copy watcher is destructive by design, but it has no standalone broad
 target. The harness creates a short-lived authorization containing the exact
-InstallDir, exact target path, baseline hash, upgrade artifact path/hash, and a
-random token. The watcher also verifies the live installer PID/path/hash before
-opening the candidate with an exclusive handle. It is not referenced by build
-or release automation.
+InstallDir, exact target path and hash, exact ProgramData database path and
+pre-upgrade hash, upgrade artifact path/hash, and a random token. The watcher
+also verifies the live installer PID/path/hash before opening the candidate and
+database with exclusive handles. Its database mutation is permitted only while
+the distinct candidate executable remains locked, so the candidate cannot
+start between mutation and forced failure. It is not referenced by build or
+release automation.
 
 The firewall and dual-surface health checks run inside the VM. A real request
 originating from a second computer remains part of the client-pairing boundary
@@ -157,7 +161,9 @@ C:\MissionLegalInstallerValidation-VM\run-20260717T220000Z-1234abcd
 It contains Inno setup/uninstall logs, process output, a transcript, the seeded
 fixture, separately archived ProgramData scenarios, watcher authorization and
 evidence, mission/backup roots, and `result.json`. Pairing codes and device
-credentials are not written into `result.json`.
+credentials are not written into `result.json`. The ACL evidence records only
+well-known SIDs and the verified allow/deny outcomes; it does not record the
+temporary standard-user name or password.
 
 If any phase fails, do not repair the VM and resume. Preserve the logs, revert
 to the clean snapshot, fix and rebuild the installer, and rerun with two new

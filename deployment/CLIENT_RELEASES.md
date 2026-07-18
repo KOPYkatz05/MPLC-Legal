@@ -96,6 +96,32 @@ download command is selected without a token:
 source differs from the embedded update provider. Only public, secret-free
 repository URLs are accepted; release credentials are not embedded in the app.
 
+## Raw-package provenance
+
+`build_windows.ps1 -Target Client` writes
+`dist\<version>\MissionLegalClient.provenance.json` beside the raw
+`MissionLegalClient` directory. `build_client_release.ps1` refuses to package a
+folder unless that manifest exactly matches the requested version, client role,
+current API/schema versions, current Git source and dependency locks, successful
+frozen smoke result, executable Windows versions, OCR model trees, and every
+file's size and SHA-256.
+
+The default input discovers that sibling automatically. For another verified
+raw folder, keep its sibling manifest with it or pass both explicitly:
+
+```powershell
+.\deployment\build_client_release.ps1 `
+  -Version '0.2.0' `
+  -InputDir 'D:\staging\MissionLegalClient' `
+  -ProvenanceManifestPath 'D:\staging\MissionLegalClient.provenance.json' `
+  -UpdateUrl 'https://updates.example.org/mission-legal/client/'
+```
+
+Do not edit the raw folder or reuse it under another version. The release script
+temporarily overlays its validated, secret-free `mission-legal-update.json` only
+while `vpk` reads the folder, restores the exact raw input afterward, and
+re-verifies provenance. Any other change requires a new raw client build.
+
 It can also seed from a local directory or network share:
 
 ```powershell
@@ -107,6 +133,13 @@ It can also seed from a local directory or network share:
 The script fails if the same version already exists. Increment `APP_VERSION`
 before every release; published packages are immutable.
 
+In production, history is mandatory: unless `-InitialRelease` is explicit, the
+builder defaults `PreviousReleaseUrl` to `UpdateUrl`, downloads the published
+history, and requires the candidate version to be strictly newer. This prevents
+a clean build machine from accidentally replacing a channel with a history-free
+feed. Use `-InitialRelease` only once; it rejects local assets and also probes
+the published HTTP/GitHub source for prior assets before packing.
+
 The compatibility constants in `version.py` are independent release controls.
 Do not raise `MIN_SUPPORTED_CLIENT_VERSION` merely because a newer client is
 available. Raise it only when older clients are genuinely unsafe or
@@ -117,6 +150,8 @@ before that client can connect to the server.
 
 Unsigned builds are suitable only for local installer testing. Production
 releases should use `-RequireSigning` plus one supported Velopack signing mode.
+`-RequireSigning` also requires the raw-package provenance to come from a clean
+Git commit; commit the intended release source and rebuild the client first.
 
 For a certificate already available to `signtool.exe`:
 
@@ -124,6 +159,7 @@ For a certificate already available to `signtool.exe`:
 $env:MISSION_LEGAL_VPK_SIGN_PARAMS = '/sha1 CERT_THUMBPRINT /fd sha256 /td sha256 /tr https://timestamp.example'
 .\deployment\build_client_release.ps1 `
   -UpdateUrl 'https://updates.example.org/mission-legal/client/' `
+  -ExpectedSignerThumbprint 'CERTIFICATE_SHA1_THUMBPRINT' `
   -RequireSigning
 ```
 
@@ -133,18 +169,27 @@ Or use Azure Trusted Signing metadata:
 .\deployment\build_client_release.ps1 `
   -UpdateUrl 'https://updates.example.org/mission-legal/client/' `
   -AzureTrustedSignFile 'C:\signing\metadata.json' `
+  -ExpectedSignerThumbprint 'CERTIFICATE_SHA1_THUMBPRINT' `
   -RequireSigning
 ```
 
 `-SignTemplate` is available for another signing tool. Use absolute paths in
-signing arguments. When signing is enabled, the script requires the resulting
-installer to have a valid Authenticode signature.
+signing arguments. `ExpectedSignerThumbprint` is the signing certificate's
+40-hex SHA-1 thumbprint as Windows reports it; it selects the expected identity,
+while artifact integrity is still recorded and checked with SHA-256. Production
+validation requires a trusted timestamp and that same signer on Setup,
+`MissionLegal.exe`, the update worker, execution stub, diagnostics, and pairing
+helper inside the full package.
 
 ## Validation and publishing boundary
 
 The script validates that:
 
-- the input contains `MissionLegal.exe` and no database/private-key files;
+- the raw input and sibling provenance exactly match the requested client role,
+  version, source, dependency locks, smoke result, PE versions, OCR models, and
+  complete package tree;
+- the input contains `MissionLegal.exe` and no database, SQLite sidecar, or
+  private-key files;
 - `mission-legal-update.json` is written as secret-free UTF-8 beside the executable;
 - input and output directories do not overlap;
 - the feed contains exactly one full package for the requested version;
@@ -152,6 +197,12 @@ The script validates that:
 - current package sizes and available SHA-1/SHA-256 values match the feed;
 - a delta exists whenever a previous full release was available;
 - the per-user installer exists and, when signing is enabled, is validly signed.
+
+Packing occurs in a unique sibling transaction directory. Existing feed files
+are cloned there for delta generation, and the final channel directory is
+replaced only after the complete staged feed validates. A failed or interrupted
+pack therefore cannot mix partial new files into the current feed; the next run
+repairs an interrupted directory swap while holding an exclusive release lock.
 
 Revalidate an already-built static directory without running `vpk`:
 
@@ -207,6 +258,21 @@ For a static HTTPS host, publish a release transaction in this order:
 Never expose a feed entry before every package it references is available. For
 GitHub Releases, keep the release as a draft until every asset is uploaded and
 verified, then publish it as one operator action.
+
+After `releases.stable.json` is live, perform the read-only outside-the-build
+verification against the immutable summary created by `build_release.ps1`:
+
+```powershell
+.\deployment\verify_published_client_feed.ps1 `
+  -FeedBaseUrl 'https://updates.example.org/mission-legal/client/' `
+  -ReleaseSummaryPath '.\dist\<version>\release-metadata\release-summary.json' `
+  -ExpectedSignerThumbprint 'CERTIFICATE_SHA1_THUMBPRINT'
+```
+
+The verifier follows no redirects and performs only HTTPS GET requests. It
+requires the published JSON and packages to match the summary by size/SHA-256,
+then rechecks timestamped Setup and inner executable signatures. A successful
+result has `remote_mutations_performed: false`.
 
 When a server release raises `MIN_SUPPORTED_CLIENT_VERSION`, publish and verify
 the compatible client release first. Only then deploy the server installer;

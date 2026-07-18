@@ -1,5 +1,12 @@
 import argparse
 import os
+import sys
+
+
+def _should_enforce_production_tls_key_acl(frozen=None):
+    if frozen is None:
+        frozen = bool(getattr(sys, "frozen", False))
+    return bool(frozen)
 
 
 def main():
@@ -85,14 +92,26 @@ def main():
             print(f"Revoked device: {args.revoke_device}")
             return
         for device in store.list_devices():
-            state = "revoked" if device["revoked_at"] else "active"
+            state = (
+                "revoked"
+                if device["revoked_at"]
+                else "pending"
+                if device["pending_confirmation"]
+                else "active"
+            )
             print(f"{device['device_id']}  {state:7}  {device['device_name']}")
         return
 
     if not args.tls_cert and not args.tls_key:
         from server.tls import generate_local_tls
 
-        paths = generate_local_tls()
+        # Frozen server/service processes run under the installed production
+        # boundary and must fail closed on the SYSTEM/Administrators-only DACL.
+        # Source-mode development and integration tests run as the caller, who
+        # still needs to read the generated key before uvicorn starts.
+        paths = generate_local_tls(
+            protect_keys=_should_enforce_production_tls_key_acl()
+        )
         args.tls_cert = str(paths["server_cert"])
         args.tls_key = str(paths["server_key"])
 

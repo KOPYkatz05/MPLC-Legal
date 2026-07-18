@@ -11,6 +11,7 @@ from pyinstaller_common import (  # noqa: E402
     CLIENT_HIDDEN_IMPORTS,
     application_datas,
     ocr_model_datas,
+    windows_version_info,
 )
 
 
@@ -68,6 +69,11 @@ client_exe = EXE(
     upx=False,
     console=False,
     disable_windowed_traceback=False,
+    version=windows_version_info(
+        REPO_ROOT,
+        description="Mission Legal Client",
+        original_filename="MissionLegal.exe",
+    ),
 )
 diagnostic_pyz = PYZ(client_analysis.pure)
 diagnostic_exe = EXE(
@@ -81,6 +87,11 @@ diagnostic_exe = EXE(
     strip=False,
     upx=False,
     console=True,
+    version=windows_version_info(
+        REPO_ROOT,
+        description="Mission Legal Diagnostics",
+        original_filename="MissionLegalDiagnostics.exe",
+    ),
 )
 setup_pyz = PYZ(setup_analysis.pure)
 setup_exe = EXE(
@@ -94,6 +105,11 @@ setup_exe = EXE(
     strip=False,
     upx=False,
     console=True,
+    version=windows_version_info(
+        REPO_ROOT,
+        description="Mission Legal Client Setup",
+        original_filename="MissionLegalClientSetup.exe",
+    ),
 )
 update_worker_pyz = PYZ(update_worker_analysis.pure)
 update_worker_exe = EXE(
@@ -108,6 +124,11 @@ update_worker_exe = EXE(
     upx=False,
     console=False,
     disable_windowed_traceback=False,
+    version=windows_version_info(
+        REPO_ROOT,
+        description="Mission Legal Update Worker",
+        original_filename="MissionLegalUpdateWorker.exe",
+    ),
 )
 
 bundle = COLLECT(

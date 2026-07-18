@@ -1,5 +1,17 @@
 import os
+import re
+import runpy
 from pathlib import Path
+
+from PyInstaller.utils.win32.versioninfo import (
+    FixedFileInfo,
+    StringFileInfo,
+    StringStruct,
+    StringTable,
+    VarFileInfo,
+    VarStruct,
+    VSVersionInfo,
+)
 
 
 CLIENT_HIDDEN_IMPORTS = [
@@ -41,6 +53,54 @@ SERVER_HIDDEN_IMPORTS = [
     "win32serviceutil",
     "win32timezone",
 ]
+
+
+def windows_version_info(repo_root, *, description, original_filename):
+    """Create deterministic Windows version metadata from ``version.py``."""
+
+    repo_root = Path(repo_root).resolve()
+    app_version = str(
+        runpy.run_path(str(repo_root / "version.py"))["APP_VERSION"]
+    ).strip()
+    match = re.match(r"^(\d+)\.(\d+)\.(\d+)", app_version)
+    if match is None:
+        raise ValueError(
+            "APP_VERSION must begin with three numeric components for Windows "
+            f"version metadata: {app_version}"
+        )
+    numeric_version = tuple(int(value) for value in match.groups()) + (0,)
+    return VSVersionInfo(
+        ffi=FixedFileInfo(
+            filevers=numeric_version,
+            prodvers=numeric_version,
+            mask=0x3F,
+            flags=0x0,
+            OS=0x40004,
+            fileType=0x1,
+            subtype=0x0,
+            date=(0, 0),
+        ),
+        kids=[
+            StringFileInfo(
+                [
+                    StringTable(
+                        "040904B0",
+                        [
+                            StringStruct("CompanyName", "Mission Legal"),
+                            StringStruct("FileDescription", description),
+                            StringStruct("FileVersion", app_version),
+                            StringStruct("InternalName", Path(original_filename).stem),
+                            StringStruct("LegalCopyright", "Mission Legal"),
+                            StringStruct("OriginalFilename", original_filename),
+                            StringStruct("ProductName", "Mission Legal"),
+                            StringStruct("ProductVersion", app_version),
+                        ],
+                    )
+                ]
+            ),
+            VarFileInfo([VarStruct("Translation", [0x0409, 1200])]),
+        ],
+    )
 
 
 def application_datas(repo_root):

@@ -31,13 +31,31 @@ supported server API range only when the API contract actually changes.
 
 This is an unsigned development build. Production builds must pass
 `-RequireSigning` together with client and server signing configuration; the
-command fails before building if either role is missing. Use `-SkipRawBuilds`
-to reuse already-validated folders under `dist\<APP_VERSION>`.
+command also requires `-ExpectedSignerThumbprint` with the approved signing
+certificate's 40-hex Windows SHA-1 thumbprint and fails before building if any
+role or identity is missing. Use `-SkipRawBuilds`
+to reuse already-validated folders under `dist\<APP_VERSION>`; the downstream
+builders still verify each folder against its sibling provenance manifest.
+Signed production builds additionally require that manifest to record a clean
+Git commit. Dirty, exactly matched provenance remains available for unsigned
+development builds.
+
+Production builds import the published client history from `UpdateUrl` by
+default and require a strictly increasing SemVer. Only the first production
+release may pass `-InitialRelease`; that mode fails if either the local channel
+or the published source already contains assets.
 
 The command does not upload anything. Publish the complete client feed
 directory only after validation. Detailed operator guidance is in
 [CLIENT_RELEASES.md](CLIENT_RELEASES.md) and
 [installer/SERVER_INSTALLER.md](installer/SERVER_INSTALLER.md).
+
+Each builder uses a unique transaction-local output and commits the completed
+directory only after validation. The orchestrator then atomically creates
+`dist\<version>\release-metadata`, containing immutable snapshots of both raw
+provenance manifests, the client JSON feed state, the server installer manifest,
+and `release-summary.json` with SHA-256/size and signature evidence. It never
+overwrites that per-version metadata.
 
 ## Build environment
 
@@ -70,6 +88,32 @@ Or build one role:
 
 Output is written beneath `dist\<APP_VERSION>`. PyInstaller work files go under
 `build\pyinstaller\<APP_VERSION>`. Both locations are ignored by Git.
+
+Each successful role smoke test also writes a manifest beside, never inside,
+the raw role folder:
+
+```text
+dist\<APP_VERSION>\
+  MissionLegalClient\
+  MissionLegalClient.provenance.json
+  MissionLegalServer\
+  MissionLegalServer.provenance.json
+```
+
+The deterministic manifest binds the role and application/API/schema versions,
+Git commit and exact dirty state, Python/platform/build-tool versions, hashes of
+both dependency lock files, the successful frozen smoke result, and every
+packaged path with its byte size and SHA-256. It also records the Windows
+`FileVersion` and `ProductVersion` of every PyInstaller executable. Client
+provenance additionally binds the three source OCR model trees byte-for-byte to
+their packaged copies. Its sorted file inventory produces one package-tree
+digest; the manifest stays outside the folder so it never needs a self-hash.
+
+Client and server installer builders always re-run this verification, including
+direct-input and skip-raw-build paths. A changed source tree, dependency lock,
+package byte, role, or requested version is not relabeled: rebuild that raw role
+with `build_windows.ps1`. The manifest is local build evidence, not a substitute
+for Authenticode and published release hashes.
 
 The current correctness-first baseline is approximately 1.3 GB for the client
 folder and 520 MB for the server folder before ZIP/installer compression. A
@@ -145,9 +189,17 @@ The authoritative database and server identity remain under
 that data. The server installer automates the service stop, verified
 pre-upgrade backup, replacement, restart, and health check.
 
+The server installer also enforces a SID-based ProgramData boundary: sensitive
+database, backup, configuration, device, and TLS-key material is limited to
+LocalSystem and Builtin Administrators. Client setup uses the deliberately
+read-only public CA copy at
+`C:\ProgramData\MissionLegal\Public\mission-legal-ca.pem`; no private key is
+made client-readable.
+
 ## Validation boundary
 
-The build script runs import/resource smoke tests against the frozen folders.
+The build script runs import/resource smoke tests against the frozen folders and
+emits the verified raw-package provenance described above.
 Before calling a release dependable, also test on a clean Windows computer or
 VM with no Python installation:
 
@@ -168,4 +220,5 @@ folder creation/relocation and mirrored-backup access, the actual upgrade
 artifact on pristine/no-ProgramData state, behavioral same-version rejection,
 Private-profile firewall scope, loopback plus selected-Private-IPv4 health,
 separate preflight and post-copy rollback failures, successful upgrade,
-downgrade rejection, uninstall preservation, and reinstall recovery.
+downgrade rejection, uninstall preservation, reinstall recovery, and an actual
+standard-user read-denial/read-only-public-CA ACL probe.

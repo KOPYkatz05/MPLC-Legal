@@ -1,6 +1,8 @@
 import json
 import os
 import ssl
+import logging
+import uuid
 from datetime import date, datetime
 from pathlib import Path
 
@@ -16,6 +18,7 @@ from version import (
 
 
 KEYRING_SERVICE = "MissionLegalLocalAPI"
+logger = logging.getLogger(__name__)
 
 
 class ApiUnavailableError(RuntimeError):
@@ -24,6 +27,14 @@ class ApiUnavailableError(RuntimeError):
 
 class ApiAuthenticationError(RuntimeError):
     pass
+
+
+class ApiPairingRecoveryRequired(ApiAuthenticationError):
+    """Local persistence failed and remote registration status is ambiguous."""
+
+    def __init__(self, message, *, device_id):
+        super().__init__(message)
+        self.device_id = str(device_id)
 
 
 class ApiCompatibilityError(RuntimeError):
@@ -69,6 +80,8 @@ class MissionLegalApiClient:
         )
         self._transport = transport
         self.timeout = timeout
+        self._pairing_previous_device_bytes = None
+        self._pairing_in_progress = False
 
     @classmethod
     def from_environment(cls):
@@ -250,25 +263,237 @@ class MissionLegalApiClient:
         # than requiring the server's internal schema number to match.
         return True
 
-    def pair(self, code, device_name):
+    @staticmethod
+    def _pairing_headers(device_id, credential):
+        return {
+            "X-Device-ID": str(device_id),
+            "X-Device-Credential": str(credential),
+        }
+
+    def _cancel_remote_pairing(self, device_id, credential):
+        with self._client() as client:
+            response = client.delete(
+                "/pair/pending",
+                headers=self._pairing_headers(device_id, credential),
+            )
+            response.raise_for_status()
+
+    def _discard_local_pairing(self, device_id):
+        keyring = self._keyring()
+        if keyring is not None:
+            try:
+                keyring.delete_password(KEYRING_SERVICE, str(device_id))
+            except Exception:
+                logger.warning(
+                    "Could not remove an incomplete pairing credential",
+                    exc_info=True,
+                )
+        current = self._read_device()
+        if current and str(current.get("device_id")) == str(device_id):
+            self.credential_path.unlink(missing_ok=True)
+
+    def pairing_credential_available(self, device_id):
+        """Check Credential Manager without treating access failures as absence."""
+
+        keyring = self._keyring()
+        if keyring is None:
+            raise ApiAuthenticationError("Windows Credential Manager is unavailable")
+        try:
+            return bool(keyring.get_password(KEYRING_SERVICE, str(device_id)))
+        except Exception as exc:
+            raise ApiAuthenticationError(
+                "Windows could not read the paired device credential"
+            ) from exc
+
+    def _write_device_pointer(self, content, *, purpose):
+        """Durably replace the non-secret device-ID pointer."""
+
+        self.credential_path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = self.credential_path.with_name(
+            f".{self.credential_path.name}.{uuid.uuid4().hex}.{purpose}.tmp"
+        )
+        try:
+            with temporary.open("xb") as handle:
+                handle.write(content)
+                handle.flush()
+                os.fsync(handle.fileno())
+            temporary.replace(self.credential_path)
+        finally:
+            try:
+                temporary.unlink(missing_ok=True)
+            except OSError:
+                logger.warning(
+                    "Could not remove a temporary device pointer file",
+                    exc_info=True,
+                )
+
+    def begin_pair(self, code, device_name, *, before_local_persist=None):
+        if self._pairing_in_progress:
+            raise ApiAuthenticationError("A device pairing is already in progress")
+        keyring = self._keyring()
+        if keyring is None:
+            raise ApiAuthenticationError("Windows Credential Manager is unavailable")
+
         payload = self._request(
             "POST",
             "/pair",
             authenticated=False,
-            json={"code": code, "device_name": device_name},
+            json={
+                "code": code,
+                "device_name": device_name,
+                "deferred_confirmation": True,
+            },
         )
-        keyring = self._keyring()
-        if keyring is None:
-            raise ApiAuthenticationError("Windows Credential Manager is unavailable")
-        keyring.set_password(KEYRING_SERVICE, payload["device_id"], payload["credential"])
-        self.credential_path.parent.mkdir(parents=True, exist_ok=True)
-        temporary = self.credential_path.with_suffix(".json.tmp")
-        temporary.write_text(
-            json.dumps({"device_id": payload["device_id"]}, indent=2),
-            encoding="utf-8",
-        )
-        temporary.replace(self.credential_path)
-        return {"device_id": payload["device_id"]}
+        device_id = str(payload.get("device_id", "")).strip()
+        credential = str(payload.get("credential", "")).strip()
+        if not device_id or not credential:
+            raise ApiAuthenticationError("The server returned invalid pairing credentials")
+
+        previous_bytes = None
+        if self.credential_path.is_file():
+            previous_bytes = self.credential_path.read_bytes()
+        try:
+            if before_local_persist is not None:
+                # The caller uses this point to durably record the returned
+                # device ID before Credential Manager or the device pointer is
+                # changed. The credential itself is intentionally never passed
+                # to, or persisted by, that callback.
+                before_local_persist(device_id)
+            self.credential_path.parent.mkdir(parents=True, exist_ok=True)
+            keyring.set_password(KEYRING_SERVICE, device_id, credential)
+            self._write_device_pointer(
+                (json.dumps({"device_id": device_id}, indent=2) + "\n").encode(
+                    "utf-8"
+                ),
+                purpose="pairing",
+            )
+        except Exception as exc:
+            cancellation_was_final = False
+            try:
+                self._cancel_remote_pairing(device_id, credential)
+                cancellation_was_final = True
+            except httpx.HTTPStatusError as cancellation_error:
+                # A rejected credential proves there is no usable confirmed
+                # registration to preserve. Conflict, 404 (legacy server),
+                # 5xx, and transport failures remain ambiguous.
+                cancellation_was_final = cancellation_error.response.status_code == 401
+                if not cancellation_was_final:
+                    logger.warning(
+                        "The server registration could not be safely cancelled "
+                        "after local credential persistence failed",
+                        exc_info=True,
+                    )
+            except Exception:
+                logger.warning(
+                    "Could not cancel a pending server registration after local "
+                    "credential persistence failed",
+                    exc_info=True,
+                )
+            if not cancellation_was_final:
+                raise ApiPairingRecoveryRequired(
+                    "Windows could not save the paired device credential, and "
+                    "the server registration must be reconciled before retrying",
+                    device_id=device_id,
+                ) from exc
+            try:
+                self._discard_local_pairing(device_id)
+            except Exception:
+                logger.warning(
+                    "Could not remove the incomplete local device pointer",
+                    exc_info=True,
+                )
+            if previous_bytes is not None:
+                try:
+                    self._write_device_pointer(
+                        previous_bytes,
+                        purpose="pairing-rollback",
+                    )
+                except Exception:
+                    logger.warning(
+                        "Could not atomically restore the previous device pointer",
+                        exc_info=True,
+                    )
+            raise ApiAuthenticationError(
+                "Windows could not save the paired device credential"
+            ) from exc
+        self._pairing_previous_device_bytes = previous_bytes
+        self._pairing_in_progress = True
+        return {"device_id": device_id}
+
+    def confirm_pairing(self):
+        try:
+            payload = self._request("POST", "/pair/confirm")
+        except Exception as confirmation_error:
+            # Confirmation is idempotent server-side. If its response was lost,
+            # an authenticated session proves that the pending registration did
+            # commit and prevents us from deleting a valid local credential.
+            try:
+                session = self.session()
+                current = self._read_device() or {}
+                confirmed_device = (session.get("device") or {}).get("device_id")
+                if str(confirmed_device) != str(current.get("device_id")):
+                    raise ApiAuthenticationError(
+                        "The server confirmed a different device registration"
+                    )
+            except Exception:
+                raise confirmation_error
+            payload = {
+                "device_id": current.get("device_id"),
+                "confirmed": True,
+            }
+        if not payload.get("confirmed"):
+            raise ApiAuthenticationError("The server did not confirm this pairing")
+        self._pairing_previous_device_bytes = None
+        self._pairing_in_progress = False
+        return {"device_id": str(payload.get("device_id", ""))}
+
+    def _restore_previous_device_pointer(self):
+        previous_bytes = self._pairing_previous_device_bytes
+        self._pairing_previous_device_bytes = None
+        self._pairing_in_progress = False
+        if previous_bytes is None:
+            return
+        self._write_device_pointer(previous_bytes, purpose="pairing-rollback")
+
+    def cancel_pairing(self):
+        device = self._read_device()
+        if not device or not device.get("device_id"):
+            return False
+        device_id = str(device["device_id"])
+        credential = self._credential(device_id)
+        try:
+            if credential:
+                self._cancel_remote_pairing(device_id, credential)
+        except httpx.HTTPStatusError as exc:
+            response_status = exc.response.status_code
+            if response_status == 409:
+                session = self.session()
+                active_device = (session.get("device") or {}).get("device_id")
+                if str(active_device) != device_id:
+                    raise
+                self._pairing_previous_device_bytes = None
+                self._pairing_in_progress = False
+                return "confirmed"
+            if response_status != 401:
+                raise
+        self._discard_local_pairing(device_id)
+        self._restore_previous_device_pointer()
+        return "cancelled"
+
+    def pair(self, code, device_name):
+        paired = self.begin_pair(code, device_name)
+        try:
+            self.confirm_pairing()
+        except Exception:
+            try:
+                self.cancel_pairing()
+            except Exception:
+                logger.warning(
+                    "Could not cancel an unconfirmed pairing",
+                    exc_info=True,
+                )
+            raise
+        return paired
 
     def session(self):
         return self._request("GET", "/v1/session")

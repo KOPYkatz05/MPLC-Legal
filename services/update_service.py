@@ -7,6 +7,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import urlparse
 
+from packaging.version import InvalidVersion, Version
+
 
 logger = logging.getLogger(__name__)
 
@@ -141,6 +143,16 @@ def _asset_candidate(asset, native=None):
     )
 
 
+def _asset_version(asset):
+    raw_version = str(getattr(asset, "Version", "") or "").strip()
+    try:
+        return Version(raw_version)
+    except InvalidVersion as exc:
+        raise UpdateConfigurationError(
+            f"Update metadata contains an invalid version: {raw_version!r}"
+        ) from exc
+
+
 def _default_manager_factory(config):
     import velopack
 
@@ -207,17 +219,32 @@ class ClientUpdateService:
             self._set_state("checking")
             manager = self._manager()
             pending = manager.get_update_pending_restart()
-            if pending is not None:
-                prepared = _asset_candidate(pending)
-                self._set_state("ready", prepared=prepared)
-                return prepared
+            pending_prepared = _asset_candidate(pending) if pending is not None else None
+            try:
+                update_info = manager.check_for_updates()
+            except Exception:
+                if pending_prepared is None:
+                    raise
+                logger.warning(
+                    "Could not refresh the update feed; using the update already "
+                    "staged for restart",
+                    exc_info=True,
+                )
+                self._set_state("ready", prepared=pending_prepared)
+                return pending_prepared
 
-            update_info = manager.check_for_updates()
             if update_info is None:
+                if pending_prepared is not None:
+                    self._set_state("ready", prepared=pending_prepared)
+                    return pending_prepared
                 self._set_state("idle")
                 return None
 
             target = update_info.TargetFullRelease
+            if pending is not None and _asset_version(target) <= _asset_version(pending):
+                self._set_state("ready", prepared=pending_prepared)
+                return pending_prepared
+
             self._set_state("downloading")
             last_progress = -1
 

@@ -154,6 +154,22 @@ def main():
     app = QApplication(sys.argv)
 
     from services.api_client import ApiCompatibilityError, MissionLegalApiClient
+    from services.client_pairing_service import (
+        ClientPairingRecoveryError,
+        recover_interrupted_pairing,
+    )
+
+    try:
+        recover_interrupted_pairing()
+    except ClientPairingRecoveryError as exc:
+        QMessageBox.critical(
+            None,
+            "Mission Legal Pairing Recovery Required",
+            str(exc),
+        )
+        return
+
+    client_update_scheduled = object()
 
     def pair_installed_client():
         from ui.dialogs.client_pairing_dialog import ClientPairingDialog
@@ -162,6 +178,8 @@ def main():
         pairing_dialog = ClientPairingDialog()
         if pairing_dialog.exec() != QDialog.Accepted:
             return None
+        if pairing_dialog.update_scheduled:
+            return client_update_scheduled
         paired_client = MissionLegalApiClient.from_environment()
         if paired_client is None:
             QMessageBox.critical(
@@ -179,6 +197,8 @@ def main():
         and os.environ.get("MISSION_LEGAL_ALLOW_LOCAL_DATABASE") != "1"
     ):
         api_client = pair_installed_client()
+        if api_client is client_update_scheduled:
+            return
         if api_client is None:
             return
 
@@ -250,6 +270,8 @@ def main():
                 clicked = dialog.clickedButton()
                 if clicked is change_connection:
                     api_client = pair_installed_client()
+                    if api_client is client_update_scheduled:
+                        return
                     if api_client is None:
                         return
                     continue

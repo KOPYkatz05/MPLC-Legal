@@ -62,14 +62,17 @@ class ServerInstallerTests(unittest.TestCase):
                 root / "Backups" / "Installer",
                 "0.1.0",
                 "0.2.0",
+                root / "Backups" / "Installer" / "attempt.json",
                 root / "Logs" / "installer.log",
             )
 
             backup = Path(result["path"])
             metadata_path = Path(result["metadata_path"])
+            receipt_path = root / "Backups" / "Installer" / "attempt.json"
             self.assertEqual(result["status"], "backed-up")
             self.assertTrue(backup.is_file())
             self.assertTrue(metadata_path.is_file())
+            self.assertTrue(receipt_path.is_file())
             maintenance.verify_database(backup)
             with closing(sqlite3.connect(backup)) as connection:
                 rows = connection.execute(
@@ -85,6 +88,15 @@ class ServerInstallerTests(unittest.TestCase):
                 metadata["backup_sha256"],
                 hashlib.sha256(backup.read_bytes()).hexdigest(),
             )
+            receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+            self.assertEqual(receipt["format"], 1)
+            self.assertEqual(receipt["status"], "backed-up")
+            self.assertEqual(receipt["attempt_id"], metadata["attempt_id"])
+            self.assertEqual(receipt["backup_path"], str(backup))
+            self.assertEqual(
+                receipt["metadata_sha256"],
+                hashlib.sha256(metadata_path.read_bytes()).hexdigest(),
+            )
 
     def test_maintenance_rejects_corrupt_database(self):
         maintenance = _maintenance_module()
@@ -95,9 +107,198 @@ class ServerInstallerTests(unittest.TestCase):
 
             with self.assertRaisesRegex(maintenance.MaintenanceError, "integrity"):
                 maintenance.create_pre_upgrade_backup(
-                    database, root / "Backups", "0.1.0", "0.2.0"
+                    database,
+                    root / "Backups",
+                    "0.1.0",
+                    "0.2.0",
+                    root / "Backups" / "attempt.json",
                 )
             self.assertFalse(list((root / "Backups").glob("*.db")))
+
+    def test_maintenance_restores_exact_receipted_snapshot_and_clears_sidecars(self):
+        maintenance = _maintenance_module()
+        with tempfile.TemporaryDirectory(dir=TEST_TEMP_ROOT) as temporary:
+            root = Path(temporary)
+            database = root / "Data" / "app.db"
+            database.parent.mkdir()
+            _create_database(database)
+            backup_dir = root / "Backups" / "Installer"
+            receipt_path = backup_dir / "attempt-restore.json"
+            result = maintenance.create_pre_upgrade_backup(
+                database,
+                backup_dir,
+                "0.1.0",
+                "0.2.0",
+                receipt_path,
+            )
+            backup = Path(result["path"])
+            expected_bytes = backup.read_bytes()
+
+            with closing(sqlite3.connect(database)) as connection:
+                connection.execute("INSERT INTO records (value) VALUES ('candidate')")
+                connection.execute(
+                    "UPDATE app_metadata SET value = '999' WHERE key = 'schema_version'"
+                )
+                connection.commit()
+            for suffix in maintenance.SQLITE_SIDECAR_SUFFIXES:
+                Path(f"{database}{suffix}").write_bytes(b"stale candidate sidecar")
+
+            restored = maintenance.restore_pre_upgrade_backup(
+                database,
+                backup_dir,
+                receipt_path,
+                "0.1.0",
+                "0.2.0",
+            )
+
+            self.assertEqual(restored["status"], "restored")
+            self.assertEqual(database.read_bytes(), expected_bytes)
+            self.assertTrue(backup.is_file(), "rollback must preserve the verified backup")
+            self.assertTrue(Path(result["metadata_path"]).is_file())
+            for suffix in maintenance.SQLITE_SIDECAR_SUFFIXES:
+                self.assertFalse(Path(f"{database}{suffix}").exists())
+            with closing(sqlite3.connect(database)) as connection:
+                rows = connection.execute(
+                    "SELECT value FROM records ORDER BY id"
+                ).fetchall()
+                schema = connection.execute(
+                    "SELECT value FROM app_metadata WHERE key = 'schema_version'"
+                ).fetchone()[0]
+            self.assertEqual(rows, [("alpha",), ("beta",)])
+            self.assertEqual(schema, "7")
+            receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+            self.assertEqual(receipt["restore_status"], "restored")
+            self.assertEqual(
+                receipt["restored_database_sha256"],
+                hashlib.sha256(expected_bytes).hexdigest(),
+            )
+            self.assertTrue(receipt["sqlite_sidecars_cleared"])
+            self.assertIn("restored_at", receipt)
+
+    def test_maintenance_rejects_tampered_backup_before_touching_live_database(self):
+        maintenance = _maintenance_module()
+        with tempfile.TemporaryDirectory(dir=TEST_TEMP_ROOT) as temporary:
+            root = Path(temporary)
+            database = root / "app.db"
+            _create_database(database)
+            backup_dir = root / "Backups"
+            receipt_path = backup_dir / "attempt.json"
+            result = maintenance.create_pre_upgrade_backup(
+                database,
+                backup_dir,
+                "0.1.0",
+                "0.2.0",
+                receipt_path,
+            )
+            with closing(sqlite3.connect(database)) as connection:
+                connection.execute("INSERT INTO records (value) VALUES ('candidate')")
+                connection.commit()
+            candidate_hash = hashlib.sha256(database.read_bytes()).hexdigest()
+            Path(result["path"]).write_bytes(b"tampered backup")
+
+            with self.assertRaisesRegex(
+                maintenance.MaintenanceError, "receipt SHA-256"
+            ):
+                maintenance.restore_pre_upgrade_backup(
+                    database,
+                    backup_dir,
+                    receipt_path,
+                    "0.1.0",
+                    "0.2.0",
+                )
+
+            self.assertEqual(
+                hashlib.sha256(database.read_bytes()).hexdigest(), candidate_hash
+            )
+            with closing(sqlite3.connect(database)) as connection:
+                values = connection.execute(
+                    "SELECT value FROM records ORDER BY id"
+                ).fetchall()
+            self.assertEqual(values[-1], ("candidate",))
+
+    def test_maintenance_no_database_receipt_removes_candidate_database_and_sidecars(self):
+        maintenance = _maintenance_module()
+        with tempfile.TemporaryDirectory(dir=TEST_TEMP_ROOT) as temporary:
+            root = Path(temporary)
+            database = root / "Data" / "app.db"
+            backup_dir = root / "Backups"
+            receipt_path = backup_dir / "no-database-attempt.json"
+            result = maintenance.create_pre_upgrade_backup(
+                database,
+                backup_dir,
+                "unknown",
+                "0.2.0",
+                receipt_path,
+            )
+            self.assertEqual(result["status"], "no-database")
+            database.parent.mkdir(parents=True)
+            _create_database(database)
+            for suffix in maintenance.SQLITE_SIDECAR_SUFFIXES:
+                Path(f"{database}{suffix}").write_bytes(b"candidate sidecar")
+
+            restored = maintenance.restore_pre_upgrade_backup(
+                database,
+                backup_dir,
+                receipt_path,
+                "unknown",
+                "0.2.0",
+            )
+
+            self.assertEqual(restored["status"], "restored-no-database")
+            self.assertFalse(database.exists())
+            for suffix in maintenance.SQLITE_SIDECAR_SUFFIXES:
+                self.assertFalse(Path(f"{database}{suffix}").exists())
+            receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+            self.assertEqual(receipt["restore_status"], "restored-no-database")
+            self.assertTrue(receipt["restored_database_absent"])
+            self.assertTrue(receipt["sqlite_sidecars_cleared"])
+
+    def test_maintenance_receipt_is_bound_to_versions_and_cannot_be_reused(self):
+        maintenance = _maintenance_module()
+        with tempfile.TemporaryDirectory(dir=TEST_TEMP_ROOT) as temporary:
+            root = Path(temporary)
+            database = root / "app.db"
+            _create_database(database)
+            backup_dir = root / "Backups"
+            receipt_path = backup_dir / "attempt.json"
+            maintenance.create_pre_upgrade_backup(
+                database,
+                backup_dir,
+                "0.1.0",
+                "0.2.0",
+                receipt_path,
+            )
+
+            with self.assertRaisesRegex(
+                maintenance.MaintenanceError, "app_version_to"
+            ):
+                maintenance.restore_pre_upgrade_backup(
+                    database,
+                    backup_dir,
+                    receipt_path,
+                    "0.1.0",
+                    "0.3.0",
+                )
+            with self.assertRaisesRegex(
+                maintenance.MaintenanceError, "receipt already exists"
+            ):
+                maintenance.create_pre_upgrade_backup(
+                    database,
+                    backup_dir,
+                    "0.1.0",
+                    "0.2.0",
+                    receipt_path,
+                )
+            with self.assertRaisesRegex(
+                maintenance.MaintenanceError, "direct child"
+            ):
+                maintenance.create_pre_upgrade_backup(
+                    database,
+                    backup_dir,
+                    "0.1.0",
+                    "0.2.0",
+                    root / "outside-receipt.json",
+                )
 
     def test_inno_definition_enforces_upgrade_safety_contract(self):
         script = (INSTALLER_DIR / "mission_legal_server.iss").read_text(
@@ -135,11 +336,13 @@ class ServerInstallerTests(unittest.TestCase):
         self.assertLess(
             prepare.index("RunBackupGate"), prepare.index("RunRollbackAction('Capture')")
         )
-        self.assertIn("--backup-before-upgrade", script)
-        self.assertLess(
-            script.index("--backup-before-upgrade"),
-            script.index("MaintenancePath :="),
-        )
+        self.assertNotIn("--backup-before-upgrade", script)
+        self.assertIn("MaintenancePath :=", script)
+        self.assertIn("pre-upgrade-backup", script)
+        self.assertIn("restore-pre-upgrade-backup", script)
+        self.assertIn("--receipt", script)
+        self.assertIn("installer-attempt-", script)
+        self.assertIn(r"Backups\Installer", script)
         self.assertIn("StartAndVerify", script)
         self.assertIn("ServerConfiguredBeforeInstall", script)
         self.assertIn("Service registration and startup are deferred", script)
@@ -149,14 +352,36 @@ class ServerInstallerTests(unittest.TestCase):
         restore = script.split("function RestorePriorInstallation: Boolean;", 1)[
             1
         ].split("function RemoveServiceWithoutHelper", 1)[0]
+        restore_stop = "RunServiceAction(ServiceScript, 'Stop', False)"
+        restore_database = "RunDatabaseRollback"
+        restore_database_complete = (
+            "Verified authoritative database rollback completed before binary"
+        )
         restore_files = "RunRollbackAction('Restore')"
         restore_registration = "RunServiceAction(ServiceScript, 'InstallOrUpdate'"
         restore_start = "RunServiceAction(ServiceScript, 'StartOnly'"
+        self.assertLess(restore.index(restore_stop), restore.index(restore_database))
+        self.assertLess(
+            restore.index(restore_database), restore.index(restore_database_complete)
+        )
+        self.assertLess(
+            restore.index(restore_database_complete), restore.index(restore_files)
+        )
         self.assertLess(restore.index(restore_files), restore.index(restore_registration))
         self.assertLess(
             restore.index(restore_registration), restore.index(restore_start)
         )
         self.assertIn("managed firewall rule could not be restored", restore)
+        self.assertIn("prior service will remain stopped", restore)
+        self.assertIn("RollbackFailedClosed := True", restore)
+        self.assertLess(
+            restore.index("if RollbackFailedClosed then"),
+            restore.index("RunDatabaseRollback"),
+        )
+        deinitialize = script.split("procedure DeinitializeSetup;", 1)[1].split(
+            "procedure CurUninstallStepChanged", 1
+        )[0]
+        self.assertIn("not RollbackFailedClosed", deinitialize)
         self.assertIn("CurUninstallStepChanged", script)
         self.assertIn("'Remove'", script)
         self.assertIn("RemoveServiceWithoutHelper", script)
@@ -303,11 +528,192 @@ class ServerInstallerTests(unittest.TestCase):
         self.assertIn("sc.exe", helper)
         self.assertIn("restart/5000/restart/15000/restart/60000", helper)
 
+    def test_server_programdata_acl_is_sid_based_fail_closed_and_vm_proven(self):
+        data_acl = (REPO_ROOT / "server" / "data_acl.py").read_text(
+            encoding="utf-8"
+        )
+        tls = (REPO_ROOT / "server" / "tls.py").read_text(encoding="utf-8")
+        setup = (REPO_ROOT / "server_setup.py").read_text(encoding="utf-8")
+        helper = (INSTALLER_DIR / "server_installer_actions.ps1").read_text(
+            encoding="utf-8"
+        )
+        harness = (INSTALLER_DIR / "validate_server_installer_vm.ps1").read_text(
+            encoding="utf-8"
+        )
+
+        for sid in ("S-1-5-18", "S-1-5-32-544", "S-1-5-32-545"):
+            self.assertIn(sid, data_acl)
+            self.assertIn(sid, helper)
+            self.assertIn(sid, harness)
+        for source in (data_acl, helper):
+            self.assertIn("SetAccessRuleProtection($true, $false)", source)
+            self.assertIn("AreAccessRulesProtected", source)
+            self.assertNotIn("Administrators:F", source)
+            self.assertNotIn("SYSTEM:F", source)
+            self.assertNotIn("USERNAME", source)
+
+        self.assertIn("if completed.returncode != 0", data_acl)
+        self.assertIn("ServerDataAclError", data_acl)
+        self.assertIn("protect_private_key_files(*paths)", tls)
+        self.assertIn("protect_sensitive_server_data(app_data_dir)", setup)
+        self.assertIn(
+            'settings.setValue("server/ca_certificate", str(published_ca))',
+            setup,
+        )
+        self.assertIn('Path("Public") / "mission-legal-ca.pem"', data_acl)
+        self.assertIn("Protect-MissionLegalServerData", helper)
+        self.assertIn("Publish-MissionLegalPublicCa", helper)
+        initialization = helper.split("switch ($Action)", 1)[0]
+        self.assertLess(
+            initialization.index("Protect-MissionLegalServerData"),
+            initialization.index("Beginning installer service action"),
+        )
+
+        self.assertIn("Invoke-StandardUserServerDataProbe", harness)
+        self.assertIn("New-LocalUser", harness)
+        self.assertIn("Remove-LocalUser -SID", harness)
+        self.assertIn("LoadUserProfile = $false", harness)
+        self.assertIn("sensitive_read_denied = $true", harness)
+        self.assertIn("public_ca_read_allowed = $true", harness)
+        self.assertIn("public_ca_write_denied = $true", harness)
+        self.assertGreaterEqual(harness.count("Assert-ServerDataAclPolicy"), 7)
+        for protected_name in (
+            "app.db",
+            "devices.json",
+            "mission-legal-ca-key.pem",
+            "mission-legal-server-key.pem",
+            'Public\\mission-legal-ca.pem',
+        ):
+            self.assertIn(protected_name, harness)
+
+    def test_package_provenance_accepts_exact_tree_and_rejects_tamper_and_relabel(self):
+        helper = REPO_ROOT / "deployment" / "package_provenance.py"
+        with tempfile.TemporaryDirectory(dir=TEST_TEMP_ROOT) as temporary:
+            root = Path(temporary)
+            package = root / "MissionLegalServer"
+            package.mkdir()
+            artifact = package / "server-runtime.bin"
+            original_bytes = b"verified frozen server fixture"
+            artifact.write_bytes(original_bytes)
+            smoke = root / "smoke.jsonl"
+            smoke.write_text(
+                json.dumps(
+                    {
+                        "api_version": "1",
+                        "app_version": "1.2.3",
+                        "frozen": True,
+                        "imports": [],
+                        "role": "server",
+                        "schema_version": 1,
+                        "status": "ok",
+                    },
+                    sort_keys=True,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            manifest = root / "MissionLegalServer.provenance.json"
+            common = [
+                "--repo-root",
+                str(REPO_ROOT),
+                "--package-dir",
+                str(package),
+                "--manifest-path",
+                str(manifest),
+            ]
+            create_command = [
+                sys.executable,
+                "-B",
+                str(helper),
+                "create",
+                *common,
+                "--role",
+                "server",
+                "--app-version",
+                "1.2.3",
+                "--api-version",
+                "1",
+                "--schema-version",
+                "1",
+                "--smoke-result",
+                str(smoke),
+                "--dependency-lock",
+                str(REPO_ROOT / "requirements_lock.txt"),
+                "--dependency-lock",
+                str(REPO_ROOT / "requirements_build.txt"),
+            ]
+            create = subprocess.run(
+                create_command,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(create.returncode, 0, create.stdout + create.stderr)
+            record = json.loads(manifest.read_text(encoding="utf-8"))
+            self.assertEqual(record["role"], "server")
+            self.assertEqual(record["application"]["app_version"], "1.2.3")
+            self.assertEqual(record["files"][0]["path"], artifact.name)
+            self.assertEqual(record["file_count"], 1)
+            self.assertEqual(len(record["tree_sha256"]), 64)
+            self.assertIn("git_commit", record["source"])
+            self.assertEqual(
+                [item["path"] for item in record["dependency_locks"]],
+                ["requirements_build.txt", "requirements_lock.txt"],
+            )
+            deterministic_bytes = manifest.read_bytes()
+            recreate = subprocess.run(
+                create_command,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(
+                recreate.returncode, 0, recreate.stdout + recreate.stderr
+            )
+            self.assertEqual(manifest.read_bytes(), deterministic_bytes)
+
+            def verify(version):
+                return subprocess.run(
+                    [
+                        sys.executable,
+                        "-B",
+                        str(helper),
+                        "verify",
+                        *common,
+                        "--expected-role",
+                        "server",
+                        "--expected-app-version",
+                        version,
+                        "--expected-api-version",
+                        "1",
+                        "--expected-schema-version",
+                        "1",
+                    ],
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                )
+
+            exact = verify("1.2.3")
+            self.assertEqual(exact.returncode, 0, exact.stdout + exact.stderr)
+
+            artifact.write_bytes(original_bytes + b"-tampered")
+            tampered = verify("1.2.3")
+            self.assertNotEqual(tampered.returncode, 0)
+            self.assertIn("tree does not match", tampered.stderr.lower())
+
+            artifact.write_bytes(original_bytes)
+            stale = verify("1.2.4")
+            self.assertNotEqual(stale.returncode, 0)
+            self.assertIn("application version mismatch", stale.stderr.lower())
+
     def test_build_reads_version_and_emits_silent_release_metadata(self):
         build = (REPO_ROOT / "deployment" / "build_server_installer.ps1").read_text(
             encoding="utf-8"
         )
-        self.assertIn("from version import APP_VERSION", build)
+        self.assertIn(
+            "from version import API_VERSION, APP_VERSION, SCHEMA_VERSION", build
+        )
         self.assertIn('"/DAppVersion=$AppVersion"', build)
         self.assertIn("MissionLegalServerSetup-$AppVersion.exe", build)
         self.assertIn("/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LOG", build)
@@ -315,9 +721,81 @@ class ServerInstallerTests(unittest.TestCase):
         self.assertIn("Get-AuthenticodeSignature", build)
         self.assertIn("Authenticode signature is not valid", build)
         self.assertIn("AllowUnpublishedDevelopmentOverwrite", build)
+        self.assertIn("RequireSigning", build)
+        self.assertIn(
+            "RequireSigning cannot be combined with AllowUnpublishedDevelopmentOverwrite",
+            build,
+        )
         self.assertIn("Published or potentially published same-version artifacts are immutable", build)
         self.assertIn('"/DDevelopmentBuild=1"', build)
         self.assertIn("development_build", build)
+        self.assertIn("production_signing_required", build)
+        self.assertIn("package_provenance.py", build)
+        self.assertIn("--expected-role server", build)
+        self.assertIn("--required-windows-version-exe MissionLegalServer.exe", build)
+        self.assertIn('"$PackageName.provenance.json"', build)
+        self.assertIn("clean Git commit", build)
+        for forbidden_name in (
+            "devices.json",
+            "server.json",
+            ".pfx",
+            ".p12",
+            "PRIVATE KEY",
+            "db|sqlite|sqlite3",
+        ):
+            self.assertIn(forbidden_name, build)
+
+    def test_raw_build_emits_role_provenance_after_smoke_validation(self):
+        build = (REPO_ROOT / "deployment" / "build_windows.ps1").read_text(
+            encoding="utf-8"
+        )
+        client_release = (
+            REPO_ROOT / "deployment" / "build_client_release.ps1"
+        ).read_text(encoding="utf-8")
+        helper = (REPO_ROOT / "deployment" / "package_provenance.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("New-PackageProvenance", build)
+        self.assertIn("MissionLegalClient.provenance.json", build)
+        self.assertIn("MissionLegalServer.provenance.json", build)
+        self.assertLess(
+            build.index("$ClientSmoke.ExitCode"),
+            build.index('$ClientManifest = Join-Path $DistRoot'),
+        )
+        self.assertLess(
+            build.index("$ServerSmoke.ExitCode"),
+            build.index('$ServerManifest = Join-Path $DistRoot'),
+        )
+        for executable in (
+            "MissionLegal.exe",
+            "MissionLegalDiagnostics.exe",
+            "MissionLegalClientSetup.exe",
+            "MissionLegalUpdateWorker.exe",
+            "MissionLegalServer.exe",
+            "MissionLegalServerSetup.exe",
+            "MissionLegalService.exe",
+        ):
+            self.assertIn(f'"{executable}"', build)
+        for required_field in (
+            '"dependency_locks"',
+            '"files"',
+            '"ocr_models"',
+            '"smoke_result"',
+            '"source"',
+            '"tree_sha256"',
+            '"windows_executables"',
+        ):
+            self.assertIn(required_field, helper)
+        self.assertIn('"--expected-role", "client"', client_release)
+        self.assertIn(
+            '"--required-windows-version-exe", "MissionLegal.exe"',
+            client_release,
+        )
+        self.assertIn("Assert-ClientRawPackageProvenance", client_release)
+        self.assertIn("clean Git commit", client_release)
+        self.assertGreaterEqual(
+            client_release.count("Assert-ClientRawPackageProvenance"), 3
+        )
 
     def test_release_orchestrator_builds_immutable_client_last(self):
         build = (REPO_ROOT / "deployment" / "build_release.ps1").read_text(
@@ -344,6 +822,11 @@ class ServerInstallerTests(unittest.TestCase):
             "MISSION_LEGAL_VPK_SIGN_PARAMS cannot be combined",
             build,
         )
+        self.assertIn(
+            "RequireSigning cannot be combined with AllowUnpublishedDevelopmentOverwrite",
+            build,
+        )
+        self.assertIn("RequireSigning = [bool]$RequireSigning", build)
         self.assertIn("ReuseExistingServerRelease", build)
         self.assertIn("Reusing immutable server installer", build)
         self.assertIn("PreviousReleaseProvider", build)
@@ -439,6 +922,13 @@ class ServerInstallerTests(unittest.TestCase):
         self.assertIn('"--existing-database"', harness)
         self.assertIn("DatabaseFixtureSha256", harness)
         self.assertIn("Get-VerifiedUpgradeBackup", harness)
+        self.assertIn("Get-VerifiedRollbackReceipt", harness)
+        self.assertIn("restored_before_prior_service_start", harness)
+        self.assertIn("restored_database_sha256", harness)
+        self.assertIn("-ExcludeDatabaseHash", harness)
+        self.assertIn("database_schema_version_restored", harness)
+        self.assertIn("pre_upgrade_rows_restored", harness)
+        self.assertIn('Join-Path $ExpectedDataRoot "Backups\\Installer"', harness)
         self.assertIn('reason -ceq "installer-pre-upgrade"', harness)
         self.assertIn("app_version_from", harness)
         self.assertIn("backup_sha256", harness)
@@ -483,6 +973,11 @@ class ServerInstallerTests(unittest.TestCase):
         self.assertIn('"Mission Legal\\Server"', watcher)
         self.assertIn('"MissionLegalService.exe"', watcher)
         self.assertIn("baseline_sha256", watcher)
+        self.assertIn("database_sha256", watcher)
+        self.assertIn("database_before_sha256", watcher)
+        self.assertIn("database_mutated_sha256", watcher)
+        self.assertIn("MISSION-LEGAL-INSTALLER-CANDIDATE-MUTATION", watcher)
+        self.assertIn("$DatabaseStream.Flush($true)", watcher)
         self.assertIn("upgrade_installer_path", watcher)
         self.assertIn("upgrade_installer_sha256", watcher)
         self.assertIn("installer_pid", watcher)
@@ -628,6 +1123,9 @@ public static class {type_name} {{ public static void Main() {{ }} }}
         self.assertIn("Same-version rejection", runbook)
         self.assertIn("selected Private-profile IPv4", runbook)
         self.assertIn("does not claim that LocalSystem modified", runbook)
+        self.assertIn("ProgramData ACLs", runbook)
+        self.assertIn("temporary non-administrator local account", runbook)
+        self.assertIn("published public CA can be read but not written", runbook)
         self.assertIn("revert", runbook)
 
 

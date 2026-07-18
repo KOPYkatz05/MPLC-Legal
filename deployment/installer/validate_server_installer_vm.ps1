@@ -1156,7 +1156,10 @@ function Get-VerifiedUpgradeBackup {
         [Parameter(Mandatory = $true)][string]$ExpectedSourceDatabaseSha256
     )
 
-    $BackupRoot = Join-Path $ExpectedDataRoot "Backups"
+    $BackupRoot = Join-Path $ExpectedDataRoot "Backups\Installer"
+    if (-not (Test-Path -LiteralPath $BackupRoot -PathType Container)) {
+        throw "Installer backup directory was not created: $BackupRoot"
+    }
     $Candidates = @()
     foreach ($MetadataPath in @(Get-ChildItem -LiteralPath $BackupRoot -Filter "mission-legal_*.json" -File)) {
         try {
@@ -1205,8 +1208,127 @@ function Get-VerifiedUpgradeBackup {
     return $Candidates | Sort-Object created_at_utc -Descending | Select-Object -First 1
 }
 
+function Get-VerifiedRollbackReceipt {
+    param(
+        [Parameter(Mandatory = $true)][DateTimeOffset]$NotBefore,
+        [Parameter(Mandatory = $true)][string]$ExpectedSourceVersion,
+        [Parameter(Mandatory = $true)][string]$ExpectedTargetVersion,
+        [Parameter(Mandatory = $true)][string]$ExpectedSourceDatabaseSha256,
+        [Parameter(Mandatory = $true)][string]$InstallerLogPath
+    )
+
+    $BackupRoot = [IO.Path]::GetFullPath((Join-Path $ExpectedDataRoot "Backups\Installer"))
+    $LiveDatabase = [IO.Path]::GetFullPath((Join-Path $ExpectedDataRoot "app.db"))
+    if (-not (Test-Path -LiteralPath $BackupRoot -PathType Container)) {
+        throw "Installer backup directory was not created: $BackupRoot"
+    }
+    $Candidates = @()
+    foreach ($ReceiptPath in @(Get-ChildItem -LiteralPath $BackupRoot -Filter "installer-attempt-*.json" -File)) {
+        try {
+            $Receipt = Get-Content -LiteralPath $ReceiptPath.FullName -Raw -Encoding UTF8 | ConvertFrom-Json
+            $Created = [DateTimeOffset]::Parse([string]$Receipt.created_at)
+            if (
+                [int]$Receipt.format -ne 1 -or
+                [string]$Receipt.status -cne "backed-up" -or
+                [string]$Receipt.restore_status -cne "restored" -or
+                [string]$Receipt.app_version_from -cne $ExpectedSourceVersion -or
+                [string]$Receipt.app_version_to -cne $ExpectedTargetVersion -or
+                $Created -lt $NotBefore.AddMinutes(-1)
+            ) {
+                continue
+            }
+            $ReceiptFullPath = [IO.Path]::GetFullPath($ReceiptPath.FullName)
+            $RecordedReceiptPath = [IO.Path]::GetFullPath([string]$Receipt.receipt_path)
+            $RecordedBackupRoot = [IO.Path]::GetFullPath([string]$Receipt.backup_dir)
+            $RecordedDatabase = [IO.Path]::GetFullPath([string]$Receipt.database)
+            if (
+                -not $RecordedReceiptPath.Equals($ReceiptFullPath, [StringComparison]::OrdinalIgnoreCase) -or
+                -not $RecordedBackupRoot.Equals($BackupRoot, [StringComparison]::OrdinalIgnoreCase) -or
+                -not $RecordedDatabase.Equals($LiveDatabase, [StringComparison]::OrdinalIgnoreCase)
+            ) {
+                throw "Rollback receipt path binding is invalid: $ReceiptPath"
+            }
+            $BackupPath = [IO.Path]::GetFullPath([string]$Receipt.backup_path)
+            $MetadataPath = [IO.Path]::GetFullPath([string]$Receipt.metadata_path)
+            if (
+                -not ([IO.Directory]::GetParent($BackupPath).FullName).Equals($BackupRoot, [StringComparison]::OrdinalIgnoreCase) -or
+                -not ([IO.Directory]::GetParent($MetadataPath).FullName).Equals($BackupRoot, [StringComparison]::OrdinalIgnoreCase) -or
+                -not ([IO.Path]::ChangeExtension($BackupPath, ".json")).Equals($MetadataPath, [StringComparison]::OrdinalIgnoreCase)
+            ) {
+                throw "Rollback receipt backup paths escape their expected directory: $ReceiptPath"
+            }
+            foreach ($Path in @($ReceiptFullPath, $BackupPath, $MetadataPath)) {
+                Assert-NoReparseAncestors $Path
+                if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+                    throw "Rollback receipt evidence file is missing: $Path"
+                }
+            }
+            $BackupSha256 = (Get-FileHash -LiteralPath $BackupPath -Algorithm SHA256).Hash.ToLowerInvariant()
+            $MetadataSha256 = (Get-FileHash -LiteralPath $MetadataPath -Algorithm SHA256).Hash.ToLowerInvariant()
+            if (
+                $BackupSha256 -cne ([string]$Receipt.backup_sha256).ToLowerInvariant() -or
+                $MetadataSha256 -cne ([string]$Receipt.metadata_sha256).ToLowerInvariant() -or
+                $BackupSha256 -cne ([string]$Receipt.restored_database_sha256).ToLowerInvariant() -or
+                ([string]$Receipt.source_file_sha256).ToLowerInvariant() -cne $ExpectedSourceDatabaseSha256.ToLowerInvariant() -or
+                -not [bool]$Receipt.sqlite_sidecars_cleared
+            ) {
+                throw "Rollback receipt hash or sidecar evidence is invalid: $ReceiptPath"
+            }
+            if ((Get-Item -LiteralPath $BackupPath).Length -ne [long]$Receipt.snapshot_size) {
+                throw "Rollback receipt snapshot size is invalid: $BackupPath"
+            }
+            $Metadata = Get-Content -LiteralPath $MetadataPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            if (
+                [string]$Metadata.reason -cne "installer-pre-upgrade" -or
+                [string]$Metadata.attempt_id -cne [string]$Receipt.attempt_id -or
+                [string]$Metadata.app_version_from -cne $ExpectedSourceVersion -or
+                [string]$Metadata.app_version_to -cne $ExpectedTargetVersion -or
+                ([string]$Metadata.backup_sha256).ToLowerInvariant() -cne $BackupSha256 -or
+                ([string]$Metadata.source_file_sha256).ToLowerInvariant() -cne $ExpectedSourceDatabaseSha256.ToLowerInvariant()
+            ) {
+                throw "Rollback receipt metadata binding is invalid: $MetadataPath"
+            }
+            $Candidates += [pscustomobject]@{
+                receipt_path = $ReceiptFullPath
+                backup_path = $BackupPath
+                metadata_path = $MetadataPath
+                source_database_sha256 = $ExpectedSourceDatabaseSha256.ToLowerInvariant()
+                restored_snapshot_sha256 = $BackupSha256
+                restored_at_utc = [DateTimeOffset]::Parse([string]$Receipt.restored_at).ToString("o")
+                created_at_utc = $Created.ToString("o")
+                sqlite_sidecars_cleared = $true
+            }
+        }
+        catch {
+            if ($_.Exception.Message -like "Rollback receipt*") {
+                throw
+            }
+        }
+    }
+    if ($Candidates.Count -eq 0) {
+        throw "No verified restored database receipt from $ExpectedSourceVersion was found."
+    }
+    if (-not (Test-Path -LiteralPath $InstallerLogPath -PathType Leaf)) {
+        throw "Post-copy installer log is missing: $InstallerLogPath"
+    }
+    $InstallerLog = Get-Content -LiteralPath $InstallerLogPath -Raw
+    $RollbackCompleted = "Verified authoritative database rollback completed before binary and service recovery."
+    $PriorServiceStart = "Service action StartOnly"
+    $RollbackIndex = $InstallerLog.IndexOf($RollbackCompleted, [StringComparison]::Ordinal)
+    $StartIndex = $InstallerLog.IndexOf($PriorServiceStart, [StringComparison]::Ordinal)
+    if ($RollbackIndex -lt 0 -or $StartIndex -lt 0 -or $RollbackIndex -ge $StartIndex) {
+        throw "Installer log does not prove database restoration completed before prior-service startup."
+    }
+    $Selected = $Candidates | Sort-Object restored_at_utc -Descending | Select-Object -First 1
+    $Selected | Add-Member -NotePropertyName restored_before_prior_service_start -NotePropertyValue $true
+    return $Selected
+}
+
 function Assert-PreservedFiles {
-    param([Parameter(Mandatory = $true)][hashtable]$ExpectedHashes)
+    param(
+        [Parameter(Mandatory = $true)][hashtable]$ExpectedHashes,
+        [switch]$ExcludeDatabaseHash
+    )
 
     $DatabasePath = Join-Path $ExpectedDataRoot "app.db"
     if (-not (Test-Path -LiteralPath $DatabasePath -PathType Leaf)) {
@@ -1216,6 +1338,9 @@ function Assert-PreservedFiles {
         throw "The authoritative database is empty after uninstall."
     }
     foreach ($Name in $ExpectedHashes.Keys) {
+        if ($ExcludeDatabaseHash -and $Name -ceq "authoritative_database") {
+            continue
+        }
         $Expected = $ExpectedHashes[$Name]
         $Path = [string]$Expected.path
         if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
@@ -1357,6 +1482,327 @@ function New-ApiValidationCredential {
     }
 }
 
+function Assert-ServerDataAclEntry {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][bool]$PublicRead,
+        [switch]$RequireProtected
+    )
+
+    if (-not (Test-Path -LiteralPath $Path)) {
+        throw "Required server-data ACL target is missing: $Path"
+    }
+    Assert-NoReparseAncestors $Path
+    $AdministratorsSid = [Security.Principal.SecurityIdentifier]::new("S-1-5-32-544")
+    $SystemSid = [Security.Principal.SecurityIdentifier]::new("S-1-5-18")
+    $UsersSid = [Security.Principal.SecurityIdentifier]::new("S-1-5-32-545")
+    $Acl = Get-Acl -LiteralPath $Path -ErrorAction Stop
+    if ($RequireProtected -and -not $Acl.AreAccessRulesProtected) {
+        throw "Required server-data ACL inheritance is not protected: $Path"
+    }
+    $Owner = $Acl.GetOwner([Security.Principal.SecurityIdentifier])
+    if ($Owner.Value -notin @($AdministratorsSid.Value, $SystemSid.Value)) {
+        throw "Server-data owner is outside Builtin Administrators/LocalSystem: $Path"
+    }
+    $AllowedSids = @($AdministratorsSid.Value, $SystemSid.Value)
+    if ($PublicRead) {
+        $AllowedSids += $UsersSid.Value
+    }
+    $RightsBySid = @{}
+    $Rules = @($Acl.GetAccessRules(
+        $true,
+        $true,
+        [Security.Principal.SecurityIdentifier]
+    ))
+    foreach ($Rule in $Rules) {
+        $SidValue = [string]$Rule.IdentityReference.Value
+        if (
+            $Rule.AccessControlType -ne [Security.AccessControl.AccessControlType]::Allow -or
+            $SidValue -cnotin $AllowedSids
+        ) {
+            throw "Server-data ACL grants access outside its SID policy: $Path"
+        }
+        if (-not $RightsBySid.ContainsKey($SidValue)) {
+            $RightsBySid[$SidValue] = [long]0
+        }
+        $RightsBySid[$SidValue] = (
+            [long]$RightsBySid[$SidValue] -bor [long]$Rule.FileSystemRights
+        )
+    }
+    $FullControl = [long][Security.AccessControl.FileSystemRights]::FullControl
+    foreach ($Sid in @($AdministratorsSid, $SystemSid)) {
+        if (
+            -not $RightsBySid.ContainsKey($Sid.Value) -or
+            (($RightsBySid[$Sid.Value] -band $FullControl) -ne $FullControl)
+        ) {
+            throw "Server-data ACL is missing FullControl for '$($Sid.Value)': $Path"
+        }
+    }
+    if ($PublicRead) {
+        $ReadAndExecute = [long][Security.AccessControl.FileSystemRights]::ReadAndExecute
+        if (
+            -not $RightsBySid.ContainsKey($UsersSid.Value) -or
+            (($RightsBySid[$UsersSid.Value] -band $ReadAndExecute) -ne $ReadAndExecute)
+        ) {
+            throw "Public CA ACL is missing Builtin Users read access: $Path"
+        }
+        $WriteMask = (
+            [long][Security.AccessControl.FileSystemRights]::Write -bor
+            [long][Security.AccessControl.FileSystemRights]::Modify -bor
+            [long][Security.AccessControl.FileSystemRights]::Delete -bor
+            [long][Security.AccessControl.FileSystemRights]::ChangePermissions -bor
+            [long][Security.AccessControl.FileSystemRights]::TakeOwnership
+        )
+        if (($RightsBySid[$UsersSid.Value] -band $WriteMask) -ne 0) {
+            throw "Public CA ACL grants Builtin Users write-capable access: $Path"
+        }
+    }
+    elseif ($RightsBySid.ContainsKey($UsersSid.Value)) {
+        throw "Sensitive server data grants Builtin Users access: $Path"
+    }
+}
+
+function Invoke-StandardUserServerDataProbe {
+    param(
+        [Parameter(Mandatory = $true)][string[]]$SensitivePaths,
+        [Parameter(Mandatory = $true)][string]$PublicCaPath
+    )
+
+    $UsersSid = [Security.Principal.SecurityIdentifier]::new("S-1-5-32-545")
+    $AdministratorsSid = [Security.Principal.SecurityIdentifier]::new("S-1-5-32-544")
+    do {
+        $AccountName = "MLAcl" + [Guid]::NewGuid().ToString("N").Substring(0, 10)
+    } while ($null -ne (Get-LocalUser -Name $AccountName -ErrorAction SilentlyContinue))
+    $PlainPassword = [Guid]::NewGuid().ToString("N") + "aA1!"
+    $SecurePassword = ConvertTo-SecureString $PlainPassword -AsPlainText -Force
+    $Account = $null
+    try {
+        $Account = New-LocalUser `
+            -Name $AccountName `
+            -Password $SecurePassword `
+            -AccountNeverExpires `
+            -UserMayNotChangePassword `
+            -ErrorAction Stop
+        $UsersMembers = @(Get-LocalGroupMember -SID $UsersSid -ErrorAction Stop)
+        if ($Account.SID.Value -notin @($UsersMembers | ForEach-Object { $_.SID.Value })) {
+            Add-LocalGroupMember -SID $UsersSid -Member $Account.SID -ErrorAction Stop
+        }
+        $AdministratorMembers = @(
+            Get-LocalGroupMember -SID $AdministratorsSid -ErrorAction Stop
+        )
+        if ($Account.SID.Value -in @($AdministratorMembers | ForEach-Object { $_.SID.Value })) {
+            throw "Disposable ACL probe account unexpectedly belongs to Builtin Administrators."
+        }
+
+        $SensitiveEncoded = @($SensitivePaths | ForEach-Object {
+            "'" + [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($_)) + "'"
+        }) -join ","
+        $PublicEncoded = [Convert]::ToBase64String(
+            [Text.Encoding]::UTF8.GetBytes($PublicCaPath)
+        )
+        $ProbeTemplate = @'
+$ErrorActionPreference = 'Stop'
+$SensitiveEncoded = @(__SENSITIVE_PATHS__)
+$PublicEncoded = '__PUBLIC_CA_PATH__'
+function Decode-Path([string]$Value) {
+    return [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($Value))
+}
+foreach ($EncodedPath in $SensitiveEncoded) {
+    $Path = Decode-Path $EncodedPath
+    try {
+        $Stream = [IO.File]::Open(
+            $Path,
+            [IO.FileMode]::Open,
+            [IO.FileAccess]::Read,
+            [IO.FileShare]::ReadWrite
+        )
+        $Stream.Dispose()
+        exit 21
+    }
+    catch {
+        if (
+            $_.Exception -isnot [UnauthorizedAccessException] -and
+            $_.Exception.InnerException -isnot [UnauthorizedAccessException]
+        ) {
+            exit 22
+        }
+        # Expected: a standard user cannot read sensitive server data.
+    }
+}
+$PublicPath = Decode-Path $PublicEncoded
+try {
+    $Text = [IO.File]::ReadAllText($PublicPath, [Text.Encoding]::ASCII)
+}
+catch {
+    exit 23
+}
+if (-not $Text.Contains('BEGIN CERTIFICATE')) {
+    exit 24
+}
+try {
+    $WriteStream = [IO.File]::Open(
+        $PublicPath,
+        [IO.FileMode]::Open,
+        [IO.FileAccess]::Write,
+        [IO.FileShare]::Read
+    )
+    $WriteStream.Dispose()
+    exit 25
+}
+catch {
+    if (
+        $_.Exception -isnot [UnauthorizedAccessException] -and
+        $_.Exception.InnerException -isnot [UnauthorizedAccessException]
+    ) {
+        exit 26
+    }
+    # Expected: Builtin Users receive read access only.
+}
+exit 0
+'@
+        $ProbeScript = $ProbeTemplate.Replace(
+            "__SENSITIVE_PATHS__",
+            $SensitiveEncoded
+        ).Replace(
+            "__PUBLIC_CA_PATH__",
+            $PublicEncoded
+        )
+        $EncodedCommand = [Convert]::ToBase64String(
+            [Text.Encoding]::Unicode.GetBytes($ProbeScript)
+        )
+        $PowerShellExe = Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\powershell.exe"
+        $StartInfo = [Diagnostics.ProcessStartInfo]::new()
+        $StartInfo.FileName = $PowerShellExe
+        $StartInfo.Arguments = (
+            "-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass " +
+            "-EncodedCommand $EncodedCommand"
+        )
+        $StartInfo.UseShellExecute = $false
+        $StartInfo.CreateNoWindow = $true
+        $StartInfo.WorkingDirectory = $env:SystemRoot
+        $StartInfo.Domain = $env:COMPUTERNAME
+        $StartInfo.UserName = $AccountName
+        $StartInfo.Password = $SecurePassword
+        $StartInfo.LoadUserProfile = $false
+        $Process = [Diagnostics.Process]::Start($StartInfo)
+        if ($null -eq $Process) {
+            throw "Could not start the standard-user server-data ACL probe."
+        }
+        try {
+            if (-not $Process.WaitForExit(60000)) {
+                $Process.Kill()
+                $Process.WaitForExit()
+                throw "Standard-user server-data ACL probe timed out."
+            }
+            if ($Process.ExitCode -ne 0) {
+                throw "Standard-user server-data ACL probe failed with exit code $($Process.ExitCode)."
+            }
+        }
+        finally {
+            $Process.Dispose()
+        }
+    }
+    finally {
+        $PlainPassword = $null
+        if ($null -ne $Account) {
+            Remove-LocalUser -SID $Account.SID -ErrorAction Stop
+        }
+    }
+    if ($null -ne (Get-LocalUser -Name $AccountName -ErrorAction SilentlyContinue)) {
+        throw "Disposable ACL probe account remains after validation: $AccountName"
+    }
+    return [pscustomobject]@{
+        temporary_standard_user_removed = $true
+        sensitive_read_denied = $true
+        public_ca_read_allowed = $true
+        public_ca_write_denied = $true
+    }
+}
+
+function Assert-ServerDataAclPolicy {
+    $PublicDirectory = Join-Path $ExpectedDataRoot "Public"
+    $PublicCa = Join-Path $PublicDirectory "mission-legal-ca.pem"
+    $RequiredProtected = @(
+        $ExpectedDataRoot,
+        (Join-Path $ExpectedDataRoot "app.db"),
+        (Join-Path $ExpectedDataRoot "Backups"),
+        (Join-Path $ExpectedDataRoot "Configuration"),
+        (Join-Path $ExpectedDataRoot "Configuration\tls"),
+        (Join-Path $ExpectedDataRoot "Configuration\tls\mission-legal-ca-key.pem"),
+        (Join-Path $ExpectedDataRoot "Configuration\tls\mission-legal-server-key.pem")
+    )
+    $SensitiveItems = New-Object System.Collections.Generic.List[string]
+    $Queue = New-Object System.Collections.Generic.Queue[string]
+    $Queue.Enqueue($ExpectedDataRoot)
+    while ($Queue.Count -gt 0) {
+        $Current = $Queue.Dequeue()
+        $SensitiveItems.Add($Current)
+        foreach ($Child in @(Get-ChildItem -LiteralPath $Current -Force -ErrorAction Stop)) {
+            if (($Child.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+                throw "Server data contains a reparse point: $($Child.FullName)"
+            }
+            if ($Child.FullName.Equals($PublicDirectory, [StringComparison]::OrdinalIgnoreCase)) {
+                continue
+            }
+            $SensitiveItems.Add($Child.FullName)
+            if ($Child.PSIsContainer) {
+                $Queue.Enqueue($Child.FullName)
+            }
+        }
+    }
+    foreach ($Path in @($SensitiveItems | Select-Object -Unique)) {
+        Assert-ServerDataAclEntry `
+            -Path $Path `
+            -PublicRead $false `
+            -RequireProtected:($Path -in $RequiredProtected)
+    }
+    Assert-ServerDataAclEntry -Path $PublicDirectory -PublicRead $true -RequireProtected
+    Assert-ServerDataAclEntry -Path $PublicCa -PublicRead $true -RequireProtected
+
+    $PrivateCa = Join-Path $ExpectedDataRoot "Configuration\tls\mission-legal-ca.pem"
+    if (
+        (Get-FileHash -LiteralPath $PrivateCa -Algorithm SHA256).Hash -cne
+        (Get-FileHash -LiteralPath $PublicCa -Algorithm SHA256).Hash
+    ) {
+        throw "Public CA certificate does not match the protected CA certificate."
+    }
+    $BackupDatabase = @(
+        Get-ChildItem `
+            -LiteralPath (Join-Path $ExpectedDataRoot "Backups") `
+            -Filter "*.db" `
+            -File `
+            -Recurse `
+            -ErrorAction Stop
+    ) | Select-Object -First 1
+    if ($null -eq $BackupDatabase) {
+        throw "No server backup database exists for the standard-user denial probe."
+    }
+    $SensitiveProbePaths = @(
+        (Join-Path $ExpectedDataRoot "app.db"),
+        (Join-Path $ExpectedDataRoot "Configuration\server.json"),
+        (Join-Path $ExpectedDataRoot "Configuration\devices.json"),
+        (Join-Path $ExpectedDataRoot "Configuration\tls\mission-legal-ca-key.pem"),
+        (Join-Path $ExpectedDataRoot "Configuration\tls\mission-legal-server-key.pem"),
+        $BackupDatabase.FullName
+    )
+    foreach ($Path in $SensitiveProbePaths) {
+        if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+            throw "Sensitive standard-user probe target is missing: $Path"
+        }
+    }
+    $StandardUserProbe = Invoke-StandardUserServerDataProbe `
+        -SensitivePaths $SensitiveProbePaths `
+        -PublicCaPath $PublicCa
+    return [pscustomobject]@{
+        sensitive_root = $ExpectedDataRoot
+        sensitive_item_count = @($SensitiveItems | Select-Object -Unique).Count
+        protected_acl_sids = @("S-1-5-18", "S-1-5-32-544")
+        public_ca = $PublicCa
+        public_read_sid = "S-1-5-32-545"
+        standard_user_probe = $StandardUserProbe
+    }
+}
+
 function Get-PersistenceHashMap {
     param(
         [Parameter(Mandatory = $true)][string]$DocumentPath,
@@ -1374,6 +1820,10 @@ function Get-PersistenceHashMap {
     }
     if ($IncludeDatabase) {
         $Paths["authoritative_database"] = Join-Path $ExpectedDataRoot "app.db"
+    }
+    $PublicCa = Join-Path $ExpectedDataRoot "Public\mission-legal-ca.pem"
+    if (Test-Path -LiteralPath $PublicCa -PathType Leaf) {
+        $Paths["public_ca_certificate"] = $PublicCa
     }
     $Hashes = @{}
     foreach ($Name in $Paths.Keys) {
@@ -1617,7 +2067,8 @@ function Invoke-PostCopyUpgradeFailure {
         [Parameter(Mandatory = $true)][string]$LogPath,
         [Parameter(Mandatory = $true)][string]$InstallerOutputPath,
         [Parameter(Mandatory = $true)][string]$WatcherOutputPath,
-        [Parameter(Mandatory = $true)][string]$BaselineServiceSha256
+        [Parameter(Mandatory = $true)][string]$BaselineServiceSha256,
+        [Parameter(Mandatory = $true)][string]$BaselineDatabaseSha256
     )
 
     $WatcherScript = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot "server_installer_failure_watcher.ps1"))
@@ -1635,6 +2086,13 @@ function Invoke-PostCopyUpgradeFailure {
     }
     if ((Get-FileHash -LiteralPath $ServicePath -Algorithm SHA256).Hash.ToLowerInvariant() -cne $BaselineServiceSha256) {
         throw "Installed service executable changed before failure injection."
+    }
+    $DatabasePath = [IO.Path]::GetFullPath((Join-Path $ExpectedDataRoot "app.db"))
+    if (-not (Test-Path -LiteralPath $DatabasePath -PathType Leaf)) {
+        throw "Baseline database is missing before failure injection: $DatabasePath"
+    }
+    if ((Get-FileHash -LiteralPath $DatabasePath -Algorithm SHA256).Hash.ToLowerInvariant() -cne $BaselineDatabaseSha256) {
+        throw "Authoritative database changed before failure injection."
     }
 
     $FailureRoot = Assert-NewScenarioPath (Join-Path $script:RunRoot "FailureInjection") "Failure-injection root"
@@ -1656,6 +2114,8 @@ function Invoke-PostCopyUpgradeFailure {
         install_dir = $InstallDir
         target_path = $ServicePath
         baseline_sha256 = $BaselineServiceSha256
+        database_path = $DatabasePath
+        database_sha256 = $BaselineDatabaseSha256
         upgrade_installer_path = $UpgradeArtifact.path
         upgrade_installer_sha256 = $UpgradeArtifact.sha256
     } | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $AuthorizationFile -Encoding UTF8
@@ -1734,6 +2194,11 @@ function Invoke-PostCopyUpgradeFailure {
             [string]$WatcherEvidence.candidate_sha256 -notmatch '^[a-f0-9]{64}$' -or
             [long]$WatcherEvidence.candidate_size -le 0 -or
             [string]$WatcherEvidence.damaged_sha256 -ceq [string]$WatcherEvidence.candidate_sha256 -or
+            [IO.Path]::GetFullPath([string]$WatcherEvidence.database_path) -ine $DatabasePath -or
+            [string]$WatcherEvidence.database_before_sha256 -cne $BaselineDatabaseSha256 -or
+            [string]$WatcherEvidence.database_mutated_sha256 -ceq $BaselineDatabaseSha256 -or
+            [string]$WatcherEvidence.database_mutated_sha256 -notmatch '^[a-f0-9]{64}$' -or
+            [long]$WatcherEvidence.database_mutated_size -le [long]$WatcherEvidence.database_before_size -or
             [string]$WatcherEvidence.upgrade_installer_sha256 -cne [string]$UpgradeArtifact.sha256
         ) {
             throw "Post-copy failure watcher did not prove a distinct installed candidate was damaged."
@@ -2006,6 +2471,7 @@ try {
         if ([int]$Record.id -ne $script:ValidationContext.SeededMissionaryId) {
             throw "UpgradeArtifact pristine migration changed the seeded row identity."
         }
+        $DataAclBeforeSameVersion = Assert-ServerDataAclPolicy
 
         $BeforeSameVersionTree = Get-InstallTreeInventory
         $FixtureDocument = Join-Path ([string]$Record.folder_path) "relocation-sentinel-$RunId.txt"
@@ -2027,6 +2493,7 @@ try {
             -Headers $Headers `
             -MissionaryCode $script:ValidationContext.MissionaryCode `
             -PassportNumber $script:ValidationContext.PassportNumber
+        $DataAclAfterSameVersion = Assert-ServerDataAclPolicy
 
         $Uninstall = Invoke-UninstallerExecutable `
             -LogPath (Join-Path $LogsRoot "02-candidate-pristine-uninstall.log") `
@@ -2046,6 +2513,8 @@ try {
             same_version_exit_code = $SameVersion.ExitCode
             same_version_tree_fingerprint = $BeforeSameVersionTree.fingerprint_sha256
             same_version_state_unchanged = $true
+            data_acl_before_same_version = $DataAclBeforeSameVersion
+            data_acl_after_same_version = $DataAclAfterSameVersion
             archived_program_data = $Archive
         }
     }
@@ -2127,6 +2596,7 @@ try {
         $script:ValidationContext.FailureHashes = $FailureHashes
         $script:ValidationContext.BaselineInstallTree = $BaselineTree
         $script:ValidationContext.BaselineServiceSha256 = $BaselineServiceSha256
+        $script:ValidationContext.BaselineSchemaVersion = [string]$Health.schema_version
         [pscustomobject]@{
             deferred_first_install = $Deferred
             health = $Health
@@ -2201,26 +2671,45 @@ try {
     }
 
     $null = Invoke-ValidationPhase "post-copy-upgrade-failure-rolls-back-exact-baseline" {
+        $FailureStarted = [DateTimeOffset]::UtcNow
+        $FailureLog = Join-Path $LogsRoot "05-post-copy-failure.log"
         $Injection = Invoke-PostCopyUpgradeFailure `
-            -LogPath (Join-Path $LogsRoot "05-post-copy-failure.log") `
+            -LogPath $FailureLog `
             -InstallerOutputPath (Join-Path $LogsRoot "05-post-copy-failure-process.log") `
             -WatcherOutputPath (Join-Path $LogsRoot "05-post-copy-watcher-process.log") `
-            -BaselineServiceSha256 $script:ValidationContext.BaselineServiceSha256
+            -BaselineServiceSha256 $script:ValidationContext.BaselineServiceSha256 `
+            -BaselineDatabaseSha256 ([string]$script:ValidationContext["FailureHashes"]["authoritative_database"]["sha256"])
         $Tree = Assert-InstallTreeMatches `
             -Expected $script:ValidationContext.BaselineInstallTree `
             -Description "Post-copy rollback"
         if ((Get-FileHash -LiteralPath (Join-Path $InstallDir "MissionLegalService.exe") -Algorithm SHA256).Hash.ToLowerInvariant() -cne $script:ValidationContext.BaselineServiceSha256) {
             throw "Post-copy rollback did not restore the exact baseline service executable."
         }
-        $null = Assert-PreservedFiles -ExpectedHashes $script:ValidationContext.FailureHashes
+        $null = Assert-PreservedFiles `
+            -ExpectedHashes $script:ValidationContext.FailureHashes `
+            -ExcludeDatabaseHash
+        $RollbackReceipt = Get-VerifiedRollbackReceipt `
+            -NotBefore $FailureStarted `
+            -ExpectedSourceVersion $BaselineVersion `
+            -ExpectedTargetVersion $UpgradeVersion `
+            -ExpectedSourceDatabaseSha256 ([string]$script:ValidationContext["FailureHashes"]["authoritative_database"]["sha256"]) `
+            -InstallerLogPath $FailureLog
         Assert-ServiceRegistration -ExpectedVersion $BaselineVersion -ExpectedState "Running"
         $Health = Wait-ServerHealthSurfaces -Port $ValidationPort -ExpectedVersion $BaselineVersion
+        if ([string]$Health.schema_version -cne [string]$script:ValidationContext.BaselineSchemaVersion) {
+            throw "Post-copy rollback did not restore the baseline database schema version."
+        }
         $Firewall = Assert-PrivateServerFirewallRule -Port $ValidationPort
         $Record = Assert-SentinelApiRecord `
             -Port $ValidationPort `
             -Headers $script:ValidationContext.ApiHeaders `
             -MissionaryCode $script:ValidationContext.UpgradeMissionaryCode `
             -PassportNumber $script:ValidationContext.UpgradePassportNumber
+        $SeededRecord = Assert-SentinelApiRecord `
+            -Port $ValidationPort `
+            -Headers $script:ValidationContext.ApiHeaders `
+            -MissionaryCode $script:ValidationContext.MissionaryCode `
+            -PassportNumber $script:ValidationContext.PassportNumber
         if (-not (Test-Path -LiteralPath $script:ValidationContext.DocumentPath -PathType Leaf)) {
             throw "Post-copy rollback lost the mission-document sentinel."
         }
@@ -2230,7 +2719,11 @@ try {
             tree_fingerprint = $Tree.fingerprint_sha256
             exact_service_binary_restored = $true
             installed_version_restored = $BaselineVersion
-            authoritative_database_unchanged = $true
+            candidate_database_mutation_sha256 = $Injection.watcher_evidence.database_mutated_sha256
+            restored_database_receipt = $RollbackReceipt
+            authoritative_database_restored_from_exact_snapshot = $true
+            database_schema_version_restored = [string]$Health.schema_version
+            pre_upgrade_rows_restored = @($SeededRecord.id, $Record.id)
             preserved_missionary_id = $Record.id
             health = $Health
             firewall_rule = $Firewall
@@ -2264,6 +2757,7 @@ try {
             -ExpectedSourceDatabaseSha256 ([string]$script:ValidationContext["FailureHashes"]["authoritative_database"]["sha256"])
         $null = Assert-PreservedFiles -ExpectedHashes $script:ValidationContext.PreservedHashes
         $PostUpgradeHashes = Get-PersistenceHashMap -DocumentPath $script:ValidationContext.DocumentPath
+        $DataAcl = Assert-ServerDataAclPolicy
         $UpgradedTree = Get-InstallTreeInventory
         $script:ValidationContext.PreservedHashes = $PostUpgradeHashes
         $script:ValidationContext.UpgradedInstallTree = $UpgradedTree
@@ -2274,6 +2768,7 @@ try {
             preserved_missionary_id = $Record.id
             document_preserved = $true
             tls_configuration_and_credentials_preserved = $true
+            server_data_acl = $DataAcl
             verified_upgrade_backup = $UpgradeBackup
             upgraded_tree_fingerprint = $UpgradedTree.fingerprint_sha256
         }
@@ -2299,6 +2794,7 @@ try {
             -Headers $script:ValidationContext.ApiHeaders `
             -MissionaryCode $script:ValidationContext.UpgradeMissionaryCode `
             -PassportNumber $script:ValidationContext.UpgradePassportNumber
+        $DataAcl = Assert-ServerDataAclPolicy
         [pscustomobject]@{
             expected_failure_exit_code = $Result.ExitCode
             installed_version_remained = $Health.app_version
@@ -2306,6 +2802,7 @@ try {
             tree_fingerprint = $Tree.fingerprint_sha256
             preserved_missionary_id = $Record.id
             firewall_rule = $Firewall
+            server_data_acl = $DataAcl
         }
     }
 
@@ -2318,6 +2815,7 @@ try {
         }
         Assert-ServerUninstalled
         $Preserved = Assert-PreservedFiles -ExpectedHashes $script:ValidationContext.PreservedHashes
+        $DataAcl = Assert-ServerDataAclPolicy
         [pscustomobject]@{
             service_removed = $true
             binaries_removed = $true
@@ -2325,6 +2823,7 @@ try {
             program_data_preserved = $true
             database_size = $Preserved.database_size
             backup_count = $Preserved.preserved_backup_count
+            server_data_acl = $DataAcl
         }
     }
 
@@ -2345,12 +2844,14 @@ try {
             -MissionaryCode $script:ValidationContext.UpgradeMissionaryCode `
             -PassportNumber $script:ValidationContext.UpgradePassportNumber
         $null = Assert-PreservedFiles -ExpectedHashes $script:ValidationContext.PreservedHashes
+        $DataAcl = Assert-ServerDataAclPolicy
         [pscustomobject]@{
             health = $Health
             firewall_rule = $Firewall
             preserved_missionary_id = $Record.id
             original_device_credential_still_valid = $true
             document_still_present = $true
+            server_data_acl = $DataAcl
         }
     }
 
@@ -2363,6 +2864,7 @@ try {
         }
         Assert-ServerUninstalled
         $Preserved = Assert-PreservedFiles -ExpectedHashes $script:ValidationContext.PreservedHashes
+        $DataAcl = Assert-ServerDataAclPolicy
         [pscustomobject]@{
             service_removed = $true
             binaries_removed = $true
@@ -2372,6 +2874,7 @@ try {
             database_size = $Preserved.database_size
             backup_count = $Preserved.preserved_backup_count
             document = $script:ValidationContext.DocumentPath
+            server_data_acl = $DataAcl
         }
     }
 

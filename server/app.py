@@ -48,6 +48,7 @@ def _compatibility_payload():
 class PairingRequest(BaseModel):
     code: str = Field(min_length=6, max_length=6)
     device_name: str = Field(min_length=1, max_length=100)
+    deferred_confirmation: bool = False
 
 
 class MissionaryCreateRequest(BaseModel):
@@ -234,6 +235,30 @@ def create_app(device_store=None, pairing_store=None, manage_lifecycle=True):
             )
         return device
 
+    def pairing_confirmation_device(
+        x_device_id: str = Header(default=""),
+        x_device_credential: str = Header(default=""),
+    ):
+        device = devices.authenticate(
+            x_device_id,
+            x_device_credential,
+            allow_pending=True,
+        )
+        if not device:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid or expired pending device credentials",
+            )
+        return device
+
+    def pending_pairing_device(device=Depends(pairing_confirmation_device)):
+        if not device.get("pending_confirmation"):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="This device registration is already active",
+            )
+        return device
+
     @app.get("/health")
     def health():
         database_ok = False
@@ -253,12 +278,44 @@ def create_app(device_store=None, pairing_store=None, manage_lifecycle=True):
 
     @app.post("/pair", status_code=status.HTTP_201_CREATED)
     def pair(request: PairingRequest):
-        if not pairing.consume(request.code):
+        claimed, registered = pairing.consume_and_execute(
+            request.code,
+            lambda: devices.register(
+                request.device_name,
+                pending_confirmation=request.deferred_confirmation,
+            ),
+            rollback=lambda result: devices.remove(result["device_id"]),
+        )
+        if not claimed:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid or expired pairing code",
             )
-        return devices.register(request.device_name)
+        return registered
+
+    @app.post("/pair/confirm")
+    def confirm_pairing(device=Depends(pairing_confirmation_device)):
+        if device.get("pending_confirmation") and not devices.confirm(
+            device["device_id"]
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="The pending device registration expired",
+            )
+        return {"device_id": device["device_id"], "confirmed": True}
+
+    @app.delete("/pair/pending")
+    def cancel_pairing(device=Depends(pending_pairing_device)):
+        removed = devices.remove_pending(device["device_id"])
+        if not removed:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="The device registration is no longer pending",
+            )
+        return {
+            "device_id": device["device_id"],
+            "removed": True,
+        }
 
     @app.get("/v1/session")
     def session(device=Depends(authenticated_device)):

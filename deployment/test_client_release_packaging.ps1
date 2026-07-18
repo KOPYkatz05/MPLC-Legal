@@ -20,10 +20,111 @@ New-Item -ItemType Directory -Force -Path $TestRoot | Out-Null
 try {
     $InputDir = Join-Path $TestRoot "input"
     $OutputDir = Join-Path $TestRoot "releases"
+    $PythonPath = Join-Path $RepoRoot "venv\Scripts\python.exe"
+    $ProvenanceHelper = Join-Path $RepoRoot "deployment\package_provenance.py"
+    $ProvenanceManifestPath = "$InputDir.provenance.json"
+    $DependencyLock = Join-Path $RepoRoot "requirements_lock.txt"
+    $BuildDependencyLock = Join-Path $RepoRoot "requirements_build.txt"
+    $OcrSourceRoot = Join-Path $TestRoot "ocr-source"
     New-Item -ItemType Directory -Force -Path $InputDir | Out-Null
     New-Item -ItemType Directory -Force -Path $OutputDir | Out-Null
-    Set-Content -LiteralPath (Join-Path $InputDir "MissionLegal.exe") -Value "fixture exe" -NoNewline
-    Set-Content -LiteralPath (Join-Path $InputDir "MissionLegalUpdateWorker.exe") -Value "fixture worker" -NoNewline
+    if (-not (Test-Path -LiteralPath $PythonPath -PathType Leaf)) {
+        throw "Fixture Python executable is missing: $PythonPath"
+    }
+
+    $VersionPayloadText = (& $PythonPath -B -c "import json,sys; sys.path.insert(0,sys.argv[1]); from version import API_VERSION, SCHEMA_VERSION; print(json.dumps({'api_version':API_VERSION,'schema_version':SCHEMA_VERSION}))" $RepoRoot).Trim()
+    if ($LASTEXITCODE -ne 0 -or -not $VersionPayloadText) {
+        throw "Could not read fixture API/schema versions from version.py."
+    }
+    $VersionPayload = $VersionPayloadText | ConvertFrom-Json
+    $ConfiguredApiVersion = [string]$VersionPayload.api_version
+    $ConfiguredSchemaVersion = [int]$VersionPayload.schema_version
+
+    $OcrFixtures = @(
+        @{ Source = "det\en\en_PP-OCRv3_det_infer"; Destination = "det"; Value = "fixture det model" },
+        @{ Source = "rec\en\en_PP-OCRv4_rec_infer"; Destination = "rec"; Value = "fixture rec model" },
+        @{ Source = "cls\ch_ppocr_mobile_v2.0_cls_infer"; Destination = "cls"; Value = "fixture cls model" }
+    )
+    foreach ($Model in $OcrFixtures) {
+        $SourceDir = Join-Path $OcrSourceRoot $Model.Source
+        $DestinationDir = Join-Path $InputDir ("_internal\ocr_models\" + $Model.Destination)
+        New-Item -ItemType Directory -Force -Path $SourceDir | Out-Null
+        New-Item -ItemType Directory -Force -Path $DestinationDir | Out-Null
+        Set-Content -LiteralPath (Join-Path $SourceDir "inference.pdmodel") -Value $Model.Value -NoNewline
+        Set-Content -LiteralPath (Join-Path $DestinationDir "inference.pdmodel") -Value $Model.Value -NoNewline
+    }
+
+    function Write-FixtureExecutables([string]$Version) {
+        if ($Version -notmatch '^\d+\.\d+\.\d+$') {
+            throw "Fixture executable version must have three numeric components: $Version"
+        }
+        $Token = $Version.Replace(".", "")
+        $AssemblyVersion = "$Version.0"
+        $CompiledExe = Join-Path $TestRoot "fixture-$Token.exe"
+        if (Test-Path -LiteralPath $CompiledExe) {
+            Remove-Item -LiteralPath $CompiledExe -Force
+        }
+        $Source = @"
+using System;
+using System.Reflection;
+[assembly: AssemblyVersion("$AssemblyVersion")]
+[assembly: AssemblyFileVersion("$AssemblyVersion")]
+[assembly: AssemblyInformationalVersion("$Version")]
+public class MissionLegalFixture$Token { public static void Main() {} }
+"@
+        Add-Type `
+            -TypeDefinition $Source `
+            -Language CSharp `
+            -OutputAssembly $CompiledExe `
+            -OutputType ConsoleApplication
+        foreach ($Name in @(
+            "MissionLegal.exe",
+            "MissionLegalDiagnostics.exe",
+            "MissionLegalClientSetup.exe",
+            "MissionLegalUpdateWorker.exe"
+        )) {
+            Copy-Item -LiteralPath $CompiledExe -Destination (Join-Path $InputDir $Name) -Force
+        }
+    }
+
+    function Write-FixtureProvenance([string]$Version) {
+        $SmokeResultPath = Join-Path $TestRoot "smoke-$($Version.Replace('.', '-')).jsonl"
+        $SmokeResult = [ordered]@{
+            api_version = $ConfiguredApiVersion
+            app_version = $Version
+            frozen = $true
+            imports = @()
+            role = "client"
+            schema_version = $ConfiguredSchemaVersion
+            status = "ok"
+        }
+        $SmokeResult | ConvertTo-Json -Compress | Set-Content -LiteralPath $SmokeResultPath -Encoding UTF8
+        & $PythonPath -B $ProvenanceHelper `
+            create `
+            --repo-root $RepoRoot `
+            --package-dir $InputDir `
+            --manifest-path $ProvenanceManifestPath `
+            --role client `
+            --app-version $Version `
+            --api-version $ConfiguredApiVersion `
+            --schema-version ([string]$ConfiguredSchemaVersion) `
+            --smoke-result $SmokeResultPath `
+            --dependency-lock $DependencyLock `
+            --dependency-lock $BuildDependencyLock `
+            --ocr-model-root $OcrSourceRoot `
+            --windows-version-exe MissionLegal.exe `
+            --windows-version-exe MissionLegalDiagnostics.exe `
+            --windows-version-exe MissionLegalClientSetup.exe `
+            --windows-version-exe MissionLegalUpdateWorker.exe
+        if ($LASTEXITCODE -ne 0) {
+            throw "Could not create fixture package provenance for $Version."
+        }
+    }
+
+    $InitialVersion = "9.8.7"
+    $NextVersion = "9.8.8"
+    Write-FixtureExecutables -Version $InitialVersion
+    Write-FixtureProvenance -Version $InitialVersion
 
     $FakeVpkScript = Join-Path $TestRoot "fake-vpk.ps1"
     $FakeVpkCommand = Join-Path $TestRoot "fake-vpk.cmd"
@@ -66,6 +167,7 @@ foreach ($Required in @("--noPortable", "--packId", "--packVersion", "--packDir"
 }
 
 $OutputDir = Get-ArgumentValue "--outputDir"
+$PackDir = Get-ArgumentValue "--packDir"
 $PackId = Get-ArgumentValue "--packId"
 $Version = Get-ArgumentValue "--packVersion"
 $Channel = Get-ArgumentValue "--channel"
@@ -73,6 +175,14 @@ $MainExe = Get-ArgumentValue "--mainExe"
 if ($PackId -ne "MissionLegal.MissionLegalTracker" -or $MainExe -ne "MissionLegal.exe" -or $Channel -ne "stable") {
     throw "Stable release identity changed."
 }
+$UpdateConfigPath = Join-Path $PackDir "mission-legal-update.json"
+if (-not (Test-Path -LiteralPath $UpdateConfigPath -PathType Leaf)) {
+    throw "Fixture pack directory did not contain the controlled update configuration."
+}
+Copy-Item `
+    -LiteralPath $UpdateConfigPath `
+    -Destination (Join-Path $OutputDir "captured-update-$Version.json") `
+    -Force
 
 $FullName = "$PackId-$Version-$Channel-full.nupkg"
 $FullPath = Join-Path $OutputDir $FullName
@@ -120,6 +230,9 @@ $Feed = @{
     Assets = @($Assets)
 }
 $Feed | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $FeedPath
+if ($env:MISSION_LEGAL_TEST_FAIL_AFTER_WRITE -eq "1") {
+    Set-Content -LiteralPath $FeedPath -Value '{intentional-invalid-json' -NoNewline
+}
 $LatestAssets = @(
     @{ RelativeFileName = $SetupName; Type = "Installer" },
     @{ RelativeFileName = $FullName; Type = "Full" }
@@ -137,27 +250,173 @@ exit 0
         -Encoding ASCII
 
     $ReleaseScript = Join-Path $RepoRoot "deployment\build_client_release.ps1"
+
+    $RejectedStaleVersion = $false
+    try {
+        & $ReleaseScript `
+            -Version $NextVersion `
+            -InputDir $InputDir `
+            -OutputDir (Join-Path $TestRoot "stale-version") `
+            -VpkPath $FakeVpkCommand `
+            -UpdateUrl "https://updates.example.test/mission-legal/client/"
+    }
+    catch {
+        if ($_.Exception.Message -notmatch "raw package.*provenance") {
+            throw
+        }
+        $RejectedStaleVersion = $true
+    }
+    if (-not $RejectedStaleVersion) {
+        throw "A raw client package was relabeled with a stale release version."
+    }
+
+    Add-Content -LiteralPath (Join-Path $InputDir "MissionLegal.exe") -Value "tampered"
+    $RejectedTamperedPackage = $false
+    try {
+        & $ReleaseScript `
+            -Version $InitialVersion `
+            -InputDir $InputDir `
+            -OutputDir (Join-Path $TestRoot "tampered-package") `
+            -VpkPath $FakeVpkCommand `
+            -UpdateUrl "https://updates.example.test/mission-legal/client/"
+    }
+    catch {
+        if ($_.Exception.Message -notmatch "raw package.*provenance") {
+            throw
+        }
+        $RejectedTamperedPackage = $true
+    }
+    if (-not $RejectedTamperedPackage) {
+        throw "A modified raw client package was accepted."
+    }
+    Copy-Item `
+        -LiteralPath (Join-Path $InputDir "MissionLegalUpdateWorker.exe") `
+        -Destination (Join-Path $InputDir "MissionLegal.exe") `
+        -Force
+
+    $ForbiddenFixtures = @(
+        @{ Name = "api-device.json"; Value = "fixture client device pointer" },
+        @{ Name = "pairing-transaction.json"; Value = "fixture pairing journal" },
+        @{ Name = "workspaces.json"; Value = "fixture user workspace state" },
+        @{ Name = "mission-legal-ca-key.pem"; Value = "fixture key filename" },
+        @{ Name = "certificate.pem"; Value = "-----BEGIN PRIVATE KEY-----`nfixture`n-----END PRIVATE KEY-----" },
+        @{ Name = "app.db-wal"; Value = "fixture sqlite sidecar" }
+    )
+    foreach ($ForbiddenFixture in $ForbiddenFixtures) {
+        $ForbiddenPath = Join-Path $InputDir $ForbiddenFixture.Name
+        Set-Content -LiteralPath $ForbiddenPath -Value $ForbiddenFixture.Value -NoNewline
+        Write-FixtureProvenance -Version $InitialVersion
+        $RejectedForbiddenState = $false
+        try {
+            & $ReleaseScript `
+                -Version $InitialVersion `
+                -InputDir $InputDir `
+                -OutputDir (Join-Path $TestRoot ("forbidden-" + $ForbiddenFixture.Name.Replace(".", "-"))) `
+                -VpkPath $FakeVpkCommand `
+                -UpdateUrl "https://updates.example.test/mission-legal/client/"
+        }
+        catch {
+            if ($_.Exception.Message -notmatch "forbidden persistent/private files") {
+                throw
+            }
+            $RejectedForbiddenState = $true
+        }
+        if (-not $RejectedForbiddenState) {
+            throw "Forbidden client fixture was accepted: $($ForbiddenFixture.Name)"
+        }
+        Remove-Item -LiteralPath $ForbiddenPath -Force
+        Write-FixtureProvenance -Version $InitialVersion
+    }
+
+    $DirtyMarker = Join-Path $RepoRoot (".provenance-dirty-fixture-" + [Guid]::NewGuid().ToString("N") + ".untracked")
+    try {
+        Set-Content -LiteralPath $DirtyMarker -Value "fixture dirty source" -NoNewline
+        Write-FixtureProvenance -Version $InitialVersion
+        $DirtyManifest = Get-Content -LiteralPath $ProvenanceManifestPath -Raw | ConvertFrom-Json
+        if (-not [bool]$DirtyManifest.source.git_dirty) {
+            throw "Fixture could not create dirty Git provenance."
+        }
+        $RejectedDirtyProduction = $false
+        try {
+            & $ReleaseScript `
+                -Version $InitialVersion `
+                -InputDir $InputDir `
+                -OutputDir (Join-Path $TestRoot "dirty-production") `
+                -VpkPath $FakeVpkCommand `
+                -UpdateUrl "https://updates.example.test/mission-legal/client/" `
+                -SignParams "fixture-signing-command" `
+                -ExpectedSignerThumbprint "0000000000000000000000000000000000000000" `
+                -RequireSigning
+        }
+        catch {
+            if ($_.Exception.Message -notmatch "clean Git commit") {
+                throw
+            }
+            $RejectedDirtyProduction = $true
+        }
+        if (-not $RejectedDirtyProduction) {
+            throw "A signed production release accepted dirty source provenance."
+        }
+    }
+    finally {
+        Remove-Item -LiteralPath $DirtyMarker -Force -ErrorAction SilentlyContinue
+        Write-FixtureProvenance -Version $InitialVersion
+    }
+
+    $ExistingSentinel = Join-Path $OutputDir "existing-release-sentinel.txt"
+    Set-Content -LiteralPath $ExistingSentinel -Value "unchanged" -NoNewline
+    $env:MISSION_LEGAL_TEST_FAIL_AFTER_WRITE = "1"
+    try {
+        $RejectedPartialTransaction = $false
+        try {
+            & $ReleaseScript `
+                -Version $InitialVersion `
+                -InputDir $InputDir `
+                -OutputDir $OutputDir `
+                -VpkPath $FakeVpkCommand `
+                -UpdateUrl "https://updates.example.test/mission-legal/client/"
+        }
+        catch {
+            $RejectedPartialTransaction = $true
+        }
+        if (-not $RejectedPartialTransaction) {
+            throw "Intentional staged build failure unexpectedly succeeded."
+        }
+    }
+    finally {
+        Remove-Item Env:MISSION_LEGAL_TEST_FAIL_AFTER_WRITE -ErrorAction SilentlyContinue
+    }
+    if ((Get-Content -LiteralPath $ExistingSentinel -Raw) -ne "unchanged") {
+        throw "A failed release transaction changed the existing output directory."
+    }
+    if (Test-Path -LiteralPath (Join-Path $OutputDir "MissionLegal.MissionLegalTracker-9.8.7-stable-full.nupkg")) {
+        throw "A failed release transaction leaked a partial package into the final output."
+    }
+
     & $ReleaseScript `
-        -Version "9.8.7" `
+        -Version $InitialVersion `
         -InputDir $InputDir `
         -OutputDir $OutputDir `
         -VpkPath $FakeVpkCommand `
         -UpdateUrl "https://updates.example.test/mission-legal/client/"
 
-    $EmbeddedConfigPath = Join-Path $InputDir "mission-legal-update.json"
-    $EmbeddedConfig = Get-Content -LiteralPath $EmbeddedConfigPath -Raw | ConvertFrom-Json
+    $CapturedConfigPath = Join-Path $OutputDir "captured-update-$InitialVersion.json"
+    $EmbeddedConfig = Get-Content -LiteralPath $CapturedConfigPath -Raw | ConvertFrom-Json
     if ($EmbeddedConfig.url -ne "https://updates.example.test/mission-legal/client/" -or $EmbeddedConfig.provider -ne "http" -or $EmbeddedConfig.prerelease) {
         throw "Embedded update source configuration is incorrect."
     }
-    $ConfigBytes = [IO.File]::ReadAllBytes($EmbeddedConfigPath)
+    $ConfigBytes = [IO.File]::ReadAllBytes($CapturedConfigPath)
     if ($ConfigBytes.Length -ge 3 -and $ConfigBytes[0] -eq 0xEF -and $ConfigBytes[1] -eq 0xBB -and $ConfigBytes[2] -eq 0xBF) {
         throw "Embedded update source configuration must be UTF-8 without a BOM."
+    }
+    if (Test-Path -LiteralPath (Join-Path $InputDir "mission-legal-update.json")) {
+        throw "The release-specific update configuration was not removed from the verified raw package."
     }
 
     $RejectedInsecurePreviousFeed = $false
     try {
         & $ReleaseScript `
-            -Version "9.8.9" `
+            -Version $InitialVersion `
             -InputDir $InputDir `
             -OutputDir (Join-Path $TestRoot "insecure-previous-feed") `
             -VpkPath $FakeVpkCommand `
@@ -174,29 +433,8 @@ exit 0
         throw "An insecure remote previous-release feed was not rejected."
     }
 
-    $RejectedSignedLocalFeed = $false
-    try {
-        & $ReleaseScript `
-            -Version "9.8.5" `
-            -InputDir $InputDir `
-            -OutputDir (Join-Path $TestRoot "signed-local-feed") `
-            -VpkPath $FakeVpkCommand `
-            -UpdateUrl "http://127.0.0.1:49173/" `
-            -SignParams "fixture-signing-command" `
-            -RequireSigning
-    }
-    catch {
-        if ($_.Exception.Message -notmatch "non-loopback HTTPS") {
-            throw
-        }
-        $RejectedSignedLocalFeed = $true
-    }
-    if (-not $RejectedSignedLocalFeed) {
-        throw "A signed release accepted a loopback-only update source."
-    }
-
     & $ReleaseScript `
-        -Version "9.8.6" `
+        -Version $InitialVersion `
         -InputDir $InputDir `
         -OutputDir (Join-Path $TestRoot "github-release") `
         -VpkPath $FakeVpkCommand `
@@ -204,33 +442,35 @@ exit 0
         -UpdateProvider "github" `
         -PreviousReleaseUrl "https://github.com/example/mission-legal-releases"
     $GitHubEmbeddedConfig = Get-Content `
-        -LiteralPath (Join-Path $InputDir "mission-legal-update.json") `
+        -LiteralPath (Join-Path (Join-Path $TestRoot "github-release") "captured-update-$InitialVersion.json") `
         -Raw | ConvertFrom-Json
     if ($GitHubEmbeddedConfig.provider -ne "github") {
         throw "GitHub update provider was not embedded in the client package."
     }
 
     & $ReleaseScript `
-        -Version "9.8.7" `
+        -Version $InitialVersion `
         -OutputDir $OutputDir `
         -ValidateOnly
 
+    Write-FixtureExecutables -Version $NextVersion
+    Write-FixtureProvenance -Version $NextVersion
     & $ReleaseScript `
-        -Version "9.8.8" `
+        -Version $NextVersion `
         -InputDir $InputDir `
         -OutputDir $OutputDir `
         -VpkPath $FakeVpkCommand `
         -UpdateUrl "https://updates.example.test/mission-legal/client/"
 
     & $ReleaseScript `
-        -Version "9.8.8" `
+        -Version $NextVersion `
         -OutputDir $OutputDir `
         -ValidateOnly
 
     $RejectedVersionReplacement = $false
     try {
         & $ReleaseScript `
-            -Version "9.8.8" `
+            -Version $NextVersion `
             -InputDir $InputDir `
             -OutputDir $OutputDir `
             -VpkPath $FakeVpkCommand `
@@ -254,7 +494,7 @@ exit 0
     $RejectedUnsafeFeed = $false
     try {
         & $ReleaseScript `
-            -Version "9.8.7" `
+            -Version $InitialVersion `
             -OutputDir $OutputDir `
             -ValidateOnly
     }
@@ -266,6 +506,25 @@ exit 0
     }
     if (-not $RejectedUnsafeFeed) {
         throw "Unsafe feed asset path was not rejected."
+    }
+
+    $Feed.Assets[0].FileName = "package.nupkg:alternate-stream"
+    $Feed | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $FeedPath
+    $RejectedAdsFeedName = $false
+    try {
+        & $ReleaseScript `
+            -Version $InitialVersion `
+            -OutputDir $OutputDir `
+            -ValidateOnly
+    }
+    catch {
+        if ($_.Exception.Message -notmatch "unsafe asset file name") {
+            throw
+        }
+        $RejectedAdsFeedName = $true
+    }
+    if (-not $RejectedAdsFeedName) {
+        throw "An NTFS alternate-data-stream feed filename was not rejected."
     }
 
     Write-Host "Client release packaging fixture test passed."

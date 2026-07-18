@@ -7,7 +7,7 @@ SPEC_DIR = Path(SPEC).resolve().parent
 REPO_ROOT = SPEC_DIR.parent
 sys.path.insert(0, str(SPEC_DIR))
 
-from pyinstaller_common import SERVER_HIDDEN_IMPORTS  # noqa: E402
+from pyinstaller_common import SERVER_HIDDEN_IMPORTS, windows_version_info  # noqa: E402
 
 
 hook_paths = [str(SPEC_DIR / "hooks")]
@@ -48,6 +48,11 @@ server_exe = EXE(
     strip=False,
     upx=False,
     console=True,
+    version=windows_version_info(
+        REPO_ROOT,
+        description="Mission Legal Server",
+        original_filename="MissionLegalServer.exe",
+    ),
 )
 setup_pyz = PYZ(setup_analysis.pure)
 setup_exe = EXE(
@@ -61,6 +66,11 @@ setup_exe = EXE(
     strip=False,
     upx=False,
     console=True,
+    version=windows_version_info(
+        REPO_ROOT,
+        description="Mission Legal Server Setup",
+        original_filename="MissionLegalServerSetup.exe",
+    ),
 )
 service_pyz = PYZ(service_analysis.pure)
 service_exe = EXE(
@@ -74,6 +84,11 @@ service_exe = EXE(
     strip=False,
     upx=False,
     console=True,
+    version=windows_version_info(
+        REPO_ROOT,
+        description="Mission Legal Windows Service",
+        original_filename="MissionLegalService.exe",
+    ),
 )
 
 bundle = COLLECT(
@@ -90,4 +105,3 @@ bundle = COLLECT(
     upx=False,
     name="MissionLegalServer",
 )
-

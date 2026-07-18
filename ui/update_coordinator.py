@@ -32,6 +32,45 @@ def required_update_version_problem(candidate_version, required_version):
     return ""
 
 
+def _download_update_blocking(service, parent, message):
+    """Run the isolated updater while a startup dialog owns the UI."""
+
+    progress = QProgressDialog(
+        message,
+        "",
+        0,
+        100,
+        parent,
+    )
+    progress.setWindowTitle("Mission Legal Update")
+    progress.setCancelButton(None)
+    progress.setWindowModality(Qt.ApplicationModal)
+    progress.setMinimumDuration(0)
+    progress.show()
+
+    result = {"prepared": None, "error": ""}
+    loop = QEventLoop()
+    worker = _UpdateWorkerProcess(service)
+
+    def finished(prepared):
+        result["prepared"] = prepared
+        loop.quit()
+
+    def failed(error):
+        result["error"] = error
+        loop.quit()
+
+    worker.progress.connect(progress.setValue)
+    worker.finished.connect(finished)
+    worker.failed.connect(failed)
+    if worker.start():
+        loop.exec()
+    else:
+        result["error"] = "The update worker could not be started."
+    progress.close()
+    return result
+
+
 def offer_required_client_update(
     detail,
     parent=None,
@@ -69,39 +108,11 @@ def offer_required_client_update(
     if prompt.clickedButton() is not download:
         return False
 
-    progress = QProgressDialog(
-        "Checking for the latest Mission Legal update...",
-        "",
-        0,
-        100,
+    result = _download_update_blocking(
+        service,
         parent,
+        "Checking for the latest Mission Legal update...",
     )
-    progress.setWindowTitle("Mission Legal Update")
-    progress.setCancelButton(None)
-    progress.setWindowModality(Qt.ApplicationModal)
-    progress.setMinimumDuration(0)
-    progress.show()
-
-    result = {"prepared": None, "error": ""}
-    loop = QEventLoop()
-    worker = _UpdateWorkerProcess(service)
-
-    def finished(prepared):
-        result["prepared"] = prepared
-        loop.quit()
-
-    def failed(error):
-        result["error"] = error
-        loop.quit()
-
-    worker.progress.connect(progress.setValue)
-    worker.finished.connect(finished)
-    worker.failed.connect(failed)
-    if worker.start():
-        loop.exec()
-    else:
-        result["error"] = "The update worker could not be started."
-    progress.close()
 
     if result["error"]:
         QMessageBox.critical(
@@ -141,6 +152,76 @@ def offer_required_client_update(
     ready.exec()
     if ready.clickedButton() is not restart:
         return False
+    try:
+        service.apply_prepared_update()
+    except Exception as exc:
+        QMessageBox.critical(
+            parent,
+            "Mission Legal Update Failed",
+            f"The downloaded update could not be installed.\n\n{exc}",
+        )
+        return False
+    return True
+
+
+def offer_optional_client_update(parent=None):
+    """Check for an optional release before the client has been paired."""
+
+    try:
+        service = ClientUpdateService()
+    except Exception as exc:
+        QMessageBox.warning(
+            parent,
+            "Mission Legal Updates",
+            f"The update configuration could not be loaded.\n\n{exc}",
+        )
+        return False
+
+    if not service.enabled:
+        QMessageBox.information(
+            parent,
+            "Mission Legal Updates",
+            "Updates are not configured for this installation.",
+        )
+        return False
+
+    result = _download_update_blocking(
+        service,
+        parent,
+        "Checking for Mission Legal updates...",
+    )
+    if result["error"]:
+        QMessageBox.warning(
+            parent,
+            "Mission Legal Update Check Failed",
+            f"The update check could not be completed.\n\n{result['error']}",
+        )
+        return False
+
+    prepared = result["prepared"]
+    if prepared is None:
+        QMessageBox.information(
+            parent,
+            "Mission Legal Updates",
+            "Mission Legal is up to date. You can continue pairing this computer.",
+        )
+        return False
+
+    ready = QMessageBox(parent)
+    ready.setIcon(QMessageBox.Information)
+    ready.setWindowTitle("Mission Legal Update Available")
+    ready.setText(f"Mission Legal {prepared.version} is available.")
+    ready.setInformativeText(
+        "You can restart and update now, or continue pairing with this version."
+    )
+    if prepared.notes_markdown:
+        ready.setDetailedText(prepared.notes_markdown[:12000])
+    restart = ready.addButton("Restart and update", QMessageBox.AcceptRole)
+    ready.addButton("Continue pairing", QMessageBox.RejectRole)
+    ready.exec()
+    if ready.clickedButton() is not restart:
+        return False
+
     try:
         service.apply_prepared_update()
     except Exception as exc:

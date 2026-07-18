@@ -1,7 +1,5 @@
 import ipaddress
-import os
 import socket
-import subprocess
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -11,6 +9,7 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.x509.oid import NameOID
 
 from database.runtime import get_app_data_dir
+from server.data_acl import protect_private_key_files
 
 
 def tls_directory():
@@ -39,6 +38,7 @@ def _write_private_key(key, path):
             serialization.NoEncryption(),
         )
     )
+    path.chmod(0o600)
 
 
 def _server_addresses(hostname):
@@ -54,11 +54,21 @@ def _server_addresses(hostname):
     return list(dict.fromkeys(values))
 
 
-def generate_local_tls(overwrite=False):
+def generate_local_tls(overwrite=False, *, protect_keys=True):
+    """Generate local TLS material and optionally enforce the production DACL.
+
+    Private-key files always receive an owner-only portable mode. Installed
+    setup/service entry points retain ``protect_keys=True`` so Windows also
+    receives the verified SYSTEM/Administrators-only DACL.
+    """
     paths = default_tls_paths()
     root = paths["server_key"].parent
     root.mkdir(parents=True, exist_ok=True)
     if not overwrite and all(path.exists() for path in paths.values()):
+        if protect_keys:
+            _protect_keys(paths["ca_key"], paths["server_key"])
+        else:
+            _set_owner_only_file_mode(paths["ca_key"], paths["server_key"])
         return paths
 
     now = datetime.now(timezone.utc)
@@ -114,19 +124,17 @@ def generate_local_tls(overwrite=False):
     _write_private_key(server_key, paths["server_key"])
     paths["ca_cert"].write_bytes(ca_cert.public_bytes(serialization.Encoding.PEM))
     paths["server_cert"].write_bytes(server_cert.public_bytes(serialization.Encoding.PEM))
-    _protect_keys(paths["ca_key"], paths["server_key"])
+    if protect_keys:
+        _protect_keys(paths["ca_key"], paths["server_key"])
+    else:
+        _set_owner_only_file_mode(paths["ca_key"], paths["server_key"])
     return paths
 
 
-def _protect_keys(*paths):
-    if os.name != "nt":
-        for path in paths:
-            path.chmod(0o600)
-        return
-    username = os.environ.get("USERNAME")
+def _set_owner_only_file_mode(*paths):
     for path in paths:
-        grants = ["SYSTEM:F", "Administrators:F"]
-        if username:
-            grants.append(f"{username}:R")
-        command = ["icacls", str(path), "/inheritance:r", "/grant:r", *grants]
-        subprocess.run(command, capture_output=True, check=False)
+        path.chmod(0o600)
+
+
+def _protect_keys(*paths):
+    protect_private_key_files(*paths)

@@ -20,9 +20,16 @@ $Purpose = "mission-legal-server-installer-post-copy-failure"
 $ProgramFilesRoot = [Environment]::GetFolderPath([Environment+SpecialFolder]::ProgramFiles)
 $InstallDir = [IO.Path]::GetFullPath((Join-Path $ProgramFilesRoot "Mission Legal\Server"))
 $TargetPath = [IO.Path]::GetFullPath((Join-Path $InstallDir "MissionLegalService.exe"))
+$ProgramDataRoot = [Environment]::GetFolderPath([Environment+SpecialFolder]::CommonApplicationData)
+$DatabasePath = [IO.Path]::GetFullPath((Join-Path $ProgramDataRoot "MissionLegal\app.db"))
 $CandidateSha256 = $null
 $CandidateSize = 0
 $DamagedSha256 = $null
+$AuthorizedDatabaseSha256 = $null
+$DatabaseBeforeSha256 = $null
+$DatabaseMutatedSha256 = $null
+$DatabaseBeforeSize = 0
+$DatabaseMutatedSize = 0
 $InstallerPid = 0
 $AuthorizedBaselineSha256 = $null
 $AuthorizedUpgradeInstallerSha256 = $null
@@ -137,6 +144,11 @@ function Write-WatcherResult {
         candidate_sha256 = $CandidateSha256
         candidate_size = $CandidateSize
         damaged_sha256 = $DamagedSha256
+        database_path = $DatabasePath
+        database_before_sha256 = $DatabaseBeforeSha256
+        database_mutated_sha256 = $DatabaseMutatedSha256
+        database_before_size = $DatabaseBeforeSize
+        database_mutated_size = $DatabaseMutatedSize
         upgrade_installer_sha256 = $AuthorizedUpgradeInstallerSha256
         completed_at_utc = [DateTimeOffset]::UtcNow.ToString('o')
     }
@@ -169,6 +181,7 @@ try {
     }
     Assert-NoReparseAncestors $InstallDir
     Assert-NoReparseAncestors $TargetPath
+    Assert-NoReparseAncestors $DatabasePath
 
     $Authorization = Get-Content -LiteralPath $ResolvedAuthorization -Raw -Encoding UTF8 | ConvertFrom-Json
     if (
@@ -184,7 +197,8 @@ try {
     }
     foreach ($Check in @(
         @([string]$Authorization.install_dir, $InstallDir, "install directory"),
-        @([string]$Authorization.target_path, $TargetPath, "target path")
+        @([string]$Authorization.target_path, $TargetPath, "target path"),
+        @([string]$Authorization.database_path, $DatabasePath, "database path")
     )) {
         $Actual = [IO.Path]::GetFullPath($Check[0])
         if (-not $Actual.Equals($Check[1], [StringComparison]::OrdinalIgnoreCase)) {
@@ -195,6 +209,10 @@ try {
     $AuthorizedBaselineSha256 = $BaselineSha256
     if ($BaselineSha256 -notmatch '^[a-f0-9]{64}$') {
         throw "Failure-watcher authorization has an invalid baseline SHA-256."
+    }
+    $AuthorizedDatabaseSha256 = ([string]$Authorization.database_sha256).ToLowerInvariant()
+    if ($AuthorizedDatabaseSha256 -notmatch '^[a-f0-9]{64}$') {
+        throw "Failure-watcher authorization has an invalid database SHA-256."
     }
     $UpgradeInstaller = [IO.Path]::GetFullPath([string]$Authorization.upgrade_installer_path)
     $UpgradeInstallerSha256 = ([string]$Authorization.upgrade_installer_sha256).ToLowerInvariant()
@@ -211,6 +229,12 @@ try {
     }
     if ((Get-LowerFileHash $TargetPath) -cne $BaselineSha256) {
         throw "Installed service executable does not match the authorized baseline SHA-256."
+    }
+    if (-not (Test-Path -LiteralPath $DatabasePath -PathType Leaf)) {
+        throw "Authorized baseline database is missing: $DatabasePath"
+    }
+    if ((Get-LowerFileHash $DatabasePath) -cne $AuthorizedDatabaseSha256) {
+        throw "Authoritative database does not match the authorized pre-upgrade SHA-256."
     }
 
     [ordered]@{
@@ -289,6 +313,7 @@ try {
         }
 
         $Stream = $null
+        $DatabaseStream = $null
         try {
             $Stream = [IO.File]::Open(
                 $TargetPath,
@@ -305,6 +330,38 @@ try {
             }
             $CandidateSha256 = $ExclusiveHash
             $CandidateSize = $Stream.Length
+
+            # Mutate the authoritative database only while holding the distinct
+            # candidate executable exclusively. The candidate service therefore
+            # cannot start between this mutation and the forced health failure.
+            # The installer must restore the receipt-bound SQLite snapshot before
+            # it is allowed to restart the baseline service.
+            $DatabaseStream = [IO.File]::Open(
+                $DatabasePath,
+                [IO.FileMode]::Open,
+                [IO.FileAccess]::ReadWrite,
+                [IO.FileShare]::None
+            )
+            $DatabaseBeforeSha256 = Get-StreamSha256 $DatabaseStream
+            $DatabaseBeforeSize = $DatabaseStream.Length
+            if ($DatabaseBeforeSha256 -cne $AuthorizedDatabaseSha256) {
+                throw "Database changed before the authorized candidate mutation."
+            }
+            $Mutation = [Text.Encoding]::UTF8.GetBytes(
+                "MISSION-LEGAL-INSTALLER-CANDIDATE-MUTATION:$AuthorizationToken"
+            )
+            $DatabaseStream.Position = $DatabaseStream.Length
+            $DatabaseStream.Write($Mutation, 0, $Mutation.Length)
+            $DatabaseStream.Flush($true)
+            $DatabaseMutatedSize = $DatabaseStream.Length
+            $DatabaseMutatedSha256 = Get-StreamSha256 $DatabaseStream
+            if (
+                $DatabaseMutatedSize -le $DatabaseBeforeSize -or
+                $DatabaseMutatedSha256 -ceq $DatabaseBeforeSha256
+            ) {
+                throw "The authorized candidate database mutation was not observable."
+            }
+
             $Stream.SetLength(0)
             $Stream.Flush($true)
             if ($Stream.Length -ne 0) {
@@ -313,6 +370,10 @@ try {
             $DamagedSha256 = Get-StreamSha256 $Stream
         }
         catch {
+            if ($null -ne $DatabaseStream) {
+                $DatabaseStream.Dispose()
+                $DatabaseStream = $null
+            }
             if ($null -ne $Stream) {
                 $Stream.Dispose()
                 $Stream = $null
@@ -321,14 +382,22 @@ try {
             continue
         }
         finally {
+            if ($null -ne $DatabaseStream) {
+                $DatabaseStream.Dispose()
+            }
             if ($null -ne $Stream) {
                 $Stream.Dispose()
             }
         }
-        if ($CandidateSize -le 0 -or $DamagedSha256 -ceq $CandidateSha256) {
-            throw "The authorized candidate-binary damage was not observable."
+        if (
+            $CandidateSize -le 0 -or
+            $DamagedSha256 -ceq $CandidateSha256 -or
+            $DatabaseMutatedSize -le $DatabaseBeforeSize -or
+            $DatabaseMutatedSha256 -ceq $DatabaseBeforeSha256
+        ) {
+            throw "The authorized candidate binary/database mutation was not observable."
         }
-        Write-WatcherResult -Status "injected" -Message "Distinct post-copy candidate service binary was truncated."
+        Write-WatcherResult -Status "injected" -Message "Distinct post-copy candidate database was mutated and its service binary was truncated."
         exit 0
     }
     throw "Timed out waiting for a distinct post-copy candidate service executable."

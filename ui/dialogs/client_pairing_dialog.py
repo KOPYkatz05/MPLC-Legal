@@ -16,12 +16,13 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
+from services.api_client import ApiCompatibilityError
 from services.client_pairing_service import default_device_name, pair_client
 
 
 class _ClientPairingWorker(QObject):
     succeeded = Signal(object)
-    failed = Signal(str)
+    failed = Signal(object)
 
     def __init__(self, values):
         super().__init__()
@@ -32,7 +33,7 @@ class _ClientPairingWorker(QObject):
         try:
             result = pair_client(**self.values)
         except Exception as exc:
-            self.failed.emit(str(exc))
+            self.failed.emit(exc)
             return
         self.succeeded.emit(result)
 
@@ -45,8 +46,10 @@ class ClientPairingDialog(QDialog):
         self._thread = None
         self._worker = None
         self._pending_result = None
-        self._pending_error = ""
+        self._pending_error = None
+        self._checking_updates = False
         self.pairing_result = None
+        self.update_scheduled = False
 
         self.setWindowTitle("Connect Mission Legal to the Main Computer")
         self.setModal(True)
@@ -97,6 +100,9 @@ class ClientPairingDialog(QDialog):
         layout.addWidget(self.status_label)
 
         actions = QHBoxLayout()
+        self.check_updates_button = QPushButton("Check for updates")
+        self.check_updates_button.clicked.connect(self._check_for_updates)
+        actions.addWidget(self.check_updates_button)
         actions.addStretch(1)
         self.cancel_button = QPushButton("Exit")
         self.cancel_button.clicked.connect(self.reject)
@@ -109,7 +115,9 @@ class ClientPairingDialog(QDialog):
 
     @property
     def busy(self):
-        return self._thread is not None and self._thread.isRunning()
+        return self._checking_updates or (
+            self._thread is not None and self._thread.isRunning()
+        )
 
     @Slot()
     def _browse_certificate(self):
@@ -143,7 +151,7 @@ class ClientPairingDialog(QDialog):
 
         self._set_busy(True)
         self._pending_result = None
-        self._pending_error = ""
+        self._pending_error = None
         self.status_label.setText(
             "Checking the encrypted connection and pairing this computer..."
         )
@@ -168,9 +176,9 @@ class ClientPairingDialog(QDialog):
         if self._thread is not None:
             self._thread.quit()
 
-    @Slot(str)
+    @Slot(object)
     def _store_failure(self, detail):
-        self._pending_error = str(detail or "Pairing failed.")
+        self._pending_error = detail
         if self._thread is not None:
             self._thread.quit()
 
@@ -182,11 +190,20 @@ class ClientPairingDialog(QDialog):
         self._thread = None
         self._set_busy(False)
         if result is None:
-            self.status_label.setText("This computer was not paired. Check the details and retry.")
+            if (
+                isinstance(error, ApiCompatibilityError)
+                and error.client_update_required
+            ):
+                self._offer_required_update(error)
+                return
+            detail = str(error or "Pairing failed.")
+            self.status_label.setText(
+                "This computer was not paired. Check the details and retry."
+            )
             QMessageBox.warning(
                 self,
                 "Mission Legal Pairing Failed",
-                error or "The server did not complete pairing.",
+                detail,
             )
             return
 
@@ -199,6 +216,80 @@ class ClientPairingDialog(QDialog):
         )
         self.accept()
 
+    @Slot()
+    def _check_for_updates(self):
+        if self.busy:
+            return
+
+        from ui.update_coordinator import offer_optional_client_update
+
+        self._checking_updates = True
+        self._set_busy(True)
+        self.status_label.setText(
+            "Checking for an optional Mission Legal update..."
+        )
+        try:
+            scheduled = offer_optional_client_update(self)
+        except Exception as exc:
+            scheduled = False
+            QMessageBox.warning(
+                self,
+                "Mission Legal Update Check Failed",
+                f"The update check could not be completed.\n\n{exc}",
+            )
+        finally:
+            self._checking_updates = False
+            self._set_busy(False)
+
+        if scheduled:
+            self._finish_for_update()
+        else:
+            self.status_label.setText(
+                "No update was scheduled. You can continue pairing this computer."
+            )
+
+    def _offer_required_update(self, error):
+        from ui.update_coordinator import offer_required_client_update
+
+        self._checking_updates = True
+        self._set_busy(True)
+        self.status_label.setText(
+            "This client must be updated before it can pair with the main computer."
+        )
+        try:
+            scheduled = offer_required_client_update(
+                str(error),
+                self,
+                required_client_version=error.required_client_version,
+            )
+        except Exception as exc:
+            scheduled = False
+            QMessageBox.warning(
+                self,
+                "Mission Legal Update Failed",
+                f"The required update could not be started.\n\n{exc}",
+            )
+        finally:
+            self._checking_updates = False
+            self._set_busy(False)
+
+        if scheduled:
+            self._finish_for_update()
+        else:
+            self.status_label.setText(
+                "The update is still required. Update Mission Legal before retrying pairing."
+            )
+
+    def _finish_for_update(self):
+        self.update_scheduled = True
+        self.status_label.setText(
+            "Closing Mission Legal so the update can be installed..."
+        )
+        # This exits the first-run dialog. main.py observes update_scheduled and
+        # returns without starting the normal Qt event loop, allowing Velopack's
+        # external updater to replace the client and restart it cleanly.
+        self.accept()
+
     def _set_busy(self, busy):
         enabled = not bool(busy)
         for widget in (
@@ -207,6 +298,7 @@ class ClientPairingDialog(QDialog):
             self.code_edit,
             self.device_edit,
             self.browse_button,
+            self.check_updates_button,
             self.connect_button,
             self.cancel_button,
         ):

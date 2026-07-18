@@ -587,6 +587,7 @@ $ProbeProcess = $null
 $InstallAttempted = $false
 $PrimaryError = $null
 $CleanupErrors = New-Object 'System.Collections.Generic.List[string]'
+$UninstallerLeftInstallRoot = $false
 $ObservedStatuses = New-Object 'System.Collections.Generic.HashSet[string]'
 $FinalPayload = $null
 
@@ -838,6 +839,10 @@ finally {
             }
             Stop-ProcessesWithin -Root $InstallRoot
             if (Test-Path -LiteralPath $InstallRoot) {
+                $UninstallerLeftInstallRoot = $true
+                $CleanupErrors.Add(
+                    "Velopack reported uninstall completion but left the install directory: $InstallRoot"
+                )
                 if (-not (Test-PathWithin -Candidate $InstallRoot -Root $HarnessRoot)) {
                     throw "Cleanup target escaped the harness root: $InstallRoot"
                 }
@@ -893,6 +898,7 @@ $Summary = [ordered]@{
     observed_statuses = @($ObservedStatuses)
     result = $FinalPayload
     installer_sha256 = (Get-FileHash -LiteralPath $BaselineInstaller -Algorithm SHA256).Hash
+    uninstaller_left_install_root = $UninstallerLeftInstallRoot
     cleanup_errors = @($CleanupErrors)
 }
 $Summary | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $SummaryPath -Encoding UTF8
