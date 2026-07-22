@@ -37,8 +37,10 @@ data/Backups/
 *.sqlite-wal
 *.sqlite-shm
 test_output/
+test_upload_tmp/
 tmp*/
 run_tmp/
+passport_ocr.txt
 
 # Test source belongs in version control. Generated test output remains covered
 # by the cache/build/runtime rules above.

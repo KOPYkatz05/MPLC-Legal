@@ -2,7 +2,7 @@
 
 Use this guide when creating the Codex Cloud environment for this repository:
 
-`KOPYkatz05/MPLC-Legalization-Process-Tracker`
+`KOPYkatz05/MPLC-Legal`
 
 ## Recommended Environment
 
@@ -59,7 +59,7 @@ folders exist, or after adding cloud-accessible model setup.
 
 1. Open `https://chatgpt.com/codex/settings/environments`.
 2. Create a new environment.
-3. Select `KOPYkatz05/MPLC-Legalization-Process-Tracker`.
+3. Select `KOPYkatz05/MPLC-Legal`.
 4. Use the default branch, `main`.
 5. Set Python to `3.12`.
 6. Add `MISSIONS_ROOT=/tmp/mission-legal-data` as an environment variable.
