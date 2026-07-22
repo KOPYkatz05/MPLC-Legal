@@ -39,3 +39,15 @@ def test_client_package_contains_the_isolated_update_worker():
     assert "client_update_worker.py" in spec
     assert "MissionLegalUpdateWorker" in spec
     assert "MissionLegalUpdateWorker.exe" in build
+
+
+def test_raw_client_smoke_skips_only_the_velopack_installation_bootstrap():
+    build = (PROJECT_ROOT / "deployment" / "build_windows.ps1").read_text(
+        encoding="utf-8"
+    )
+
+    assert 'MISSION_LEGAL_SKIP_VELOPACK_BOOTSTRAP = "1"' in build
+    assert "PreviousVelopackBootstrapSkip" in build
+    assert "Remove-Item Env:MISSION_LEGAL_SKIP_VELOPACK_BOOTSTRAP" in build
+    assert "Wait-Process -Timeout 180" in build
+    assert ".WaitForExit(" not in build

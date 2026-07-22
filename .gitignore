@@ -29,6 +29,7 @@ ENV/
 
 # Runtime output and temporary files
 logs/
+data/Backups/
 *.log
 *.db
 *.sqlite

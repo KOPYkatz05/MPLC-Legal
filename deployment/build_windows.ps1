@@ -181,20 +181,47 @@ if ($Target -in @("All", "Client")) {
             Remove-Item -LiteralPath $SmokePath -Force
         }
     }
-    $ClientSmoke = Start-Process `
-        -FilePath $ClientDiagnosticsExe `
-        -ArgumentList "--package-smoke-test" `
-        -WorkingDirectory $ClientDir `
-        -WindowStyle Hidden `
-        -RedirectStandardOutput $ClientSmokeOutput `
-        -RedirectStandardError $ClientSmokeError `
-        -PassThru
-    if (-not $ClientSmoke.WaitForExit(180000)) {
-        Stop-Process -Id $ClientSmoke.Id -Force
-        throw "The packaged client smoke test timed out. See $env:MISSION_LEGAL_SMOKE_PROGRESS"
+    # The raw PyInstaller folder is intentionally not a Velopack installation.
+    # Skip only the Velopack lifecycle bootstrap while exercising the packaged
+    # application imports; installed-update smoke tests leave it enabled.
+    $PreviousVelopackBootstrapSkip = [Environment]::GetEnvironmentVariable(
+        "MISSION_LEGAL_SKIP_VELOPACK_BOOTSTRAP",
+        "Process"
+    )
+    $env:MISSION_LEGAL_SKIP_VELOPACK_BOOTSTRAP = "1"
+    try {
+        $ClientSmoke = Start-Process `
+            -FilePath $ClientDiagnosticsExe `
+            -ArgumentList "--package-smoke-test" `
+            -WorkingDirectory $ClientDir `
+            -WindowStyle Hidden `
+            -RedirectStandardOutput $ClientSmokeOutput `
+            -RedirectStandardError $ClientSmokeError `
+            -PassThru
+        try {
+            $ClientSmoke | Wait-Process -Timeout 180 -ErrorAction Stop
+        }
+        catch {
+            if (-not $ClientSmoke.HasExited) {
+                Stop-Process -Id $ClientSmoke.Id -Force
+                throw "The packaged client smoke test timed out. See $env:MISSION_LEGAL_SMOKE_PROGRESS"
+            }
+            throw
+        }
+        if ($null -eq $ClientSmoke.ExitCode) {
+            throw "The packaged client smoke test completed without a readable exit code."
+        }
+        if ($ClientSmoke.ExitCode -ne 0) {
+            throw "The packaged client smoke test failed. See $env:MISSION_LEGAL_SMOKE_PROGRESS"
+        }
     }
-    if ($ClientSmoke.ExitCode -ne 0) {
-        throw "The packaged client smoke test failed. See $env:MISSION_LEGAL_SMOKE_PROGRESS"
+    finally {
+        if ($null -eq $PreviousVelopackBootstrapSkip) {
+            Remove-Item Env:MISSION_LEGAL_SKIP_VELOPACK_BOOTSTRAP -ErrorAction SilentlyContinue
+        }
+        else {
+            $env:MISSION_LEGAL_SKIP_VELOPACK_BOOTSTRAP = $PreviousVelopackBootstrapSkip
+        }
     }
     & $ClientSetupExe --help | Out-Null
     if ($LASTEXITCODE -ne 0) {
@@ -254,9 +281,18 @@ if ($Target -in @("All", "Server")) {
         -RedirectStandardOutput $ServerSmokeOutput `
         -RedirectStandardError $ServerSmokeError `
         -PassThru
-    if (-not $ServerSmoke.WaitForExit(180000)) {
-        Stop-Process -Id $ServerSmoke.Id -Force
-        throw "The packaged server smoke test timed out. See $env:MISSION_LEGAL_SMOKE_PROGRESS"
+    try {
+        $ServerSmoke | Wait-Process -Timeout 180 -ErrorAction Stop
+    }
+    catch {
+        if (-not $ServerSmoke.HasExited) {
+            Stop-Process -Id $ServerSmoke.Id -Force
+            throw "The packaged server smoke test timed out. See $env:MISSION_LEGAL_SMOKE_PROGRESS"
+        }
+        throw
+    }
+    if ($null -eq $ServerSmoke.ExitCode) {
+        throw "The packaged server smoke test completed without a readable exit code."
     }
     if ($ServerSmoke.ExitCode -ne 0) {
         throw "The packaged server smoke test failed."
