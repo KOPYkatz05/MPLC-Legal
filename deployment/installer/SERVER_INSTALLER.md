@@ -81,8 +81,10 @@ reinstalls. Before any installed file is removed or replaced, setup then:
 6. atomically writes a unique installer-attempt receipt binding the source and
    target versions, authoritative database path, backup path, metadata path,
    attempt ID, sizes, and SHA-256 digests;
-7. captures the complete Program Files application tree and records a SHA-256
-   inventory for independent binary rollback;
+7. for an upgrade, captures the complete Program Files application tree and
+   records a SHA-256 inventory for independent binary rollback; for a verified
+   first install, requires no installer registration, service, or application
+   files and skips the unnecessary binary snapshot;
 8. replaces the private application runtime;
 9. replaces and verifies the sensitive ProgramData ACLs using well-known SIDs;
 10. installs or updates the service at its stable executable path;
@@ -121,7 +123,8 @@ until setup commits the successful upgrade.
 
 Any failed gate produces a nonzero setup result. Setup and uninstall logging are
 always enabled; the service and maintenance helpers also append logs under
-`%PROGRAMDATA%\MissionLegal\Logs`.
+`%PROGRAMDATA%\MissionLegal\Logs`. Binary rollback diagnostics are written to
+`installer-rollback.log`, including the exact hidden PowerShell error.
 
 Silent upgrades are supported by Inno Setup:
 
@@ -134,16 +137,32 @@ also verify the release-manifest SHA-256 before launching setup.
 
 ## First server configuration
 
-The installer deliberately does not write user-profile settings while elevated.
-On a fresh machine where `app.db` and `Configuration\server.json` are not both
-present, it installs the binaries and registered uninstaller but creates neither
-the service nor the managed firewall rule. It also leaves `app.db` and
-`server.json` absent. This prevents an automatic service start from creating an
-empty authoritative database before setup can migrate the real database.
+An interactive first install now includes a small guided setup:
 
-After the first install, open an elevated PowerShell window as the intended
-Windows account. Configure the mission-storage and backup locations with the
-packaged setup utility:
+1. choose **Create a fresh server** or **Migrate a verified database snapshot**;
+2. select the existing mission-document folder;
+3. select the OneDrive database-backup folder;
+4. for migration, select the `.db` snapshot.
+
+After the files are copied, the installer runs the packaged server-setup utility
+under the elevation already granted to Setup. It configures the protected
+ProgramData state, storage ACLs, Private-profile firewall rule, Windows service,
+startup, and health check. No Administrator PowerShell window or second command
+is required. The guided path always uses `--skip-main-client`, so it never writes
+desktop credentials or settings into the elevated administrator's profile, and
+it never passes `--replace-existing-database`.
+
+The migration source is integrity-checked and remains unchanged. If a populated
+authoritative database already exists, guided migration fails without replacing
+it. If setup fails after creating or migrating the database, the installer
+removes the candidate service, restores the receipted database or no-database
+state, and lets Inno Setup remove the new application files.
+
+Unattended `/SILENT` and `/VERYSILENT` first installs deliberately retain the
+old deferred behavior because there are no interactive path selections. They
+lay down the binaries and uninstaller but do not create the service, managed
+firewall rule, `app.db`, or `server.json`. Finish one of those installs with the
+packaged utility:
 
 ```powershell
 & "$env:ProgramFiles\Mission Legal\Server\MissionLegalServerSetup.exe" `
@@ -216,6 +235,11 @@ An explicitly supplied `--existing-database` is never ignored:
   schema, setup preserves a verified local snapshot and safely replaces it;
 - if the destination contains application data, setup refuses the operation
   without changing either database.
+
+For a normal first-server migration, select **Migrate a verified database
+snapshot** in the interactive installer. The manual command below is reserved
+for a deferred/silent install or for an explicitly reviewed replacement of
+already-populated authoritative data.
 
 Replacing a populated authoritative database requires deliberate authority:
 

@@ -107,7 +107,15 @@ var
   RollbackFailedClosed: Boolean;
   PriorInstallVersion: String;
   HasPriorRegisteredInstall: Boolean;
+  HasPriorRegistrationFootprint: Boolean;
+  HasPriorServiceRegistration: Boolean;
+  NeedsPriorBinarySnapshot: Boolean;
   ServerConfiguredBeforeInstall: Boolean;
+  PostCopyDatabaseMutationPossible: Boolean;
+  WizardSetupRequired: Boolean;
+  SetupModePage: TInputOptionWizardPage;
+  StoragePage: TInputDirWizardPage;
+  MigrationDatabasePage: TInputFileWizardPage;
 
 function ReadVersionNumber(const Value: String; var Index: Integer;
   var Number: Integer): Boolean;
@@ -269,6 +277,23 @@ begin
   RegQueryStringValue(HKLM64, RegistryPath, 'DisplayVersion', Result);
 end;
 
+function HasServerRegistrationFootprint: Boolean;
+var
+  RegistryPath: String;
+begin
+  RegistryPath := 'Software\Microsoft\Windows\CurrentVersion\Uninstall\' +
+    ServerAppId + '_is1';
+  Result :=
+    RegKeyExists(HKLM64, 'Software\MissionLegal\Server') or
+    RegKeyExists(HKLM64, RegistryPath);
+end;
+
+function HasServerServiceRegistration: Boolean;
+begin
+  Result := RegKeyExists(
+    HKLM64, 'SYSTEM\CurrentControlSet\Services\' + ServiceName);
+end;
+
 function AllowDevelopmentReinstall: Boolean;
 begin
   Result := False;
@@ -284,10 +309,20 @@ var
 begin
   Result := True;
   PriorInstallVersion := GetInstalledVersion;
-  HasPriorRegisteredInstall := PriorInstallVersion <> '';
-  if not HasPriorRegisteredInstall then
-    Exit;
-  if not CompareReleaseVersions('{#AppVersion}', PriorInstallVersion, Comparison) then
+  HasPriorRegistrationFootprint := HasServerRegistrationFootprint;
+  HasPriorServiceRegistration := HasServerServiceRegistration;
+  HasPriorRegisteredInstall :=
+    HasPriorRegistrationFootprint and (PriorInstallVersion <> '');
+  if HasPriorServiceRegistration and (not HasPriorRegistrationFootprint) then
+    ErrorMessage := 'A Mission Legal Server service exists without a registered ' +
+      'installer-owned application. Setup will not replace this partial or ' +
+      'manually registered installation.'
+  else if HasPriorRegistrationFootprint and (PriorInstallVersion = '') then
+    ErrorMessage := 'Mission Legal Server registration exists but its installed ' +
+      'version is missing. Setup cannot create a verified rollback state.'
+  else if not HasPriorRegisteredInstall then
+    Exit
+  else if not CompareReleaseVersions('{#AppVersion}', PriorInstallVersion, Comparison) then
     ErrorMessage := 'Setup cannot safely compare the installed Mission Legal Server ' +
       'version (' + PriorInstallVersion + ') with this package ({#AppVersion}).'
   else if Comparison < 0 then
@@ -322,7 +357,11 @@ var
   ResultCode: Integer;
 begin
   Log(Description + ': ' + FileName + ' ' + Parameters);
-  Result := Exec(FileName, Parameters, '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  { Capture stdout and stderr in the Inno Setup log. This is especially
+    important for hidden PowerShell and Python console helpers: a path,
+    integrity, ACL, TLS, or service error must not collapse into only "exit 1". }
+  Result := ExecAndLogOutput(
+    FileName, Parameters, '', SW_HIDE, ewWaitUntilTerminated, ResultCode, nil);
   if not Result then
   begin
     Log(Description + ' could not be started.');
@@ -356,7 +395,9 @@ begin
   Parameters := '-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File ' +
     QuoteArgument(ScriptPath) + ' -Action ' + QuoteArgument(Action) +
     ' -InstallDir ' + QuoteArgument(ExpandConstant('{app}')) +
-    ' -SnapshotDir ' + QuoteArgument(BinarySnapshotDir);
+    ' -SnapshotDir ' + QuoteArgument(BinarySnapshotDir) +
+    ' -LogFile ' + QuoteArgument(
+      ExpandConstant('{commonappdata}\MissionLegal\Logs\installer-rollback.log'));
   Result := RunProcess(PowerShellExe, Parameters, 'Binary rollback action ' + Action);
 end;
 
@@ -429,6 +470,202 @@ begin
     FileExists(ExpandConstant('{commonappdata}\MissionLegal\Configuration\server.json'));
 end;
 
+function DefaultOneDriveRoot: String;
+begin
+  Result := GetEnv('OneDriveCommercial');
+  if Result = '' then
+    Result := GetEnv('OneDrive');
+end;
+
+procedure InitializeWizard;
+var
+  OneDriveRoot: String;
+begin
+  ServerConfiguredBeforeInstall := IsServerConfigured;
+  WizardSetupRequired :=
+    (not ServerConfiguredBeforeInstall) and (not WizardSilent);
+
+  SetupModePage := CreateInputOptionPage(
+    wpWelcome,
+    'Choose the server setup',
+    'Will this computer start a new server or migrate an existing database?',
+    'Setup will configure the Windows service, private-network firewall rule, ' +
+      'server storage, and database automatically. It never replaces a populated ' +
+      'local database without explicit migration authority.',
+    True,
+    False);
+  SetupModePage.Add(
+    'Create a fresh server (keep any local server data already present)');
+  SetupModePage.Add('Migrate a verified database snapshot');
+  SetupModePage.SelectedValueIndex := 0;
+
+  StoragePage := CreateInputDirPage(
+    SetupModePage.ID,
+    'Choose server storage',
+    'Select the mission-document and mirrored database-backup folders.',
+    'The mission-document folder must already exist. The backup folder may be ' +
+      'created during setup. Both locations will grant the server service access.',
+    False,
+    '');
+  StoragePage.Add('Mission documents folder:');
+  StoragePage.Add('OneDrive database backup folder:');
+
+  OneDriveRoot := DefaultOneDriveRoot;
+  if OneDriveRoot <> '' then
+  begin
+    StoragePage.Values[0] :=
+      AddBackslash(OneDriveRoot) + 'Mission Legal Documents';
+    StoragePage.Values[1] :=
+      AddBackslash(OneDriveRoot) + 'Mission Legal Database Backups';
+  end
+  else
+  begin
+    StoragePage.Values[0] :=
+      ExpandConstant('{userdocs}\Mission Legal Documents');
+    StoragePage.Values[1] :=
+      ExpandConstant('{userdocs}\Mission Legal Database Backups');
+  end;
+
+  MigrationDatabasePage := CreateInputFilePage(
+    StoragePage.ID,
+    'Choose the database snapshot',
+    'Select the verified SQLite snapshot to migrate.',
+    'Setup integrity-checks the selected snapshot and preserves the source file. ' +
+      'A populated authoritative database is never replaced by this guided setup.');
+  MigrationDatabasePage.Add(
+    'Database snapshot:',
+    'SQLite database snapshots (*.db)|*.db|All files (*.*)|*.*',
+    '.db');
+end;
+
+function ShouldSkipPage(PageID: Integer): Boolean;
+begin
+  Result := False;
+  if (PageID = SetupModePage.ID) or (PageID = StoragePage.ID) then
+    Result := not WizardSetupRequired
+  else if PageID = MigrationDatabasePage.ID then
+    Result :=
+      (not WizardSetupRequired) or
+      (SetupModePage.SelectedValueIndex <> 1);
+end;
+
+function NormalizeSelectedDirectory(const Value: String): String;
+begin
+  Result := Trim(Value);
+  while (Length(Result) > 3) and
+    ((Result[Length(Result)] = '\') or
+      (Result[Length(Result)] = '/')) do
+    Delete(Result, Length(Result), 1);
+end;
+
+function IsDriveRoot(const Value: String): Boolean;
+begin
+  Result :=
+    (Length(Value) = 3) and
+    (Value[2] = ':') and
+    ((Value[3] = '\') or (Value[3] = '/'));
+end;
+
+function NextButtonClick(CurPageID: Integer): Boolean;
+begin
+  Result := True;
+  if (not WizardSetupRequired) or WizardSilent then
+    Exit;
+
+  if CurPageID = StoragePage.ID then
+  begin
+    StoragePage.Values[0] :=
+      NormalizeSelectedDirectory(StoragePage.Values[0]);
+    StoragePage.Values[1] :=
+      NormalizeSelectedDirectory(StoragePage.Values[1]);
+    if StoragePage.Values[0] = '' then
+    begin
+      MsgBox('Choose the folder containing the mission documents.',
+        mbError, MB_OK);
+      Result := False;
+      Exit;
+    end;
+    if IsDriveRoot(StoragePage.Values[0]) then
+    begin
+      MsgBox('Choose a mission documents folder inside the drive, not the ' +
+        'drive root itself.', mbError, MB_OK);
+      Result := False;
+      Exit;
+    end;
+    if not DirExists(StoragePage.Values[0]) then
+    begin
+      MsgBox('The mission documents folder does not exist. Create or select it ' +
+        'with Browse, then continue.' + #13#10#13#10 + StoragePage.Values[0],
+        mbError, MB_OK);
+      Result := False;
+      Exit;
+    end;
+    if StoragePage.Values[1] = '' then
+    begin
+      MsgBox('Choose the OneDrive database backup folder.',
+        mbError, MB_OK);
+      Result := False;
+      Exit;
+    end;
+    if IsDriveRoot(StoragePage.Values[1]) then
+    begin
+      MsgBox('Choose a database backup folder inside the drive, not the drive ' +
+        'root itself.', mbError, MB_OK);
+      Result := False;
+      Exit;
+    end;
+  end
+  else if (CurPageID = MigrationDatabasePage.ID) and
+    (SetupModePage.SelectedValueIndex = 1) then
+  begin
+    MigrationDatabasePage.Values[0] :=
+      Trim(MigrationDatabasePage.Values[0]);
+    if not FileExists(MigrationDatabasePage.Values[0]) then
+    begin
+      MsgBox('Choose an existing database snapshot to migrate.',
+        mbError, MB_OK);
+      Result := False;
+      Exit;
+    end;
+    if CompareText(
+      ExtractFileExt(MigrationDatabasePage.Values[0]), '.db') <> 0 then
+    begin
+      MsgBox('The migration snapshot must be a .db file.',
+        mbError, MB_OK);
+      Result := False;
+      Exit;
+    end;
+  end;
+end;
+
+function RunInitialServerConfiguration: Boolean;
+var
+  Parameters: String;
+  SetupExecutable: String;
+begin
+  SetupExecutable := ExpandConstant('{app}\MissionLegalServerSetup.exe');
+  Parameters :=
+    '--data-dir ' +
+      QuoteArgument(ExpandConstant('{commonappdata}\MissionLegal')) +
+    ' --mission-storage-root ' + QuoteArgument(StoragePage.Values[0]) +
+    ' --onedrive-backup-dir ' + QuoteArgument(StoragePage.Values[1]) +
+    ' --host ' + QuoteArgument('0.0.0.0') +
+    ' --port 8765 --skip-main-client';
+  if SetupModePage.SelectedValueIndex = 1 then
+    Parameters := Parameters + ' --existing-database ' +
+      QuoteArgument(MigrationDatabasePage.Values[0]);
+  Result := RunProcess(
+    SetupExecutable, Parameters, 'Initial server configuration');
+end;
+
+function InstalledPayloadIsRecognizable: Boolean;
+begin
+  Result :=
+    FileExists(ExpandConstant('{app}\MissionLegalServer.exe')) and
+    FileExists(ExpandConstant('{app}\MissionLegalServerSetup.exe')) and
+    FileExists(ExpandConstant('{app}\MissionLegalService.exe'));
+end;
+
 procedure RestorePriorVersionRegistry;
 var
   RegistryPath: String;
@@ -456,8 +693,17 @@ begin
     Result := False;
     Exit;
   end;
-  if BinaryRollbackRestored or (not BinarySnapshotCaptured) then
+  if BinaryRollbackRestored then
   begin
+    Result := True;
+    Exit;
+  end;
+  if (not BinarySnapshotCaptured) and
+    (not PostCopyDatabaseMutationPossible) then
+  begin
+    { Inno Setup will remove any partially copied first-install files. No
+      service or authoritative database mutation has begun, so there is no
+      installer-owned state for the custom rollback helper to restore. }
     Result := True;
     Exit;
   end;
@@ -498,7 +744,7 @@ begin
     Log('Verified authoritative database rollback completed before binary and ' +
       'service recovery.');
   end;
-  if not RunRollbackAction('Restore') then
+  if BinarySnapshotCaptured and (not RunRollbackAction('Restore')) then
   begin
     RollbackFailedClosed := True;
     Log('ERROR: The previous application binaries could not be restored. ' +
@@ -506,6 +752,9 @@ begin
     Result := False;
     Exit;
   end;
+  if not BinarySnapshotCaptured then
+    Log('No prior application binaries existed; Inno Setup will remove the ' +
+      'candidate first-install files.');
   BinaryRollbackRestored := True;
   RestorePriorVersionRegistry;
   { Re-run the registration action against the restored executable before any
@@ -604,6 +853,7 @@ begin
       '{commonappdata}\MissionLegal\Backups\Installer\installer-attempt-') +
       ExtractFileName(ExpandConstant('{tmp}')) + '.json';
   ServerConfiguredBeforeInstall := IsServerConfigured;
+  NeedsPriorBinarySnapshot := HasPriorRegistrationFootprint;
   try
     ExtractTemporaryFile('server_installer_actions.ps1');
     ExtractTemporaryFile('server_installer_rollback.ps1');
@@ -611,6 +861,24 @@ begin
   except
     Result := 'Setup could not extract its server maintenance tools. ' +
       'No application files were changed. Details: ' + GetExceptionMessage;
+    Exit;
+  end;
+
+  if NeedsPriorBinarySnapshot then
+  begin
+    if not InstalledPayloadIsRecognizable then
+    begin
+      Result := 'The registered Mission Legal Server application files are ' +
+        'incomplete. Setup cannot create a verified binary rollback copy. ' +
+        'No service or application files were changed.';
+      Exit;
+    end;
+  end
+  else if not RunRollbackAction('PrepareFresh') then
+  begin
+    Result := 'Setup found an unregistered application tree or a rollback ' +
+      'snapshot that is not safe to discard. No service or application files ' +
+      'were changed. Review ProgramData\MissionLegal\Logs\installer-rollback.log.';
     Exit;
   end;
 
@@ -635,13 +903,14 @@ begin
     Exit;
   end;
   DatabaseBackupCaptured := True;
-  if not RunRollbackAction('Capture') then
+  if NeedsPriorBinarySnapshot and (not RunRollbackAction('Capture')) then
   begin
     Result := 'Setup could not create and verify an independent rollback copy of ' +
-      'the installed application binaries. No application files were changed.';
+      'the installed application binaries. No application files were changed. ' +
+      'Review ProgramData\MissionLegal\Logs\installer-rollback.log.';
     Exit;
   end;
-  BinarySnapshotCaptured := True;
+  BinarySnapshotCaptured := NeedsPriorBinarySnapshot;
 end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
@@ -651,8 +920,46 @@ begin
   if CurStep = ssPostInstall then
   begin
     ServiceScript := ExpandConstant('{app}\InstallerSupport\server_installer_actions.ps1');
-    if ServerConfiguredBeforeInstall then
+    if WizardSetupRequired then
     begin
+      { The installed setup utility may create or migrate the authoritative
+        database before it registers and health-checks the service. From this
+        point, a failure must restore the receipted pre-install database state
+        even though a true first install has no binary rollback snapshot. }
+      PostCopyDatabaseMutationPossible := True;
+      if not RunInitialServerConfiguration then
+      begin
+        RestorePriorInstallation;
+        RaiseException(
+          'Mission Legal Server configuration did not complete. The prior ' +
+          'database state was restored when possible, and Setup will remove ' +
+          'the newly installed files. Review the Setup log and the logs under ' +
+          'ProgramData\MissionLegal\Logs.');
+      end;
+      { The packaged setup utility normally registers and verifies the service
+        itself. Keep the outer installer authoritative as well: a custom /DIR
+        path intentionally makes the utility treat itself like a raw package,
+        so finish registration here instead of accepting a false success. }
+      if (not HasServerServiceRegistration) and
+        (not RunServiceAction(ServiceScript, 'InstallOrUpdate', False)) then
+      begin
+        RestorePriorInstallation;
+        RaiseException(
+          'Server settings were written, but the Mission Legal Server service ' +
+          'could not be installed. The prior database state was restored when ' +
+          'possible.');
+      end;
+      if not RunServiceAction(ServiceScript, 'StartAndVerify', False) then
+      begin
+        RestorePriorInstallation;
+        RaiseException(
+          'The newly configured server did not pass service and health ' +
+          'verification. The prior database state was restored when possible.');
+      end;
+    end
+    else if ServerConfiguredBeforeInstall then
+    begin
+      PostCopyDatabaseMutationPossible := True;
       if not RunServiceAction(ServiceScript, 'InstallOrUpdate', False) then
       begin
         RestorePriorInstallation;
@@ -666,9 +973,10 @@ begin
           'The previous application binaries were restored when possible.');
       end;
     end;
-    if not ServerConfiguredBeforeInstall then
+    if (not WizardSetupRequired) and (not ServerConfiguredBeforeInstall) then
       Log('Server configuration and authoritative database are not both present. ' +
-        'Service registration and startup are deferred until server setup is complete.');
+        'Silent installation left service registration and startup deferred. ' +
+        'Run MissionLegalServerSetup.exe with explicit storage paths to finish.');
   end;
   if CurStep = ssDone then
   begin

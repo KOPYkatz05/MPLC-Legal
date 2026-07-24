@@ -7,16 +7,27 @@ import shutil
 import sqlite3
 import subprocess
 import sys
-import tempfile
 import unittest
 import uuid
-from contextlib import closing
+from contextlib import closing, contextmanager
 from pathlib import Path
 
 
 INSTALLER_DIR = Path(__file__).resolve().parent
 REPO_ROOT = INSTALLER_DIR.parents[1]
 TEST_TEMP_ROOT = REPO_ROOT / "run_tmp" / "server-installer-unittest"
+
+
+@contextmanager
+def _writable_test_directory():
+    """Avoid Python 3.12's restrictive Windows TemporaryDirectory ACL."""
+
+    path = TEST_TEMP_ROOT / f"rollback-{uuid.uuid4().hex}"
+    path.mkdir(parents=True)
+    try:
+        yield path
+    finally:
+        shutil.rmtree(path, ignore_errors=True)
 
 
 def _maintenance_module():
@@ -52,8 +63,7 @@ class ServerInstallerTests(unittest.TestCase):
 
     def test_maintenance_creates_integrity_checked_snapshot(self):
         maintenance = _maintenance_module()
-        with tempfile.TemporaryDirectory(dir=TEST_TEMP_ROOT) as temporary:
-            root = Path(temporary)
+        with _writable_test_directory() as root:
             database = root / "app.db"
             _create_database(database)
 
@@ -100,8 +110,7 @@ class ServerInstallerTests(unittest.TestCase):
 
     def test_maintenance_rejects_corrupt_database(self):
         maintenance = _maintenance_module()
-        with tempfile.TemporaryDirectory(dir=TEST_TEMP_ROOT) as temporary:
-            root = Path(temporary)
+        with _writable_test_directory() as root:
             database = root / "app.db"
             database.write_bytes(b"not a sqlite database")
 
@@ -117,8 +126,7 @@ class ServerInstallerTests(unittest.TestCase):
 
     def test_maintenance_restores_exact_receipted_snapshot_and_clears_sidecars(self):
         maintenance = _maintenance_module()
-        with tempfile.TemporaryDirectory(dir=TEST_TEMP_ROOT) as temporary:
-            root = Path(temporary)
+        with _writable_test_directory() as root:
             database = root / "Data" / "app.db"
             database.parent.mkdir()
             _create_database(database)
@@ -177,8 +185,7 @@ class ServerInstallerTests(unittest.TestCase):
 
     def test_maintenance_rejects_tampered_backup_before_touching_live_database(self):
         maintenance = _maintenance_module()
-        with tempfile.TemporaryDirectory(dir=TEST_TEMP_ROOT) as temporary:
-            root = Path(temporary)
+        with _writable_test_directory() as root:
             database = root / "app.db"
             _create_database(database)
             backup_dir = root / "Backups"
@@ -218,8 +225,7 @@ class ServerInstallerTests(unittest.TestCase):
 
     def test_maintenance_no_database_receipt_removes_candidate_database_and_sidecars(self):
         maintenance = _maintenance_module()
-        with tempfile.TemporaryDirectory(dir=TEST_TEMP_ROOT) as temporary:
-            root = Path(temporary)
+        with _writable_test_directory() as root:
             database = root / "Data" / "app.db"
             backup_dir = root / "Backups"
             receipt_path = backup_dir / "no-database-attempt.json"
@@ -255,8 +261,7 @@ class ServerInstallerTests(unittest.TestCase):
 
     def test_maintenance_receipt_is_bound_to_versions_and_cannot_be_reused(self):
         maintenance = _maintenance_module()
-        with tempfile.TemporaryDirectory(dir=TEST_TEMP_ROOT) as temporary:
-            root = Path(temporary)
+        with _writable_test_directory() as root:
             database = root / "app.db"
             _create_database(database)
             backup_dir = root / "Backups"
@@ -321,17 +326,29 @@ class ServerInstallerTests(unittest.TestCase):
         self.assertIn("ArchitecturesInstallIn64BitMode=x64compatible", setup)
         self.assertIn("SetupLogging=yes", setup)
         self.assertIn("UninstallLogging=yes", setup)
+        self.assertIn("ExecAndLogOutput", script)
         self.assertIn("CompareReleaseVersions", initialize)
         self.assertIn("Downgrades are blocked", initialize)
         self.assertIn("Same-version reinstalls are blocked", initialize)
         self.assertIn("AllowDevelopmentReinstall", initialize)
         self.assertIn("{param:ALLOWDEVREINSTALL|0}", script)
         self.assertIn("#ifdef DevelopmentBuild", script)
+        self.assertIn("HasServerRegistrationFootprint", initialize)
+        self.assertIn("HasServerServiceRegistration", initialize)
+        self.assertIn("service exists without a registered", initialize)
+        self.assertIn("version is missing", initialize)
+        self.assertIn("NeedsPriorBinarySnapshot :=", prepare)
+        self.assertIn("InstalledPayloadIsRecognizable", prepare)
+        self.assertIn("RunRollbackAction('PrepareFresh')", prepare)
         self.assertIn(
             "RecordInitialServiceState := not PreflightStarted", prepare
         )
         stop_call = "ServiceScript, 'Stop', RecordInitialServiceState"
         self.assertIn(stop_call, prepare)
+        self.assertLess(
+            prepare.index("RunRollbackAction('PrepareFresh')"),
+            prepare.index(stop_call),
+        )
         self.assertLess(prepare.index(stop_call), prepare.index("RunBackupGate"))
         self.assertLess(
             prepare.index("RunBackupGate"), prepare.index("RunRollbackAction('Capture')")
@@ -345,7 +362,7 @@ class ServerInstallerTests(unittest.TestCase):
         self.assertIn(r"Backups\Installer", script)
         self.assertIn("StartAndVerify", script)
         self.assertIn("ServerConfiguredBeforeInstall", script)
-        self.assertIn("Service registration and startup are deferred", script)
+        self.assertIn("Silent installation left service registration", script)
         self.assertIn("RestorePriorInstallation", script)
         self.assertIn("RunRollbackAction('Restore')", script)
         self.assertIn("InstallerBinaries\\rollback-{#AppVersion}", script)
@@ -378,6 +395,14 @@ class ServerInstallerTests(unittest.TestCase):
             restore.index("if RollbackFailedClosed then"),
             restore.index("RunDatabaseRollback"),
         )
+        self.assertNotIn(
+            "BinaryRollbackRestored or (not BinarySnapshotCaptured)", restore
+        )
+        self.assertIn("PostCopyDatabaseMutationPossible", restore)
+        self.assertIn(
+            "if BinarySnapshotCaptured and (not RunRollbackAction('Restore'))",
+            restore,
+        )
         deinitialize = script.split("procedure DeinitializeSetup;", 1)[1].split(
             "procedure CurUninstallStepChanged", 1
         )[0]
@@ -398,13 +423,60 @@ class ServerInstallerTests(unittest.TestCase):
         self.assertNotIn("{commonappdata}", install_delete.lower())
         self.assertNotIn("[UninstallDelete]", script)
 
+    def test_inno_first_install_wizard_and_automatic_configuration_contract(self):
+        script = (INSTALLER_DIR / "mission_legal_server.iss").read_text(
+            encoding="utf-8"
+        )
+        wizard = script.split("procedure InitializeWizard;", 1)[1].split(
+            "procedure RestorePriorVersionRegistry", 1
+        )[0]
+        post_install = script.split(
+            "procedure CurStepChanged(CurStep: TSetupStep);", 1
+        )[1].split("procedure DeinitializeSetup", 1)[0]
+
+        self.assertIn("CreateInputOptionPage", wizard)
+        self.assertIn("Create a fresh server", wizard)
+        self.assertIn("Migrate a verified database snapshot", wizard)
+        self.assertIn("CreateInputDirPage", wizard)
+        self.assertIn("Mission documents folder", wizard)
+        self.assertIn("OneDrive database backup folder", wizard)
+        self.assertIn("CreateInputFilePage", wizard)
+        self.assertIn("function ShouldSkipPage", wizard)
+        self.assertIn("SetupModePage.SelectedValueIndex <> 1", wizard)
+        self.assertIn("function NextButtonClick", wizard)
+        self.assertIn("WizardSilent", wizard)
+        self.assertIn("DirExists(StoragePage.Values[0])", wizard)
+        self.assertIn("FileExists(MigrationDatabasePage.Values[0])", wizard)
+        self.assertIn("function RunInitialServerConfiguration", wizard)
+        self.assertIn(r"{app}\MissionLegalServerSetup.exe", wizard)
+        self.assertIn("--mission-storage-root", wizard)
+        self.assertIn("--onedrive-backup-dir", wizard)
+        self.assertIn("--existing-database", wizard)
+        self.assertIn("--skip-main-client", wizard)
+        self.assertNotIn("--replace-existing-database", wizard)
+        self.assertIn("if WizardSetupRequired then", post_install)
+        self.assertLess(
+            post_install.index("PostCopyDatabaseMutationPossible := True"),
+            post_install.index("RunInitialServerConfiguration"),
+        )
+        self.assertIn("not HasServerServiceRegistration", post_install)
+        self.assertLess(
+            post_install.index("RunInitialServerConfiguration"),
+            post_install.index("ServiceScript, 'StartAndVerify'"),
+        )
+        self.assertIn("RestorePriorInstallation", post_install)
+        self.assertIn("RaiseException", post_install)
+        self.assertIn(
+            "(not WizardSetupRequired) and (not ServerConfiguredBeforeInstall)",
+            post_install,
+        )
+
     def test_binary_rollback_helper_restores_exact_prior_tree(self):
         powershell = shutil.which("powershell.exe") or shutil.which("powershell")
         if not powershell:
             self.skipTest("Windows PowerShell is required for the rollback helper")
         helper = INSTALLER_DIR / "server_installer_rollback.ps1"
-        with tempfile.TemporaryDirectory(dir=TEST_TEMP_ROOT) as temporary:
-            root = Path(temporary)
+        with _writable_test_directory() as root:
             install = root / "Program Files" / "Mission Legal" / "Server"
             snapshot = root / "ProgramData" / "Rollback"
             (install / "_internal").mkdir(parents=True)
@@ -456,8 +528,7 @@ class ServerInstallerTests(unittest.TestCase):
         if not powershell:
             self.skipTest("Windows PowerShell is required for the rollback helper")
         helper = INSTALLER_DIR / "server_installer_rollback.ps1"
-        with tempfile.TemporaryDirectory(dir=TEST_TEMP_ROOT) as temporary:
-            root = Path(temporary)
+        with _writable_test_directory() as root:
             install = root / "installed"
             snapshot = root / "rollback"
             install.mkdir()
@@ -512,6 +583,229 @@ class ServerInstallerTests(unittest.TestCase):
             self.assertEqual(executable.read_bytes(), b"known-good-server")
             self.assertFalse((install / "candidate-only.dll").exists())
             subprocess.run(command + ["-Action", "Discard"], check=True)
+
+    def test_binary_rollback_helper_serializes_empty_inventory_as_an_array(self):
+        powershell = shutil.which("powershell.exe") or shutil.which("powershell")
+        if not powershell:
+            self.skipTest("Windows PowerShell is required for the rollback helper")
+        helper = INSTALLER_DIR / "server_installer_rollback.ps1"
+        with _writable_test_directory() as root:
+            install = root / "missing-install"
+            snapshot = root / "rollback"
+            log_file = root / "Logs" / "installer-rollback.log"
+            command = [
+                powershell,
+                "-NoLogo",
+                "-NoProfile",
+                "-NonInteractive",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                str(helper),
+                "-InstallDir",
+                str(install),
+                "-SnapshotDir",
+                str(snapshot),
+                "-LogFile",
+                str(log_file),
+            ]
+
+            subprocess.run(command + ["-Action", "Capture"], check=True)
+
+            metadata = json.loads(
+                (snapshot / "snapshot.json").read_text(encoding="utf-8-sig")
+            )
+            self.assertFalse(metadata["had_installation"])
+            self.assertEqual(metadata["files"], [])
+            self.assertIn(
+                "action=Capture succeeded",
+                log_file.read_text(encoding="utf-8-sig"),
+            )
+
+            subprocess.run(command + ["-Action", "PrepareFresh"], check=True)
+            self.assertFalse(snapshot.exists())
+            self.assertIn(
+                "action=PrepareFresh succeeded",
+                log_file.read_text(encoding="utf-8-sig"),
+            )
+
+    def test_prepare_fresh_repairs_only_the_legacy_empty_snapshot(self):
+        powershell = shutil.which("powershell.exe") or shutil.which("powershell")
+        if not powershell:
+            self.skipTest("Windows PowerShell is required for the rollback helper")
+        helper = INSTALLER_DIR / "server_installer_rollback.ps1"
+        with _writable_test_directory() as root:
+            install = root / "empty-install"
+            snapshot = root / "rollback"
+            files = snapshot / "files"
+            install.mkdir()
+            files.mkdir(parents=True)
+            (snapshot / "snapshot.json").write_text(
+                json.dumps(
+                    {
+                        "format": 1,
+                        "install_dir": str(install),
+                        "had_installation": False,
+                        "captured_at": "2026-07-18T00:00:00Z",
+                        "files": {},
+                    },
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+            command = [
+                powershell,
+                "-NoLogo",
+                "-NoProfile",
+                "-NonInteractive",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                str(helper),
+                "-InstallDir",
+                str(install),
+                "-SnapshotDir",
+                str(snapshot),
+                "-LogFile",
+                str(root / "rollback.log"),
+                "-Action",
+                "PrepareFresh",
+            ]
+
+            subprocess.run(command, check=True, capture_output=True, text=True)
+
+            self.assertFalse(snapshot.exists())
+
+    def test_prepare_fresh_rejects_ambiguous_empty_metadata(self):
+        powershell = shutil.which("powershell.exe") or shutil.which("powershell")
+        if not powershell:
+            self.skipTest("Windows PowerShell is required for the rollback helper")
+        helper = INSTALLER_DIR / "server_installer_rollback.ps1"
+        cases = {
+            "missing-had-installation": {
+                "files": {},
+            },
+            "null-had-installation": {
+                "had_installation": None,
+                "files": {},
+            },
+            "string-had-installation": {
+                "had_installation": "false",
+                "files": {},
+            },
+            "null-files": {
+                "had_installation": False,
+                "files": None,
+            },
+        }
+        with _writable_test_directory() as root:
+            for name, fields in cases.items():
+                with self.subTest(name=name):
+                    install = root / name / "empty-install"
+                    snapshot = root / name / "rollback"
+                    (snapshot / "files").mkdir(parents=True)
+                    install.mkdir()
+                    payload = {
+                        "format": 1,
+                        "install_dir": str(install),
+                        "captured_at": "2026-07-18T00:00:00Z",
+                        **fields,
+                    }
+                    metadata_path = snapshot / "snapshot.json"
+                    metadata_path.write_text(
+                        json.dumps(payload, indent=2),
+                        encoding="utf-8",
+                    )
+                    before = metadata_path.read_bytes()
+
+                    retry = subprocess.run(
+                        [
+                            powershell,
+                            "-NoLogo",
+                            "-NoProfile",
+                            "-NonInteractive",
+                            "-ExecutionPolicy",
+                            "Bypass",
+                            "-File",
+                            str(helper),
+                            "-InstallDir",
+                            str(install),
+                            "-SnapshotDir",
+                            str(snapshot),
+                            "-Action",
+                            "PrepareFresh",
+                        ],
+                        check=False,
+                        capture_output=True,
+                        text=True,
+                    )
+
+                    self.assertNotEqual(retry.returncode, 0)
+                    self.assertTrue(snapshot.is_dir())
+                    self.assertEqual(metadata_path.read_bytes(), before)
+
+    def test_prepare_fresh_preserves_real_or_ambiguous_state(self):
+        powershell = shutil.which("powershell.exe") or shutil.which("powershell")
+        if not powershell:
+            self.skipTest("Windows PowerShell is required for the rollback helper")
+        helper = INSTALLER_DIR / "server_installer_rollback.ps1"
+        with _writable_test_directory() as root:
+            install = root / "unregistered-install"
+            snapshot = root / "rollback"
+            files = snapshot / "files"
+            install.mkdir()
+            files.mkdir(parents=True)
+            (install / "unexpected.exe").write_bytes(b"do-not-overwrite")
+            metadata_path = snapshot / "snapshot.json"
+            metadata_path.write_text(
+                json.dumps(
+                    {
+                        "format": 1,
+                        "install_dir": str(install),
+                        "had_installation": False,
+                        "captured_at": "2026-07-18T00:00:00Z",
+                        "files": {},
+                    },
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+            before = metadata_path.read_bytes()
+            log_file = root / "rollback.log"
+            retry = subprocess.run(
+                [
+                    powershell,
+                    "-NoLogo",
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-ExecutionPolicy",
+                    "Bypass",
+                    "-File",
+                    str(helper),
+                    "-InstallDir",
+                    str(install),
+                    "-SnapshotDir",
+                    str(snapshot),
+                    "-LogFile",
+                    str(log_file),
+                    "-Action",
+                    "PrepareFresh",
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+
+            self.assertNotEqual(retry.returncode, 0)
+            self.assertTrue(snapshot.is_dir())
+            self.assertEqual(metadata_path.read_bytes(), before)
+            self.assertEqual(
+                (install / "unexpected.exe").read_bytes(), b"do-not-overwrite"
+            )
+            self.assertIn(
+                "unregistered application tree",
+                log_file.read_text(encoding="utf-8-sig").lower(),
+            )
 
     def test_service_helper_verifies_path_health_and_recovery(self):
         helper = (INSTALLER_DIR / "server_installer_actions.ps1").read_text(
@@ -588,8 +882,7 @@ class ServerInstallerTests(unittest.TestCase):
 
     def test_package_provenance_accepts_exact_tree_and_rejects_tamper_and_relabel(self):
         helper = REPO_ROOT / "deployment" / "package_provenance.py"
-        with tempfile.TemporaryDirectory(dir=TEST_TEMP_ROOT) as temporary:
-            root = Path(temporary)
+        with _writable_test_directory() as root:
             package = root / "MissionLegalServer"
             package.mkdir()
             artifact = package / "server-runtime.bin"
@@ -1040,8 +1333,7 @@ public static class {type_name} {{ public static void Main() {{ }} }}
             )
             self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
 
-        with tempfile.TemporaryDirectory(dir=TEST_TEMP_ROOT) as temporary:
-            root = Path(temporary)
+        with _writable_test_directory() as root:
             baseline = root / "baseline-0.1.0.exe"
             upgrade = root / "upgrade-0.1.1.exe"
             build_fixture(baseline, "0.1.0", "BaselineFixture")
@@ -1117,7 +1409,7 @@ public static class {type_name} {{ public static void Main() {{ }} }}
         self.assertIn("Private", runbook)
         self.assertIn("LocalSystem", runbook)
         self.assertIn("empty-database-before-migration", runbook)
-        self.assertIn("Deferred first install", runbook)
+        self.assertIn("Deferred silent first install", runbook)
         self.assertIn("Candidate pristine migration", runbook)
         self.assertIn("Real post-copy rollback", runbook)
         self.assertIn("Same-version rejection", runbook)

@@ -139,10 +139,19 @@ opening a local database.
 
 ## Installed server first run
 
-On a pristine computer the elevated server installer lays down the binaries but
-leaves the service, managed firewall rule, `app.db`, and `server.json` absent
-until the authoritative database and server paths have been configured. Run the
-installed setup utility once from an elevated PowerShell window:
+On an interactive first install, the elevated server installer asks whether this
+computer will create a fresh server or migrate a verified `.db` snapshot. It
+then asks for the existing mission-document folder and the OneDrive
+database-backup folder. For migration, it also asks for the snapshot file.
+
+Setup automatically runs the installed configuration utility with its existing
+elevation, configures the service and Private-profile firewall rule, starts the
+server, and health-checks the packaged version. It preserves a migration source,
+never authorizes replacement of a populated authoritative database, and does
+not write main-client settings into the elevated administrator's profile.
+
+`/SILENT` and `/VERYSILENT` first installs still defer configuration because no
+storage paths were selected. To finish one of those installs manually, run:
 
 ```powershell
 & "$env:ProgramFiles\Mission Legal\Server\MissionLegalServerSetup.exe" `
