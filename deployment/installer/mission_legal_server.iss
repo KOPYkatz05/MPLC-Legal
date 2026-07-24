@@ -93,15 +93,20 @@ Root: HKLM; Subkey: "Software\MissionLegal\Server"; ValueType: string; ValueName
 const
   ServerAppId = '{8A39739D-CBD2-4C38-AE5D-9DE7E69B29D5}';
   ServiceName = 'MissionLegalServer';
+  ReadinessMarkerContent = 'mission-legal-server-ready-v1';
+  ReadinessMarkerIntroducedVersion = '0.1.1';
 
 var
   PreflightStarted: Boolean;
   InstallCompleted: Boolean;
+  InstallFailureDetected: Boolean;
+  FreshFootprintCleanupCompleted: Boolean;
   ServiceStateFile: String;
   BinarySnapshotDir: String;
   DatabaseRollbackReceiptPath: String;
   BinarySnapshotCaptured: Boolean;
   BinaryRollbackRestored: Boolean;
+  RollbackIntegrationRestored: Boolean;
   DatabaseBackupCaptured: Boolean;
   DatabaseRollbackRestored: Boolean;
   RollbackFailedClosed: Boolean;
@@ -111,6 +116,7 @@ var
   HasPriorServiceRegistration: Boolean;
   NeedsPriorBinarySnapshot: Boolean;
   ServerConfiguredBeforeInstall: Boolean;
+  ReadinessMarkerExistedBeforeInstall: Boolean;
   PostCopyDatabaseMutationPossible: Boolean;
   WizardSetupRequired: Boolean;
   SetupModePage: TInputOptionWizardPage;
@@ -464,10 +470,48 @@ begin
     (CompareText(Trim(String(State)), 'absent') = 0);
 end;
 
+function ReadinessMarkerPath: String;
+begin
+  Result := ExpandConstant(
+    '{commonappdata}\MissionLegal\Configuration\installer-ready-v1.marker');
+end;
+
+function HasValidServerReadinessMarker: Boolean;
+var
+  Marker: AnsiString;
+begin
+  Result :=
+    LoadStringFromFile(ReadinessMarkerPath, Marker) and
+    (CompareText(Trim(String(Marker)), ReadinessMarkerContent) = 0);
+end;
+
+function HasCoreServerState: Boolean;
+begin
+  Result :=
+    FileExists(ExpandConstant('{commonappdata}\MissionLegal\app.db')) and
+    FileExists(
+      ExpandConstant('{commonappdata}\MissionLegal\Configuration\server.json'));
+end;
+
 function IsServerConfigured: Boolean;
 begin
-  Result := FileExists(ExpandConstant('{commonappdata}\MissionLegal\app.db')) and
-    FileExists(ExpandConstant('{commonappdata}\MissionLegal\Configuration\server.json'));
+  Result := HasCoreServerState and HasValidServerReadinessMarker;
+end;
+
+function IsVerifiedLegacyConfiguredServer: Boolean;
+var
+  Comparison: Integer;
+begin
+  Result := False;
+  if FileExists(ReadinessMarkerPath) or
+    (not HasPriorRegisteredInstall) or
+    (not HasPriorServiceRegistration) or
+    (not HasCoreServerState) then
+    Exit;
+  if not CompareReleaseVersions(
+    PriorInstallVersion, ReadinessMarkerIntroducedVersion, Comparison) then
+    Exit;
+  Result := Comparison < 0;
 end;
 
 function DefaultOneDriveRoot: String;
@@ -481,7 +525,13 @@ procedure InitializeWizard;
 var
   OneDriveRoot: String;
 begin
-  ServerConfiguredBeforeInstall := IsServerConfigured;
+  ReadinessMarkerExistedBeforeInstall := FileExists(ReadinessMarkerPath);
+  ServerConfiguredBeforeInstall :=
+    IsServerConfigured or IsVerifiedLegacyConfiguredServer;
+  if IsVerifiedLegacyConfiguredServer then
+    Log('Adopting a registered pre-readiness-marker server without rerunning ' +
+      'the initial storage wizard. The candidate must pass all current runtime ' +
+      'gates before its readiness marker is committed.');
   WizardSetupRequired :=
     (not ServerConfiguredBeforeInstall) and (not WizardSilent);
 
@@ -693,7 +743,7 @@ begin
     Result := False;
     Exit;
   end;
-  if BinaryRollbackRestored then
+  if BinaryRollbackRestored and RollbackIntegrationRestored then
   begin
     Result := True;
     Exit;
@@ -764,18 +814,23 @@ begin
   if (not ServiceWasAbsent) and
     (not RunServiceAction(ServiceScript, 'InstallOrUpdate', False)) then
   begin
+    RollbackFailedClosed := True;
     Log('The previous binaries were restored, but their service registration ' +
-      'or managed firewall rule could not be restored and verified.');
+      'or managed firewall rule could not be restored and verified. Rollback ' +
+      'failed closed and the prior service will remain stopped.');
     Result := False;
     Exit;
   end;
   if ServiceWasRunning and
     (not RunServiceAction(ServiceScript, 'StartOnly', False)) then
   begin
-    Log('The previous binaries were restored, but their service could not be restarted.');
+    RollbackFailedClosed := True;
+    Log('The previous binaries were restored, but their service could not be ' +
+      'restarted and held stable. Rollback failed closed.');
     Result := False;
     Exit;
   end;
+  RollbackIntegrationRestored := True;
   Result := True;
 end;
 
@@ -852,7 +907,8 @@ begin
     DatabaseRollbackReceiptPath := ExpandConstant(
       '{commonappdata}\MissionLegal\Backups\Installer\installer-attempt-') +
       ExtractFileName(ExpandConstant('{tmp}')) + '.json';
-  ServerConfiguredBeforeInstall := IsServerConfigured;
+  ServerConfiguredBeforeInstall :=
+    IsServerConfigured or IsVerifiedLegacyConfiguredServer;
   NeedsPriorBinarySnapshot := HasPriorRegistrationFootprint;
   try
     ExtractTemporaryFile('server_installer_actions.ps1');
@@ -913,77 +969,217 @@ begin
   BinarySnapshotCaptured := NeedsPriorBinarySnapshot;
 end;
 
-procedure CurStepChanged(CurStep: TSetupStep);
+function RemoveFailedFreshInstallationFootprint: Boolean;
+var
+  AppPath: String;
+  RegistryPath: String;
+begin
+  Result := False;
+  if HasPriorRegistrationFootprint then
+  begin
+    Result := True;
+    Exit;
+  end;
+  if HasServerServiceRegistration then
+  begin
+    Log('ERROR: Refusing to remove the failed fresh-install files while the ' +
+      'candidate service registration still exists.');
+    Exit;
+  end;
+
+  AppPath := RemoveBackslashUnlessRoot(ExpandConstant('{app}'));
+  if (Length(AppPath) < 4) or
+    (CompareText(
+      AppPath,
+      RemoveBackslashUnlessRoot(ExtractFileDrive(AppPath) + '\')) = 0) then
+  begin
+    Log('ERROR: Refusing unsafe fresh-install cleanup path: ' + AppPath);
+    Exit;
+  end;
+  if DirExists(AppPath) and (not DelTree(AppPath, True, True, True)) then
+  begin
+    Log('ERROR: Could not remove the failed fresh-install application tree: ' +
+      AppPath);
+    Exit;
+  end;
+
+  RegistryPath := 'Software\Microsoft\Windows\CurrentVersion\Uninstall\' +
+    ServerAppId + '_is1';
+  if RegKeyExists(HKLM64, 'Software\MissionLegal\Server') and
+    (not RegDeleteKeyIncludingSubkeys(
+      HKLM64, 'Software\MissionLegal\Server')) then
+  begin
+    Log('ERROR: Could not remove the failed fresh-install product registry key.');
+    Exit;
+  end;
+  if RegKeyExists(HKLM64, RegistryPath) and
+    (not RegDeleteKeyIncludingSubkeys(HKLM64, RegistryPath)) then
+  begin
+    Log('ERROR: Could not remove the failed fresh-install uninstall registration.');
+    Exit;
+  end;
+
+  Result :=
+    (not DirExists(AppPath)) and
+    (not RegKeyExists(HKLM64, 'Software\MissionLegal\Server')) and
+    (not RegKeyExists(HKLM64, RegistryPath)) and
+    (not HasServerServiceRegistration);
+  if Result then
+    Log('Verified removal of the failed fresh-install files and registration.')
+  else
+    Log('ERROR: Failed fresh-install files or registration remain after cleanup.');
+end;
+
+procedure FailServerInstallation(const Message: String);
+var
+  RestoreSucceeded: Boolean;
+  CleanupSucceeded: Boolean;
+begin
+  InstallFailureDetected := True;
+  RestoreSucceeded := RestorePriorInstallation;
+  CleanupSucceeded := False;
+  if RestoreSucceeded then
+    CleanupSucceeded := RemoveFailedFreshInstallationFootprint;
+  FreshFootprintCleanupCompleted := CleanupSucceeded;
+  if not RestoreSucceeded then
+    RaiseException(
+      Message + ' Rollback failed closed; no server will be started ' +
+      'automatically. Review the Setup and installer rollback logs.');
+  if not CleanupSucceeded then
+    RaiseException(
+      Message + ' The prior data state was restored, but Setup could not ' +
+      'fully remove the failed fresh-install files or registration. Review ' +
+      'the Setup log before retrying.');
+  RaiseException(Message + ' The prior state was restored and the failed ' +
+    'candidate footprint was removed when this was a fresh install.');
+end;
+
+procedure FinishServerInstallation;
 var
   ServiceScript: String;
 begin
-  if CurStep = ssPostInstall then
+  { ssPostInstall runs after Inno Setup has finalized its uninstall log, so
+    every failure path below must restore the prior application/data state and
+    explicitly remove a failed true-first-install footprint before raising. }
+  ServiceScript := ExpandConstant('{app}\InstallerSupport\server_installer_actions.ps1');
+  if WizardSetupRequired then
   begin
-    ServiceScript := ExpandConstant('{app}\InstallerSupport\server_installer_actions.ps1');
-    if WizardSetupRequired then
+    WizardForm.StatusLabel.Caption :=
+      'Configuring the authoritative database and server settings...';
+    WizardForm.StatusLabel.Update;
+    { The installed setup utility may create or migrate the authoritative
+      database before it registers and health-checks the service. From this
+      point, a failure must restore the receipted pre-install database state
+      even though a true first install has no binary rollback snapshot. }
+    PostCopyDatabaseMutationPossible := True;
+    if not RunInitialServerConfiguration then
     begin
-      { The installed setup utility may create or migrate the authoritative
-        database before it registers and health-checks the service. From this
-        point, a failure must restore the receipted pre-install database state
-        even though a true first install has no binary rollback snapshot. }
-      PostCopyDatabaseMutationPossible := True;
-      if not RunInitialServerConfiguration then
-      begin
-        RestorePriorInstallation;
-        RaiseException(
-          'Mission Legal Server configuration did not complete. The prior ' +
-          'database state was restored when possible, and Setup will remove ' +
-          'the newly installed files. Review the Setup log and the logs under ' +
-          'ProgramData\MissionLegal\Logs.');
-      end;
-      { The packaged setup utility normally registers and verifies the service
-        itself. Keep the outer installer authoritative as well: a custom /DIR
-        path intentionally makes the utility treat itself like a raw package,
-        so finish registration here instead of accepting a false success. }
-      if (not HasServerServiceRegistration) and
-        (not RunServiceAction(ServiceScript, 'InstallOrUpdate', False)) then
-      begin
-        RestorePriorInstallation;
-        RaiseException(
-          'Server settings were written, but the Mission Legal Server service ' +
-          'could not be installed. The prior database state was restored when ' +
-          'possible.');
-      end;
-      if not RunServiceAction(ServiceScript, 'StartAndVerify', False) then
-      begin
-        RestorePriorInstallation;
-        RaiseException(
-          'The newly configured server did not pass service and health ' +
-          'verification. The prior database state was restored when possible.');
-      end;
-    end
-    else if ServerConfiguredBeforeInstall then
-    begin
-      PostCopyDatabaseMutationPossible := True;
-      if not RunServiceAction(ServiceScript, 'InstallOrUpdate', False) then
-      begin
-        RestorePriorInstallation;
-        RaiseException('The Mission Legal Server service could not be installed or updated. ' +
-          'The previous application binaries were restored when possible.');
-      end;
-      if not RunServiceAction(ServiceScript, 'StartAndVerify', False) then
-      begin
-        RestorePriorInstallation;
-        RaiseException('The updated server did not pass service and health verification. ' +
-          'The previous application binaries were restored when possible.');
-      end;
+      FailServerInstallation(
+        'Mission Legal Server configuration did not complete. The prior ' +
+        'state will be restored when possible, and a failed true-first-install ' +
+        'footprint will be removed. Server logs under ' +
+        '%ProgramData%\MissionLegal\Logs require an administrator or IT account. ' +
+        'The Setup log is in the Setup account''s %TEMP% folder with a name ' +
+        'beginning with "Setup Log".');
     end;
-    if (not WizardSetupRequired) and (not ServerConfiguredBeforeInstall) then
-      Log('Server configuration and authoritative database are not both present. ' +
-        'Silent installation left service registration and startup deferred. ' +
-        'Run MissionLegalServerSetup.exe with explicit storage paths to finish.');
+    { The packaged setup utility normally registers and verifies the service
+      itself. Keep the outer installer authoritative as well: a custom /DIR
+      path intentionally makes the utility treat itself like a raw package,
+      so finish registration here instead of accepting a false success. }
+    if (not HasServerServiceRegistration) and
+      (not RunServiceAction(ServiceScript, 'InstallOrUpdate', False)) then
+    begin
+      FailServerInstallation(
+        'Server settings were written, but Windows service, storage access, ' +
+        'or firewall integration did not complete. Setup will restore the prior ' +
+        'state when possible and remove a failed true-first-install footprint.');
+    end;
+    WizardForm.StatusLabel.Caption :=
+      'Starting the server and verifying its secure connection...';
+    WizardForm.StatusLabel.Update;
+    if not RunServiceAction(ServiceScript, 'StartAndVerify', False) then
+    begin
+      FailServerInstallation(
+        'The newly configured server did not pass service and health ' +
+        'verification. Setup will restore the prior state when possible and ' +
+        'remove a failed true-first-install footprint.');
+    end;
+  end
+  else if ServerConfiguredBeforeInstall then
+  begin
+    WizardForm.StatusLabel.Caption :=
+      'Updating Windows service and firewall integration...';
+    WizardForm.StatusLabel.Update;
+    PostCopyDatabaseMutationPossible := True;
+    if not RunServiceAction(ServiceScript, 'InstallOrUpdate', False) then
+    begin
+      FailServerInstallation(
+        'Mission Legal Server Windows integration did not complete. ' +
+        'Setup will restore the previous application state when possible. Review ' +
+        'the final failing stage in the Setup log.');
+    end;
+    WizardForm.StatusLabel.Caption :=
+      'Starting the server and verifying its secure connection...';
+    WizardForm.StatusLabel.Update;
+    if not RunServiceAction(ServiceScript, 'StartAndVerify', False) then
+    begin
+      FailServerInstallation(
+        'The updated server did not pass service and health verification. ' +
+        'Setup will restore the previous application state when possible.');
+    end;
   end;
+  if (not WizardSetupRequired) and (not ServerConfiguredBeforeInstall) then
+    Log('Server configuration and authoritative database are not both present. ' +
+      'Silent installation left service registration and startup deferred. ' +
+      'Run MissionLegalServerSetup.exe with explicit storage paths to finish.');
+end;
+
+procedure CurStepChanged(CurStep: TSetupStep);
+begin
+  if CurStep = ssPostInstall then
+    FinishServerInstallation;
   if CurStep = ssDone then
   begin
-    InstallCompleted := True;
-    if BinarySnapshotCaptured and (not RunRollbackAction('Discard')) then
-      Log('Setup succeeded, but its temporary binary rollback snapshot could not be removed.');
+    if InstallFailureDetected then
+      Log('ERROR: Setup reached ssDone after a recorded server-install failure; ' +
+        'the failure exit code and rollback state are being preserved.')
+    else
+    begin
+      InstallCompleted := True;
+      if BinarySnapshotCaptured and (not RunRollbackAction('Discard')) then
+        Log('Setup succeeded, but its temporary binary rollback snapshot could not be removed.');
+    end;
   end;
+end;
+
+function GetCustomSetupExitCode: Integer;
+begin
+  if InstallFailureDetected then
+    Result := 20
+  else
+    Result := 0;
+end;
+
+procedure RemoveCandidateReadinessMarker;
+var
+  MarkerPath: String;
+  TemporaryPath: String;
+  RollbackPath: String;
+begin
+  if ReadinessMarkerExistedBeforeInstall then
+    Exit;
+  MarkerPath := ReadinessMarkerPath;
+  TemporaryPath := MarkerPath + '.tmp';
+  RollbackPath := MarkerPath + '.rollback';
+  if FileExists(TemporaryPath) and (not DeleteFile(TemporaryPath)) then
+    Log('WARNING: Could not remove candidate readiness-marker temporary file: ' +
+      TemporaryPath);
+  if FileExists(RollbackPath) and (not DeleteFile(RollbackPath)) then
+    Log('WARNING: Could not remove candidate readiness-marker rollback file: ' +
+      RollbackPath);
+  if FileExists(MarkerPath) and (not DeleteFile(MarkerPath)) then
+    Log('WARNING: Could not remove the candidate server readiness marker: ' +
+      MarkerPath);
 end;
 
 procedure DeinitializeSetup;
@@ -993,6 +1189,11 @@ begin
   if PreflightStarted and (not InstallCompleted) then
   begin
     RestorePriorInstallation;
+    if InstallFailureDetected and (not HasPriorRegistrationFootprint) and
+      (not FreshFootprintCleanupCompleted) then
+      FreshFootprintCleanupCompleted :=
+        RemoveFailedFreshInstallationFootprint;
+    RemoveCandidateReadinessMarker;
     ScriptPath := ExpandConstant('{tmp}\server_installer_actions.ps1');
     if not FileExists(ScriptPath) then
       ScriptPath := ExpandConstant('{app}\InstallerSupport\server_installer_actions.ps1');

@@ -264,10 +264,20 @@ if ($Target -in @("All", "Server")) {
     $env:MISSION_LEGAL_SMOKE_PROGRESS = Join-Path $ServerRuntime "progress.log"
     $ServerSmokeOutput = Join-Path $ServerRuntime "smoke-result.stdout.log"
     $ServerSmokeError = Join-Path $ServerRuntime "smoke-result.stderr.log"
+    $ServiceSmokeOutput = Join-Path $ServerRuntime "service-smoke-result.stdout.log"
+    $ServiceSmokeError = Join-Path $ServerRuntime "service-smoke-result.stderr.log"
+    $ServerHttpsSmokeOutput = Join-Path $ServerRuntime "https-smoke-result.jsonl"
+    $ServerHttpsSmokeStdout = Join-Path $ServerRuntime "https-server.stdout.log"
+    $ServerHttpsSmokeStderr = Join-Path $ServerRuntime "https-server.stderr.log"
     foreach ($SmokePath in @(
         $env:MISSION_LEGAL_SMOKE_PROGRESS,
         $ServerSmokeOutput,
-        $ServerSmokeError
+        $ServerSmokeError,
+        $ServiceSmokeOutput,
+        $ServiceSmokeError,
+        $ServerHttpsSmokeOutput,
+        $ServerHttpsSmokeStdout,
+        $ServerHttpsSmokeStderr
     )) {
         if (Test-Path -LiteralPath $SmokePath -PathType Leaf) {
             Remove-Item -LiteralPath $SmokePath -Force
@@ -297,16 +307,85 @@ if ($Target -in @("All", "Server")) {
     if ($ServerSmoke.ExitCode -ne 0) {
         throw "The packaged server smoke test failed."
     }
+    $ServiceSmoke = Start-Process `
+        -FilePath $ServiceExe `
+        -ArgumentList "--package-smoke-test" `
+        -WorkingDirectory $ServerDir `
+        -WindowStyle Hidden `
+        -RedirectStandardOutput $ServiceSmokeOutput `
+        -RedirectStandardError $ServiceSmokeError `
+        -PassThru
+    try {
+        $ServiceSmoke | Wait-Process -Timeout 180 -ErrorAction Stop
+    }
+    catch {
+        if (-not $ServiceSmoke.HasExited) {
+            Stop-Process -Id $ServiceSmoke.Id -Force
+            throw (
+                "The packaged service entry-point smoke test timed out. " +
+                "See $ServiceSmokeError."
+            )
+        }
+        throw
+    }
+    if ($null -eq $ServiceSmoke.ExitCode) {
+        throw "The packaged service entry-point smoke test completed without a readable exit code."
+    }
+    if ($ServiceSmoke.ExitCode -ne 0) {
+        throw "The packaged service entry-point smoke test failed. See $ServiceSmokeError."
+    }
+    $ServiceSmokeResult = $null
+    foreach ($Line in (Get-Content -LiteralPath $ServiceSmokeOutput -ErrorAction Stop)) {
+        try {
+            $Candidate = $Line | ConvertFrom-Json -ErrorAction Stop
+            if ($Candidate.status -eq "ok") {
+                $ServiceSmokeResult = $Candidate
+            }
+        }
+        catch {
+            continue
+        }
+    }
+    if (
+        $null -eq $ServiceSmokeResult -or
+        $ServiceSmokeResult.role -ne "server" -or
+        $ServiceSmokeResult.frozen -ne $true -or
+        [string]$ServiceSmokeResult.app_version -ne [string]$AppVersion -or
+        [string]$ServiceSmokeResult.api_version -ne [string]$ApiVersion -or
+        [int]$ServiceSmokeResult.schema_version -ne [int]$SchemaVersion
+    ) {
+        throw "The packaged service entry-point smoke result is invalid. See $ServiceSmokeOutput."
+    }
     & $ServerSetupExe --help | Out-Null
     if ($LASTEXITCODE -ne 0) {
         throw "The packaged server setup utility failed its CLI smoke test."
+    }
+    $ServerHttpsSmokeHelper = Join-Path $PSScriptRoot "frozen_server_https_smoke.py"
+    if (-not (Test-Path -LiteralPath $ServerHttpsSmokeHelper -PathType Leaf)) {
+        throw "The frozen server HTTPS smoke helper is missing: $ServerHttpsSmokeHelper"
+    }
+    & $PythonPath -B $ServerHttpsSmokeHelper `
+        --server-exe $ServerExe `
+        --runtime-parent $ServerRuntime `
+        --base-smoke-result $ServerSmokeOutput `
+        --output $ServerHttpsSmokeOutput `
+        --server-stdout $ServerHttpsSmokeStdout `
+        --server-stderr $ServerHttpsSmokeStderr `
+        --app-version $AppVersion `
+        --api-version $ApiVersion `
+        --schema-version $SchemaVersion
+    if ($LASTEXITCODE -ne 0) {
+        throw (
+            "The packaged server failed its CA-verified HTTPS health smoke test. " +
+            "See $ServerHttpsSmokeStdout and $ServerHttpsSmokeStderr."
+        )
     }
     $ServerManifest = Join-Path $DistRoot "MissionLegalServer.provenance.json"
     New-PackageProvenance `
         -Role "server" `
         -PackageDir $ServerDir `
         -ManifestPath $ServerManifest `
-        -SmokeResultPath $ServerSmokeOutput `
+        -SmokeResultPath $ServerHttpsSmokeOutput `
         -WindowsVersionExecutables @(
             "MissionLegalServer.exe",
             "MissionLegalServerSetup.exe",

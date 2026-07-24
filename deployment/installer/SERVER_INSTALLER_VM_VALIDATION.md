@@ -76,7 +76,11 @@ service, firewall, registry, or data mutation.
     -ValidateOnly
 ```
 
-Treat an artifact-version or identity mismatch as a release blocker.
+The versions above are illustrative. The baseline must be a known-good,
+immutable, lower-version installer; do not use a previously failed development
+artifact merely because its version is lower. Record and compare the SHA-256 of
+both exact installers before treating the run as evidence. Treat an
+artifact-version or identity mismatch as a release blocker.
 
 ## Create the short-lived marker
 

@@ -47,6 +47,24 @@ $script:OverallStatus = "not-started"
 $script:FailureMessage = $null
 $script:RunRoot = $null
 $script:TranscriptStarted = $false
+$WriteCapableRightsMask = (
+    [long][Security.AccessControl.FileSystemRights]::WriteData -bor
+    [long][Security.AccessControl.FileSystemRights]::AppendData -bor
+    [long][Security.AccessControl.FileSystemRights]::WriteExtendedAttributes -bor
+    [long][Security.AccessControl.FileSystemRights]::WriteAttributes -bor
+    [long][Security.AccessControl.FileSystemRights]::DeleteSubdirectoriesAndFiles -bor
+    [long][Security.AccessControl.FileSystemRights]::Delete -bor
+    [long][Security.AccessControl.FileSystemRights]::ChangePermissions -bor
+    [long][Security.AccessControl.FileSystemRights]::TakeOwnership
+)
+
+function Test-WriteCapableFileSystemRights {
+    param([Parameter(Mandatory = $true)][long]$Rights)
+
+    # Modify includes read/execute bits. Test the constituent mutation rights
+    # so a legitimate ReadAndExecute rule is not reported as writable.
+    return (($Rights -band $WriteCapableRightsMask) -ne 0)
+}
 
 function Test-IsAdministrator {
     $Identity = [Security.Principal.WindowsIdentity]::GetCurrent()
@@ -1546,14 +1564,9 @@ function Assert-ServerDataAclEntry {
         ) {
             throw "Public CA ACL is missing Builtin Users read access: $Path"
         }
-        $WriteMask = (
-            [long][Security.AccessControl.FileSystemRights]::Write -bor
-            [long][Security.AccessControl.FileSystemRights]::Modify -bor
-            [long][Security.AccessControl.FileSystemRights]::Delete -bor
-            [long][Security.AccessControl.FileSystemRights]::ChangePermissions -bor
-            [long][Security.AccessControl.FileSystemRights]::TakeOwnership
-        )
-        if (($RightsBySid[$UsersSid.Value] -band $WriteMask) -ne 0) {
+        if (
+            Test-WriteCapableFileSystemRights -Rights $RightsBySid[$UsersSid.Value]
+        ) {
             throw "Public CA ACL grants Builtin Users write-capable access: $Path"
         }
     }

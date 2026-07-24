@@ -1,6 +1,7 @@
 import ipaddress
 from pathlib import Path
 
+import pytest
 from cryptography import x509
 from cryptography.hazmat.primitives import serialization
 
@@ -39,6 +40,26 @@ def test_generate_local_tls_reuses_existing_material(monkeypatch, tmp_path):
     second = tls.generate_local_tls()
 
     assert second["server_cert"].read_bytes() == original
+
+
+def test_generate_local_tls_refuses_incomplete_material_without_explicit_overwrite(
+    monkeypatch,
+    tmp_path,
+):
+    monkeypatch.setattr(tls, "tls_directory", lambda: tmp_path)
+    existing_ca = tls.default_tls_paths()["ca_cert"]
+    existing_ca.write_bytes(b"existing trust anchor")
+
+    with pytest.raises(RuntimeError, match="Incomplete local TLS material"):
+        tls.generate_local_tls(protect_keys=False)
+
+    assert existing_ca.read_bytes() == b"existing trust anchor"
+    assert not tls.default_tls_paths()["ca_key"].exists()
+
+    paths = tls.generate_local_tls(overwrite=True, protect_keys=False)
+
+    assert all(path.is_file() for path in paths.values())
+    assert paths["ca_cert"].read_bytes() != b"existing trust anchor"
 
 
 def test_generate_local_tls_can_preserve_source_caller_access(monkeypatch, tmp_path):

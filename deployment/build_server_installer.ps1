@@ -90,8 +90,10 @@ $TransactionOutputDir = $null
 $BuildTransactionRoot = $null
 try {
 Repair-MissionLegalInterruptedReleaseTransaction -FinalDirectory $FinalOutputDir
-$ExistingReleaseArtifacts = @($InstallerPath, $ManifestPath) |
-    Where-Object { Test-Path -LiteralPath $_ -PathType Leaf }
+$ExistingReleaseArtifacts = @(
+    @($InstallerPath, $ManifestPath) |
+        Where-Object { Test-Path -LiteralPath $_ -PathType Leaf }
+)
 if ($ExistingReleaseArtifacts.Count -gt 0 -and -not $AllowUnpublishedDevelopmentOverwrite) {
     throw (
         "Server release artifacts already exist for version $AppVersion. " +
@@ -328,6 +330,66 @@ if (-not $IsccPath -or -not (Test-Path -LiteralPath $IsccPath -PathType Leaf)) {
 }
 $IsccPath = [IO.Path]::GetFullPath($IsccPath)
 
+$InstallerHelperPath = Join-Path $PSScriptRoot "installer\server_installer_actions.ps1"
+$WindowsPowerShellPath = Join-Path $env:SystemRoot `
+    "System32\WindowsPowerShell\v1.0\powershell.exe"
+if (-not (Test-Path -LiteralPath $WindowsPowerShellPath -PathType Leaf)) {
+    throw "Windows PowerShell 5.1 is required for the installer helper runtime gate."
+}
+$InstallerHelperHash = (
+    Get-FileHash -LiteralPath $InstallerHelperPath -Algorithm SHA256
+).Hash.ToLowerInvariant()
+$RuntimeSelfTestOutput = @(
+    & $WindowsPowerShellPath `
+        -NoLogo `
+        -NoProfile `
+        -NonInteractive `
+        -ExecutionPolicy Bypass `
+        -File $InstallerHelperPath `
+        -Action RuntimeSelfTest `
+        -InstallDir $RepoRoot `
+        -DataDir (Join-Path $RepoRoot "build\installer\runtime-selftest-unused") `
+        -AppVersion $AppVersion 2>&1
+)
+if ($LASTEXITCODE -ne 0) {
+    throw (
+        "The Windows PowerShell 5.1 installer-helper runtime self-test failed:`n" +
+        (($RuntimeSelfTestOutput | ForEach-Object { [string]$_ }) -join [Environment]::NewLine)
+    )
+}
+$RuntimeSelfTestJson = $RuntimeSelfTestOutput |
+    ForEach-Object { [string]$_ } |
+    Where-Object { $_.TrimStart().StartsWith("{") } |
+    Select-Object -Last 1
+try {
+    $RuntimeSelfTestEvidence = $RuntimeSelfTestJson | ConvertFrom-Json -ErrorAction Stop
+}
+catch {
+    throw (
+        "The installer-helper runtime self-test did not emit valid JSON evidence. " +
+        "Output: " + (($RuntimeSelfTestOutput | ForEach-Object { [string]$_ }) -join " ")
+    )
+}
+if (
+    [string]$RuntimeSelfTestEvidence.status -cne "ok" -or
+    [string]$RuntimeSelfTestEvidence.action -cne "RuntimeSelfTest" -or
+    [int]$RuntimeSelfTestEvidence.powershell_major -ne 5 -or
+    -not [bool]$RuntimeSelfTestEvidence.inventory_materialized -or
+    -not [bool]$RuntimeSelfTestEvidence.configuration_defaults -or
+    -not [bool]$RuntimeSelfTestEvidence.configuration_validation -or
+    -not [bool]$RuntimeSelfTestEvidence.unicode_configuration -or
+    -not [bool]$RuntimeSelfTestEvidence.public_ca_first_publish -or
+    -not [bool]$RuntimeSelfTestEvidence.public_ca_identical_publish -or
+    -not [bool]$RuntimeSelfTestEvidence.public_ca_republish -or
+    -not [bool]$RuntimeSelfTestEvidence.rights_classification -or
+    [int]$RuntimeSelfTestEvidence.residue_count -ne 0
+) {
+    throw (
+        "The installer-helper runtime self-test evidence did not satisfy every " +
+        "required Windows PowerShell 5.1 gate: $RuntimeSelfTestJson"
+    )
+}
+
 New-Item -ItemType Directory -Force -Path $OutputDir | Out-Null
 if ($ExistingReleaseArtifacts.Count -gt 0) {
     Write-Warning (
@@ -356,6 +418,15 @@ $CompilerArguments += $InstallerScript
 & $IsccPath @CompilerArguments
 if ($LASTEXITCODE -ne 0) {
     throw "Inno Setup failed to compile the server installer."
+}
+$InstallerHelperHashAfterCompile = (
+    Get-FileHash -LiteralPath $InstallerHelperPath -Algorithm SHA256
+).Hash.ToLowerInvariant()
+if ($InstallerHelperHashAfterCompile -cne $InstallerHelperHash) {
+    throw (
+        "The installer service helper changed between its PowerShell 5.1 runtime " +
+        "self-test and Inno Setup compilation."
+    )
 }
 
 if (-not (Test-Path -LiteralPath $InstallerPath -PathType Leaf)) {
@@ -403,6 +474,21 @@ $Manifest = [ordered]@{
     package_provenance = [ordered]@{
         filename = [IO.Path]::GetFileName($ProvenanceManifestPath)
         sha256 = $ProvenanceHash
+    }
+    installer_helper_runtime_self_test = [ordered]@{
+        helper_sha256 = $InstallerHelperHash
+        status = [string]$RuntimeSelfTestEvidence.status
+        action = [string]$RuntimeSelfTestEvidence.action
+        powershell_major = [int]$RuntimeSelfTestEvidence.powershell_major
+        inventory_materialized = [bool]$RuntimeSelfTestEvidence.inventory_materialized
+        configuration_defaults = [bool]$RuntimeSelfTestEvidence.configuration_defaults
+        configuration_validation = [bool]$RuntimeSelfTestEvidence.configuration_validation
+        unicode_configuration = [bool]$RuntimeSelfTestEvidence.unicode_configuration
+        public_ca_first_publish = [bool]$RuntimeSelfTestEvidence.public_ca_first_publish
+        public_ca_identical_publish = [bool]$RuntimeSelfTestEvidence.public_ca_identical_publish
+        public_ca_republish = [bool]$RuntimeSelfTestEvidence.public_ca_republish
+        rights_classification = [bool]$RuntimeSelfTestEvidence.rights_classification
+        residue_count = [int]$RuntimeSelfTestEvidence.residue_count
     }
     signatures = @($SignatureEvidence)
     silent_upgrade_arguments = "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LOG"

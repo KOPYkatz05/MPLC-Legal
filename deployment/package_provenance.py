@@ -531,7 +531,88 @@ def _build_environment(distributions: list[str]) -> dict:
     }
 
 
-def _read_smoke_result(path: Path, role: str, app_version: str, api_version: str, schema_version: int) -> dict:
+def _validate_server_https_smoke_result(
+    result: dict,
+    *,
+    app_version: str,
+    api_version: str,
+    schema_version: int,
+    package_inventory: list[dict],
+) -> None:
+    evidence = result.get("https_health")
+    expected_keys = {
+        "api_version",
+        "app_version",
+        "database_integrity",
+        "executable_sha256",
+        "executable_size",
+        "frozen_executable",
+        "host",
+        "schema_version",
+        "status",
+        "tls_peer_verified",
+        "transport",
+    }
+    if not isinstance(evidence, dict) or set(evidence) != expected_keys:
+        raise ProvenanceError(
+            "Server package smoke result has no valid frozen HTTPS health evidence"
+        )
+    expected = {
+        "api_version": str(api_version),
+        "app_version": str(app_version),
+        "database_integrity": "ok",
+        "frozen_executable": True,
+        "host": "127.0.0.1",
+        "schema_version": int(schema_version),
+        "status": "ok",
+        "tls_peer_verified": True,
+        "transport": "https",
+    }
+    for key, value in expected.items():
+        if evidence.get(key) != value:
+            raise ProvenanceError(
+                f"Server frozen HTTPS smoke {key!r} mismatch: "
+                f"expected {value!r}, found {evidence.get(key)!r}"
+            )
+    executable_hash = evidence.get("executable_sha256")
+    executable_size = evidence.get("executable_size")
+    if (
+        not isinstance(executable_hash, str)
+        or re.fullmatch(r"[a-f0-9]{64}", executable_hash) is None
+        or not isinstance(executable_size, int)
+        or isinstance(executable_size, bool)
+        or executable_size <= 0
+    ):
+        raise ProvenanceError(
+            "Server frozen HTTPS smoke has invalid executable hash/size evidence"
+        )
+    executable_records = [
+        item
+        for item in package_inventory
+        if item.get("path") == "MissionLegalServer.exe"
+    ]
+    if len(executable_records) != 1:
+        raise ProvenanceError(
+            "Server package inventory must contain exactly one MissionLegalServer.exe"
+        )
+    executable_record = executable_records[0]
+    if (
+        executable_record.get("sha256") != executable_hash
+        or executable_record.get("size") != executable_size
+    ):
+        raise ProvenanceError(
+            "Frozen HTTPS smoke is not bound to the packaged MissionLegalServer.exe"
+        )
+
+
+def _read_smoke_result(
+    path: Path,
+    role: str,
+    app_version: str,
+    api_version: str,
+    schema_version: int,
+    package_inventory: list[dict],
+) -> dict:
     _assert_no_reparse_ancestors(path)
     try:
         lines = path.read_text(encoding="utf-8-sig", errors="strict").splitlines()
@@ -562,6 +643,14 @@ def _read_smoke_result(path: Path, role: str, app_version: str, api_version: str
             )
     if result.get("frozen") is not True:
         raise ProvenanceError("Package smoke result did not prove a frozen executable")
+    if role == "server":
+        _validate_server_https_smoke_result(
+            result,
+            app_version=app_version,
+            api_version=api_version,
+            schema_version=schema_version,
+            package_inventory=package_inventory,
+        )
     return result
 
 
@@ -683,6 +772,7 @@ def create_manifest(args) -> dict:
         args.app_version,
         args.api_version,
         schema_version,
+        files,
     )
     ocr_models = None
     if args.role == "client":
@@ -885,6 +975,14 @@ def verify_manifest(args) -> dict:
         or int(smoke.get("schema_version")) != int(args.expected_schema_version)
     ):
         raise ProvenanceError("Recorded smoke result does not match the expected role/version")
+    if args.expected_role == "server":
+        _validate_server_https_smoke_result(
+            smoke,
+            app_version=args.expected_app_version,
+            api_version=args.expected_api_version,
+            schema_version=args.expected_schema_version,
+            package_inventory=current_files,
+        )
 
     ocr_models = manifest.get("ocr_models")
     if args.expected_role == "client":

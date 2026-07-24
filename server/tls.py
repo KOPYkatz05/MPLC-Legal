@@ -1,4 +1,5 @@
 import ipaddress
+import os
 import socket
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -64,12 +65,36 @@ def generate_local_tls(overwrite=False, *, protect_keys=True):
     paths = default_tls_paths()
     root = paths["server_key"].parent
     root.mkdir(parents=True, exist_ok=True)
-    if not overwrite and all(path.exists() for path in paths.values()):
-        if protect_keys:
-            _protect_keys(paths["ca_key"], paths["server_key"])
-        else:
-            _set_owner_only_file_mode(paths["ca_key"], paths["server_key"])
-        return paths
+    if not overwrite:
+        existing = {
+            name: os.path.lexists(path)
+            for name, path in paths.items()
+        }
+        if any(existing.values()) and not all(existing.values()):
+            missing = ", ".join(
+                name for name, present in existing.items() if not present
+            )
+            raise RuntimeError(
+                "Incomplete local TLS material; refusing to rotate the local "
+                f"certificate authority implicitly. Missing: {missing}. "
+                "Repair the existing files or explicitly use overwrite=True."
+            )
+        if all(existing.values()):
+            unsafe = [
+                name
+                for name, path in paths.items()
+                if path.is_symlink() or not path.is_file()
+            ]
+            if unsafe:
+                raise RuntimeError(
+                    "Existing local TLS material contains an unsafe path: "
+                    + ", ".join(unsafe)
+                )
+            if protect_keys:
+                _protect_keys(paths["ca_key"], paths["server_key"])
+            else:
+                _set_owner_only_file_mode(paths["ca_key"], paths["server_key"])
+            return paths
 
     now = datetime.now(timezone.utc)
     ca_key = _private_key()

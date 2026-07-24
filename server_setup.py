@@ -23,6 +23,18 @@ class ServerSetupError(RuntimeError):
     pass
 
 
+def _configure_server_data_environment(data_dir, *, environment=None):
+    """Force an explicit setup data root to own its authoritative database."""
+
+    environment = os.environ if environment is None else environment
+    resolved = Path(data_dir).expanduser().resolve()
+    environment["MISSION_LEGAL_DATA_DIR"] = str(resolved)
+    # A development override must never redirect an installed setup away from
+    # the database covered by the installer's ProgramData backup receipt.
+    environment.pop("MISSION_LEGAL_DATABASE_PATH", None)
+    return resolved
+
+
 def _port(value):
     port = int(value)
     if not 1 <= port <= 65535:
@@ -511,7 +523,16 @@ def _handle_existing_database(
         return "destination-preserved"
 
     if destination_database.exists() and source_database != destination_database:
+        database_backup_service.verify(source_database)
         database_backup_service.verify(destination_database)
+        if _database_sha256(source_database) == _database_sha256(
+            destination_database
+        ):
+            print(
+                "The supplied migration snapshot already matches the verified "
+                f"authoritative database: {destination_database}"
+            )
+            return "already-authoritative"
         populated = _database_has_application_data(destination_database)
         if populated and not allow_populated_replacement:
             raise ServerSetupError(
@@ -558,7 +579,7 @@ def main():
         program_data = os.environ.get("PROGRAMDATA")
         data_dir = str(Path(program_data) / "MissionLegal") if program_data else None
     if data_dir:
-        os.environ["MISSION_LEGAL_DATA_DIR"] = str(Path(data_dir).expanduser().resolve())
+        data_dir = _configure_server_data_environment(data_dir)
 
     from server.configuration import load_server_configuration, save_server_configuration
     from server.security import PairingCodeStore

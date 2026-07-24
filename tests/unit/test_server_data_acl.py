@@ -2,6 +2,7 @@ import ctypes
 import json
 import os
 import stat
+import subprocess
 from pathlib import Path
 from unittest import mock
 
@@ -116,6 +117,206 @@ def test_public_ca_publication_is_atomic_and_reapplies_sensitive_policy(
     ]
 
 
+def test_public_ca_publication_replaces_a_different_existing_ca(
+    tmp_path,
+    monkeypatch,
+):
+    source = tmp_path / "Configuration" / "tls" / "mission-legal-ca.pem"
+    source.parent.mkdir(parents=True)
+    source.write_bytes(b"new certificate")
+    destination = data_acl.public_ca_path(tmp_path)
+    destination.parent.mkdir()
+    destination.write_bytes(b"old certificate")
+    calls = []
+
+    def invoke(mode, paths):
+        calls.append(mode)
+        if mode == "PreparePublic":
+            Path(paths[2]).mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setattr(data_acl, "_is_windows", lambda: True)
+    monkeypatch.setattr(data_acl, "_invoke_windows_acl", invoke)
+
+    published = data_acl.publish_public_ca(source, tmp_path)
+
+    assert published.read_bytes() == b"new certificate"
+    assert calls == [
+        "ProtectSensitive",
+        "PreparePublic",
+        "ProtectPrivate",
+        "ProtectPublic",
+    ]
+    assert not (tmp_path / data_acl.PUBLIC_CA_ROLLBACK_NAME).exists()
+    assert not destination.with_name(".mission-legal-ca.pem.tmp").exists()
+
+
+def test_public_ca_publication_is_idempotent_for_the_same_ca(
+    tmp_path,
+    monkeypatch,
+):
+    source = tmp_path / "Configuration" / "tls" / "mission-legal-ca.pem"
+    source.parent.mkdir(parents=True)
+    source.write_bytes(b"unchanged certificate")
+    destination = data_acl.public_ca_path(tmp_path)
+    destination.parent.mkdir()
+    destination.write_bytes(source.read_bytes())
+    replace = mock.Mock(wraps=os.replace)
+
+    def invoke(mode, paths):
+        if mode == "PreparePublic":
+            Path(paths[2]).mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setattr(data_acl, "_is_windows", lambda: True)
+    monkeypatch.setattr(data_acl, "_invoke_windows_acl", invoke)
+    monkeypatch.setattr(data_acl.os, "replace", replace)
+
+    published = data_acl.publish_public_ca(source, tmp_path)
+
+    assert published.read_bytes() == b"unchanged certificate"
+    replace.assert_not_called()
+    assert not (tmp_path / data_acl.PUBLIC_CA_ROLLBACK_NAME).exists()
+
+
+def test_public_ca_publication_restores_old_bytes_when_public_acl_fails(
+    tmp_path,
+    monkeypatch,
+):
+    source = tmp_path / "Configuration" / "tls" / "mission-legal-ca.pem"
+    source.parent.mkdir(parents=True)
+    source.write_bytes(b"new certificate")
+    destination = data_acl.public_ca_path(tmp_path)
+    destination.parent.mkdir()
+    destination.write_bytes(b"old certificate")
+    public_attempts = 0
+
+    def invoke(mode, paths):
+        nonlocal public_attempts
+        if mode == "PreparePublic":
+            Path(paths[2]).mkdir(parents=True, exist_ok=True)
+        elif mode == "ProtectPublic":
+            public_attempts += 1
+            if public_attempts == 1:
+                raise data_acl.ServerDataAclError("injected public ACL failure")
+
+    monkeypatch.setattr(data_acl, "_is_windows", lambda: True)
+    monkeypatch.setattr(data_acl, "_invoke_windows_acl", invoke)
+
+    with pytest.raises(data_acl.ServerDataAclError, match="injected public ACL"):
+        data_acl.publish_public_ca(source, tmp_path)
+
+    assert destination.read_bytes() == b"old certificate"
+    assert public_attempts == 2
+    assert not (tmp_path / data_acl.PUBLIC_CA_ROLLBACK_NAME).exists()
+    assert not destination.with_name(".mission-legal-ca.pem.tmp").exists()
+
+
+def test_public_ca_publication_restores_old_bytes_after_hash_mismatch(
+    tmp_path,
+    monkeypatch,
+):
+    source = tmp_path / "Configuration" / "tls" / "mission-legal-ca.pem"
+    source.parent.mkdir(parents=True)
+    source.write_bytes(b"new certificate")
+    destination = data_acl.public_ca_path(tmp_path)
+    destination.parent.mkdir()
+    destination.write_bytes(b"old certificate")
+    public_attempts = 0
+
+    def invoke(mode, paths):
+        nonlocal public_attempts
+        if mode == "PreparePublic":
+            Path(paths[2]).mkdir(parents=True, exist_ok=True)
+        elif mode == "ProtectPublic":
+            public_attempts += 1
+            if public_attempts == 1:
+                Path(paths[1]).write_bytes(b"post-commit corruption")
+
+    monkeypatch.setattr(data_acl, "_is_windows", lambda: True)
+    monkeypatch.setattr(data_acl, "_invoke_windows_acl", invoke)
+
+    with pytest.raises(data_acl.ServerDataAclError, match="hash verification"):
+        data_acl.publish_public_ca(source, tmp_path)
+
+    assert destination.read_bytes() == b"old certificate"
+    assert public_attempts == 2
+    assert not (tmp_path / data_acl.PUBLIC_CA_ROLLBACK_NAME).exists()
+
+
+def test_public_ca_publication_recovers_only_known_interrupted_residue(
+    tmp_path,
+    monkeypatch,
+):
+    stable = b"stable certificate"
+    source = tmp_path / "Configuration" / "tls" / "mission-legal-ca.pem"
+    source.parent.mkdir(parents=True)
+    source.write_bytes(stable)
+    destination = data_acl.public_ca_path(tmp_path)
+    destination.parent.mkdir()
+    destination.write_bytes(b"interrupted replacement")
+    temporary = destination.with_name(".mission-legal-ca.pem.tmp")
+    temporary.write_bytes(b"incomplete staging")
+    rollback = tmp_path / data_acl.PUBLIC_CA_ROLLBACK_NAME
+    rollback.write_bytes(stable)
+
+    def invoke(mode, paths):
+        if mode == "PreparePublic":
+            Path(paths[2]).mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setattr(data_acl, "_is_windows", lambda: True)
+    monkeypatch.setattr(data_acl, "_invoke_windows_acl", invoke)
+
+    published = data_acl.publish_public_ca(source, tmp_path)
+
+    assert published.read_bytes() == stable
+    assert not temporary.exists()
+    assert not rollback.exists()
+
+
+def test_public_ca_publication_refuses_unexpected_public_items(
+    tmp_path,
+    monkeypatch,
+):
+    source = tmp_path / "Configuration" / "tls" / "mission-legal-ca.pem"
+    source.parent.mkdir(parents=True)
+    source.write_bytes(b"certificate")
+    unexpected = tmp_path / "Public" / "do-not-delete.txt"
+    unexpected.parent.mkdir()
+    unexpected.write_bytes(b"unrelated")
+    monkeypatch.setattr(data_acl, "_is_windows", lambda: False)
+
+    with pytest.raises(data_acl.ServerDataAclError, match="unexpected item"):
+        data_acl.publish_public_ca(source, tmp_path)
+
+    assert unexpected.read_bytes() == b"unrelated"
+
+
+def test_public_ca_publication_refuses_reparse_staging_residue(
+    tmp_path,
+    monkeypatch,
+):
+    source = tmp_path / "Configuration" / "tls" / "mission-legal-ca.pem"
+    source.parent.mkdir(parents=True)
+    source.write_bytes(b"certificate")
+    temporary = (
+        data_acl.public_ca_path(tmp_path)
+        .with_name(".mission-legal-ca.pem.tmp")
+    )
+    temporary.parent.mkdir()
+    temporary.write_bytes(b"unsafe residue")
+    real_is_reparse_point = data_acl._is_reparse_point
+    monkeypatch.setattr(data_acl, "_is_windows", lambda: False)
+    monkeypatch.setattr(
+        data_acl,
+        "_is_reparse_point",
+        lambda path: Path(path) == temporary or real_is_reparse_point(path),
+    )
+
+    with pytest.raises(data_acl.ServerDataAclError, match="reparse point"):
+        data_acl.publish_public_ca(source, tmp_path)
+
+    assert temporary.read_bytes() == b"unsafe residue"
+
+
 def test_public_ca_source_must_stay_inside_sensitive_root(tmp_path):
     source = tmp_path.parent / "outside-ca.pem"
     source.write_text("certificate", encoding="utf-8")
@@ -124,6 +325,28 @@ def test_public_ca_source_must_stay_inside_sensitive_root(tmp_path):
             data_acl.publish_public_ca(source, tmp_path)
     finally:
         source.unlink(missing_ok=True)
+
+
+@pytest.mark.parametrize(
+    "source_path",
+    (
+        Path("Public") / "mission-legal-ca.pem",
+        Path("Public") / ".mission-legal-ca.pem.tmp",
+        Path(data_acl.PUBLIC_CA_ROLLBACK_NAME),
+    ),
+)
+def test_public_ca_source_cannot_use_reserved_publication_paths(
+    tmp_path,
+    source_path,
+):
+    source = tmp_path / source_path
+    source.parent.mkdir(parents=True, exist_ok=True)
+    source.write_bytes(b"must not be deleted")
+
+    with pytest.raises(data_acl.ServerDataAclError, match="reserved publication path"):
+        data_acl.publish_public_ca(source, tmp_path)
+
+    assert source.read_bytes() == b"must not be deleted"
 
 
 def test_windows_acl_process_failure_is_not_ignored(monkeypatch, tmp_path):
@@ -147,6 +370,153 @@ def test_windows_powershell_json_paths_are_flattened():
     output = data_acl._invoke_windows_acl("ValidatePaths", paths)
 
     assert json.loads(output) == list(paths)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows PowerShell 5.1 contract")
+def test_windows_powershell_sensitive_inventory_materializes_object_list(tmp_path):
+    root = tmp_path / "server-data"
+    nested = root / "Backups"
+    public = root / "Public"
+    nested.mkdir(parents=True)
+    public.mkdir()
+    database = root / "app.db"
+    snapshot = nested / "snapshot.db"
+    database.write_bytes(b"database")
+    snapshot.write_bytes(b"snapshot")
+    (public / "mission-legal-ca.pem").write_bytes(b"public certificate")
+
+    environment = os.environ.copy()
+    environment.update(
+        {
+            "MISSION_LEGAL_ACL_MODE": "ValidatePaths",
+            "MISSION_LEGAL_ACL_PATHS": json.dumps([str(root), str(public)]),
+        }
+    )
+    probe_script = data_acl._WINDOWS_ACL_SCRIPT + r"""
+$ProbeItems = @(
+    Get-SensitiveItems -Root ([string]$Paths[0]) -PublicRoot ([string]$Paths[1])
+)
+$ProbeJson = $ProbeItems |
+    Select-Object -Property Path, Directory |
+    ConvertTo-Json -Compress
+Write-Output "PROBE=$ProbeJson"
+"""
+    completed = subprocess.run(
+        [
+            data_acl._powershell_executable(),
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            probe_script,
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+        env=environment,
+    )
+
+    assert completed.returncode == 0, (
+        f"stdout:\n{completed.stdout}\nstderr:\n{completed.stderr}"
+    )
+    probe_line = next(
+        line for line in completed.stdout.splitlines() if line.startswith("PROBE=")
+    )
+    items = json.loads(probe_line.removeprefix("PROBE="))
+    reported_root = Path(items[0]["Path"])
+    inventory = {
+        Path(item["Path"]).relative_to(reported_root): item["Directory"]
+        for item in items
+    }
+    assert inventory == {
+        Path("."): True,
+        Path("app.db"): False,
+        Path("Backups"): True,
+        Path("Backups") / "snapshot.db": False,
+    }
+    assert Path("Public") not in inventory
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows PowerShell 5.1 contract")
+def test_windows_powershell_public_read_rights_are_not_classified_as_writable():
+    environment = os.environ.copy()
+    environment.update(
+        {
+            "MISSION_LEGAL_ACL_MODE": "ValidatePaths",
+            "MISSION_LEGAL_ACL_PATHS": json.dumps([r"C:\Mission Legal\ACL probe"]),
+        }
+    )
+    probe_script = data_acl._WINDOWS_ACL_SCRIPT + r"""
+$PublicAcl = New-ExactAcl -Directory $false -PublicRead $true
+$ReadRules = @(
+    @($PublicAcl.GetAccessRules(
+        $true,
+        $true,
+        [Security.Principal.SecurityIdentifier]
+    )) | Where-Object {
+        $_.IdentityReference.Value -ceq $UsersSid.Value
+    }
+)
+if ($ReadRules.Count -ne 1) {
+    throw "Expected exactly one Builtin Users rule in the public ACL probe."
+}
+$ReadRule = $ReadRules[0]
+$Probe = [ordered]@{
+    powershell_major = [int]$PSVersionTable.PSVersion.Major
+    read_and_execute = [bool](Test-WriteCapableFileSystemRights -Rights (
+        [long]$ReadRule.FileSystemRights
+    ))
+    write = [bool](Test-WriteCapableFileSystemRights -Rights (
+        [long][Security.AccessControl.FileSystemRights]::Write
+    ))
+    modify = [bool](Test-WriteCapableFileSystemRights -Rights (
+        [long][Security.AccessControl.FileSystemRights]::Modify
+    ))
+    delete_children = [bool](Test-WriteCapableFileSystemRights -Rights (
+        [long][Security.AccessControl.FileSystemRights]::DeleteSubdirectoriesAndFiles
+    ))
+    full_control = [bool](Test-WriteCapableFileSystemRights -Rights (
+        [long][Security.AccessControl.FileSystemRights]::FullControl
+    ))
+}
+Write-Output "RIGHTS_PROBE=$($Probe | ConvertTo-Json -Compress)"
+"""
+    completed = subprocess.run(
+        [
+            data_acl._powershell_executable(),
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            probe_script,
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+        env=environment,
+    )
+
+    assert completed.returncode == 0, (
+        f"stdout:\n{completed.stdout}\nstderr:\n{completed.stderr}"
+    )
+    probe_line = next(
+        line
+        for line in completed.stdout.splitlines()
+        if line.startswith("RIGHTS_PROBE=")
+    )
+    probe = json.loads(probe_line.removeprefix("RIGHTS_PROBE="))
+    assert probe == {
+        "powershell_major": 5,
+        "read_and_execute": False,
+        "write": True,
+        "modify": True,
+        "delete_children": True,
+        "full_control": True,
+    }
 
 
 def test_tls_reuse_reprotects_both_private_keys(monkeypatch, tmp_path):
@@ -196,11 +566,16 @@ def test_setup_installer_and_vm_harness_share_the_sid_acl_contract():
         "Beginning installer service action"
     )
     assert "Install-OrUpdateService" in install_action
-    assert "Publish-MissionLegalPublicCa -AllowMissing" in install_action
+    assert "Publish-MissionLegalPublicCa" not in install_action
     start_action = actions.split('"StartAndVerify" {', 1)[1].split(
         '"StartOnly" {', 1
     )[0]
     assert "Publish-MissionLegalPublicCa" in start_action
+    assert "Set-MissionLegalReadinessMarker" in start_action
+    start_only_action = actions.split('"StartOnly" {', 1)[1].split(
+        '"Remove" {', 1
+    )[0]
+    assert "Publish-MissionLegalPublicCa" not in start_only_action
     for sid in (
         data_acl.SYSTEM_SID,
         data_acl.ADMINISTRATORS_SID,
@@ -209,6 +584,21 @@ def test_setup_installer_and_vm_harness_share_the_sid_acl_contract():
         assert sid in actions
         assert sid in harness
     assert "USERNAME" not in actions
+    for source in (data_acl._WINDOWS_ACL_SCRIPT, actions):
+        assert "return $Items.ToArray()" in source
+        assert "return @($Items)" not in source
+    for source in (data_acl._WINDOWS_ACL_SCRIPT, actions, harness):
+        assert "function Test-WriteCapableFileSystemRights" in source
+        mask = source.split("$WriteCapableRightsMask = (", 1)[1].split(")", 1)[0]
+        assert "FileSystemRights]::WriteData" in mask
+        assert "FileSystemRights]::AppendData" in mask
+        assert "FileSystemRights]::WriteExtendedAttributes" in mask
+        assert "FileSystemRights]::WriteAttributes" in mask
+        assert "FileSystemRights]::DeleteSubdirectoriesAndFiles" in mask
+        assert "FileSystemRights]::Delete" in mask
+        assert "FileSystemRights]::ChangePermissions" in mask
+        assert "FileSystemRights]::TakeOwnership" in mask
+        assert "FileSystemRights]::Modify" not in mask
     assert "Invoke-StandardUserServerDataProbe" in harness
     for protected_name in (
         "app.db",

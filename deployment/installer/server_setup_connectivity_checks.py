@@ -1,5 +1,6 @@
 import hashlib
 import os
+import shutil
 import sqlite3
 import subprocess
 import sys
@@ -230,6 +231,30 @@ class ServerSetupConnectivityTests(unittest.TestCase):
 
             self.assertEqual(result, "already-authoritative")
             self.assertEqual(_values(database), [("authoritative",)])
+
+    def test_matching_snapshot_at_different_path_is_retry_safe(self):
+        with tempfile.TemporaryDirectory(dir=TEST_TEMP_ROOT) as temporary:
+            root = Path(temporary)
+            source = root / "selected-snapshot.db"
+            destination = root / "ProgramData" / "app.db"
+            destination.parent.mkdir(parents=True)
+            _create_database(source, ["already-migrated"])
+            shutil.copy2(source, destination)
+            original_hash = _sha256(destination)
+
+            with mock.patch.object(server_setup, "_assert_server_service_stopped"):
+                result = server_setup._handle_existing_database(
+                    source,
+                    destination,
+                    explicitly_supplied=True,
+                    allow_populated_replacement=False,
+                    database_backup_service=DatabaseBackupService,
+                    backup_dir=destination.parent / "Backups",
+                )
+
+            self.assertEqual(result, "already-authoritative")
+            self.assertEqual(_sha256(destination), original_hash)
+            self.assertFalse((destination.parent / "Backups").exists())
 
     def test_missing_explicit_database_fails_instead_of_falling_back(self):
         with tempfile.TemporaryDirectory(dir=TEST_TEMP_ROOT) as temporary:

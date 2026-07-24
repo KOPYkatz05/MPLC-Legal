@@ -309,7 +309,11 @@ class ServerInstallerTests(unittest.TestCase):
         script = (INSTALLER_DIR / "mission_legal_server.iss").read_text(
             encoding="utf-8"
         )
+        helper = (INSTALLER_DIR / "server_installer_actions.ps1").read_text(
+            encoding="utf-8"
+        )
         setup = script.split("[Setup]", 1)[1].split("[Files]", 1)[0]
+        files = script.split("[Files]", 1)[1].split("[InstallDelete]", 1)[0]
         install_delete = script.split("[InstallDelete]", 1)[1].split(
             "[Registry]", 1
         )[0]
@@ -327,6 +331,8 @@ class ServerInstallerTests(unittest.TestCase):
         self.assertIn("SetupLogging=yes", setup)
         self.assertIn("UninstallLogging=yes", setup)
         self.assertIn("ExecAndLogOutput", script)
+        self.assertNotIn("AfterInstall: FinishServerInstallation", files)
+        self.assertIn("CurStep = ssPostInstall", script)
         self.assertIn("CompareReleaseVersions", initialize)
         self.assertIn("Downgrades are blocked", initialize)
         self.assertIn("Same-version reinstalls are blocked", initialize)
@@ -362,6 +368,28 @@ class ServerInstallerTests(unittest.TestCase):
         self.assertIn(r"Backups\Installer", script)
         self.assertIn("StartAndVerify", script)
         self.assertIn("ServerConfiguredBeforeInstall", script)
+        self.assertIn("MissionLegalInstallerTlsValidator", helper)
+        self.assertIn("X509Chain", helper)
+        self.assertIn("AllowUnknownCertificateAuthority", helper)
+        self.assertIn("RemoteCertificateNameMismatch", helper)
+        self.assertIn("root.Thumbprint", helper)
+        self.assertIn("trustedCa.Thumbprint", helper)
+        self.assertIn(
+            "ServicePointManager.ServerCertificateValidationCallback = Validate",
+            helper,
+        )
+        self.assertNotIn(
+            "ServerCertificateValidationCallback = { $true }",
+            helper,
+        )
+        self.assertIn(
+            "$PreviousSecurityProtocol = [Net.ServicePointManager]::SecurityProtocol",
+            helper,
+        )
+        self.assertIn(
+            "[Net.ServicePointManager]::SecurityProtocol = $PreviousSecurityProtocol",
+            helper,
+        )
         self.assertIn("Silent installation left service registration", script)
         self.assertIn("RestorePriorInstallation", script)
         self.assertIn("RunRollbackAction('Restore')", script)
@@ -398,6 +426,22 @@ class ServerInstallerTests(unittest.TestCase):
         self.assertNotIn(
             "BinaryRollbackRestored or (not BinarySnapshotCaptured)", restore
         )
+        self.assertIn(
+            "if BinaryRollbackRestored and RollbackIntegrationRestored then",
+            restore,
+        )
+        self.assertLess(
+            restore.index("BinaryRollbackRestored := True"),
+            restore.index("RollbackIntegrationRestored := True"),
+        )
+        registration_failure = restore.split(
+            "RunServiceAction(ServiceScript, 'InstallOrUpdate'", 1
+        )[1].split("RunServiceAction(ServiceScript, 'StartOnly'", 1)[0]
+        restart_failure = restore.split(
+            "RunServiceAction(ServiceScript, 'StartOnly'", 1
+        )[1]
+        self.assertIn("RollbackFailedClosed := True", registration_failure)
+        self.assertIn("RollbackFailedClosed := True", restart_failure)
         self.assertIn("PostCopyDatabaseMutationPossible", restore)
         self.assertIn(
             "if BinarySnapshotCaptured and (not RunRollbackAction('Restore'))",
@@ -430,9 +474,16 @@ class ServerInstallerTests(unittest.TestCase):
         wizard = script.split("procedure InitializeWizard;", 1)[1].split(
             "procedure RestorePriorVersionRegistry", 1
         )[0]
-        post_install = script.split(
+        transactional_finish = script.split(
+            "procedure FinishServerInstallation;", 1
+        )[1].split("procedure CurStepChanged", 1)[0]
+        transactional_failure = script.split(
+            "function RemoveFailedFreshInstallationFootprint: Boolean;", 1
+        )[1].split("procedure FinishServerInstallation", 1)[0]
+        lifecycle = script.split(
             "procedure CurStepChanged(CurStep: TSetupStep);", 1
         )[1].split("procedure DeinitializeSetup", 1)[0]
+        files = script.split("[Files]", 1)[1].split("[InstallDelete]", 1)[0]
 
         self.assertIn("CreateInputOptionPage", wizard)
         self.assertIn("Create a fresh server", wizard)
@@ -454,22 +505,80 @@ class ServerInstallerTests(unittest.TestCase):
         self.assertIn("--existing-database", wizard)
         self.assertIn("--skip-main-client", wizard)
         self.assertNotIn("--replace-existing-database", wizard)
-        self.assertIn("if WizardSetupRequired then", post_install)
-        self.assertLess(
-            post_install.index("PostCopyDatabaseMutationPossible := True"),
-            post_install.index("RunInitialServerConfiguration"),
+        self.assertIn("mission-legal-server-ready-v1", script)
+        self.assertIn("function HasValidServerReadinessMarker", script)
+        configured = script.split("function HasCoreServerState: Boolean;", 1)[
+            1
+        ].split("function DefaultOneDriveRoot", 1)[0]
+        self.assertIn("app.db", configured)
+        self.assertIn("server.json", configured)
+        self.assertIn("HasValidServerReadinessMarker", configured)
+        self.assertIn("function IsVerifiedLegacyConfiguredServer", configured)
+        self.assertIn("HasPriorRegisteredInstall", configured)
+        self.assertIn("HasPriorServiceRegistration", configured)
+        self.assertIn("ReadinessMarkerIntroducedVersion", configured)
+        self.assertIn("Result := Comparison < 0", configured)
+        self.assertNotIn("AfterInstall: FinishServerInstallation", files)
+        self.assertIn("CurStep = ssPostInstall", lifecycle)
+        self.assertIn(
+            "ReadinessMarkerExistedBeforeInstall := FileExists(ReadinessMarkerPath)",
+            wizard,
         )
-        self.assertIn("not HasServerServiceRegistration", post_install)
-        self.assertLess(
-            post_install.index("RunInitialServerConfiguration"),
-            post_install.index("ServiceScript, 'StartAndVerify'"),
+        self.assertIn(
+            "IsServerConfigured or IsVerifiedLegacyConfiguredServer", wizard
         )
-        self.assertIn("RestorePriorInstallation", post_install)
-        self.assertIn("RaiseException", post_install)
+        self.assertIn("if WizardSetupRequired then", transactional_finish)
+        self.assertIn(
+            "Configuring the authoritative database and server settings",
+            transactional_finish,
+        )
+        self.assertIn(
+            "Updating Windows service and firewall integration",
+            transactional_finish,
+        )
+        self.assertIn(
+            "Starting the server and verifying its secure connection",
+            transactional_finish,
+        )
+        self.assertLess(
+            transactional_finish.index("PostCopyDatabaseMutationPossible := True"),
+            transactional_finish.index("RunInitialServerConfiguration"),
+        )
+        self.assertIn("not HasServerServiceRegistration", transactional_finish)
+        self.assertLess(
+            transactional_finish.index("RunInitialServerConfiguration"),
+            transactional_finish.index("ServiceScript, 'StartAndVerify'"),
+        )
+        self.assertNotIn("RestorePriorInstallation", transactional_finish)
+        self.assertIn("FailServerInstallation", transactional_finish)
+        self.assertIn("HasPriorRegistrationFootprint", transactional_failure)
+        self.assertIn("HasServerServiceRegistration", transactional_failure)
+        self.assertIn("DelTree(AppPath, True, True, True)", transactional_failure)
+        self.assertIn("RegDeleteKeyIncludingSubkeys", transactional_failure)
+        self.assertIn("RestorePriorInstallation", transactional_failure)
+        self.assertIn("InstallFailureDetected := True", transactional_failure)
+        self.assertIn(
+            "FreshFootprintCleanupCompleted := CleanupSucceeded",
+            transactional_failure,
+        )
+        self.assertLess(
+            transactional_failure.index("RestorePriorInstallation"),
+            transactional_failure.index("RemoveFailedFreshInstallationFootprint"),
+        )
+        self.assertIn("RaiseException", transactional_failure)
+        self.assertIn("function GetCustomSetupExitCode", script)
+        self.assertIn("if InstallFailureDetected then", lifecycle)
+        self.assertIn("Result := 20", lifecycle)
         self.assertIn(
             "(not WizardSetupRequired) and (not ServerConfiguredBeforeInstall)",
-            post_install,
+            transactional_finish,
         )
+        self.assertIn("procedure RemoveCandidateReadinessMarker", lifecycle)
+        deinitialize = script.split("procedure DeinitializeSetup;", 1)[1]
+        self.assertIn("RestorePriorInstallation", deinitialize)
+        self.assertIn("not FreshFootprintCleanupCompleted", deinitialize)
+        self.assertIn("RemoveFailedFreshInstallationFootprint", deinitialize)
+        self.assertIn("RemoveCandidateReadinessMarker", deinitialize)
 
     def test_binary_rollback_helper_restores_exact_prior_tree(self):
         powershell = shutil.which("powershell.exe") or shutil.which("powershell")
@@ -811,16 +920,87 @@ class ServerInstallerTests(unittest.TestCase):
         helper = (INSTALLER_DIR / "server_installer_actions.ps1").read_text(
             encoding="utf-8"
         )
-        self.assertIn(
-            'ValidateSet("Stop", "InstallOrUpdate", "StartAndVerify", "StartOnly", "Remove")',
-            helper,
-        )
+        self.assertIn("[ValidateSet(", helper)
+        for action in (
+            "RuntimeSelfTest",
+            "Stop",
+            "InstallOrUpdate",
+            "StartAndVerify",
+            "StartOnly",
+            "Remove",
+        ):
+            self.assertIn(f'"{action}"', helper)
         self.assertIn("Get-RegisteredServiceExecutable", helper)
         self.assertIn("Service executable mismatch", helper)
         self.assertIn("Get-HealthUri", helper)
         self.assertIn("Health endpoint reports version", helper)
+        self.assertIn("Assert-ServiceOwnsConfiguredListener", helper)
+        self.assertIn("Set-MissionLegalReadinessMarker", helper)
+        self.assertIn("[IO.File]::Replace($Candidate, $Destination, $Rollback, $true)", helper)
+        self.assertNotIn("[IO.File]::Replace($Temporary, $PublicCaPath, $null)", helper)
+        self.assertIn("Get-ConfigurationPropertyValue", helper)
+        self.assertIn("ScriptStackTrace", helper)
         self.assertIn("sc.exe", helper)
         self.assertIn("restart/5000/restart/15000/restart/60000", helper)
+
+    @unittest.skipUnless(os.name == "nt", "Windows PowerShell 5.1 runtime contract")
+    def test_service_helper_runtime_self_test_executes_real_ps51_paths(self):
+        powershell = (
+            Path(os.environ["SystemRoot"])
+            / "System32"
+            / "WindowsPowerShell"
+            / "v1.0"
+            / "powershell.exe"
+        )
+        if not powershell.is_file():
+            self.skipTest("Windows PowerShell 5.1 executable is unavailable")
+        helper = INSTALLER_DIR / "server_installer_actions.ps1"
+        completed = subprocess.run(
+            [
+                str(powershell),
+                "-NoLogo",
+                "-NoProfile",
+                "-NonInteractive",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                str(helper),
+                "-Action",
+                "RuntimeSelfTest",
+                "-InstallDir",
+                str(REPO_ROOT),
+                "-DataDir",
+                str(TEST_TEMP_ROOT / "runtime-selftest-unused"),
+                "-AppVersion",
+                "0.1.0",
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(
+            completed.returncode,
+            0,
+            f"stdout:\n{completed.stdout}\nstderr:\n{completed.stderr}",
+        )
+        evidence = json.loads(completed.stdout.strip().splitlines()[-1])
+        self.assertEqual(
+            evidence,
+            {
+                "status": "ok",
+                "action": "RuntimeSelfTest",
+                "powershell_major": 5,
+                "inventory_materialized": True,
+                "configuration_defaults": True,
+                "configuration_validation": True,
+                "unicode_configuration": True,
+                "public_ca_first_publish": True,
+                "public_ca_identical_publish": True,
+                "public_ca_republish": True,
+                "rights_classification": True,
+                "residue_count": 0,
+            },
+        )
 
     def test_server_programdata_acl_is_sid_based_fail_closed_and_vm_proven(self):
         data_acl = (REPO_ROOT / "server" / "data_acl.py").read_text(
@@ -842,9 +1022,25 @@ class ServerInstallerTests(unittest.TestCase):
         for source in (data_acl, helper):
             self.assertIn("SetAccessRuleProtection($true, $false)", source)
             self.assertIn("AreAccessRulesProtected", source)
+            self.assertIn("return $Items.ToArray()", source)
+            self.assertNotIn("return @($Items)", source)
             self.assertNotIn("Administrators:F", source)
             self.assertNotIn("SYSTEM:F", source)
             self.assertNotIn("USERNAME", source)
+        for source in (data_acl, helper, harness):
+            self.assertIn("function Test-WriteCapableFileSystemRights", source)
+            mask = source.split("$WriteCapableRightsMask = (", 1)[1].split(
+                ")", 1
+            )[0]
+            self.assertIn("FileSystemRights]::WriteData", mask)
+            self.assertIn("FileSystemRights]::AppendData", mask)
+            self.assertIn("FileSystemRights]::WriteExtendedAttributes", mask)
+            self.assertIn("FileSystemRights]::WriteAttributes", mask)
+            self.assertIn("FileSystemRights]::DeleteSubdirectoriesAndFiles", mask)
+            self.assertIn("FileSystemRights]::Delete", mask)
+            self.assertIn("FileSystemRights]::ChangePermissions", mask)
+            self.assertIn("FileSystemRights]::TakeOwnership", mask)
+            self.assertNotIn("FileSystemRights]::Modify", mask)
 
         self.assertIn("if completed.returncode != 0", data_acl)
         self.assertIn("ServerDataAclError", data_acl)
@@ -883,32 +1079,66 @@ class ServerInstallerTests(unittest.TestCase):
     def test_package_provenance_accepts_exact_tree_and_rejects_tamper_and_relabel(self):
         helper = REPO_ROOT / "deployment" / "package_provenance.py"
         with _writable_test_directory() as root:
+            source_repo = root / "source"
+            source_repo.mkdir()
+            for lock_name in ("requirements_lock.txt", "requirements_build.txt"):
+                shutil.copy2(REPO_ROOT / lock_name, source_repo / lock_name)
+            (source_repo / "fixture.txt").write_text(
+                "isolated provenance fixture\n", encoding="utf-8"
+            )
+            for git_arguments in (
+                ["init", "--quiet"],
+                ["config", "user.email", "provenance-test@mission-legal.invalid"],
+                ["config", "user.name", "Mission Legal Test"],
+                ["add", "."],
+                ["commit", "--quiet", "-m", "provenance fixture"],
+            ):
+                completed = subprocess.run(
+                    ["git", "-C", str(source_repo), *git_arguments],
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                )
+                self.assertEqual(
+                    completed.returncode, 0, completed.stdout + completed.stderr
+                )
+
             package = root / "MissionLegalServer"
             package.mkdir()
-            artifact = package / "server-runtime.bin"
+            artifact = package / "MissionLegalServer.exe"
             original_bytes = b"verified frozen server fixture"
             artifact.write_bytes(original_bytes)
             smoke = root / "smoke.jsonl"
+            smoke_payload = {
+                "api_version": "1",
+                "app_version": "1.2.3",
+                "frozen": True,
+                "https_health": {
+                    "api_version": "1",
+                    "app_version": "1.2.3",
+                    "database_integrity": "ok",
+                    "executable_sha256": hashlib.sha256(original_bytes).hexdigest(),
+                    "executable_size": len(original_bytes),
+                    "frozen_executable": True,
+                    "host": "127.0.0.1",
+                    "schema_version": 1,
+                    "status": "ok",
+                    "tls_peer_verified": True,
+                    "transport": "https",
+                },
+                "imports": [],
+                "role": "server",
+                "schema_version": 1,
+                "status": "ok",
+            }
             smoke.write_text(
-                json.dumps(
-                    {
-                        "api_version": "1",
-                        "app_version": "1.2.3",
-                        "frozen": True,
-                        "imports": [],
-                        "role": "server",
-                        "schema_version": 1,
-                        "status": "ok",
-                    },
-                    sort_keys=True,
-                )
-                + "\n",
+                json.dumps(smoke_payload, sort_keys=True) + "\n",
                 encoding="utf-8",
             )
             manifest = root / "MissionLegalServer.provenance.json"
             common = [
                 "--repo-root",
-                str(REPO_ROOT),
+                str(source_repo),
                 "--package-dir",
                 str(package),
                 "--manifest-path",
@@ -931,10 +1161,28 @@ class ServerInstallerTests(unittest.TestCase):
                 "--smoke-result",
                 str(smoke),
                 "--dependency-lock",
-                str(REPO_ROOT / "requirements_lock.txt"),
+                str(source_repo / "requirements_lock.txt"),
                 "--dependency-lock",
-                str(REPO_ROOT / "requirements_build.txt"),
+                str(source_repo / "requirements_build.txt"),
             ]
+            missing_health_payload = dict(smoke_payload)
+            missing_health_payload.pop("https_health")
+            smoke.write_text(
+                json.dumps(missing_health_payload, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            missing_health = subprocess.run(
+                create_command,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertNotEqual(missing_health.returncode, 0)
+            self.assertIn("HTTPS health evidence", missing_health.stderr)
+            smoke.write_text(
+                json.dumps(smoke_payload, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
             create = subprocess.run(
                 create_command,
                 check=False,
@@ -990,6 +1238,19 @@ class ServerInstallerTests(unittest.TestCase):
             exact = verify("1.2.3")
             self.assertEqual(exact.returncode, 0, exact.stdout + exact.stderr)
 
+            invalid_manifest = json.loads(deterministic_bytes)
+            invalid_manifest["smoke_result"]["https_health"][
+                "tls_peer_verified"
+            ] = False
+            manifest.write_text(
+                json.dumps(invalid_manifest, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            invalid_health = verify("1.2.3")
+            self.assertNotEqual(invalid_health.returncode, 0)
+            self.assertIn("tls_peer_verified", invalid_health.stderr)
+            manifest.write_bytes(deterministic_bytes)
+
             artifact.write_bytes(original_bytes + b"-tampered")
             tampered = verify("1.2.3")
             self.assertNotEqual(tampered.returncode, 0)
@@ -1014,6 +1275,7 @@ class ServerInstallerTests(unittest.TestCase):
         self.assertIn("Get-AuthenticodeSignature", build)
         self.assertIn("Authenticode signature is not valid", build)
         self.assertIn("AllowUnpublishedDevelopmentOverwrite", build)
+        self.assertIn("$ExistingReleaseArtifacts = @(", build)
         self.assertIn("RequireSigning", build)
         self.assertIn(
             "RequireSigning cannot be combined with AllowUnpublishedDevelopmentOverwrite",
@@ -1028,6 +1290,11 @@ class ServerInstallerTests(unittest.TestCase):
         self.assertIn("--required-windows-version-exe MissionLegalServer.exe", build)
         self.assertIn('"$PackageName.provenance.json"', build)
         self.assertIn("clean Git commit", build)
+        self.assertIn("WindowsPowerShell\\v1.0\\powershell.exe", build)
+        self.assertIn("-Action RuntimeSelfTest", build)
+        self.assertIn("public_ca_republish", build)
+        self.assertIn("installer_helper_runtime_self_test", build)
+        self.assertIn("$InstallerHelperHashAfterCompile -cne $InstallerHelperHash", build)
         for forbidden_name in (
             "devices.json",
             "server.json",
@@ -1057,8 +1324,23 @@ class ServerInstallerTests(unittest.TestCase):
         )
         self.assertLess(
             build.index("$ServerSmoke.ExitCode"),
+            build.index("$ServiceSmoke = Start-Process"),
+        )
+        self.assertLess(
+            build.index("$ServiceSmoke.ExitCode"),
+            build.index("frozen_server_https_smoke.py"),
+        )
+        self.assertLess(
+            build.index("frozen_server_https_smoke.py"),
             build.index('$ServerManifest = Join-Path $DistRoot'),
         )
+        self.assertIn("--base-smoke-result $ServerSmokeOutput", build)
+        self.assertIn("-SmokeResultPath $ServerHttpsSmokeOutput", build)
+        self.assertIn('-FilePath $ServiceExe', build)
+        self.assertIn('$ServiceSmokeResult.frozen -ne $true', build)
+        self.assertIn('"https_health"', helper)
+        self.assertIn("tls_peer_verified", helper)
+        self.assertIn("MissionLegalServer.exe", helper)
         for executable in (
             "MissionLegal.exe",
             "MissionLegalDiagnostics.exe",

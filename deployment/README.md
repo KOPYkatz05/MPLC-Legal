@@ -148,7 +148,10 @@ Setup automatically runs the installed configuration utility with its existing
 elevation, configures the service and Private-profile firewall rule, starts the
 server, and health-checks the packaged version. It preserves a migration source,
 never authorizes replacement of a populated authoritative database, and does
-not write main-client settings into the elevated administrator's profile.
+not write main-client settings into the elevated administrator's profile. Setup
+is complete only after the service owns the configured listener, remains stable,
+passes the final health check, publishes the verified public CA, and commits the
+protected `Configuration\installer-ready-v1.marker`.
 
 `/SILENT` and `/VERYSILENT` first installs still defer configuration because no
 storage paths were selected. To finish one of those installs manually, run:
@@ -164,6 +167,9 @@ The installed utility automatically invokes the packaged checked service
 helper to register or update `MissionLegalServer`, apply the storage/firewall
 policy, start it, and require the packaged version from `/health`. A nonzero
 exit means first-run setup is incomplete; do not pair clients until it succeeds.
+If an interactive first attempt fails before the readiness marker is committed,
+running the installer again reopens the guided fresh/migration setup even when
+some protected database or configuration state remains from recovery.
 
 ## Raw server-folder test
 
@@ -189,8 +195,9 @@ firewall rule for its configured port and checked `LocalSystem` Modify ACLs on
 the mission-document and mirrored-backup roots. Stop the service before passing
 `--existing-database`. An empty installer-created database is preserved and
 safely replaced; a populated authoritative database is refused unless the
-operator also supplies `--replace-existing-database`. Full migration and
-recovery semantics are documented in
+operator also supplies `--replace-existing-database`, except that a byte-for-byte
+identical supplied snapshot is accepted as the already-authoritative database
+for a safe retry. Full migration and recovery semantics are documented in
 [`installer/SERVER_INSTALLER.md`](installer/SERVER_INSTALLER.md).
 
 The authoritative database and server identity remain under

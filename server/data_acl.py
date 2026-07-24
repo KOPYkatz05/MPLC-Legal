@@ -1,6 +1,8 @@
+import hashlib
 import json
 import os
 import shutil
+import stat
 import subprocess
 from pathlib import Path
 
@@ -11,6 +13,7 @@ SYSTEM_SID = "S-1-5-18"
 ADMINISTRATORS_SID = "S-1-5-32-544"
 USERS_SID = "S-1-5-32-545"
 PUBLIC_CA_RELATIVE_PATH = Path("Public") / "mission-legal-ca.pem"
+PUBLIC_CA_ROLLBACK_NAME = ".mission-legal-public-ca.rollback"
 
 
 class ServerDataAclError(RuntimeError):
@@ -21,7 +24,21 @@ _WINDOWS_ACL_SCRIPT = r"""
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 trap {
-    [Console]::Error.WriteLine($_.ToString())
+    $ErrorRecord = $_
+    [Console]::Error.WriteLine($ErrorRecord.ToString())
+    if (
+        $null -ne $ErrorRecord.InvocationInfo -and
+        -not [string]::IsNullOrWhiteSpace(
+            $ErrorRecord.InvocationInfo.PositionMessage
+        )
+    ) {
+        [Console]::Error.WriteLine($ErrorRecord.InvocationInfo.PositionMessage)
+    }
+    if (-not [string]::IsNullOrWhiteSpace($ErrorRecord.ScriptStackTrace)) {
+        [Console]::Error.WriteLine(
+            "PowerShell stack: $($ErrorRecord.ScriptStackTrace)"
+        )
+    }
     exit 1
 }
 
@@ -30,6 +47,16 @@ $AdministratorsSid = [Security.Principal.SecurityIdentifier]::new('S-1-5-32-544'
 $UsersSid = [Security.Principal.SecurityIdentifier]::new('S-1-5-32-545')
 $FullControl = [Security.AccessControl.FileSystemRights]::FullControl
 $ReadAndExecute = [Security.AccessControl.FileSystemRights]::ReadAndExecute
+$WriteCapableRightsMask = (
+    [long][Security.AccessControl.FileSystemRights]::WriteData -bor
+    [long][Security.AccessControl.FileSystemRights]::AppendData -bor
+    [long][Security.AccessControl.FileSystemRights]::WriteExtendedAttributes -bor
+    [long][Security.AccessControl.FileSystemRights]::WriteAttributes -bor
+    [long][Security.AccessControl.FileSystemRights]::DeleteSubdirectoriesAndFiles -bor
+    [long][Security.AccessControl.FileSystemRights]::Delete -bor
+    [long][Security.AccessControl.FileSystemRights]::ChangePermissions -bor
+    [long][Security.AccessControl.FileSystemRights]::TakeOwnership
+)
 $AllowedType = [Security.AccessControl.AccessControlType]::Allow
 $NoInheritance = [Security.AccessControl.InheritanceFlags]::None
 $ContainerAndObjectInheritance = (
@@ -46,6 +73,14 @@ foreach ($DecodedPath in $DecodedPaths) {
     # it is wrapped directly in @(...). Flatten it explicitly so each ACL
     # target remains one path string.
     $Paths += [string]$DecodedPath
+}
+
+function Test-WriteCapableFileSystemRights {
+    param([Parameter(Mandatory = $true)][long]$Rights)
+
+    # Do not use the composite Modify right here. It includes the read and
+    # execute bits, so ReadAndExecute would be misclassified as writable.
+    return (($Rights -band $WriteCapableRightsMask) -ne 0)
 }
 
 function Assert-NormalItem {
@@ -166,14 +201,9 @@ function Assert-ExactAcl {
         ) {
             throw "Public ACL is missing Builtin Users read access: $Path"
         }
-        $WriteMask = (
-            [long][Security.AccessControl.FileSystemRights]::Write -bor
-            [long][Security.AccessControl.FileSystemRights]::Modify -bor
-            [long][Security.AccessControl.FileSystemRights]::Delete -bor
-            [long][Security.AccessControl.FileSystemRights]::ChangePermissions -bor
-            [long][Security.AccessControl.FileSystemRights]::TakeOwnership
-        )
-        if (($RightsBySid[$UsersSid.Value] -band $WriteMask) -ne 0) {
+        if (
+            Test-WriteCapableFileSystemRights -Rights $RightsBySid[$UsersSid.Value]
+        ) {
             throw "Public ACL grants Builtin Users write-capable access: $Path"
         }
     }
@@ -220,7 +250,10 @@ function Get-SensitiveItems {
             }
         }
     }
-    return @($Items)
+    # Windows PowerShell 5.1 cannot materialize a Generic.List[object] of
+    # PSCustomObjects with @($Items); its binder throws "Argument types do not
+    # match." Convert to a normal Object[] before returning it to the pipeline.
+    return $Items.ToArray()
 }
 
 switch ($Mode) {
@@ -320,6 +353,40 @@ def _absolute_path(path):
 
 def _is_windows():
     return os.name == "nt"
+
+
+def _path_entry_exists(path):
+    return os.path.lexists(path)
+
+
+def _is_reparse_point(path):
+    details = os.lstat(path)
+    if stat.S_ISLNK(details.st_mode):
+        return True
+    attributes = getattr(details, "st_file_attributes", 0)
+    reparse_attribute = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
+    return bool(reparse_attribute and attributes & reparse_attribute)
+
+
+def _assert_normal_file(path, *, label, allow_missing=False):
+    if not _path_entry_exists(path):
+        if allow_missing:
+            return False
+        raise ServerDataAclError(f"{label} is missing: {path}")
+    if _is_reparse_point(path):
+        raise ServerDataAclError(f"{label} is a reparse point: {path}")
+    if not stat.S_ISREG(os.lstat(path).st_mode):
+        raise ServerDataAclError(f"{label} is not a normal file: {path}")
+    return True
+
+
+def _assert_normal_directory(path, *, label):
+    if not _path_entry_exists(path):
+        raise ServerDataAclError(f"{label} is missing: {path}")
+    if _is_reparse_point(path):
+        raise ServerDataAclError(f"{label} is a reparse point: {path}")
+    if not stat.S_ISDIR(os.lstat(path).st_mode):
+        raise ServerDataAclError(f"{label} is not a normal directory: {path}")
 
 
 def public_ca_path(data_dir=None):
@@ -429,6 +496,71 @@ def protect_private_key_files(*paths):
             path.chmod(0o600)
 
 
+def _file_sha256(path):
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.digest()
+
+
+def _copy_file_exclusive(source, destination):
+    with destination.open("xb") as destination_stream:
+        with source.open("rb") as source_stream:
+            shutil.copyfileobj(source_stream, destination_stream)
+        destination_stream.flush()
+        os.fsync(destination_stream.fileno())
+    destination.chmod(0o600)
+
+
+def _remove_known_publication_file(path, *, label):
+    if not _assert_normal_file(path, label=label, allow_missing=True):
+        return
+    path.unlink()
+
+
+def _prepare_public_ca_directory(
+    root,
+    source,
+    public_root,
+    destination,
+    temporary,
+):
+    if _is_windows():
+        _invoke_windows_acl(
+            "PreparePublic",
+            (root, source, public_root, destination, temporary),
+        )
+        return
+
+    if _path_entry_exists(public_root):
+        _assert_normal_directory(public_root, label="Public CA directory")
+    else:
+        public_root.mkdir(parents=True, exist_ok=False)
+    public_root.chmod(0o700)
+    for path in public_root.iterdir():
+        if _is_reparse_point(path):
+            raise ServerDataAclError(
+                f"Public CA directory contains a reparse point: {path}"
+            )
+        if path not in (destination, temporary):
+            raise ServerDataAclError(
+                f"Public CA directory contains an unexpected item: {path}"
+            )
+        _assert_normal_file(path, label="Public CA publication file")
+        path.chmod(0o600)
+
+
+def _protect_public_ca(public_root, destination):
+    if _is_windows():
+        _invoke_windows_acl("ProtectPublic", (public_root, destination))
+    else:
+        _assert_normal_directory(public_root, label="Public CA directory")
+        _assert_normal_file(destination, label="Published CA certificate")
+        destination.chmod(0o644)
+        public_root.chmod(0o755)
+
+
 def publish_public_ca(source_ca, data_dir=None):
     root = _absolute_path(data_dir or get_app_data_dir())
     supplied_source = Path(source_ca).expanduser()
@@ -439,53 +571,177 @@ def publish_public_ca(source_ca, data_dir=None):
         raise ServerDataAclError(
             f"CA certificate must be inside the protected server data root: {source}"
         ) from exc
-    if supplied_source.is_symlink() or not source.is_file() or source.is_symlink():
+    if (
+        supplied_source.is_symlink()
+        or not _path_entry_exists(source)
+        or _is_reparse_point(source)
+        or not source.is_file()
+    ):
         raise ServerDataAclError(f"CA certificate is missing or unsafe: {source}")
 
     destination = public_ca_path(root)
     public_root = destination.parent
     temporary = destination.with_name(f".{destination.name}.tmp")
-    protect_sensitive_server_data(root)
-    if _is_windows():
-        _invoke_windows_acl(
-            "PreparePublic",
-            (root, source, public_root, destination, temporary),
+    rollback = root / PUBLIC_CA_ROLLBACK_NAME
+    if source in (destination, temporary, rollback):
+        raise ServerDataAclError(
+            f"CA certificate conflicts with a reserved publication path: {source}"
         )
-    else:
-        if public_root.is_symlink():
-            raise ServerDataAclError(f"Public CA directory is a symbolic link: {public_root}")
-        public_root.mkdir(parents=True, exist_ok=True)
-        unexpected = [
-            path
-            for path in public_root.iterdir()
-            if path not in (destination, temporary)
-        ]
-        if unexpected:
-            raise ServerDataAclError(
-                f"Public CA directory contains an unexpected item: {unexpected[0]}"
-            )
-        public_root.chmod(0o700)
-        for path in (destination, temporary):
-            if path.exists():
-                if path.is_symlink() or not path.is_file():
-                    raise ServerDataAclError(f"Public CA path is unsafe: {path}")
-                path.chmod(0o600)
+    prepared = False
+    had_destination = False
+    committed = False
+    rollback_owned = False
+    previous_digest = None
 
-    if temporary.exists():
-        temporary.unlink()
+    protect_sensitive_server_data(root)
+
     try:
-        with temporary.open("xb") as stream:
-            with source.open("rb") as source_stream:
-                shutil.copyfileobj(source_stream, stream)
-        temporary.chmod(0o600)
-        os.replace(temporary, destination)
-    finally:
-        if temporary.exists():
-            temporary.unlink()
+        _prepare_public_ca_directory(
+            root,
+            source,
+            public_root,
+            destination,
+            temporary,
+        )
+        prepared = True
+        had_destination = _assert_normal_file(
+            destination,
+            label="Published CA certificate",
+            allow_missing=True,
+        )
+        _remove_known_publication_file(
+            temporary,
+            label="Public CA staging file",
+        )
 
-    if _is_windows():
-        _invoke_windows_acl("ProtectPublic", (public_root, destination))
-    else:
-        destination.chmod(0o644)
-        public_root.chmod(0o755)
-    return destination
+        if _assert_normal_file(
+            rollback,
+            label="Public CA rollback file",
+            allow_missing=True,
+        ):
+            if _path_entry_exists(destination):
+                _assert_normal_file(
+                    destination,
+                    label="Interrupted published CA certificate",
+                )
+            os.replace(rollback, destination)
+            had_destination = True
+            _protect_public_ca(public_root, destination)
+            _prepare_public_ca_directory(
+                root,
+                source,
+                public_root,
+                destination,
+                temporary,
+            )
+
+        source_digest = _file_sha256(source)
+        if had_destination:
+            previous_digest = _file_sha256(destination)
+            if previous_digest == source_digest:
+                _protect_public_ca(public_root, destination)
+                if _file_sha256(destination) != source_digest:
+                    raise ServerDataAclError(
+                        "Published CA certificate changed during verification"
+                    )
+                return destination
+
+        _copy_file_exclusive(source, temporary)
+        staged_digest = _file_sha256(temporary)
+        if staged_digest != source_digest or _file_sha256(source) != source_digest:
+            raise ServerDataAclError(
+                "CA certificate changed while the public copy was staged"
+            )
+
+        if had_destination:
+            rollback_owned = True
+            _copy_file_exclusive(destination, rollback)
+            if _is_windows():
+                _invoke_windows_acl("ProtectPrivate", (rollback,))
+            else:
+                rollback.chmod(0o600)
+            if (
+                _file_sha256(rollback) != previous_digest
+                or _file_sha256(destination) != previous_digest
+            ):
+                raise ServerDataAclError(
+                    "Existing public CA certificate changed while it was preserved"
+                )
+
+        os.replace(temporary, destination)
+        committed = True
+        _protect_public_ca(public_root, destination)
+        if _file_sha256(destination) != staged_digest:
+            raise ServerDataAclError(
+                "Published CA certificate failed post-commit hash verification"
+            )
+        _remove_known_publication_file(
+            rollback,
+            label="Public CA rollback file",
+        )
+        return destination
+    except Exception as error:
+        recovery_errors = []
+        try:
+            _remove_known_publication_file(
+                temporary,
+                label="Public CA staging file",
+            )
+        except Exception as cleanup_error:
+            recovery_errors.append(f"staging cleanup failed: {cleanup_error}")
+
+        if committed:
+            if had_destination:
+                try:
+                    _assert_normal_file(
+                        rollback,
+                        label="Public CA rollback file",
+                    )
+                    if _path_entry_exists(destination):
+                        _assert_normal_file(
+                            destination,
+                            label="Failed published CA certificate",
+                        )
+                    os.replace(rollback, destination)
+                    if (
+                        previous_digest is not None
+                        and _file_sha256(destination) != previous_digest
+                    ):
+                        raise ServerDataAclError(
+                            "Restored public CA certificate failed hash verification"
+                        )
+                except Exception as rollback_error:
+                    recovery_errors.append(
+                        f"prior CA restoration failed: {rollback_error}"
+                    )
+            else:
+                try:
+                    _remove_known_publication_file(
+                        destination,
+                        label="Failed published CA certificate",
+                    )
+                except Exception as removal_error:
+                    recovery_errors.append(
+                        f"failed CA removal failed: {removal_error}"
+                    )
+        elif rollback_owned:
+            try:
+                _remove_known_publication_file(
+                    rollback,
+                    label="Public CA rollback file",
+                )
+            except Exception as cleanup_error:
+                recovery_errors.append(f"rollback cleanup failed: {cleanup_error}")
+
+        if prepared and had_destination and _path_entry_exists(destination):
+            try:
+                _protect_public_ca(public_root, destination)
+            except Exception as acl_error:
+                recovery_errors.append(f"prior CA ACL restoration failed: {acl_error}")
+
+        if recovery_errors:
+            detail = "; ".join(recovery_errors)
+            raise ServerDataAclError(
+                f"Public CA publication failed: {error}. Recovery also failed: {detail}"
+            ) from error
+        raise

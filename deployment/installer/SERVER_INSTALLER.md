@@ -95,7 +95,9 @@ reinstalls. Before any installed file is removed or replaced, setup then:
 13. starts the service and requires `/health` to report the new application
     version;
 14. publishes and verifies a read-only copy of the public CA certificate for
-    client setup.
+    client setup;
+15. repeats health and service-PID/listener stability checks, then atomically
+    commits the protected `Configuration\installer-ready-v1.marker`.
 
 If service or health validation fails after files were copied, setup stops the
 candidate and uses only that attempt's durable receipt. It validates the
@@ -114,17 +116,21 @@ start either candidate or prior binaries automatically. A binary recovery
 snapshot that cannot be safely validated is likewise preserved and blocks
 another same-version capture instead of being overwritten.
 
-Until the server has an installer-validation read-only marker, run upgrades in
-a short maintenance window with client applications closed. The candidate is
-live briefly while `/health` is evaluated; if it accepts a write and then fails
-validation, exact pre-upgrade restoration necessarily discards that
-post-snapshot write. A future validation-mode gate should reject API mutations
-until setup commits the successful upgrade.
+The current readiness marker records that setup completed; it is not an API
+write-blocking validation mode. Run upgrades in a short maintenance window with
+client applications closed. The candidate is live briefly while `/health` is
+evaluated; if it accepts a write and then fails validation, exact pre-upgrade
+restoration necessarily discards that post-snapshot write. A future validation
+mode should reject API mutations until setup commits the successful upgrade.
 
 Any failed gate produces a nonzero setup result. Setup and uninstall logging are
 always enabled; the service and maintenance helpers also append logs under
 `%PROGRAMDATA%\MissionLegal\Logs`. Binary rollback diagnostics are written to
 `installer-rollback.log`, including the exact hidden PowerShell error.
+`C:\ProgramData` is hidden, and these server logs are intentionally readable only
+by LocalSystem and administrators. If access is denied, the administrator or IT
+account that approved Setup must collect them. The Inno Setup log is stored
+under the Setup account's `%TEMP%` with a filename beginning with `Setup Log`.
 
 Silent upgrades are supported by Inno Setup:
 
@@ -153,10 +159,17 @@ desktop credentials or settings into the elevated administrator's profile, and
 it never passes `--replace-existing-database`.
 
 The migration source is integrity-checked and remains unchanged. If a populated
-authoritative database already exists, guided migration fails without replacing
-it. If setup fails after creating or migrating the database, the installer
-removes the candidate service, restores the receipted database or no-database
-state, and lets Inno Setup remove the new application files.
+authoritative database already exists with different content, guided migration
+fails without replacing it. A byte-identical supplied snapshot is accepted as
+already authoritative so an interrupted migration can be retried safely. If
+setup fails after creating or migrating the database, the installer removes the
+candidate service, restores the receipted database or no-database state, and
+lets Inno Setup remove the new application files.
+
+The installer treats the server as configured only when `app.db`,
+`Configuration\server.json`, and the exact protected readiness marker are all
+present. A failed first attempt without that marker reopens this guided setup on
+the next run instead of being misclassified as an upgrade.
 
 Unattended `/SILENT` and `/VERYSILENT` first installs deliberately retain the
 old deferred behavior because there are no interactive path selections. They
@@ -233,8 +246,11 @@ An explicitly supplied `--existing-database` is never ignored:
   source through SQLite's backup API;
 - if the installer-created destination contains only an empty application
   schema, setup preserves a verified local snapshot and safely replaces it;
+- if the supplied source and populated destination have the same SHA-256,
+  setup reports the destination as already authoritative for retry safety;
 - if the destination contains application data, setup refuses the operation
-  without changing either database.
+  without changing either database unless the identical-source exception above
+  applies.
 
 For a normal first-server migration, select **Migrate a verified database
 snapshot** in the interactive installer. The manual command below is reserved
