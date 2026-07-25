@@ -32,6 +32,7 @@ from services.appointment_service import (
 )
 
 from utils.logger import logger
+from utils.passport_numbers import normalize_passport_number
 from services.api_client import MissionLegalApiClient, RemoteRecord, json_value
 
 
@@ -180,6 +181,7 @@ class MissionaryService:
         arrival_date=None,
         visa_expiration=None,
     ):
+        passport_number = normalize_passport_number(passport_number)
         if self.api_client is not None:
             payload = self.api_client.post(
                 "/v1/missionaries",
@@ -290,6 +292,11 @@ class MissionaryService:
         missionary_id,
         field_updates,
     ):
+        field_updates = dict(field_updates)
+        if "passport_number" in field_updates:
+            field_updates["passport_number"] = normalize_passport_number(
+                field_updates["passport_number"]
+            )
         if self.api_client is not None:
             payload = self.api_client.patch(
                 f"/v1/missionaries/{missionary_id}",

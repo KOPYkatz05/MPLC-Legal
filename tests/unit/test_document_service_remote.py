@@ -4,6 +4,9 @@ from services import document_service as module
 
 
 class FakeDocumentClient:
+    def __init__(self):
+        self.upload_data = None
+
     def get(self, path, **kwargs):
         if path.endswith("get_documents"):
             return {
@@ -25,8 +28,9 @@ class FakeDocumentClient:
         return destination
 
     def upload(self, path, *, file_path, data):
-        assert Path(file_path).read_bytes() == b"upload"
+        assert Path(file_path).is_file()
         assert data["missionary_id"] == "9"
+        self.upload_data = data
         return {
             "id": 5,
             "missionary_id": 9,
@@ -69,3 +73,32 @@ def test_remote_upload_sends_file_and_materializes_response(monkeypatch, tmp_pat
 
     assert document.id == 5
     assert Path(document.file_path).read_bytes() == b"document"
+
+
+def test_remote_ocr_upload_serializes_multipart_json_fields(monkeypatch):
+    client = FakeDocumentClient()
+    monkeypatch.setattr(
+        module.MissionLegalApiClient,
+        "from_environment",
+        classmethod(lambda cls: client),
+    )
+    source = Path(__file__)
+    missionary = type("Missionary", (), {"id": 9})()
+    service = module.DocumentService()
+    monkeypatch.setattr(service, "_materialize", lambda record: record)
+
+    service.upload_document(
+        missionary,
+        source,
+        "PASSPORT",
+        "GENERAL",
+        ocr_raw_data={"status": "success", "fields": ["passport_number"]},
+        ocr_confirmed_data={"passport_number": "redacted"},
+    )
+
+    assert client.upload_data["ocr_raw_data"] == (
+        '{"status": "success", "fields": ["passport_number"]}'
+    )
+    assert client.upload_data["ocr_confirmed_data"] == (
+        '{"passport_number": "redacted"}'
+    )

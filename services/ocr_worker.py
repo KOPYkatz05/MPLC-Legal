@@ -100,6 +100,26 @@ def main(argv=None):
             len(pages),
         )
         return 0
+    except Exception:
+        logger.exception("OCR_WORKER_FAILED pid=%s", os.getpid())
+        try:
+            Path(args.output).write_text(
+                json.dumps({
+                    "pages": [],
+                    "error": (
+                        "OCR could not start. The installed OCR model files "
+                        "could not be opened."
+                    ),
+                }),
+                encoding="utf-8",
+            )
+        except OSError:
+            logger.exception(
+                "OCR_WORKER_ERROR_OUTPUT_FAILED pid=%s output=%s",
+                os.getpid(),
+                args.output,
+            )
+        return 1
     finally:
         logger.info("OCR_WORKER_EXIT pid=%s", os.getpid())
         faulthandler.disable()

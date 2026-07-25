@@ -22,6 +22,7 @@ from services.expiration_rules import set_entry_based_expiration
 from services.image_processing_service import ImageProcessingService
 from services.residency_service import ResidencyService
 from utils.constants import DOCUMENTS, MISSIONARY_DATE_FIELDS
+from utils.passport_numbers import normalize_passport_number
 from utils.logger import logger
 
 _ocr_service = None
@@ -702,8 +703,17 @@ def _extract_ocr_texts_subprocess(image_paths):
             detail = (completed.stderr or completed.stdout or "").strip()
             if detail:
                 logger.error("OCR worker failed: %s", detail[-2000:])
+            worker_error = ""
+            try:
+                worker_payload = json.loads(
+                    output_path.read_text(encoding="utf-8")
+                )
+                worker_error = str(worker_payload.get("error") or "").strip()
+            except (OSError, ValueError, TypeError):
+                pass
             raise RuntimeError(
-                "OCR service unavailable. PaddleOCR stopped unexpectedly."
+                worker_error
+                or "OCR service unavailable. PaddleOCR stopped unexpectedly."
             )
 
         try:
@@ -963,6 +973,8 @@ def apply_missionary_updates(
         if field in ignored_derived_fields:
             continue
         value = confirmed_data.get(field, "")
+        if field == "passport_number":
+            value = normalize_passport_number(value)
         if not value:
             continue
         if field in DATE_AUTO_UPDATE_FIELDS:

@@ -83,6 +83,7 @@ from utils.constants import (
 )
 from utils.i18n import field_label, tr
 from utils.logger import logger
+from utils.passport_numbers import normalize_passport_number
 
 
 SUPPORTED_EXTENSIONS = {
@@ -2543,13 +2544,32 @@ class UploadSessionDialog(MaskDialogBase):
                     self.ocr_form.addRow(field_widget)
             else:
                 edit = create_line_edit()
-                edit.setText(str(value or ""))
+                edit.setText(
+                    normalize_passport_number(value)
+                    if field == "passport_number"
+                    else str(value or "")
+                )
+                if field == "passport_number":
+                    edit.textChanged.connect(
+                        lambda text, edit=edit: self._normalize_passport_edit(
+                            edit, text
+                        )
+                    )
                 edit.textChanged.connect(
                     lambda _text, self=self: self._sync_current_ocr_data()
                 )
                 self.field_edits[field] = edit
                 if _widget_alive(self.ocr_form):
                     self.ocr_form.addRow(f"{label}", edit)
+
+    @staticmethod
+    def _normalize_passport_edit(edit, value):
+        normalized = normalize_passport_number(value)
+        if normalized == value:
+            return
+        cursor_position = edit.cursorPosition()
+        edit.setText(normalized)
+        edit.setCursorPosition(min(cursor_position, len(normalized)))
 
     def apply_ocr_banner(self, status, text):
         if not _widget_alive(self.ocr_status_label):
@@ -2574,7 +2594,12 @@ class UploadSessionDialog(MaskDialogBase):
             return
         data = {}
         for field, edit in self.field_edits.items():
-            data[field] = edit.text().strip()
+            value = edit.text().strip()
+            data[field] = (
+                normalize_passport_number(value)
+                if field == "passport_number"
+                else value
+            )
         for field, edit in self.date_edits.items():
             qdate = self._date_picker_value(edit)
             if qdate.isValid() and qdate != DATE_PLACEHOLDER:

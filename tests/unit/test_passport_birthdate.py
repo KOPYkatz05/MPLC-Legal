@@ -55,6 +55,38 @@ def test_passport_upload_auto_updates_birthdate_and_source(monkeypatch):
         session.close()
 
 
+def test_passport_upload_removes_whitespace_from_passport_number(monkeypatch):
+    engine = create_engine("sqlite:///:memory:")
+    testing_session = sessionmaker(
+        bind=engine,
+        autoflush=False,
+        autocommit=False,
+    )
+    Base.metadata.create_all(bind=engine)
+    monkeypatch.setattr(upload_pipeline, "SessionLocal", testing_session)
+
+    session = testing_session()
+    missionary = Missionary(full_name="Test Missionary")
+    session.add(missionary)
+    session.commit()
+    missionary_id = missionary.id
+    session.close()
+
+    upload_pipeline.apply_missionary_updates(
+        missionary_id,
+        "PASSPORT",
+        77,
+        {"passport_number": "P12 34\t567"},
+    )
+
+    session = testing_session()
+    try:
+        refreshed = session.query(Missionary).filter_by(id=missionary_id).one()
+        assert refreshed.passport_number == "P1234567"
+    finally:
+        session.close()
+
+
 def test_missionary_detail_page_handles_birthdate_field(monkeypatch, qapp):
     page = detail_module.MissionaryDetailPage(
         SimpleNamespace(

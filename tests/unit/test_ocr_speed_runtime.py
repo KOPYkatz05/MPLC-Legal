@@ -1,5 +1,8 @@
+from pathlib import Path
 from types import SimpleNamespace
+from uuid import uuid4
 
+import pytest
 from PySide6.QtGui import QShowEvent
 from PySide6.QtWidgets import QWidget
 
@@ -10,7 +13,7 @@ from ui.dialogs.upload_session_dialog import (
     UploadSessionDialog,
 )
 from ui.foundation import FluentLoadingDialog
-from services import upload_pipeline
+from services import ocr_service, ocr_worker, upload_pipeline
 
 
 def test_ocr_runtime_mode_defaults_to_subprocess(monkeypatch):
@@ -118,6 +121,72 @@ def test_extract_ocr_texts_subprocess_hides_windows_worker(monkeypatch):
         assert startupinfo.wShowWindow == upload_pipeline.subprocess.SW_HIDE
     else:
         assert "startupinfo" not in captured["kwargs"]
+
+
+def test_ocr_subprocess_surfaces_structured_worker_error(monkeypatch):
+    def fake_run(command, **kwargs):
+        output_path = command[command.index("--output") + 1]
+        with open(output_path, "w", encoding="utf-8") as handle:
+            handle.write('{"pages": [], "error": "OCR model files are unavailable."}')
+        return SimpleNamespace(returncode=1, stdout="", stderr="")
+
+    monkeypatch.setattr(upload_pipeline.subprocess, "run", fake_run)
+
+    with pytest.raises(RuntimeError, match="OCR model files are unavailable"):
+        upload_pipeline._extract_ocr_texts_subprocess(["page.png"])
+
+
+def test_frozen_ocr_models_use_windows_compatible_paths(monkeypatch):
+    monkeypatch.setattr(ocr_service, "is_frozen", lambda: True)
+    monkeypatch.setattr(
+        ocr_service,
+        "resource_path",
+        lambda *parts: r"C:\Users\Perú\AppData\Local\MissionLegal" + (
+            "\\" + "\\".join(parts)
+        ),
+    )
+    monkeypatch.setattr(
+        ocr_service,
+        "_paddle_compatible_model_path",
+        lambda path: str(path).replace(
+            r"C:\Users\Perú",
+            r"C:\Users\PERU~1",
+        ),
+    )
+
+    paths = ocr_service.default_paddle_model_dirs()
+
+    assert all(path.startswith(r"C:\Users\PERU~1") for path in paths.values())
+    assert paths["rec_model_dir"].endswith(r"ocr_models\rec")
+
+
+def test_ocr_worker_converts_initialization_failure_to_result(monkeypatch):
+    class FaultFile:
+        def close(self):
+            pass
+
+    def fail_service():
+        raise RuntimeError("native model open failed")
+
+    test_root = Path("test_upload_tmp") / str(uuid4())
+    test_root.mkdir(parents=True)
+    output = test_root / "ocr-result.json"
+    monkeypatch.setattr(ocr_worker, "_enable_fault_log", lambda: FaultFile())
+    monkeypatch.setattr(ocr_worker, "OCRService", fail_service)
+    monkeypatch.setattr(ocr_worker.faulthandler, "disable", lambda: None)
+
+    try:
+        return_code = ocr_worker.main([
+            "--output",
+            str(output),
+            str(test_root / "passport.png"),
+        ])
+
+        assert return_code == 1
+        assert "could not be opened" in output.read_text(encoding="utf-8")
+    finally:
+        output.unlink(missing_ok=True)
+        test_root.rmdir()
 
 
 def test_frozen_ocr_subprocess_dispatches_through_packaged_app(monkeypatch):

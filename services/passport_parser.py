@@ -1,5 +1,7 @@
 import re
 
+from utils.passport_numbers import normalize_passport_number
+
 
 class PassportParser:
 
@@ -67,7 +69,7 @@ class PassportParser:
 
             data["surname"] = surname
             data["given_names"] = given_names
-            data["passport_number"] = (
+            data["passport_number"] = normalize_passport_number(
                 line2[0:9].replace("<", "")
             )
             data["nationality"] = line2[10:13]

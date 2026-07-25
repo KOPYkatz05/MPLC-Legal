@@ -30,6 +30,7 @@ from ui.foundation import (
 )
 
 from utils.logger import logger
+from utils.passport_numbers import normalize_passport_number
 from utils.runtime_paths import resource_path
 
 try:
@@ -578,6 +579,9 @@ class AddMissionaryDialog(MaskDialogBase):
             "Passport number",
             "AddMissionaryInput",
         )
+        self.passport_input.textChanged.connect(
+            self._normalize_passport_input
+        )
 
         self.arrival_date_input = (
             create_date_picker(
@@ -711,6 +715,11 @@ class AddMissionaryDialog(MaskDialogBase):
             .date()
             .toPython()
         )
+
+    def _normalize_passport_input(self, value):
+        normalized = normalize_passport_number(value)
+        if normalized != value:
+            self.passport_input.setText(normalized)
 
     def _selected_nationality(self):
         nationality = self.nationality_input.currentData()

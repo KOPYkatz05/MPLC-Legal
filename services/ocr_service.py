@@ -1,6 +1,7 @@
 import os
 import sys
 import time
+import ctypes
 from pathlib import Path
 
 from utils.logger import logger
@@ -28,10 +29,54 @@ BUNDLED_PADDLE_MODEL_DIRS = {
 }
 
 
+def _windows_short_path(path):
+    """Return an ASCII-safe 8.3 path when Windows provides one."""
+    path = str(Path(path).resolve())
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    get_short_path = kernel32.GetShortPathNameW
+    get_short_path.argtypes = [
+        ctypes.c_wchar_p,
+        ctypes.c_wchar_p,
+        ctypes.c_uint32,
+    ]
+    get_short_path.restype = ctypes.c_uint32
+
+    required = get_short_path(path, None, 0)
+    if not required:
+        return path
+    buffer = ctypes.create_unicode_buffer(required)
+    written = get_short_path(path, buffer, required)
+    if not written or written >= required:
+        return path
+    return buffer.value
+
+
+def _paddle_compatible_model_path(path):
+    path = str(path)
+    if os.name != "nt":
+        return path
+    try:
+        short_path = _windows_short_path(path)
+    except (AttributeError, OSError):
+        logger.warning(
+            "Could not resolve a Windows short path for OCR model directory %s",
+            path,
+            exc_info=True,
+        )
+        return path
+    if short_path != path:
+        logger.info(
+            "Using Windows short path for OCR model directory original=%s resolved=%s",
+            path,
+            short_path,
+        )
+    return short_path
+
+
 def default_paddle_model_dirs():
     if is_frozen():
         return {
-            key: resource_path(*parts)
+            key: _paddle_compatible_model_path(resource_path(*parts))
             for key, parts in BUNDLED_PADDLE_MODEL_DIRS.items()
         }
     return dict(DEFAULT_PADDLE_MODEL_DIRS)

@@ -54,8 +54,10 @@ class DocumentService(RemoteServiceMixin):
                     "missionary_id": str(missionary.id),
                     "document_type": document_type,
                     "workflow_stage": workflow_stage or "GENERAL",
-                    "ocr_raw_data": ocr_raw_data or "",
-                    "ocr_confirmed_data": ocr_confirmed_data or "",
+                    "ocr_raw_data": self._serialize_json_field(ocr_raw_data) or "",
+                    "ocr_confirmed_data": (
+                        self._serialize_json_field(ocr_confirmed_data) or ""
+                    ),
                     "notes": notes or "",
                 },
             )
@@ -100,14 +102,8 @@ class DocumentService(RemoteServiceMixin):
                 destination_path,
             )
 
-            raw_json = None
-            confirmed_json = None
-            if ocr_raw_data is not None:
-                raw_json = json.dumps(ocr_raw_data, default=str)
-            if ocr_confirmed_data is not None:
-                confirmed_json = json.dumps(
-                    ocr_confirmed_data, default=str
-                )
+            raw_json = self._serialize_json_field(ocr_raw_data)
+            confirmed_json = self._serialize_json_field(ocr_confirmed_data)
 
             document = Document(
                 missionary_id=missionary.id,
@@ -153,6 +149,14 @@ class DocumentService(RemoteServiceMixin):
 
         finally:
             session.close()
+
+    @staticmethod
+    def _serialize_json_field(value):
+        if value is None:
+            return None
+        if isinstance(value, str):
+            return value
+        return json.dumps(value, default=str)
 
     @staticmethod
     def _build_destination_path(
