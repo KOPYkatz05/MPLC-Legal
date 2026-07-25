@@ -56,15 +56,14 @@ used by the client is the directory URL, not the JSON file URL.
 
 The installed Start menu/Desktop shortcut opens `MissionLegal.exe`. If that
 Windows user has not been paired yet, the app opens a first-run connection
-window automatically. The user enters:
+window automatically. The user pastes the single setup code copied from Mission
+Legal Server Manager and enters a recognizable name for that computer. That
+package contains only the LAN HTTPS address, public CA certificate, and
+short-lived one-use pairing code; it never contains a private key.
 
-- the main computer's HTTPS address, such as `https://MAIN-COMPUTER:8765`;
-- the public `mission-legal-ca.pem` certificate copied from the main computer;
-- a six-digit one-use pairing code from the administrator; and
-- a recognizable name for that computer.
-
-The app copies only the public CA certificate into the user's stable LocalAppData
-configuration and stores the device credential in Windows Credential Manager.
+The app extracts and saves the public CA certificate into the user's stable
+LocalAppData configuration and stores the device credential in Windows
+Credential Manager.
 It does not create a local writable database. `MissionLegalClientSetup.exe`
 remains available as a command-line pairing option for automated deployment,
 but normal users do not need to find or run it.

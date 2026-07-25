@@ -3,9 +3,25 @@ import socket
 import ssl
 import subprocess
 import sys
+import tempfile
 import time
+import uuid
+import shutil
+from pathlib import Path
 
 import httpx
+import pytest
+
+
+@pytest.fixture
+def tmp_path():
+    root = Path(tempfile.gettempdir()).resolve()
+    path = root / f"mission-legal-local-api-tls-{uuid.uuid4().hex}"
+    path.mkdir(mode=0o777)
+    try:
+        yield path
+    finally:
+        shutil.rmtree(path)
 
 
 def _free_port():

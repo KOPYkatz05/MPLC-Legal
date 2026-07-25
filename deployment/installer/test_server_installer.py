@@ -345,6 +345,17 @@ class ServerInstallerTests(unittest.TestCase):
         self.assertIn("version is missing", initialize)
         self.assertIn("NeedsPriorBinarySnapshot :=", prepare)
         self.assertIn("InstalledPayloadIsRecognizable", prepare)
+        self.assertIn("ShutdownInstalledServerManager", prepare)
+        self.assertIn("IsSupportedServiceInstallPath", prepare)
+        self.assertIn("ValidateManagerOperator", prepare)
+        self.assertLess(
+            prepare.index("IsSupportedServiceInstallPath"),
+            prepare.index("ValidateManagerOperator"),
+        )
+        self.assertLess(
+            prepare.index("ValidateManagerOperator"),
+            prepare.index("ShutdownInstalledServerManager"),
+        )
         self.assertIn("RunRollbackAction('PrepareFresh')", prepare)
         self.assertIn(
             "RecordInitialServiceState := not PreflightStarted", prepare
@@ -353,6 +364,10 @@ class ServerInstallerTests(unittest.TestCase):
         self.assertIn(stop_call, prepare)
         self.assertLess(
             prepare.index("RunRollbackAction('PrepareFresh')"),
+            prepare.index(stop_call),
+        )
+        self.assertLess(
+            prepare.index("ShutdownInstalledServerManager"),
             prepare.index(stop_call),
         )
         self.assertLess(prepare.index(stop_call), prepare.index("RunBackupGate"))
@@ -367,6 +382,29 @@ class ServerInstallerTests(unittest.TestCase):
         self.assertIn("installer-attempt-", script)
         self.assertIn(r"Backups\Installer", script)
         self.assertIn("StartAndVerify", script)
+        self.assertIn("VerifyServerManagerConnection", script)
+        self.assertIn("ManagerOperatorAccount", script)
+        self.assertIn("{param:MANAGERACCOUNT|}", script)
+        manager_account = script.split(
+            "function GetManagerOperatorAccount(Param: String): String;", 1
+        )[1].split("function HasServerRegistrationFootprint", 1)[0]
+        self.assertLess(
+            manager_account.index("{param:MANAGERACCOUNT|}"),
+            manager_account.index("ManagerOperatorPage.Values[0]"),
+        )
+        self.assertIn("PathIsStrictlyUnderRoot", script)
+        self.assertIn("ExpandConstant('{autopf64}')", script)
+        self.assertIn("ExpandConstant('{autopf32}')", script)
+        self.assertIn("must be installed beneath Windows Program", script)
+        self.assertIn('"ValidateManagerOperator"', helper)
+        self.assertIn("SidTypeUser = 1", helper)
+        self.assertIn("accountType != SidTypeUser", helper)
+        self.assertIn("ResolveUserSid", helper)
+        self.assertIn(
+            r'Type: files; Name: "{app}\MissionLegalServerManager.exe"',
+            install_delete,
+        )
+        self.assertNotIn("MissionLegalServerManager.exe", setup)
         self.assertIn("ServerConfiguredBeforeInstall", script)
         self.assertIn("MissionLegalInstallerTlsValidator", helper)
         self.assertIn("X509Chain", helper)
@@ -390,6 +428,9 @@ class ServerInstallerTests(unittest.TestCase):
             "[Net.ServicePointManager]::SecurityProtocol = $PreviousSecurityProtocol",
             helper,
         )
+        self.assertIn("param([uint32]$ExpectedProcessId = 0)", helper)
+        self.assertNotIn("$ExpectedProcessId.HasValue", helper)
+        self.assertNotIn("$ExpectedProcessId.Value", helper)
         self.assertIn("Silent installation left service registration", script)
         self.assertIn("RestorePriorInstallation", script)
         self.assertIn("RunRollbackAction('Restore')", script)
@@ -397,6 +438,7 @@ class ServerInstallerTests(unittest.TestCase):
         restore = script.split("function RestorePriorInstallation: Boolean;", 1)[
             1
         ].split("function RemoveServiceWithoutHelper", 1)[0]
+        self.assertNotIn("RelaunchPriorServerManager", script)
         restore_stop = "RunServiceAction(ServiceScript, 'Stop', False)"
         restore_database = "RunDatabaseRollback"
         restore_database_complete = (
@@ -492,6 +534,9 @@ class ServerInstallerTests(unittest.TestCase):
         self.assertIn("Mission documents folder", wizard)
         self.assertIn("OneDrive database backup folder", wizard)
         self.assertIn("CreateInputFilePage", wizard)
+        self.assertIn("CreateInputQueryPage", wizard)
+        self.assertIn("Choose the Server Manager account", wizard)
+        self.assertIn("DOMAIN\\User", wizard)
         self.assertIn("function ShouldSkipPage", wizard)
         self.assertIn("SetupModePage.SelectedValueIndex <> 1", wizard)
         self.assertIn("function NextButtonClick", wizard)
@@ -540,6 +585,11 @@ class ServerInstallerTests(unittest.TestCase):
             "Starting the server and verifying its secure connection",
             transactional_finish,
         )
+        self.assertIn(
+            "Verifying Server Manager access for the selected Windows account",
+            transactional_finish,
+        )
+        self.assertIn("VerifyServerManagerConnection", transactional_finish)
         self.assertLess(
             transactional_finish.index("PostCopyDatabaseMutationPossible := True"),
             transactional_finish.index("RunInitialServerConfiguration"),
@@ -1288,10 +1338,19 @@ class ServerInstallerTests(unittest.TestCase):
         self.assertIn("package_provenance.py", build)
         self.assertIn("--expected-role server", build)
         self.assertIn("--required-windows-version-exe MissionLegalServer.exe", build)
+        self.assertIn(
+            "--required-windows-version-exe MissionLegalServerManager.exe",
+            build,
+        )
         self.assertIn('"$PackageName.provenance.json"', build)
         self.assertIn("clean Git commit", build)
         self.assertIn("WindowsPowerShell\\v1.0\\powershell.exe", build)
         self.assertIn("-Action RuntimeSelfTest", build)
+        self.assertIn('"maintenance-runtime-temp"', build)
+        self.assertIn("$env:TEMP = $MaintenanceRuntimeTemp", build)
+        self.assertIn("$env:TMP = $MaintenanceRuntimeTemp", build)
+        self.assertIn("$PriorProcessTemp", build)
+        self.assertIn("$PriorProcessTmp", build)
         self.assertIn("public_ca_republish", build)
         self.assertIn("installer_helper_runtime_self_test", build)
         self.assertIn("$InstallerHelperHashAfterCompile -cne $InstallerHelperHash", build)
@@ -1349,6 +1408,7 @@ class ServerInstallerTests(unittest.TestCase):
             "MissionLegalServer.exe",
             "MissionLegalServerSetup.exe",
             "MissionLegalService.exe",
+            "MissionLegalServerManager.exe",
         ):
             self.assertIn(f'"{executable}"', build)
         for required_field in (
@@ -1371,6 +1431,85 @@ class ServerInstallerTests(unittest.TestCase):
         self.assertGreaterEqual(
             client_release.count("Assert-ClientRawPackageProvenance"), 3
         )
+
+    def test_server_manager_is_windowed_packaged_and_installer_managed(self):
+        spec = (
+            REPO_ROOT / "deployment" / "mission_legal_server.spec"
+        ).read_text(encoding="utf-8")
+        installer = (
+            INSTALLER_DIR / "mission_legal_server.iss"
+        ).read_text(encoding="utf-8")
+        release = (
+            REPO_ROOT / "deployment" / "build_release.ps1"
+        ).read_text(encoding="utf-8")
+        common = (
+            REPO_ROOT / "deployment" / "pyinstaller_common.py"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("manager_analysis = server_analysis(", spec)
+        self.assertIn('"server_manager.py"', spec)
+        manager_analysis = spec.split(
+            "manager_analysis = server_analysis(", 1
+        )[1].split("server_pyz = PYZ(", 1)[0]
+        self.assertIn('"ui.server_manager_window"', manager_analysis)
+        self.assertIn("include_server_hidden_imports=False", manager_analysis)
+        self.assertIn('"server.networking"', common)
+        self.assertIn('"server.tls"', common)
+        self.assertGreaterEqual(common.count('"services.pairing_package"'), 2)
+        manager_exe = spec.split("manager_exe = EXE(", 1)[1].split(
+            "bundle = COLLECT", 1
+        )[0]
+        self.assertIn('name="MissionLegalServerManager"', manager_exe)
+        self.assertIn("console=False", manager_exe)
+        self.assertNotIn("uac_admin=True", manager_exe)
+        self.assertIn("server_manager_icon.ico", manager_exe)
+        collect = spec.split("bundle = COLLECT(", 1)[1]
+        self.assertIn("manager_exe", collect)
+        self.assertIn("manager_analysis.binaries", collect)
+        self.assertIn("manager_analysis.datas", collect)
+
+        files = installer.split("[Files]", 1)[1].split("[InstallDelete]", 1)[0]
+        self.assertIn(
+            r'Source: "{#ServerPackageDir}\MissionLegalServerManager.exe"',
+            files,
+        )
+        self.assertIn("MissionLegalServerManager.exe", installer)
+        self.assertIn("--connection-smoke-test", installer)
+        self.assertIn(
+            r'Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"',
+            installer,
+        )
+        self.assertIn(
+            'ValueName: "Mission Legal Server Manager"',
+            installer,
+        )
+        self.assertIn(
+            r'ValueData: """{app}\MissionLegalServerManager.exe"" --startup"',
+            installer,
+        )
+        self.assertNotIn("--install-autostart", installer)
+        self.assertNotIn("--remove-autostart", installer)
+        self.assertIn(
+            'Parameters: "--startup"',
+            installer,
+        )
+        self.assertIn("runasoriginaluser", installer)
+        self.assertNotIn(
+            "MISSION_LEGAL_MANAGER_OPERATOR_SID",
+            (REPO_ROOT / "server_manager.py").read_text(encoding="utf-8"),
+        )
+        self.assertIn("'StopManager'", installer)
+        self.assertIn("'RemoveLegacyManagerAutostart'", installer)
+        helper = (
+            INSTALLER_DIR / "server_installer_actions.ps1"
+        ).read_text(encoding="utf-8")
+        self.assertIn("Get-InstalledServerManagerProcesses", helper)
+        self.assertIn("[string]$_.ExecutablePath", helper)
+        self.assertIn("$ExecutablePath.Equals(", helper)
+        self.assertIn("$ManagerExe", helper)
+        self.assertIn("Stop-Process", helper)
+        self.assertIn("Registry::HKEY_USERS", helper)
+        self.assertIn("server_installed_executable = 4", release)
 
     def test_release_orchestrator_builds_immutable_client_last(self):
         build = (REPO_ROOT / "deployment" / "build_release.ps1").read_text(

@@ -1,10 +1,26 @@
 import json
+import shutil
 import subprocess
 import sys
+import tempfile
 import time
+import uuid
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 
+import pytest
 from server.security import DeviceCredentialStore, PairingCodeStore
+
+
+@pytest.fixture
+def tmp_path():
+    root = Path(tempfile.gettempdir()).resolve()
+    path = root / f"mission-legal-server-security-{uuid.uuid4().hex}"
+    path.mkdir(mode=0o777)
+    try:
+        yield path
+    finally:
+        shutil.rmtree(path)
 
 
 def test_pairing_code_is_one_time(tmp_path):

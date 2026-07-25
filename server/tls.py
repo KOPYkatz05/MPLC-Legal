@@ -1,16 +1,18 @@
 import ipaddress
 import os
 import socket
+import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
-from cryptography.hazmat.primitives.asymmetric import rsa
+from cryptography.hazmat.primitives.asymmetric import padding, rsa
 from cryptography.x509.oid import NameOID
 
 from database.runtime import get_app_data_dir
 from server.data_acl import protect_private_key_files
+from server.networking import discover_lan_ipv4_addresses
 
 
 def tls_directory():
@@ -42,17 +44,138 @@ def _write_private_key(key, path):
     path.chmod(0o600)
 
 
-def _server_addresses(hostname):
+def _server_addresses(hostname, lan_addresses=None):
     names = {hostname, socket.getfqdn(), "localhost"}
     values = [x509.DNSName(name) for name in sorted(names) if name]
     values.extend([x509.IPAddress(ipaddress.ip_address("127.0.0.1"))])
-    try:
-        for result in socket.getaddrinfo(hostname, None, socket.AF_INET):
-            address = result[4][0]
-            values.append(x509.IPAddress(ipaddress.ip_address(address)))
-    except OSError:
-        pass
+    addresses = (
+        discover_lan_ipv4_addresses(hostname)
+        if lan_addresses is None
+        else tuple(lan_addresses)
+    )
+    for address in addresses:
+        try:
+            parsed = ipaddress.ip_address(str(address))
+        except ValueError:
+            continue
+        if isinstance(parsed, ipaddress.IPv4Address):
+            values.append(x509.IPAddress(parsed))
     return list(dict.fromkeys(values))
+
+
+def _public_key_bytes(key):
+    public_key = key.public_key() if hasattr(key, "public_key") else key
+    return public_key.public_bytes(
+        serialization.Encoding.DER,
+        serialization.PublicFormat.SubjectPublicKeyInfo,
+    )
+
+
+def _build_server_certificate(
+    *,
+    ca_cert,
+    ca_key,
+    server_key,
+    hostname,
+    addresses,
+    now,
+):
+    server_name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, hostname)])
+    return (
+        x509.CertificateBuilder()
+        .subject_name(server_name)
+        .issuer_name(ca_cert.subject)
+        .public_key(server_key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now - timedelta(minutes=5))
+        .not_valid_after(now + timedelta(days=825))
+        .add_extension(x509.SubjectAlternativeName(addresses), critical=False)
+        .add_extension(x509.BasicConstraints(ca=False, path_length=None), critical=True)
+        .add_extension(
+            x509.ExtendedKeyUsage([x509.oid.ExtendedKeyUsageOID.SERVER_AUTH]),
+            critical=False,
+        )
+        .sign(ca_key, hashes.SHA256())
+    )
+
+
+def _write_certificate_atomic(certificate, path):
+    staged = path.with_name(f".{path.name}.{uuid.uuid4().hex}.renewing")
+    try:
+        staged.write_bytes(certificate.public_bytes(serialization.Encoding.PEM))
+        os.replace(staged, path)
+    finally:
+        try:
+            staged.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
+def _refresh_server_certificate(paths, *, hostname, addresses):
+    """Renew only the leaf certificate when its reachable SAN set is stale."""
+
+    try:
+        ca_cert = x509.load_pem_x509_certificate(paths["ca_cert"].read_bytes())
+        ca_key = serialization.load_pem_private_key(
+            paths["ca_key"].read_bytes(),
+            password=None,
+        )
+        server_cert = x509.load_pem_x509_certificate(
+            paths["server_cert"].read_bytes()
+        )
+        server_key = serialization.load_pem_private_key(
+            paths["server_key"].read_bytes(),
+            password=None,
+        )
+    except (OSError, ValueError, TypeError) as exc:
+        raise RuntimeError(
+            "Existing Mission Legal TLS material could not be validated safely."
+        ) from exc
+
+    if _public_key_bytes(ca_key) != _public_key_bytes(ca_cert.public_key()):
+        raise RuntimeError("The Mission Legal CA certificate and key do not match.")
+    if _public_key_bytes(server_key) != _public_key_bytes(server_cert.public_key()):
+        raise RuntimeError("The Mission Legal server certificate and key do not match.")
+    if server_cert.issuer != ca_cert.subject:
+        raise RuntimeError("The Mission Legal server certificate has an unexpected issuer.")
+    try:
+        ca_cert.public_key().verify(
+            server_cert.signature,
+            server_cert.tbs_certificate_bytes,
+            padding.PKCS1v15(),
+            server_cert.signature_hash_algorithm,
+        )
+    except Exception as exc:
+        raise RuntimeError(
+            "The Mission Legal server certificate is not signed by its local CA."
+        ) from exc
+
+    try:
+        current = set(
+            server_cert.extensions.get_extension_for_class(
+                x509.SubjectAlternativeName
+            ).value
+        )
+    except x509.ExtensionNotFound:
+        current = set()
+    desired = set(addresses)
+    renew_before = datetime.now(timezone.utc) + timedelta(days=30)
+    expires_at = getattr(server_cert, "not_valid_after_utc", None)
+    if expires_at is None:
+        expires_at = server_cert.not_valid_after.replace(tzinfo=timezone.utc)
+    if desired.issubset(current) and expires_at > renew_before:
+        return False
+
+    renewed = _build_server_certificate(
+        ca_cert=ca_cert,
+        ca_key=ca_key,
+        server_key=server_key,
+        hostname=hostname,
+        addresses=addresses,
+        now=datetime.now(timezone.utc),
+    )
+    _write_certificate_atomic(renewed, paths["server_cert"])
+    return True
 
 
 def generate_local_tls(overwrite=False, *, protect_keys=True):
@@ -65,6 +188,8 @@ def generate_local_tls(overwrite=False, *, protect_keys=True):
     paths = default_tls_paths()
     root = paths["server_key"].parent
     root.mkdir(parents=True, exist_ok=True)
+    hostname = socket.gethostname()
+    addresses = _server_addresses(hostname)
     if not overwrite:
         existing = {
             name: os.path.lexists(path)
@@ -90,6 +215,11 @@ def generate_local_tls(overwrite=False, *, protect_keys=True):
                     "Existing local TLS material contains an unsafe path: "
                     + ", ".join(unsafe)
                 )
+            _refresh_server_certificate(
+                paths,
+                hostname=hostname,
+                addresses=addresses,
+            )
             if protect_keys:
                 _protect_keys(paths["ca_key"], paths["server_key"])
             else:
@@ -126,23 +256,13 @@ def generate_local_tls(overwrite=False, *, protect_keys=True):
     )
 
     server_key = _private_key()
-    hostname = socket.gethostname()
-    server_name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, hostname)])
-    server_cert = (
-        x509.CertificateBuilder()
-        .subject_name(server_name)
-        .issuer_name(ca_cert.subject)
-        .public_key(server_key.public_key())
-        .serial_number(x509.random_serial_number())
-        .not_valid_before(now - timedelta(minutes=5))
-        .not_valid_after(now + timedelta(days=825))
-        .add_extension(x509.SubjectAlternativeName(_server_addresses(hostname)), critical=False)
-        .add_extension(x509.BasicConstraints(ca=False, path_length=None), critical=True)
-        .add_extension(
-            x509.ExtendedKeyUsage([x509.oid.ExtendedKeyUsageOID.SERVER_AUTH]),
-            critical=False,
-        )
-        .sign(ca_key, hashes.SHA256())
+    server_cert = _build_server_certificate(
+        ca_cert=ca_cert,
+        ca_key=ca_key,
+        server_key=server_key,
+        hostname=hostname,
+        addresses=addresses,
+        now=now,
     )
 
     _write_private_key(ca_key, paths["ca_key"])

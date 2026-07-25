@@ -3,6 +3,9 @@ param(
     [Parameter(Mandatory = $true)]
     [ValidateSet(
         "RuntimeSelfTest",
+        "ValidateManagerOperator",
+        "StopManager",
+        "RemoveLegacyManagerAutostart",
         "Stop",
         "InstallOrUpdate",
         "StartAndVerify",
@@ -16,6 +19,7 @@ param(
     [string]$DataDir,
     [Parameter(Mandatory = $true)]
     [string]$AppVersion,
+    [string]$ManagerOperatorAccount,
     [string]$StateFile,
     [ValidateRange(10, 300)]
     [int]$ServiceTimeoutSeconds = 90,
@@ -35,6 +39,9 @@ $DataDir = [IO.Path]::GetFullPath(
     [Environment]::ExpandEnvironmentVariables($DataDir)
 )
 $ServiceExe = [IO.Path]::GetFullPath((Join-Path $InstallDir "MissionLegalService.exe"))
+$ManagerExe = [IO.Path]::GetFullPath(
+    (Join-Path $InstallDir "MissionLegalServerManager.exe")
+)
 $LogPath = Join-Path $DataDir "Logs\installer-service.log"
 $PublicCaDirectory = Join-Path $DataDir "Public"
 $PublicCaPath = Join-Path $PublicCaDirectory "mission-legal-ca.pem"
@@ -80,6 +87,199 @@ function Write-InstallerLog {
     catch {
         # Inno Setup also keeps a mandatory setup/uninstall log.  Do not mask a
         # service result just because the secondary ProgramData log failed.
+    }
+}
+
+function Assert-ManagerOperatorIsUser {
+    if (
+        [string]::IsNullOrWhiteSpace($ManagerOperatorAccount) -or
+        $ManagerOperatorAccount.Length -gt 256 -or
+        $ManagerOperatorAccount.IndexOfAny([char[]]"`0`r`n") -ge 0
+    ) {
+        throw "The Server Manager operator account is invalid."
+    }
+    if ($null -eq ("MissionLegalInstallerAccountResolver" -as [type])) {
+        Add-Type -TypeDefinition @"
+using System;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+using System.Security.Principal;
+using System.Text;
+
+public static class MissionLegalInstallerAccountResolver
+{
+    private const int ErrorInsufficientBuffer = 122;
+    private const int SidTypeUser = 1;
+
+    [DllImport(
+        "advapi32.dll",
+        CharSet = CharSet.Unicode,
+        SetLastError = true)]
+    private static extern bool LookupAccountName(
+        string systemName,
+        string accountName,
+        byte[] sid,
+        ref uint sidSize,
+        StringBuilder referencedDomainName,
+        ref uint referencedDomainNameSize,
+        out int accountType);
+
+    public static string ResolveUserSid(string accountName)
+    {
+        uint sidSize = 0;
+        uint domainSize = 0;
+        int accountType;
+        LookupAccountName(
+            null,
+            accountName,
+            null,
+            ref sidSize,
+            null,
+            ref domainSize,
+            out accountType);
+        int firstError = Marshal.GetLastWin32Error();
+        if (firstError != ErrorInsufficientBuffer || sidSize == 0)
+        {
+            throw new Win32Exception(firstError);
+        }
+
+        byte[] sid = new byte[sidSize];
+        StringBuilder domain = new StringBuilder((int)Math.Max(domainSize, 1));
+        if (!LookupAccountName(
+            null,
+            accountName,
+            sid,
+            ref sidSize,
+            domain,
+            ref domainSize,
+            out accountType))
+        {
+            throw new Win32Exception(Marshal.GetLastWin32Error());
+        }
+        if (accountType != SidTypeUser)
+        {
+            throw new InvalidOperationException(
+                "The selected principal is not one Windows user account.");
+        }
+        return new SecurityIdentifier(sid, 0).Value;
+    }
+}
+"@
+    }
+    $ResolvedSid = [MissionLegalInstallerAccountResolver]::ResolveUserSid(
+        $ManagerOperatorAccount
+    )
+    if ([string]::IsNullOrWhiteSpace($ResolvedSid)) {
+        throw "The Server Manager operator did not resolve to a user SID."
+    }
+    Write-InstallerLog "Verified that the Server Manager operator is one Windows user SID."
+}
+
+function Get-InstalledServerManagerProcesses {
+    $Processes = @(
+        Get-CimInstance `
+            -ClassName Win32_Process `
+            -Filter "Name='MissionLegalServerManager.exe'" `
+            -ErrorAction Stop
+    )
+    return @(
+        $Processes | Where-Object {
+            if ([string]::IsNullOrWhiteSpace([string]$_.ExecutablePath)) {
+                return $false
+            }
+            try {
+                $ExecutablePath = [IO.Path]::GetFullPath(
+                    [Environment]::ExpandEnvironmentVariables(
+                        [string]$_.ExecutablePath
+                    )
+                )
+                return $ExecutablePath.Equals(
+                    $ManagerExe,
+                    [StringComparison]::OrdinalIgnoreCase
+                )
+            }
+            catch {
+                return $false
+            }
+        }
+    )
+}
+
+function Stop-InstalledServerManagerProcesses {
+    $Deadline = [DateTimeOffset]::UtcNow.AddSeconds(15)
+    do {
+        $Processes = @(Get-InstalledServerManagerProcesses)
+        if ($Processes.Count -eq 0) {
+            Write-InstallerLog (
+                "No Server Manager process remains at the exact installed path."
+            )
+            return
+        }
+        foreach ($Process in $Processes) {
+            $ExecutablePath = [IO.Path]::GetFullPath(
+                [string]$Process.ExecutablePath
+            )
+            if (-not $ExecutablePath.Equals(
+                $ManagerExe,
+                [StringComparison]::OrdinalIgnoreCase
+            )) {
+                throw "Refusing to stop a Server Manager process from another path."
+            }
+            Write-InstallerLog (
+                "Stopping installed Server Manager process ID " +
+                "$([uint32]$Process.ProcessId)."
+            )
+            Stop-Process `
+                -Id ([uint32]$Process.ProcessId) `
+                -Force `
+                -ErrorAction Stop
+        }
+        Start-Sleep -Milliseconds 200
+    } while ([DateTimeOffset]::UtcNow -lt $Deadline)
+
+    $Remaining = @(Get-InstalledServerManagerProcesses)
+    if ($Remaining.Count -ne 0) {
+        throw (
+            "Server Manager processes remain at the exact installed path after " +
+            "the shutdown timeout."
+        )
+    }
+}
+
+function Remove-LegacyServerManagerAutostart {
+    $ValueName = "Mission Legal Server Manager"
+    $ExpectedCommand = '"' + $ManagerExe + '" --startup'
+    foreach ($Hive in @(
+        Get-ChildItem -LiteralPath "Registry::HKEY_USERS" -ErrorAction Stop |
+        Where-Object { $_.PSChildName -match "^S-1-\d+(?:-\d+)+$" }
+    )) {
+        $RunKey = (
+            "Registry::HKEY_USERS\" + $Hive.PSChildName +
+            "\Software\Microsoft\Windows\CurrentVersion\Run"
+        )
+        if (-not (Test-Path -LiteralPath $RunKey -PathType Container)) {
+            continue
+        }
+        $Command = Get-ItemPropertyValue `
+            -LiteralPath $RunKey `
+            -Name $ValueName `
+            -ErrorAction SilentlyContinue
+        if (
+            $null -ne $Command -and
+            ([string]$Command).Trim().Equals(
+                $ExpectedCommand,
+                [StringComparison]::OrdinalIgnoreCase
+            )
+        ) {
+            Remove-ItemProperty `
+                -LiteralPath $RunKey `
+                -Name $ValueName `
+                -Force `
+                -ErrorAction Stop
+            Write-InstallerLog (
+                "Removed an exact legacy per-user Server Manager startup entry."
+            )
+        }
     }
 }
 
@@ -1014,17 +1214,16 @@ function Get-RunningServiceProcessId {
 }
 
 function Assert-ServiceOwnsConfiguredListener {
-    param([Nullable[uint32]]$ExpectedProcessId)
+    param([uint32]$ExpectedProcessId = 0)
 
     $ServiceProcessId = Get-RunningServiceProcessId
     if (
-        $null -ne $ExpectedProcessId -and
-        $ExpectedProcessId.HasValue -and
-        $ServiceProcessId -ne $ExpectedProcessId.Value
+        $ExpectedProcessId -ne 0 -and
+        $ServiceProcessId -ne $ExpectedProcessId
     ) {
         throw (
             "Service process changed during verification. Expected PID " +
-            "$($ExpectedProcessId.Value), found $ServiceProcessId."
+            "$ExpectedProcessId, found $ServiceProcessId."
         )
     }
     $Port = Get-ConfiguredServerPort
@@ -1052,7 +1251,7 @@ function Assert-ServiceRemainsStable {
 
     Start-Sleep -Seconds $Seconds
     $null = Assert-ServiceOwnsConfiguredListener `
-        -ExpectedProcessId ([Nullable[uint32]]$ExpectedProcessId)
+        -ExpectedProcessId $ExpectedProcessId
 }
 
 function Get-HealthUri {
@@ -1455,6 +1654,18 @@ function Invoke-InstallerRuntimeSelfTest {
 try {
     if ($Action -eq "RuntimeSelfTest") {
         Invoke-InstallerRuntimeSelfTest
+        exit 0
+    }
+    if ($Action -eq "ValidateManagerOperator") {
+        Assert-ManagerOperatorIsUser
+        exit 0
+    }
+    if ($Action -eq "StopManager") {
+        Stop-InstalledServerManagerProcesses
+        exit 0
+    }
+    if ($Action -eq "RemoveLegacyManagerAutostart") {
+        Remove-LegacyServerManagerAutostart
         exit 0
     }
     if ($Action -in @("InstallOrUpdate", "StartAndVerify", "StartOnly")) {

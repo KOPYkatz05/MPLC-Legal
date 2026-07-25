@@ -135,6 +135,7 @@ function New-PackageProvenance {
         $ProvenanceArguments += @(
             "--tool-package", "cryptography",
             "--tool-package", "fastapi",
+            "--tool-package", "PySide6",
             "--tool-package", "SQLAlchemy",
             "--tool-package", "uvicorn"
         )
@@ -253,7 +254,13 @@ if ($Target -in @("All", "Server")) {
     $ServerExe = Join-Path $ServerDir "MissionLegalServer.exe"
     $ServerSetupExe = Join-Path $ServerDir "MissionLegalServerSetup.exe"
     $ServiceExe = Join-Path $ServerDir "MissionLegalService.exe"
-    foreach ($Path in @($ServerExe, $ServerSetupExe, $ServiceExe)) {
+    $ServerManagerExe = Join-Path $ServerDir "MissionLegalServerManager.exe"
+    foreach ($Path in @(
+        $ServerExe,
+        $ServerSetupExe,
+        $ServiceExe,
+        $ServerManagerExe
+    )) {
         if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
             throw "Expected server artifact is missing: $Path"
         }
@@ -356,6 +363,43 @@ if ($Target -in @("All", "Server")) {
     ) {
         throw "The packaged service entry-point smoke result is invalid. See $ServiceSmokeOutput."
     }
+    $PreviousQtPlatform = [Environment]::GetEnvironmentVariable(
+        "QT_QPA_PLATFORM",
+        "Process"
+    )
+    $env:QT_QPA_PLATFORM = "offscreen"
+    try {
+        $ManagerSmoke = Start-Process `
+            -FilePath $ServerManagerExe `
+            -ArgumentList "--package-smoke-test" `
+            -WorkingDirectory $ServerDir `
+            -WindowStyle Hidden `
+            -PassThru
+        try {
+            $ManagerSmoke | Wait-Process -Timeout 60 -ErrorAction Stop
+        }
+        catch {
+            if (-not $ManagerSmoke.HasExited) {
+                Stop-Process -Id $ManagerSmoke.Id -Force
+                throw "The packaged Server Manager smoke test timed out."
+            }
+            throw
+        }
+        if ($null -eq $ManagerSmoke.ExitCode) {
+            throw "The packaged Server Manager smoke test completed without a readable exit code."
+        }
+        if ($ManagerSmoke.ExitCode -ne 0) {
+            throw "The packaged Server Manager smoke test failed."
+        }
+    }
+    finally {
+        if ($null -eq $PreviousQtPlatform) {
+            Remove-Item Env:QT_QPA_PLATFORM -ErrorAction SilentlyContinue
+        }
+        else {
+            $env:QT_QPA_PLATFORM = $PreviousQtPlatform
+        }
+    }
     & $ServerSetupExe --help | Out-Null
     if ($LASTEXITCODE -ne 0) {
         throw "The packaged server setup utility failed its CLI smoke test."
@@ -389,7 +433,8 @@ if ($Target -in @("All", "Server")) {
         -WindowsVersionExecutables @(
             "MissionLegalServer.exe",
             "MissionLegalServerSetup.exe",
-            "MissionLegalService.exe"
+            "MissionLegalService.exe",
+            "MissionLegalServerManager.exe"
         )
 }
 

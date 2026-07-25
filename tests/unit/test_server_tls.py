@@ -1,4 +1,7 @@
 import ipaddress
+import shutil
+import tempfile
+import uuid
 from pathlib import Path
 
 import pytest
@@ -10,6 +13,17 @@ from server import tls
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+@pytest.fixture
+def tmp_path():
+    root = Path(tempfile.gettempdir()).resolve()
+    path = root / f"mission-legal-tls-{uuid.uuid4().hex}"
+    path.mkdir(mode=0o777)
+    try:
+        yield path
+    finally:
+        shutil.rmtree(path)
 
 
 def test_generate_local_tls_creates_ca_and_server_certificate(monkeypatch, tmp_path):
@@ -40,6 +54,44 @@ def test_generate_local_tls_reuses_existing_material(monkeypatch, tmp_path):
     second = tls.generate_local_tls()
 
     assert second["server_cert"].read_bytes() == original
+
+
+def test_existing_ca_is_preserved_when_lan_ip_requires_leaf_renewal(
+    monkeypatch,
+    tmp_path,
+):
+    monkeypatch.setattr(tls, "tls_directory", lambda: tmp_path)
+    monkeypatch.setattr(tls, "_protect_keys", lambda *paths: None)
+    addresses = {
+        "values": [
+            x509.DNSName("localhost"),
+            x509.IPAddress(ipaddress.ip_address("127.0.0.1")),
+        ]
+    }
+    monkeypatch.setattr(
+        tls,
+        "_server_addresses",
+        lambda _hostname: list(addresses["values"]),
+    )
+    paths = tls.generate_local_tls()
+    original_ca = paths["ca_cert"].read_bytes()
+    original_ca_key = paths["ca_key"].read_bytes()
+    original_server_key = paths["server_key"].read_bytes()
+    original_server_cert = paths["server_cert"].read_bytes()
+
+    lan_ip = ipaddress.ip_address("192.168.108.50")
+    addresses["values"].append(x509.IPAddress(lan_ip))
+    tls.generate_local_tls()
+
+    renewed = x509.load_pem_x509_certificate(paths["server_cert"].read_bytes())
+    alternatives = renewed.extensions.get_extension_for_class(
+        x509.SubjectAlternativeName
+    ).value
+    assert lan_ip in alternatives.get_values_for_type(x509.IPAddress)
+    assert paths["ca_cert"].read_bytes() == original_ca
+    assert paths["ca_key"].read_bytes() == original_ca_key
+    assert paths["server_key"].read_bytes() == original_server_key
+    assert paths["server_cert"].read_bytes() != original_server_cert
 
 
 def test_generate_local_tls_refuses_incomplete_material_without_explicit_overwrite(

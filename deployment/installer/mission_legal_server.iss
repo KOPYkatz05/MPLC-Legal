@@ -66,7 +66,8 @@ Source: "{#MaintenanceExe}"; DestName: "MissionLegalServerMaintenance.exe"; Flag
 Source: "{#ServerPackageDir}\MissionLegalServer.exe"; DestDir: "{app}"; Flags: ignoreversion signonce
 Source: "{#ServerPackageDir}\MissionLegalServerSetup.exe"; DestDir: "{app}"; Flags: ignoreversion signonce
 Source: "{#ServerPackageDir}\MissionLegalService.exe"; DestDir: "{app}"; Flags: ignoreversion signonce
-Source: "{#ServerPackageDir}\*"; DestDir: "{app}"; Excludes: "MissionLegalServer.exe,MissionLegalServerSetup.exe,MissionLegalService.exe"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#ServerPackageDir}\MissionLegalServerManager.exe"; DestDir: "{app}"; Flags: ignoreversion signonce
+Source: "{#ServerPackageDir}\*"; DestDir: "{app}"; Excludes: "MissionLegalServer.exe,MissionLegalServerSetup.exe,MissionLegalService.exe,MissionLegalServerManager.exe"; Flags: ignoreversion recursesubdirs createallsubdirs
 #else
 Source: "{#MaintenanceExe}"; DestName: "MissionLegalServerMaintenance.exe"; Flags: dontcopy noencryption
 Source: "{#ServerPackageDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
@@ -84,10 +85,19 @@ Type: filesandordirs; Name: "{app}\InstallerSupport"
 Type: files; Name: "{app}\MissionLegalServer.exe"
 Type: files; Name: "{app}\MissionLegalServerSetup.exe"
 Type: files; Name: "{app}\MissionLegalService.exe"
+Type: files; Name: "{app}\MissionLegalServerManager.exe"
 
 [Registry]
 Root: HKLM; Subkey: "Software\MissionLegal\Server"; ValueType: string; ValueName: "InstallDir"; ValueData: "{app}"; Flags: uninsdeletekey
 Root: HKLM; Subkey: "Software\MissionLegal\Server"; ValueType: string; ValueName: "Version"; ValueData: "{#AppVersion}"; Flags: uninsdeletekey
+Root: HKLM; Subkey: "Software\MissionLegal\Server"; ValueType: string; ValueName: "ManagerOperatorAccount"; ValueData: "{code:GetManagerOperatorAccount}"; Flags: uninsdeletevalue
+Root: HKLM; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "Mission Legal Server Manager"; ValueData: """{app}\MissionLegalServerManager.exe"" --startup"; Flags: uninsdeletevalue
+
+[Icons]
+Name: "{autoprograms}\Mission Legal Server Manager"; Filename: "{app}\MissionLegalServerManager.exe"; WorkingDir: "{app}"; Comment: "Open the Mission Legal Server Manager"
+
+[Run]
+Filename: "{app}\MissionLegalServerManager.exe"; Parameters: "--startup"; WorkingDir: "{app}"; Flags: nowait runasoriginaluser skipifsilent
 
 [Code]
 const
@@ -111,10 +121,14 @@ var
   DatabaseRollbackRestored: Boolean;
   RollbackFailedClosed: Boolean;
   PriorInstallVersion: String;
+  PriorManagerOperatorAccount: String;
   HasPriorRegisteredInstall: Boolean;
+  HadPriorManagerOperatorAccount: Boolean;
   HasPriorRegistrationFootprint: Boolean;
   HasPriorServiceRegistration: Boolean;
   NeedsPriorBinarySnapshot: Boolean;
+  ManagerOperatorSetupRequired: Boolean;
+  ManagerShutdownAttempted: Boolean;
   ServerConfiguredBeforeInstall: Boolean;
   ReadinessMarkerExistedBeforeInstall: Boolean;
   PostCopyDatabaseMutationPossible: Boolean;
@@ -122,6 +136,7 @@ var
   SetupModePage: TInputOptionWizardPage;
   StoragePage: TInputDirWizardPage;
   MigrationDatabasePage: TInputFileWizardPage;
+  ManagerOperatorPage: TInputQueryWizardPage;
 
 function ReadVersionNumber(const Value: String; var Index: Integer;
   var Number: Integer): Boolean;
@@ -283,6 +298,32 @@ begin
   RegQueryStringValue(HKLM64, RegistryPath, 'DisplayVersion', Result);
 end;
 
+function DefaultManagerOperatorAccount: String;
+var
+  DomainName: String;
+  UserName: String;
+begin
+  DomainName := Trim(GetEnv('USERDOMAIN'));
+  UserName := Trim(GetEnv('USERNAME'));
+  if (DomainName <> '') and (UserName <> '') then
+    Result := DomainName + '\' + UserName
+  else
+    Result := UserName;
+end;
+
+function GetManagerOperatorAccount(Param: String): String;
+begin
+  { An explicit silent/automation override must win over the hidden upgrade
+    page, whose value is initialized from the prior registration. }
+  Result := Trim(ExpandConstant('{param:MANAGERACCOUNT|}'));
+  if (Result = '') and Assigned(ManagerOperatorPage) then
+    Result := Trim(ManagerOperatorPage.Values[0]);
+  if Result = '' then
+    Result := Trim(PriorManagerOperatorAccount);
+  if Result = '' then
+    Result := DefaultManagerOperatorAccount;
+end;
+
 function HasServerRegistrationFootprint: Boolean;
 var
   RegistryPath: String;
@@ -315,11 +356,24 @@ var
 begin
   Result := True;
   PriorInstallVersion := GetInstalledVersion;
+  HadPriorManagerOperatorAccount := RegQueryStringValue(
+    HKLM64,
+    'Software\MissionLegal\Server',
+    'ManagerOperatorAccount',
+    PriorManagerOperatorAccount);
+  ManagerOperatorSetupRequired :=
+    (not HadPriorManagerOperatorAccount) or
+    (Trim(PriorManagerOperatorAccount) = '');
   HasPriorRegistrationFootprint := HasServerRegistrationFootprint;
   HasPriorServiceRegistration := HasServerServiceRegistration;
   HasPriorRegisteredInstall :=
     HasPriorRegistrationFootprint and (PriorInstallVersion <> '');
-  if HasPriorServiceRegistration and (not HasPriorRegistrationFootprint) then
+  if WizardSilent and ManagerOperatorSetupRequired and
+    (Trim(ExpandConstant('{param:MANAGERACCOUNT|}')) = '') then
+    ErrorMessage := 'A silent server installation must identify the Windows ' +
+      'account allowed to use Server Manager. Add ' +
+      '/MANAGERACCOUNT="DOMAIN\User" and retry.'
+  else if HasPriorServiceRegistration and (not HasPriorRegistrationFootprint) then
     ErrorMessage := 'A Mission Legal Server service exists without a registered ' +
       'installer-owned application. Setup will not replace this partial or ' +
       'manually registered installation.'
@@ -378,6 +432,26 @@ begin
     Log(Description + ' failed with exit code ' + IntToStr(ResultCode) + '.');
 end;
 
+function VerifyServerManagerConnection: Boolean;
+var
+  Parameters: String;
+  ResultPath: String;
+begin
+  ResultPath := ExpandConstant('{tmp}\mission-legal-manager-smoke.json');
+  if FileExists(ResultPath) then
+    DeleteFile(ResultPath);
+  Parameters := '--connection-smoke-test ' + QuoteArgument(ResultPath);
+  Result := RunProcess(
+    ExpandConstant('{app}\MissionLegalServerManager.exe'),
+    Parameters,
+    'Server Manager local-control verification');
+  Result := Result and FileExists(ResultPath);
+  if Result then
+    Log('Server Manager local-control verification passed.')
+  else
+    Log('Server Manager local-control verification failed.');
+end;
+
 function RunServiceAction(const ScriptPath, Action: String; RecordState: Boolean): Boolean;
 var
   Parameters: String;
@@ -387,9 +461,19 @@ begin
     ' -InstallDir ' + QuoteArgument(ExpandConstant('{app}')) +
     ' -DataDir ' + QuoteArgument(ExpandConstant('{commonappdata}\MissionLegal')) +
     ' -AppVersion ' + QuoteArgument('{#AppVersion}');
+  if CompareText(Action, 'ValidateManagerOperator') = 0 then
+    Parameters := Parameters + ' -ManagerOperatorAccount ' +
+      QuoteArgument(GetManagerOperatorAccount(''));
   if RecordState then
     Parameters := Parameters + ' -StateFile ' + QuoteArgument(ServiceStateFile);
   Result := RunProcess(PowerShellExe, Parameters, 'Service action ' + Action);
+end;
+
+function ShutdownInstalledServerManager(const ServiceScript: String): Boolean;
+begin
+  Result := RunServiceAction(ServiceScript, 'StopManager', False);
+  if Result then
+    Log('Verified that no Server Manager process remains at the exact installed path.');
 end;
 
 function RunRollbackAction(const Action: String): Boolean;
@@ -586,6 +670,22 @@ begin
     'Database snapshot:',
     'SQLite database snapshots (*.db)|*.db|All files (*.*)|*.*',
     '.db');
+
+  ManagerOperatorPage := CreateInputQueryPage(
+    MigrationDatabasePage.ID,
+    'Choose the Server Manager account',
+    'Which Windows account should be allowed to manage this server?',
+    'Enter the account that normally signs in to this computer and will use ' +
+      'the tray icon. This grants only the Server Manager''s fixed local ' +
+      'actions; it does not grant access to the protected database or keys.');
+  ManagerOperatorPage.Add('Windows account (DOMAIN\User):', False);
+  if Trim(ExpandConstant('{param:MANAGERACCOUNT|}')) <> '' then
+    ManagerOperatorPage.Values[0] :=
+      Trim(ExpandConstant('{param:MANAGERACCOUNT|}'))
+  else if HadPriorManagerOperatorAccount then
+    ManagerOperatorPage.Values[0] := Trim(PriorManagerOperatorAccount)
+  else
+    ManagerOperatorPage.Values[0] := DefaultManagerOperatorAccount;
 end;
 
 function ShouldSkipPage(PageID: Integer): Boolean;
@@ -596,7 +696,9 @@ begin
   else if PageID = MigrationDatabasePage.ID then
     Result :=
       (not WizardSetupRequired) or
-      (SetupModePage.SelectedValueIndex <> 1);
+      (SetupModePage.SelectedValueIndex <> 1)
+  else if PageID = ManagerOperatorPage.ID then
+    Result := not ManagerOperatorSetupRequired;
 end;
 
 function NormalizeSelectedDirectory(const Value: String): String;
@@ -619,7 +721,34 @@ end;
 function NextButtonClick(CurPageID: Integer): Boolean;
 begin
   Result := True;
-  if (not WizardSetupRequired) or WizardSilent then
+  if WizardSilent then
+    Exit;
+
+  if CurPageID = ManagerOperatorPage.ID then
+  begin
+    ManagerOperatorPage.Values[0] :=
+      Trim(ManagerOperatorPage.Values[0]);
+    if ManagerOperatorPage.Values[0] = '' then
+    begin
+      MsgBox('Enter the Windows account that will use Server Manager.',
+        mbError, MB_OK);
+      Result := False;
+      Exit;
+    end;
+    if (Length(ManagerOperatorPage.Values[0]) > 256) or
+      (Pos(#13, ManagerOperatorPage.Values[0]) > 0) or
+      (Pos(#10, ManagerOperatorPage.Values[0]) > 0) or
+      (Pos(#0, ManagerOperatorPage.Values[0]) > 0) then
+    begin
+      MsgBox('The Server Manager Windows account is not valid.',
+        mbError, MB_OK);
+      Result := False;
+      Exit;
+    end;
+    Exit;
+  end;
+
+  if not WizardSetupRequired then
     Exit;
 
   if CurPageID = StoragePage.ID then
@@ -730,6 +859,17 @@ begin
   end
   else
     RegDeleteValue(HKLM64, 'Software\MissionLegal\Server', 'Version');
+  if HadPriorManagerOperatorAccount then
+    RegWriteStringValue(
+      HKLM64,
+      'Software\MissionLegal\Server',
+      'ManagerOperatorAccount',
+      PriorManagerOperatorAccount)
+  else
+    RegDeleteValue(
+      HKLM64,
+      'Software\MissionLegal\Server',
+      'ManagerOperatorAccount');
 end;
 
 function RestorePriorInstallation: Boolean;
@@ -894,12 +1034,47 @@ begin
   Result := RemoveFirewallWithoutHelper;
 end;
 
+function PathIsStrictlyUnderRoot(
+  const CandidatePath, RootPath: String): Boolean;
+var
+  Candidate: String;
+  Root: String;
+begin
+  Candidate := AddBackslash(ExpandFileName(CandidatePath));
+  Root := AddBackslash(ExpandFileName(RootPath));
+  Result :=
+    (Length(Candidate) > Length(Root)) and
+    (CompareText(Copy(Candidate, 1, Length(Root)), Root) = 0);
+end;
+
+function IsSupportedServiceInstallPath: Boolean;
+var
+  InstallPath: String;
+begin
+  InstallPath := ExpandConstant('{app}');
+  Result :=
+    PathIsStrictlyUnderRoot(
+      InstallPath,
+      ExpandConstant('{autopf64}')) or
+    PathIsStrictlyUnderRoot(
+      InstallPath,
+      ExpandConstant('{autopf32}'));
+end;
+
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 var
   ServiceScript: String;
   RecordInitialServiceState: Boolean;
 begin
   Result := '';
+  if not IsSupportedServiceInstallPath then
+  begin
+    Result := 'Mission Legal Server must be installed beneath Windows Program ' +
+      'Files or Program Files (x86). Setup rejected this application path ' +
+      'before stopping the service or changing application files: ' +
+      ExpandConstant('{app}');
+    Exit;
+  end;
   ServiceStateFile := ExpandConstant('{tmp}\mission-legal-service-state.txt');
   BinarySnapshotDir := ExpandConstant(
     '{commonappdata}\MissionLegal\Backups\InstallerBinaries\rollback-{#AppVersion}');
@@ -919,6 +1094,26 @@ begin
       'No application files were changed. Details: ' + GetExceptionMessage;
     Exit;
   end;
+
+  ServiceScript := ExpandConstant('{tmp}\server_installer_actions.ps1');
+  if not RunServiceAction(
+    ServiceScript, 'ValidateManagerOperator', False) then
+  begin
+    Result := 'The Server Manager operator must resolve to one Windows user ' +
+      'account, not a group or another type of security principal. No service ' +
+      'or application files were changed.';
+    Exit;
+  end;
+
+  if (not ManagerShutdownAttempted) and
+    (not ShutdownInstalledServerManager(ServiceScript)) then
+  begin
+    Result := 'Mission Legal Server Manager could not be closed for the ' +
+      'upgrade. No application or server files were changed. Setup only stops ' +
+      'a process whose executable path exactly matches this installation.';
+    Exit;
+  end;
+  ManagerShutdownAttempted := True;
 
   if NeedsPriorBinarySnapshot then
   begin
@@ -943,7 +1138,6 @@ begin
     still restarts a service that was originally running. }
   RecordInitialServiceState := not PreflightStarted;
   PreflightStarted := True;
-  ServiceScript := ExpandConstant('{tmp}\server_installer_actions.ps1');
   if not RunServiceAction(
     ServiceScript, 'Stop', RecordInitialServiceState) then
   begin
@@ -1128,10 +1322,28 @@ begin
         'Setup will restore the previous application state when possible.');
     end;
   end;
+  if WizardSetupRequired or ServerConfiguredBeforeInstall then
+  begin
+    WizardForm.StatusLabel.Caption :=
+      'Verifying Server Manager access for the selected Windows account...';
+    WizardForm.StatusLabel.Update;
+    if not VerifyServerManagerConnection then
+    begin
+      FailServerInstallation(
+        'The server is healthy, but Server Manager could not connect through ' +
+        'its protected local control channel. Setup will restore the prior ' +
+        'state when possible.');
+    end;
+  end;
   if (not WizardSetupRequired) and (not ServerConfiguredBeforeInstall) then
     Log('Server configuration and authoritative database are not both present. ' +
       'Silent installation left service registration and startup deferred. ' +
       'Run MissionLegalServerSetup.exe with explicit storage paths to finish.');
+  if not RunServiceAction(
+    ServiceScript, 'RemoveLegacyManagerAutostart', False) then
+    Log('WARNING: Setup could not finish best-effort cleanup of exact legacy ' +
+      'per-user Server Manager startup entries. The installer-owned ' +
+      'machine-wide startup registration remains authoritative.');
 end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
@@ -1212,6 +1424,14 @@ begin
     ServiceScript := ExpandConstant('{app}\InstallerSupport\server_installer_actions.ps1');
     if FileExists(ServiceScript) then
     begin
+      if not ShutdownInstalledServerManager(ServiceScript) then
+        RaiseException('Mission Legal Server Manager could not be closed. Setup ' +
+          'refused to remove shared files while the exact installed executable ' +
+          'was still running.');
+      if not RunServiceAction(
+        ServiceScript, 'RemoveLegacyManagerAutostart', False) then
+        Log('WARNING: Uninstall could not finish best-effort cleanup of exact ' +
+          'legacy per-user Server Manager startup entries.');
       if not RunServiceAction(ServiceScript, 'Remove', False) then
         RaiseException('Mission Legal Server could not be stopped and removed. ' +
           'ProgramData was not changed. Review the uninstall log before retrying.');

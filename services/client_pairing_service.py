@@ -19,6 +19,7 @@ from PySide6.QtCore import QSettings
 from app_identity import APP, ORG
 from database.runtime import get_client_data_dir
 from services.api_client import ApiPairingRecoveryRequired, MissionLegalApiClient
+from services.pairing_package import PairingPackageError, decode_pairing_package
 from utils.interprocess_lock import interprocess_file_lock
 
 
@@ -83,15 +84,29 @@ def validate_pairing_code(value):
 
 
 def _stage_ca_certificate(certificate):
-    certificate = Path(certificate).expanduser().resolve()
-    if not certificate.is_file():
-        raise ClientPairingError(f"The CA certificate does not exist: {certificate}")
-    try:
-        certificate_bytes = certificate.read_bytes()
-    except OSError as exc:
-        raise ClientPairingError(
-            f"Windows could not read the CA certificate: {certificate}"
-        ) from exc
+    source_path = None
+    if isinstance(certificate, bytes):
+        certificate_bytes = certificate
+    elif (
+        isinstance(certificate, str)
+        and "-----BEGIN CERTIFICATE-----" in certificate
+    ):
+        certificate_bytes = certificate.encode("ascii", errors="strict")
+    else:
+        try:
+            source_path = Path(certificate).expanduser().resolve()
+        except (OSError, TypeError, ValueError) as exc:
+            raise ClientPairingError("The CA certificate location is invalid.") from exc
+        if not source_path.is_file():
+            raise ClientPairingError(
+                f"The CA certificate does not exist: {source_path}"
+            )
+        try:
+            certificate_bytes = source_path.read_bytes()
+        except OSError as exc:
+            raise ClientPairingError(
+                f"Windows could not read the CA certificate: {source_path}"
+            ) from exc
     if not certificate_bytes or len(certificate_bytes) > 2 * 1024 * 1024:
         raise ClientPairingError(
             "Choose the public Mission Legal CA certificate supplied by the administrator."
@@ -120,14 +135,17 @@ def _stage_ca_certificate(certificate):
     configuration_dir = get_client_data_dir() / "Configuration"
     configuration_dir.mkdir(parents=True, exist_ok=True)
     saved_certificate = (configuration_dir / "mission-legal-ca.pem").resolve()
-    if certificate == saved_certificate:
-        return certificate, saved_certificate, None
+    if source_path == saved_certificate:
+        return source_path, saved_certificate, None
 
     staged = saved_certificate.with_name(
         f".{saved_certificate.name}.{uuid.uuid4().hex}.pairing"
     )
     try:
-        shutil.copy2(certificate, staged)
+        if source_path is None:
+            staged.write_bytes(certificate_bytes)
+        else:
+            shutil.copy2(source_path, staged)
     except Exception:
         try:
             staged.unlink(missing_ok=True)
@@ -138,6 +156,21 @@ def _stage_ca_certificate(certificate):
             )
         raise
     return staged, saved_certificate, staged
+
+
+def pair_client_from_setup_code(setup_code, device_name=None):
+    """Pair from the single package copied out of Server Manager."""
+
+    try:
+        package = decode_pairing_package(setup_code)
+    except PairingPackageError as exc:
+        raise ClientPairingError(str(exc)) from exc
+    return pair_client(
+        package.server_url,
+        package.ca_certificate_pem,
+        package.pairing_code,
+        device_name=device_name,
+    )
 
 
 def _snapshot_settings(settings, keys):

@@ -12,12 +12,17 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QMessageBox,
+    QPlainTextEdit,
     QPushButton,
     QVBoxLayout,
 )
 
 from services.api_client import ApiCompatibilityError
-from services.client_pairing_service import default_device_name, pair_client
+from services.client_pairing_service import (
+    default_device_name,
+    pair_client,
+    pair_client_from_setup_code,
+)
 
 
 class _ClientPairingWorker(QObject):
@@ -31,7 +36,14 @@ class _ClientPairingWorker(QObject):
     @Slot()
     def run(self):
         try:
-            result = pair_client(**self.values)
+            setup_code = str(self.values.pop("setup_code", "") or "").strip()
+            if setup_code:
+                result = pair_client_from_setup_code(
+                    setup_code,
+                    device_name=self.values.get("device_name"),
+                )
+            else:
+                result = pair_client(**self.values)
         except Exception as exc:
             self.failed.emit(exc)
             return
@@ -39,7 +51,7 @@ class _ClientPairingWorker(QObject):
 
 
 class ClientPairingDialog(QDialog):
-    """Collect the public CA certificate and one-use server pairing code."""
+    """Connect a client using one setup code or advanced manual details."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -50,6 +62,7 @@ class ClientPairingDialog(QDialog):
         self._checking_updates = False
         self.pairing_result = None
         self.update_scheduled = False
+        self._manual_setup_visible = False
 
         self.setWindowTitle("Connect Mission Legal to the Main Computer")
         self.setModal(True)
@@ -57,14 +70,24 @@ class ClientPairingDialog(QDialog):
 
         layout = QVBoxLayout(self)
         intro = QLabel(
-            "Ask the Mission Legal administrator for the server address, the "
-            "public Mission Legal CA certificate, and a six-digit one-use "
-            "pairing code. Private keys are never copied to this computer."
+            "On the main computer, open Mission Legal Server Manager, generate "
+            "a setup code, and copy it here. The HTTPS server address, "
+            "public certificate, and one-use pairing code are filled in "
+            "automatically."
         )
         intro.setWordWrap(True)
         layout.addWidget(intro)
 
         form = QFormLayout()
+        self.pairing_form = form
+        self.setup_code_edit = QPlainTextEdit()
+        self.setup_code_edit.setPlaceholderText(
+            "Paste the setup code copied from Server Manager"
+        )
+        self.setup_code_edit.setAccessibleName("Mission Legal setup code")
+        self.setup_code_edit.setFixedHeight(92)
+        form.addRow("Setup code", self.setup_code_edit)
+
         self.server_edit = QLineEdit()
         self.server_edit.setPlaceholderText("https://MAIN-COMPUTER:8765")
         self.server_edit.setAccessibleName("Mission Legal server address")
@@ -89,11 +112,18 @@ class ClientPairingDialog(QDialog):
         )
         form.addRow("Pairing code", self.code_edit)
 
+        self.advanced_button = QPushButton("Use manual setup")
+        self.advanced_button.clicked.connect(self._toggle_manual_setup)
+        form.addRow("", self.advanced_button)
+
         self.device_edit = QLineEdit(default_device_name())
         self.device_edit.setMaxLength(100)
         self.device_edit.setAccessibleName("Computer name")
         form.addRow("Computer name", self.device_edit)
         layout.addLayout(form)
+        self._manual_row_indexes = (1, 2, 3)
+        for row in self._manual_row_indexes:
+            form.setRowVisible(row, False)
 
         self.status_label = QLabel("Nothing is sent until you choose Connect.")
         self.status_label.setWordWrap(True)
@@ -131,21 +161,41 @@ class ClientPairingDialog(QDialog):
             self.certificate_edit.setText(path)
 
     @Slot()
+    def _toggle_manual_setup(self):
+        self._manual_setup_visible = not self._manual_setup_visible
+        for row in self._manual_row_indexes:
+            self.pairing_form.setRowVisible(row, self._manual_setup_visible)
+        self.advanced_button.setText(
+            "Hide manual setup"
+            if self._manual_setup_visible
+            else "Use manual setup"
+        )
+
+    @Slot()
     def _start_pairing(self):
         if self.busy:
             return
-        values = {
-            "server_url": self.server_edit.text(),
-            "certificate": self.certificate_edit.text(),
-            "pairing_code": self.code_edit.text(),
-            "device_name": self.device_edit.text(),
-        }
-        if not all(str(value).strip() for value in values.values()):
+        setup_code = self.setup_code_edit.toPlainText().strip()
+        if setup_code:
+            values = {
+                "setup_code": setup_code,
+                "device_name": self.device_edit.text(),
+            }
+            missing = not values["device_name"].strip()
+        else:
+            values = {
+                "server_url": self.server_edit.text(),
+                "certificate": self.certificate_edit.text(),
+                "pairing_code": self.code_edit.text(),
+                "device_name": self.device_edit.text(),
+            }
+            missing = not all(str(value).strip() for value in values.values())
+        if missing:
             QMessageBox.warning(
                 self,
                 "Pairing Information Required",
-                "Enter the server address, certificate, pairing code, and "
-                "computer name.",
+                "Paste the setup code and enter this computer's name. You can "
+                "also choose manual setup for separate connection details.",
             )
             return
 
@@ -293,11 +343,13 @@ class ClientPairingDialog(QDialog):
     def _set_busy(self, busy):
         enabled = not bool(busy)
         for widget in (
+            self.setup_code_edit,
             self.server_edit,
             self.certificate_edit,
             self.code_edit,
             self.device_edit,
             self.browse_button,
+            self.advanced_button,
             self.check_updates_button,
             self.connect_button,
             self.cancel_button,

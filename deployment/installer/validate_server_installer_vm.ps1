@@ -30,6 +30,7 @@ Set-StrictMode -Version Latest
 $ExpectedConfirmation = "I CONFIRM THIS IS A DISPOSABLE MISSION LEGAL TEST VM"
 $MarkerPurpose = "mission-legal-server-installer-validation"
 $ServiceName = "MissionLegalServer"
+$ManagerOperatorAccount = [Security.Principal.WindowsIdentity]::GetCurrent().Name
 $AppId = "{8A39739D-CBD2-4C38-AE5D-9DE7E69B29D5}_is1"
 $DefaultServerPort = 8765
 $ProgramFilesRoot = [Environment]::GetFolderPath([Environment+SpecialFolder]::ProgramFiles)
@@ -41,6 +42,8 @@ $MarkerDirectory = [IO.Path]::GetFullPath(
 )
 $MarkerPath = Join-Path $MarkerDirectory "vm-consent.json"
 $UninstallRegistryPath = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\$AppId"
+$ManagerRunRegistryPath = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run"
+$ManagerRunValueName = "Mission Legal Server Manager"
 $script:Phases = New-Object System.Collections.Generic.List[object]
 $script:ValidationContext = @{}
 $script:OverallStatus = "not-started"
@@ -646,6 +649,36 @@ function Assert-ServiceRegistration {
     if ([int](Get-ItemPropertyValue -LiteralPath $ServiceKey -Name "FailureActionsOnNonCrashFailures" -ErrorAction Stop) -ne 1) {
         throw "Service non-crash recovery actions are not enabled."
     }
+    $ManagerPath = Join-Path $InstallDir "MissionLegalServerManager.exe"
+    if (-not (Test-Path -LiteralPath $ManagerPath -PathType Leaf)) {
+        throw "Server Manager executable is missing: $ManagerPath"
+    }
+    $RegisteredManagerAccount = [string](Get-ItemPropertyValue `
+        -LiteralPath "HKLM:\SOFTWARE\MissionLegal\Server" `
+        -Name "ManagerOperatorAccount" `
+        -ErrorAction Stop)
+    if ($RegisteredManagerAccount -cne $ManagerOperatorAccount) {
+        throw (
+            "Server Manager operator is '$RegisteredManagerAccount', expected " +
+            "'$ManagerOperatorAccount'."
+        )
+    }
+    $ExpectedManagerRunCommand = '"' + [IO.Path]::GetFullPath($ManagerPath) +
+        '" --startup'
+    $RegisteredManagerRunCommand = [string](Get-ItemPropertyValue `
+        -LiteralPath $ManagerRunRegistryPath `
+        -Name $ManagerRunValueName `
+        -ErrorAction Stop)
+    if (-not $RegisteredManagerRunCommand.Equals(
+        $ExpectedManagerRunCommand,
+        [StringComparison]::OrdinalIgnoreCase
+    )) {
+        throw (
+            "Server Manager machine startup command is " +
+            "'$RegisteredManagerRunCommand', expected " +
+            "'$ExpectedManagerRunCommand'."
+        )
+    }
     $Installed = Get-ItemProperty -LiteralPath $UninstallRegistryPath -ErrorAction Stop
     if ([string]$Installed.DisplayVersion -cne $ExpectedVersion) {
         throw "Installed version is '$($Installed.DisplayVersion)', expected '$ExpectedVersion'."
@@ -663,7 +696,8 @@ function Assert-DeferredFirstInstallState {
     foreach ($Name in @(
         "MissionLegalServer.exe",
         "MissionLegalServerSetup.exe",
-        "MissionLegalService.exe"
+        "MissionLegalService.exe",
+        "MissionLegalServerManager.exe"
     )) {
         $Path = Join-Path $InstallDir $Name
         if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
@@ -693,6 +727,20 @@ function Assert-DeferredFirstInstallState {
     $RegistryInstallDir = [IO.Path]::GetFullPath([string]$Installed.InstallLocation).TrimEnd('\')
     if (-not $RegistryInstallDir.Equals($InstallDir.TrimEnd('\'), [StringComparison]::OrdinalIgnoreCase)) {
         throw "Deferred installer registered '$RegistryInstallDir', expected '$InstallDir'."
+    }
+    $ManagerPath = [IO.Path]::GetFullPath(
+        (Join-Path $InstallDir "MissionLegalServerManager.exe")
+    )
+    $ExpectedManagerRunCommand = '"' + $ManagerPath + '" --startup'
+    $RegisteredManagerRunCommand = [string](Get-ItemPropertyValue `
+        -LiteralPath $ManagerRunRegistryPath `
+        -Name $ManagerRunValueName `
+        -ErrorAction Stop)
+    if (-not $RegisteredManagerRunCommand.Equals(
+        $ExpectedManagerRunCommand,
+        [StringComparison]::OrdinalIgnoreCase
+    )) {
+        throw "Deferred install has an invalid machine-wide Manager startup entry."
     }
     return [pscustomobject]@{
         installed_version = $ExpectedVersion
@@ -1113,6 +1161,13 @@ function Assert-ServerUninstalled {
     if (Test-Path -LiteralPath $InstallDir) {
         throw "The application directory still exists after uninstall: $InstallDir"
     }
+    $ManagerRunCommand = Get-ItemPropertyValue `
+        -LiteralPath $ManagerRunRegistryPath `
+        -Name $ManagerRunValueName `
+        -ErrorAction SilentlyContinue
+    if ($null -ne $ManagerRunCommand) {
+        throw "The machine-wide Server Manager startup entry remains after uninstall."
+    }
     Assert-NoServerFirewallRule
 }
 
@@ -1143,6 +1198,7 @@ function Invoke-InstallerExecutable {
             "/VERYSILENT",
             "/SUPPRESSMSGBOXES",
             "/NORESTART",
+            "/MANAGERACCOUNT=$ManagerOperatorAccount",
             "/LOG=$LogPath"
         ) `
         -OutputPath $ProcessOutputPath

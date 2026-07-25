@@ -1,12 +1,57 @@
 import base64
 import hashlib
 import json
+import shutil
+import tempfile
 import uuid
 from pathlib import Path
 
 import pytest
 
 from services import client_pairing_service as pairing
+from services.pairing_package import encode_pairing_package
+
+
+@pytest.fixture
+def tmp_path():
+    root = Path(tempfile.gettempdir()).resolve()
+    path = root / f"mission-legal-client-pairing-{uuid.uuid4().hex}"
+    path.mkdir(mode=0o777)
+    try:
+        yield path
+    finally:
+        shutil.rmtree(path)
+
+
+@pytest.fixture
+def isolated_qsettings(monkeypatch):
+    class Settings:
+        NoError = 0
+        values = {}
+
+        def __init__(self, *_args):
+            pass
+
+        def setValue(self, key, value):
+            type(self).values[key] = value
+
+        def contains(self, key):
+            return key in type(self).values
+
+        def value(self, key):
+            return type(self).values.get(key)
+
+        def remove(self, key):
+            type(self).values.pop(key, None)
+
+        def sync(self):
+            pass
+
+        def status(self):
+            return self.NoError
+
+    monkeypatch.setattr(pairing, "QSettings", Settings)
+    return Settings
 
 
 def _digest(content):
@@ -84,6 +129,58 @@ def test_server_url_is_normalized_without_trailing_slash():
 def test_pairing_code_requires_six_digits(value):
     with pytest.raises(pairing.ClientPairingError):
         pairing.validate_pairing_code(value)
+
+
+def test_automatic_setup_code_supplies_address_certificate_and_pairing_code(
+    monkeypatch,
+):
+    public_ca = "-----BEGIN CERTIFICATE-----\nPUBLIC CA\n-----END CERTIFICATE-----\n"
+    setup_code = encode_pairing_package(
+        server_url="https://192.168.108.50:8765",
+        ca_certificate_pem=public_ca,
+        pairing_code="123456",
+        expires_at="2026-07-25T12:10:00+00:00",
+    )
+    observed = {}
+    expected = object()
+
+    def capture(server_url, certificate, pairing_code, device_name=None):
+        observed.update(
+            server_url=server_url,
+            certificate=certificate,
+            pairing_code=pairing_code,
+            device_name=device_name,
+        )
+        return expected
+
+    monkeypatch.setattr(pairing, "pair_client", capture)
+
+    result = pairing.pair_client_from_setup_code(setup_code, "Front Office")
+
+    assert result is expected
+    assert observed == {
+        "server_url": "https://192.168.108.50:8765",
+        "certificate": public_ca,
+        "pairing_code": "123456",
+        "device_name": "Front Office",
+    }
+
+
+def test_embedded_public_ca_is_staged_without_a_manual_certificate_file(
+    monkeypatch,
+    tmp_path,
+):
+    public_ca = b"-----BEGIN CERTIFICATE-----\nPUBLIC CA\n-----END CERTIFICATE-----\n"
+    client_root = tmp_path / "client-data"
+    monkeypatch.setattr(pairing, "get_client_data_dir", lambda: client_root)
+
+    verification, saved, staged = pairing._stage_ca_certificate(public_ca)
+
+    assert verification == staged
+    assert saved == (
+        client_root / "Configuration" / "mission-legal-ca.pem"
+    ).resolve()
+    assert staged.read_bytes() == public_ca
 
 
 def test_pair_client_persists_public_certificate_and_connection(monkeypatch, tmp_path):
@@ -176,7 +273,12 @@ def test_pair_client_persists_public_certificate_and_connection(monkeypatch, tmp
     )
 
 
-def test_failed_connection_does_not_replace_a_saved_certificate(monkeypatch, tmp_path):
+def test_failed_connection_does_not_replace_a_saved_certificate(
+    monkeypatch,
+    tmp_path,
+    isolated_qsettings,
+):
+    _ = isolated_qsettings
     source_certificate = tmp_path / "wrong.pem"
     wrong_ca = "-----BEGIN CERTIFICATE-----\nWRONG CA\n-----END CERTIFICATE-----\n"
     source_certificate.write_text(wrong_ca, encoding="utf-8")
@@ -467,7 +569,9 @@ def test_ambiguous_begin_pair_cleanup_preserves_new_keyring_credential(
 def test_certificate_replace_failure_cancels_pairing_and_restores_prior_ca(
     monkeypatch,
     tmp_path,
+    isolated_qsettings,
 ):
+    _ = isolated_qsettings
     source_certificate = tmp_path / "new.pem"
     source_certificate.write_text(
         "-----BEGIN CERTIFICATE-----\nNEW CA\n-----END CERTIFICATE-----\n",
@@ -1020,12 +1124,20 @@ def test_recovery_finishes_rollback_after_new_ca_and_credential_are_gone(
     assert saved.read_text(encoding="utf-8") == old_ca
 
 
-def test_pair_client_rejects_a_certificate_file_containing_a_private_key(tmp_path):
+def test_pair_client_rejects_a_certificate_file_containing_a_private_key(
+    monkeypatch,
+    tmp_path,
+):
     unsafe = tmp_path / "server-bundle.pem"
     unsafe.write_text(
         "-----BEGIN CERTIFICATE-----\nPUBLIC CA\n-----END CERTIFICATE-----\n"
         "-----BEGIN PRIVATE KEY-----\nSECRET\n-----END PRIVATE KEY-----\n",
         encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        pairing,
+        "get_client_data_dir",
+        lambda: tmp_path / "client-data",
     )
 
     with pytest.raises(pairing.ClientPairingError, match="contains a private key"):
@@ -1055,12 +1167,45 @@ def test_first_run_dialog_exposes_pairing_inputs(qtbot):
 
     dialog = ClientPairingDialog()
     qtbot.addWidget(dialog)
+    assert "Paste the setup code" in dialog.setup_code_edit.placeholderText()
     assert dialog.server_edit.placeholderText().startswith("https://")
     assert dialog.code_edit.maxLength() == 6
+    assert dialog.server_edit.isHidden()
+    assert dialog.certificate_edit.isHidden()
     assert dialog.device_edit.text()
     assert dialog.check_updates_button.text() == "Check for updates"
     assert dialog.check_updates_button.isEnabled()
     assert dialog.connect_button.isEnabled()
+
+
+def test_pairing_worker_uses_automatic_setup_code(qapp, monkeypatch):
+    from ui.dialogs import client_pairing_dialog as dialog_module
+
+    observed = {}
+    expected = object()
+
+    def pair_from_setup(setup_code, *, device_name=None):
+        observed.update(setup_code=setup_code, device_name=device_name)
+        return expected
+
+    monkeypatch.setattr(
+        dialog_module,
+        "pair_client_from_setup_code",
+        pair_from_setup,
+    )
+    worker = dialog_module._ClientPairingWorker(
+        {"setup_code": "MLPAIR1:payload", "device_name": "Front Office"}
+    )
+    results = []
+    worker.succeeded.connect(results.append)
+
+    worker.run()
+
+    assert observed == {
+        "setup_code": "MLPAIR1:payload",
+        "device_name": "Front Office",
+    }
+    assert results == [expected]
 
 
 def test_optional_update_check_remains_in_pairing_when_no_apply_is_scheduled(

@@ -48,6 +48,7 @@ param(
     [string]$ServerSignToolName,
     [string]$ServerSignToolCommand,
     [string]$ExpectedSignerThumbprint,
+    [string]$ServerUpdatePrivateKeyPath = $env:MISSION_LEGAL_SERVER_UPDATE_PRIVATE_KEY,
     [switch]$RequireSigning,
     [switch]$AllowUnpublishedDevelopmentOverwrite
 )
@@ -197,6 +198,7 @@ $ServerArguments = @{
     SkipServerPackageBuild = $true
     RequireSigning = [bool]$RequireSigning
     ExpectedSignerThumbprint = $ExpectedSignerThumbprint
+    ServerUpdatePrivateKeyPath = $ServerUpdatePrivateKeyPath
 }
 if ($AllowUnpublishedDevelopmentOverwrite) {
     $ServerArguments.AllowUnpublishedDevelopmentOverwrite = $true
@@ -212,9 +214,11 @@ if ($HasServerSigning) {
 $ServerReleaseRoot = [IO.Path]::GetFullPath((Join-Path $RepoRoot "dist\$AppVersion\installers"))
 $ServerInstallerPath = Join-Path $ServerReleaseRoot "MissionLegalServerSetup-$AppVersion.exe"
 $ServerManifestPath = Join-Path $ServerReleaseRoot "MissionLegalServerSetup-$AppVersion.json"
+$ServerManifestSignaturePath = "$ServerManifestPath.sig"
 $HasServerInstaller = Test-Path -LiteralPath $ServerInstallerPath -PathType Leaf
 $HasServerManifest = Test-Path -LiteralPath $ServerManifestPath -PathType Leaf
-if ($HasServerInstaller -xor $HasServerManifest) {
+$HasServerManifestSignature = Test-Path -LiteralPath $ServerManifestSignaturePath -PathType Leaf
+if (($HasServerInstaller -ne $HasServerManifest) -or ($HasServerInstaller -ne $HasServerManifestSignature)) {
     throw (
         "The existing same-version server release is incomplete. Preserve the existing file for diagnosis, " +
         "then bump APP_VERSION or explicitly use -AllowUnpublishedDevelopmentOverwrite for unpublished development artifacts."
@@ -233,6 +237,16 @@ if (-not (Test-Path -LiteralPath $ServerInstallerPath -PathType Leaf)) {
 }
 if (-not (Test-Path -LiteralPath $ServerManifestPath -PathType Leaf)) {
     throw "Expected server installer manifest is missing: $ServerManifestPath"
+}
+if (-not (Test-Path -LiteralPath $ServerManifestSignaturePath -PathType Leaf)) {
+    throw "Expected signed server installer manifest is missing: $ServerManifestSignaturePath"
+}
+& $PythonPath (Join-Path $PSScriptRoot "sign_server_release.py") verify `
+    --public-key (Join-Path $PSScriptRoot "server_update_public_key.txt") `
+    --manifest $ServerManifestPath `
+    --signature $ServerManifestSignaturePath
+if ($LASTEXITCODE -ne 0) {
+    throw "Server installer manifest signature verification failed."
 }
 try {
     $ServerManifest = Get-Content -LiteralPath $ServerManifestPath -Raw |
@@ -303,7 +317,7 @@ if ($HasServerSigning -or $RequireSigning) {
         }
         $RequiredServerSignatureRoleCounts = [ordered]@{
             server_installer = 1
-            server_installed_executable = 3
+            server_installed_executable = 4
             server_embedded_maintenance_executable = 1
         }
         foreach ($Role in $RequiredServerSignatureRoleCounts.Keys) {
@@ -484,6 +498,7 @@ foreach ($Package in $CurrentPackages) {
 
 Add-ReleaseArtifact -Path $ServerInstallerPath -Role "server" -Kind "installer"
 Add-ReleaseArtifact -Path $ServerManifestPath -Role "server" -Kind "installer_manifest"
+Add-ReleaseArtifact -Path $ServerManifestSignaturePath -Role "server" -Kind "installer_manifest_signature"
 $ServerProvenancePath = Join-Path $RepoRoot "dist\$AppVersion\MissionLegalServer.provenance.json"
 Add-ReleaseArtifact -Path $ClientProvenancePath -Role "client" -Kind "raw_package_provenance"
 Add-ReleaseArtifact -Path $ServerProvenancePath -Role "server" -Kind "raw_package_provenance"

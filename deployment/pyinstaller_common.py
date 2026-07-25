@@ -35,6 +35,8 @@ CLIENT_HIDDEN_IMPORTS = [
     "requests",
     "scipy",
     "services.ocr_worker",
+    "services.pairing_package",
+    "services.server_update_service",
     "shapely",
     "skimage",
     "sqlalchemy.dialects.sqlite.pysqlite",
@@ -48,6 +50,9 @@ CLIENT_HIDDEN_IMPORTS = [
 SERVER_HIDDEN_IMPORTS = [
     "keyring.backends.Windows",
     "server.app",
+    "server.networking",
+    "server.tls",
+    "services.pairing_package",
     "sqlalchemy.dialects.sqlite.pysqlite",
     "win32cred",
     "win32serviceutil",

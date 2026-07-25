@@ -9,6 +9,7 @@ param(
     [string]$SignToolCommand,
     [string]$ExpectedSignerThumbprint,
     [switch]$RequireSigning,
+    [string]$ServerUpdatePrivateKeyPath = $env:MISSION_LEGAL_SERVER_UPDATE_PRIVATE_KEY,
     [switch]$AllowUnpublishedDevelopmentOverwrite
 )
 
@@ -144,7 +145,8 @@ $ServerPackageDir = Assert-RepositoryPath $ServerPackageDir "Server package dire
 $ExpectedServerFiles = @(
     "MissionLegalServer.exe",
     "MissionLegalServerSetup.exe",
-    "MissionLegalService.exe"
+    "MissionLegalService.exe",
+    "MissionLegalServerManager.exe"
 )
 foreach ($Name in $ExpectedServerFiles) {
     $Path = Join-Path $ServerPackageDir $Name
@@ -180,7 +182,8 @@ if (-not (Test-Path -LiteralPath $ProvenanceManifestPath -PathType Leaf)) {
     --expected-schema-version $SchemaVersionText `
     --required-windows-version-exe MissionLegalServer.exe `
     --required-windows-version-exe MissionLegalServerSetup.exe `
-    --required-windows-version-exe MissionLegalService.exe
+    --required-windows-version-exe MissionLegalService.exe `
+    --required-windows-version-exe MissionLegalServerManager.exe
 if ($LASTEXITCODE -ne 0) {
     throw (
         "Server raw package does not match its provenance manifest. " +
@@ -266,7 +269,8 @@ foreach ($Item in @(Get-ChildItem -LiteralPath $ServerPackageDir -Force)) {
     --expected-schema-version $SchemaVersionText `
     --required-windows-version-exe MissionLegalServer.exe `
     --required-windows-version-exe MissionLegalServerSetup.exe `
-    --required-windows-version-exe MissionLegalService.exe
+    --required-windows-version-exe MissionLegalService.exe `
+    --required-windows-version-exe MissionLegalServerManager.exe
 if ($LASTEXITCODE -ne 0) {
     throw "The transaction-local server payload did not match its provenance manifest."
 }
@@ -303,8 +307,35 @@ $MaintenanceExe = Join-Path $MaintenanceDist "MissionLegalServerMaintenance.exe"
 if (-not (Test-Path -LiteralPath $MaintenanceExe -PathType Leaf)) {
     throw "The server maintenance executable is missing: $MaintenanceExe"
 }
-& $MaintenanceExe --help | Out-Null
-if ($LASTEXITCODE -ne 0) {
+$MaintenanceRuntimeTemp = Join-Path $BuildRoot "maintenance-runtime-temp"
+New-Item -ItemType Directory -Force -Path $MaintenanceRuntimeTemp | Out-Null
+$PriorProcessTemp = [Environment]::GetEnvironmentVariable("TEMP", "Process")
+$PriorProcessTmp = [Environment]::GetEnvironmentVariable("TMP", "Process")
+$MaintenanceSmokeExitCode = $null
+try {
+    # PyInstaller one-file helpers unpack before Python starts. Give that
+    # bootloader a transaction-local directory with inherited workspace ACLs
+    # instead of relying on a potentially stale or restricted user TEMP folder.
+    $env:TEMP = $MaintenanceRuntimeTemp
+    $env:TMP = $MaintenanceRuntimeTemp
+    & $MaintenanceExe --help | Out-Null
+    $MaintenanceSmokeExitCode = $LASTEXITCODE
+}
+finally {
+    if ($null -eq $PriorProcessTemp) {
+        Remove-Item Env:TEMP -ErrorAction SilentlyContinue
+    }
+    else {
+        $env:TEMP = $PriorProcessTemp
+    }
+    if ($null -eq $PriorProcessTmp) {
+        Remove-Item Env:TMP -ErrorAction SilentlyContinue
+    }
+    else {
+        $env:TMP = $PriorProcessTmp
+    }
+}
+if ($MaintenanceSmokeExitCode -ne 0) {
     throw "The server maintenance executable failed its CLI smoke test."
 }
 
@@ -444,7 +475,8 @@ if ($SignToolName) {
     foreach ($PayloadName in @(
         'MissionLegalServer.exe',
         'MissionLegalServerSetup.exe',
-        'MissionLegalService.exe'
+        'MissionLegalService.exe',
+        'MissionLegalServerManager.exe'
     )) {
         $PayloadEvidence = Assert-MissionLegalAuthenticodeSignature `
             -Path (Join-Path $StagedServerPackageDir $PayloadName) `
@@ -494,6 +526,28 @@ $Manifest = [ordered]@{
     silent_upgrade_arguments = "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LOG"
 }
 $Manifest | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $ManifestPath -Encoding UTF8
+$ManifestSignaturePath = "$ManifestPath.sig"
+if ([string]::IsNullOrWhiteSpace($ServerUpdatePrivateKeyPath)) {
+    throw "ServerUpdatePrivateKeyPath or MISSION_LEGAL_SERVER_UPDATE_PRIVATE_KEY is required."
+}
+$ServerUpdatePrivateKeyPath = [IO.Path]::GetFullPath($ServerUpdatePrivateKeyPath)
+if (-not (Test-Path -LiteralPath $ServerUpdatePrivateKeyPath -PathType Leaf)) {
+    throw "The server update signing key was not found: $ServerUpdatePrivateKeyPath"
+}
+& $PythonPath (Join-Path $PSScriptRoot "sign_server_release.py") sign `
+    --private-key $ServerUpdatePrivateKeyPath `
+    --manifest $ManifestPath `
+    --output $ManifestSignaturePath
+if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $ManifestSignaturePath -PathType Leaf)) {
+    throw "Could not sign the server release manifest."
+}
+& $PythonPath (Join-Path $PSScriptRoot "sign_server_release.py") verify `
+    --public-key (Join-Path $PSScriptRoot "server_update_public_key.txt") `
+    --manifest $ManifestPath `
+    --signature $ManifestSignaturePath
+if ($LASTEXITCODE -ne 0) {
+    throw "The server release manifest signature did not verify."
+}
 
 $CommittedOutputDir = Complete-MissionLegalReleaseTransaction `
     -TransactionDirectory $TransactionOutputDir `
@@ -501,10 +555,12 @@ $CommittedOutputDir = Complete-MissionLegalReleaseTransaction `
 $TransactionOutputDir = $null
 $InstallerPath = Join-Path $CommittedOutputDir "MissionLegalServerSetup-$AppVersion.exe"
 $ManifestPath = Join-Path $CommittedOutputDir "MissionLegalServerSetup-$AppVersion.json"
+$ManifestSignaturePath = "$ManifestPath.sig"
 
 Write-Host "Mission Legal Server installer: $InstallerPath"
 Write-Host "SHA-256: $InstallerHash"
 Write-Host "Release manifest: $ManifestPath"
+Write-Host "Release manifest signature: $ManifestSignaturePath"
 }
 finally {
     if (

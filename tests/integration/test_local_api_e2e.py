@@ -1,7 +1,24 @@
 import os
+import shutil
 import subprocess
 import sys
+import tempfile
 import textwrap
+import uuid
+from pathlib import Path
+
+import pytest
+
+
+@pytest.fixture
+def tmp_path():
+    root = Path(tempfile.gettempdir()).resolve()
+    path = root / f"mission-legal-local-api-e2e-{uuid.uuid4().hex}"
+    path.mkdir(mode=0o777)
+    try:
+        yield path
+    finally:
+        shutil.rmtree(path)
 
 
 def test_authenticated_document_round_trip(tmp_path):

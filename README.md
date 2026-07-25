@@ -18,18 +18,16 @@ This transfers an existing `data\app.db` to `C:\ProgramData\MissionLegal\app.db`
 
 Setup also pairs the main computer's desktop application with its own HTTPS service, so the main app and additional computers use the same validation and database access path.
 
-Create a ten-minute, one-use pairing code:
+Open Mission Legal Server Manager from the notification area and choose
+**Generate setup code**. The copied setup code contains only the reachable
+HTTPS address, public CA certificate, and ten-minute one-use pairing code; it
+never contains a private key.
 
-```powershell
-.\scripts\create_pairing_code.ps1
-```
-
-Copy only the generated `mission-legal-ca.pem` certificate to the additional computer. Never copy either private-key file. Pair the additional computer:
-
-With the packaged client, open Mission Legal from its installed shortcut. The
-first-run connection window asks for the server address, public CA certificate,
-six-digit code, and computer name. The command below remains available for a
-source checkout or automated deployment:
+With the packaged client, open Mission Legal from its installed shortcut and
+paste that one setup code into the first-run connection window. Mission Legal
+saves the public CA certificate automatically. The separate command-line
+arguments below remain available only for source checkouts and automated
+deployment:
 
 ```powershell
 python client_setup.py `
@@ -85,3 +83,7 @@ clean-Windows validation flow, [deployment/CLIENT_RELEASES.md](deployment/CLIENT
 for client update-feed publishing, and
 [deployment/installer/SERVER_INSTALLER.md](deployment/installer/SERVER_INSTALLER.md)
 for server installation and upgrade behavior.
+Server Manager checks the public GitHub release source for newer server
+installers. It downloads only releases whose manifest passes the embedded
+Ed25519 verification key, verifies the installer hash and size, and then asks
+an administrator to approve the existing transactional upgrade installer.
