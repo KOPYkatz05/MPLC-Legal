@@ -1,4 +1,5 @@
 from copy import deepcopy
+import time
 
 from PySide6.QtCore import QEventLoop, QPoint, Qt
 from PySide6.QtGui import QColor, QCursor
@@ -38,6 +39,7 @@ from ui.foundation import (
     create_list_widget,
     show_message,
 )
+from ui.foundation.background_loader import LatestRequestLoader
 from ui.dialogs.missionary_workspace_dialog import MissionaryWorkspaceDialog
 from ui.widgets.workspace_layout_editor import (
     GraphicsWorkspaceLayoutEditor,
@@ -48,6 +50,7 @@ from ui.widgets.editable_canvas import EditableCanvasEditorKit
 from utils.constants import DOCUMENTS
 from utils.i18n import field_label
 from utils.language_helper import ui_text as tr
+from utils.logger import logger
 
 
 FIELD_KEYS = [
@@ -428,6 +431,8 @@ class WorkspaceBlockPropertiesDialog(QMenu):
 
 
 class WorkspacesPage(QWidget):
+    CACHE_TTL_SECONDS = 300.0
+
     def __init__(self, main_window):
         super().__init__()
         self.setObjectName("WorkspacesPage")
@@ -441,6 +446,10 @@ class WorkspacesPage(QWidget):
         self._workspaces = []
         self._selected_workspace_id = None
         self._refreshing_layers = False
+        self._workspace_dirty = False
+        self._applying_workspace_snapshot = False
+        self._last_refresh_at = 0.0
+        self._refresh_loader = LatestRequestLoader(parent=self)
         self.setup_ui()
 
     def keyPressEvent(self, event):
@@ -847,8 +856,8 @@ class WorkspacesPage(QWidget):
             self.block_document_combo.addItem(config.get("label", document_type), document_type)
         self.block_document_combo.currentIndexChanged.connect(self._update_block_document_type)
 
-        self._load_workspaces()
         self._refresh_palette()
+        self._populate_block_options()
 
     def _block_label(self, block_type):
         return tr(BLOCK_LABELS.get(block_type, "workspace_block_unsupported"))
@@ -903,8 +912,37 @@ class WorkspacesPage(QWidget):
             self.palette_body_layout.addWidget(empty)
         self.palette_body_layout.addStretch()
 
+    def request_refresh(self, force=False):
+        now = time.monotonic()
+        cache_is_fresh = (
+            bool(self._workspaces)
+            and now - self._last_refresh_at < self.CACHE_TTL_SECONDS
+        )
+        if not force and (cache_is_fresh or self._workspace_dirty):
+            return False
+
+        service = self.workspace_service
+        default_name = tr("workspace_default_name")
+
+        def fetch_workspaces():
+            workspaces = list(service.list_workspaces() or [])
+            if not workspaces:
+                workspace = service.save_workspace(
+                    new_workspace(default_name)
+                )
+                workspaces = [workspace]
+            return workspaces
+
+        self._refresh_loader.request(
+            fetch_workspaces,
+            on_success=self._apply_workspace_snapshot,
+            on_error=self._workspace_refresh_failed,
+        )
+        return True
+
     def load_data(self):
-        self._load_workspaces()
+        """Compatibility entry point for callers that need a forced refresh."""
+        return self.request_refresh(force=True)
 
     def retranslate_ui(self):
         self.workspace_page_title.setText(tr("workspace_builder_title"))
@@ -954,20 +992,51 @@ class WorkspacesPage(QWidget):
         self._populate_block_options()
 
     def _load_workspaces(self):
-        self._workspaces = self.workspace_service.list_workspaces()
-        self.workspaces_list.blockSignals(True)
-        self.workspaces_list.clear()
-        for workspace in self._workspaces:
-            item = QListWidgetItem(workspace.get("name", tr("workspace_title")))
-            item.setData(Qt.UserRole, workspace.get("id"))
-            self.workspaces_list.addItem(item)
-        self.workspaces_list.blockSignals(False)
-        if self._workspaces:
-            self.workspaces_list.setCurrentRow(0)
-        else:
-            workspace = self.workspace_service.save_workspace(new_workspace(tr("workspace_default_name")))
-            self._workspaces = [workspace]
-            self._load_workspaces()
+        """Synchronously reconcile after a local workspace mutation."""
+        self._refresh_loader.cancel()
+        workspaces = list(self.workspace_service.list_workspaces() or [])
+        if not workspaces:
+            workspace = self.workspace_service.save_workspace(
+                new_workspace(tr("workspace_default_name"))
+            )
+            workspaces = [workspace]
+        self._apply_workspace_snapshot(workspaces)
+
+    def _apply_workspace_snapshot(self, workspaces):
+        selected_id = self._selected_workspace_id
+        self._applying_workspace_snapshot = True
+        try:
+            self._workspaces = list(workspaces or [])
+            self.workspaces_list.blockSignals(True)
+            self.workspaces_list.clear()
+            for workspace in self._workspaces:
+                item = QListWidgetItem(
+                    workspace.get("name", tr("workspace_title"))
+                )
+                item.setData(Qt.UserRole, workspace.get("id"))
+                self.workspaces_list.addItem(item)
+            self.workspaces_list.blockSignals(False)
+            if self._workspaces:
+                selected_row = 0
+                for row, workspace in enumerate(self._workspaces):
+                    if workspace.get("id") == selected_id:
+                        selected_row = row
+                        break
+                self.workspaces_list.setCurrentRow(selected_row)
+            else:
+                self._selected_workspace_id = None
+                self._populate_block_options()
+            self._workspace_dirty = False
+            self._last_refresh_at = time.monotonic()
+        finally:
+            self._applying_workspace_snapshot = False
+
+    @staticmethod
+    def _workspace_refresh_failed(error):
+        logger.error(
+            "Failed to load workspaces",
+            exc_info=(type(error), error, error.__traceback__),
+        )
 
     def _current_workspace(self):
         return next(
@@ -1180,8 +1249,16 @@ class WorkspacesPage(QWidget):
         self.shortcut_hint_label.setText(hint)
 
     def _workspace_layout_changed(self):
+        self._mark_workspace_dirty()
         self._refresh_layers_list()
         self._populate_block_options()
+
+    def _mark_workspace_dirty(self):
+        if self._applying_workspace_snapshot:
+            return
+        self._workspace_dirty = True
+        if self._refresh_loader.busy:
+            self._refresh_loader.cancel()
 
     def _new_workspace(self):
         workspace = self.workspace_service.save_workspace(new_workspace(tr("workspace_default_name")))
@@ -1226,6 +1303,7 @@ class WorkspacesPage(QWidget):
     def _update_workspace_name(self, value):
         workspace = self._current_workspace()
         if workspace is not None:
+            self._mark_workspace_dirty()
             workspace["name"] = value
             item = self.workspaces_list.currentItem()
             if item:
@@ -1234,6 +1312,7 @@ class WorkspacesPage(QWidget):
     def _update_workspace_size(self):
         workspace = self._current_workspace()
         if workspace is not None:
+            self._mark_workspace_dirty()
             dialog_size = self.workspace_size_combo.currentData()
             workspace["dialog_size"] = dialog_size
             if getattr(self.workspace_layout_editor, "workspace", None) is not None:
@@ -1361,6 +1440,7 @@ class WorkspacesPage(QWidget):
     def _update_block_title(self, value):
         block = self._current_block()
         if block is not None:
+            self._mark_workspace_dirty()
             block["title"] = value
             self.workspace_layout_editor.render()
             self._refresh_layers_list()
@@ -1376,11 +1456,13 @@ class WorkspacesPage(QWidget):
     def _update_block_document_type(self):
         block = self._current_block()
         if block is not None and block.get("type") == "document_viewer":
+            self._mark_workspace_dirty()
             block["document_type"] = self.block_document_combo.currentData() or ""
 
     def _update_block_web_url(self, value):
         block = self._current_block()
         if block is not None and block.get("type") == "web_viewer":
+            self._mark_workspace_dirty()
             block["web_url"] = value
             self.workspace_layout_editor.render()
 

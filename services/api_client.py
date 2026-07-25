@@ -1,8 +1,11 @@
+import atexit
 import json
 import os
 import ssl
 import logging
+import threading
 import uuid
+from contextlib import contextmanager
 from datetime import date, datetime
 from pathlib import Path
 
@@ -63,6 +66,10 @@ class ApiCompatibilityError(RuntimeError):
 
 
 class MissionLegalApiClient:
+    _environment_lock = threading.RLock()
+    _environment_client = None
+    _environment_key = None
+
     def __init__(
         self,
         base_url,
@@ -82,6 +89,10 @@ class MissionLegalApiClient:
         self.timeout = timeout
         self._pairing_previous_device_bytes = None
         self._pairing_in_progress = False
+        self._client_condition = threading.Condition(threading.RLock())
+        self._http_client = None
+        self._active_client_users = 0
+        self._closed = False
 
     @classmethod
     def from_environment(cls):
@@ -103,9 +114,54 @@ class MissionLegalApiClient:
                 base_url = None
         if not base_url:
             return None
-        return cls(base_url, certificate=certificate or True)
+        certificate = certificate or True
+        credential_path = (
+            get_client_data_dir() / "Configuration" / "api-device.json"
+        )
+        environment_key = (
+            str(base_url).rstrip("/"),
+            str(certificate),
+            str(credential_path),
+        )
 
-    def _client(self):
+        stale_client = None
+        with cls._environment_lock:
+            client = cls._environment_client
+            if (
+                client is not None
+                and cls._environment_key == environment_key
+                and not client.closed
+            ):
+                return client
+            stale_client = client
+            client = cls(
+                base_url,
+                certificate=certificate,
+                credential_path=credential_path,
+            )
+            cls._environment_client = client
+            cls._environment_key = environment_key
+        if stale_client is not None:
+            stale_client.close()
+        return client
+
+    @classmethod
+    def close_environment_client(cls):
+        """Close and forget the process-wide configured API connection owner."""
+
+        with cls._environment_lock:
+            client = cls._environment_client
+            cls._environment_client = None
+            cls._environment_key = None
+        if client is not None:
+            client.close()
+
+    @property
+    def closed(self):
+        with self._client_condition:
+            return self._closed
+
+    def _build_client(self):
         verify = self.certificate
         if isinstance(verify, (str, Path)):
             verify = ssl.create_default_context(cafile=str(verify))
@@ -115,6 +171,53 @@ class MissionLegalApiClient:
             timeout=self.timeout,
             transport=self._transport,
         )
+
+    @contextmanager
+    def _use_client(self):
+        """Keep the shared transport alive until this request has completed."""
+
+        with self._client_condition:
+            if self._closed:
+                raise RuntimeError("This Mission Legal API client is closed")
+            if self._http_client is None:
+                self._http_client = self._build_client()
+            client = self._http_client
+            self._active_client_users += 1
+        try:
+            yield client
+        finally:
+            client_to_close = None
+            with self._client_condition:
+                self._active_client_users -= 1
+                if self._closed and self._active_client_users == 0:
+                    client_to_close = self._http_client
+                    self._http_client = None
+                self._client_condition.notify_all()
+            if client_to_close is not None:
+                client_to_close.close()
+
+    def close(self):
+        """Stop new work and close the transport after active calls finish."""
+
+        client_to_close = None
+        with self._client_condition:
+            if self._closed:
+                return
+            self._closed = True
+            if self._active_client_users == 0:
+                client_to_close = self._http_client
+                self._http_client = None
+            self._client_condition.notify_all()
+        if client_to_close is not None:
+            client_to_close.close()
+
+    def __enter__(self):
+        if self.closed:
+            raise RuntimeError("This Mission Legal API client is closed")
+        return self
+
+    def __exit__(self, _exc_type, _exc_value, _traceback):
+        self.close()
 
     def _read_device(self):
         try:
@@ -156,7 +259,7 @@ class MissionLegalApiClient:
         if authenticated:
             kwargs.setdefault("headers", {}).update(self._headers())
         try:
-            with self._client() as client:
+            with self._use_client() as client:
                 response = client.request(method, path, **kwargs)
         except httpx.HTTPError as exc:
             self._report_unavailable(exc)
@@ -250,6 +353,36 @@ class MissionLegalApiClient:
                 required_client_version=required_version,
             )
 
+        server_app = str(payload.get("app_version", "")).strip()
+        if not server_app:
+            raise ApiCompatibilityError(
+                "Server application-version metadata is missing",
+                reason=ApiCompatibilityError.INVALID_METADATA,
+            )
+        try:
+            server_version = Version(server_app)
+        except InvalidVersion as exc:
+            raise ApiCompatibilityError(
+                "Server application-version metadata is invalid",
+                reason=ApiCompatibilityError.INVALID_METADATA,
+            ) from exc
+
+        if server_version > installed_version:
+            raise ApiCompatibilityError(
+                f"Mission Legal {server_version} is required. "
+                f"This computer is running {installed_version}.",
+                reason=ApiCompatibilityError.CLIENT_UPDATE_REQUIRED,
+                required_client_version=server_version,
+            )
+
+        if server_version < installed_version:
+            raise ApiCompatibilityError(
+                f"Mission Legal Server {server_version} does not match this "
+                f"client {installed_version}. Update Mission Legal Server on "
+                "the main computer.",
+                reason=ApiCompatibilityError.SERVER_UPDATE_REQUIRED,
+            )
+
         if required_version is not None and installed_version < required_version:
             raise ApiCompatibilityError(
                 f"Mission Legal {required_version} or newer is required. "
@@ -271,7 +404,7 @@ class MissionLegalApiClient:
         }
 
     def _cancel_remote_pairing(self, device_id, credential):
-        with self._client() as client:
+        with self._use_client() as client:
             response = client.delete(
                 "/pair/pending",
                 headers=self._pairing_headers(device_id, credential),
@@ -513,7 +646,7 @@ class MissionLegalApiClient:
     def upload(self, path, *, file_path, data):
         headers = self._headers()
         try:
-            with self._client() as client, Path(file_path).open("rb") as handle:
+            with self._use_client() as client, Path(file_path).open("rb") as handle:
                 response = client.post(
                     path,
                     headers=headers,
@@ -534,7 +667,7 @@ class MissionLegalApiClient:
         destination.parent.mkdir(parents=True, exist_ok=True)
         temporary = destination.with_suffix(destination.suffix + ".downloading")
         try:
-            with self._client() as client:
+            with self._use_client() as client:
                 response = client.get(path, headers=self._headers())
                 response.raise_for_status()
                 temporary.write_bytes(response.content)
@@ -545,6 +678,9 @@ class MissionLegalApiClient:
             raise ApiUnavailableError(str(exc)) from exc
         self._report_restored()
         return destination
+
+
+atexit.register(MissionLegalApiClient.close_environment_client)
 
 
 class RemoteRecord:

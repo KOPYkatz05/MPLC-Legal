@@ -34,7 +34,9 @@ from services.secretary_work_service import (
     WAITING_REASON_LABELS,
     SecretaryWorkService,
 )
+from services.client_view_service import ClientViewService
 from ui.dialogs.office_work_dialogs import ProjectDialog, TaskDialog
+from ui.foundation.background_loader import LatestRequestLoader
 from ui.foundation import (
     FilterBar,
     create_button,
@@ -342,6 +344,22 @@ class OfficeWorkPage(QWidget):
         self.setObjectName("OfficeWorkPage")
         self.main_window = main_window
         self.service = service or SecretaryWorkService()
+        self.client_view_service = ClientViewService()
+        self._background_loads_enabled = isinstance(main_window, QWidget)
+        self._data_loader = LatestRequestLoader(parent=self)
+        self._has_loaded_data = False
+        self._cached_grouped_tasks = None
+        self._cached_projects = None
+        self._loaded_task_filter_signature = None
+        self._loaded_project_filter_signature = None
+        self._last_automation_at = 0.0
+        self._setup_complete = False
+        self._task_action_loaders = {}
+        self._pending_task_actions = set()
+        self._task_widgets_by_id = {}
+        self._project_action_loaders = {}
+        self._pending_project_actions = set()
+        self._project_widgets_by_id = {}
         self._selected_tab = "tasks"
         self._project_filter_id = None
         self._board_lane_orders = {}
@@ -354,10 +372,20 @@ class OfficeWorkPage(QWidget):
         self._task_render_timer = QTimer(self)
         self._task_render_timer.setSingleShot(True)
         self._task_render_timer.setInterval(140)
-        self._task_render_timer.timeout.connect(self.render_tasks)
+        self._task_render_timer.timeout.connect(
+            self._dispatch_task_refresh
+        )
+        self._project_refresh_timer = QTimer(self)
+        self._project_refresh_timer.setSingleShot(True)
+        self._project_refresh_timer.setInterval(140)
+        self._project_refresh_timer.timeout.connect(
+            self._dispatch_project_refresh
+        )
 
         self.setup_ui()
-        self.load_data()
+        self._setup_complete = True
+        if not self._background_loads_enabled:
+            self._load_data_synchronously()
 
     def setup_ui(self):
         outer = QVBoxLayout()
@@ -533,7 +561,7 @@ class OfficeWorkPage(QWidget):
                 status,
             )
         self.task_status_filter.currentIndexChanged.connect(
-            lambda _=None: self.render_tasks()
+            self._task_filters_changed
         )
 
         self.task_priority_filter = create_combo_box()
@@ -541,7 +569,7 @@ class OfficeWorkPage(QWidget):
         for priority in PRIORITIES:
             self.task_priority_filter.addItem(priority.title(), priority)
         self.task_priority_filter.currentIndexChanged.connect(
-            lambda _=None: self.render_tasks()
+            self._task_filters_changed
         )
 
         self.task_type_filter = create_combo_box()
@@ -552,7 +580,7 @@ class OfficeWorkPage(QWidget):
                 task_type,
             )
         self.task_type_filter.currentIndexChanged.connect(
-            lambda _=None: self.render_tasks()
+            self._task_filters_changed
         )
 
         self.task_stage_filter = create_combo_box()
@@ -560,7 +588,7 @@ class OfficeWorkPage(QWidget):
         for stage in WORKFLOW_STAGES:
             self.task_stage_filter.addItem(stage.title(), stage)
         self.task_stage_filter.currentIndexChanged.connect(
-            lambda _=None: self.render_tasks()
+            self._task_filters_changed
         )
 
         self.task_document_filter = create_combo_box()
@@ -574,7 +602,7 @@ class OfficeWorkPage(QWidget):
                 document_type,
             )
         self.task_document_filter.currentIndexChanged.connect(
-            lambda _=None: self.render_tasks()
+            self._task_filters_changed
         )
 
         self.task_source_filter = create_combo_box()
@@ -582,7 +610,7 @@ class OfficeWorkPage(QWidget):
         self.task_source_filter.addItem("Manual", "MANUAL")
         self.task_source_filter.addItem("Auto", "AUTO")
         self.task_source_filter.currentIndexChanged.connect(
-            lambda _=None: self.render_tasks()
+            self._task_filters_changed
         )
 
         self.task_due_filter = create_combo_box()
@@ -596,7 +624,7 @@ class OfficeWorkPage(QWidget):
         ]:
             self.task_due_filter.addItem(label, value)
         self.task_due_filter.currentIndexChanged.connect(
-            lambda _=None: self.render_tasks()
+            self._task_filters_changed
         )
 
         self.task_follow_up_filter = create_combo_box()
@@ -605,7 +633,7 @@ class OfficeWorkPage(QWidget):
         self.task_follow_up_filter.addItem("Upcoming Follow-Ups", "upcoming")
         self.task_follow_up_filter.addItem("No Follow-Up", "missing")
         self.task_follow_up_filter.currentIndexChanged.connect(
-            lambda _=None: self.render_tasks()
+            self._task_filters_changed
         )
 
         self.task_waiting_reason_filter = create_combo_box()
@@ -613,7 +641,7 @@ class OfficeWorkPage(QWidget):
         for reason, label in WAITING_REASON_LABELS.items():
             self.task_waiting_reason_filter.addItem(label, reason)
         self.task_waiting_reason_filter.currentIndexChanged.connect(
-            lambda _=None: self.render_tasks()
+            self._task_filters_changed
         )
 
         self.task_project_filter = create_combo_box()
@@ -623,7 +651,7 @@ class OfficeWorkPage(QWidget):
 
         self.task_missionary_filter = create_combo_box()
         self.task_missionary_filter.currentIndexChanged.connect(
-            lambda _=None: self.render_tasks()
+            self._task_filters_changed
         )
         self.task_filter_menu = None
 
@@ -687,7 +715,7 @@ class OfficeWorkPage(QWidget):
         self.project_filter_bar.setObjectName("OfficeWorkFilterBar")
 
         self.project_search = create_search_edit("Search projects")
-        self.project_search.textChanged.connect(self.render_projects)
+        self.project_search.textChanged.connect(self._project_filters_changed)
         self.project_filter_bar.add_filter(self.project_search, stretch=1)
 
         self.project_status_filter = create_combo_box()
@@ -699,7 +727,7 @@ class OfficeWorkPage(QWidget):
                 status,
             )
         self.project_status_filter.currentIndexChanged.connect(
-            lambda _=None: self.render_projects()
+            self._project_filters_changed
         )
         self.project_filter_bar.add_filter(self.project_status_filter)
 
@@ -708,7 +736,7 @@ class OfficeWorkPage(QWidget):
         for priority in PRIORITIES:
             self.project_priority_filter.addItem(priority.title(), priority)
         self.project_priority_filter.currentIndexChanged.connect(
-            lambda _=None: self.render_projects()
+            self._project_filters_changed
         )
         self.project_filter_bar.add_filter(self.project_priority_filter)
 
@@ -717,25 +745,164 @@ class OfficeWorkPage(QWidget):
         self.project_filter_bar.add_filter(add_project_btn)
 
     def load_data(self):
-        """Force a refresh after task or project mutations."""
+        """Compatibility entry point for mutation-triggered forced refreshes."""
+        if self._background_loads_enabled:
+            return self.request_refresh(force=True)
+        self._load_data_synchronously()
+        return True
+
+    def _load_data_synchronously(self):
         self._run_process_automation()
         self._refresh_task_filter_options()
         self.render_tasks()
+        self._loaded_task_filter_signature = tuple(
+            self._current_task_filters().items()
+        )
         if self._selected_tab == "projects":
             self.render_projects()
+            self._loaded_project_filter_signature = tuple(
+                self._current_project_filters().items()
+            )
         else:
             self._projects_loaded = False
         self._last_load_at = time.monotonic()
+        self._has_loaded_data = True
 
-    def request_refresh(self):
-        """Refresh navigation only when the Office Work cache is stale."""
-        if time.monotonic() - self._last_load_at < self._office_cache_ttl_seconds:
+    def request_refresh(self, force=False):
+        """Refresh the current tab off-thread, coalescing rapid filter changes."""
+        task_filters = self._current_task_filters()
+        project_filters = self._current_project_filters()
+        task_signature = tuple(task_filters.items())
+        project_signature = tuple(project_filters.items())
+        include_projects = self._selected_tab == "projects"
+        cache_matches = (
+            self._has_loaded_data
+            and self._loaded_task_filter_signature == task_signature
+            and (
+                not include_projects
+                or self._loaded_project_filter_signature == project_signature
+            )
+        )
+        cache_is_fresh = (
+            cache_matches
+            and time.monotonic() - self._last_load_at
+            < self._office_cache_ttl_seconds
+        )
+        if cache_is_fresh and not force:
             return False
-        self.load_data()
+        if not self._background_loads_enabled:
+            self._load_data_synchronously()
+            return True
+        if self._data_loader.busy and not force:
+            return False
+
+        run_automation = (
+            time.monotonic() - self._last_automation_at
+            >= self._office_cache_ttl_seconds
+        )
+
+        def fetch_snapshot():
+            snapshot = self.client_view_service.get_office_work_snapshot(
+                task_filters=task_filters,
+                project_filters=project_filters,
+                include_projects=include_projects,
+                run_automation=run_automation,
+            )
+            return {
+                "snapshot": snapshot,
+                "task_signature": task_signature,
+                "project_signature": project_signature,
+                "include_projects": include_projects,
+                "ran_automation": run_automation,
+            }
+
+        self._data_loader.request(
+            fetch_snapshot,
+            on_success=self._apply_office_work_snapshot,
+            on_error=self._office_work_refresh_failed,
+        )
         return True
+
+    def _current_task_filters(self):
+        completed_tab = self._selected_tab == "completed"
+        return {
+            "search": self.task_search.text(),
+            "status": (
+                "DONE"
+                if completed_tab
+                else self.task_status_filter.currentData()
+            ),
+            "priority": self.task_priority_filter.currentData(),
+            "project_id": self._project_filter_id,
+            "missionary_id": self.task_missionary_filter.currentData(),
+            "due_range": self.task_due_filter.currentData(),
+            "task_type": self.task_type_filter.currentData(),
+            "related_stage": self.task_stage_filter.currentData(),
+            "related_document_type": self.task_document_filter.currentData(),
+            "automation_state": self.task_source_filter.currentData(),
+            "waiting_follow_up": self.task_follow_up_filter.currentData(),
+            "waiting_reason": self.task_waiting_reason_filter.currentData(),
+            "include_done": completed_tab,
+        }
+
+    def _current_project_filters(self):
+        return {
+            "search": self.project_search.text(),
+            "status": self.project_status_filter.currentData(),
+            "priority": self.project_priority_filter.currentData(),
+            "include_done": self.project_status_filter.currentData() == "ALL",
+        }
+
+    def _apply_office_work_snapshot(self, payload):
+        snapshot = payload["snapshot"]
+        self._cached_grouped_tasks = snapshot.get("grouped_tasks") or {}
+        self._loaded_task_filter_signature = payload["task_signature"]
+        self._refresh_task_filter_options(
+            project_options=snapshot.get("project_options") or [],
+            missionary_options=snapshot.get("missionary_options") or [],
+        )
+        if payload["include_projects"]:
+            self._cached_projects = list(snapshot.get("projects") or [])
+            self._loaded_project_filter_signature = payload[
+                "project_signature"
+            ]
+            self.render_projects(self._cached_projects)
+        else:
+            self._projects_loaded = False
+            self.render_tasks(self._cached_grouped_tasks)
+        if payload["ran_automation"]:
+            self._last_automation_at = time.monotonic()
+        self._last_load_at = time.monotonic()
+        self._has_loaded_data = True
+
+    @staticmethod
+    def _office_work_refresh_failed(error):
+        logger.error("Failed to refresh Tasks in background: %s", error)
 
     def _schedule_task_render(self, *_args):
         self._task_render_timer.start()
+
+    def _task_filters_changed(self, *_args):
+        if not self._setup_complete:
+            return
+        if self._background_loads_enabled:
+            self._task_render_timer.start()
+        else:
+            self.render_tasks()
+
+    def _dispatch_task_refresh(self):
+        self.request_refresh(force=True)
+
+    def _project_filters_changed(self, *_args):
+        if not self._setup_complete:
+            return
+        if self._background_loads_enabled:
+            self._project_refresh_timer.start()
+        else:
+            self.render_projects()
+
+    def _dispatch_project_refresh(self):
+        self.request_refresh(force=True)
 
     @staticmethod
     def _task_layout_class_for_width(width):
@@ -754,7 +921,11 @@ class OfficeWorkPage(QWidget):
                 else QBoxLayout.LeftToRight
             )
         if hasattr(self, "task_content_layout"):
-            self._schedule_task_render()
+            if self._background_loads_enabled:
+                if self._cached_grouped_tasks is not None:
+                    self.render_tasks(self._cached_grouped_tasks)
+            else:
+                self._schedule_task_render()
 
     def _run_process_automation(self):
         if not self.main_window:
@@ -770,7 +941,11 @@ class OfficeWorkPage(QWidget):
         except Exception:
             logger.exception("Process automation failed during office work load")
 
-    def _refresh_task_filter_options(self):
+    def _refresh_task_filter_options(
+        self,
+        project_options=None,
+        missionary_options=None,
+    ):
         current_project = self._project_filter_id
         current_missionary = self.task_missionary_filter.currentData() if hasattr(
             self,
@@ -780,7 +955,9 @@ class OfficeWorkPage(QWidget):
         self.task_project_filter.blockSignals(True)
         self.task_project_filter.clear()
         self.task_project_filter.addItem("All Projects", None)
-        for project in self.service.project_options():
+        if project_options is None:
+            project_options = self.service.project_options()
+        for project in project_options:
             self.task_project_filter.addItem(project["title"], project["id"])
         self._set_combo_data(self.task_project_filter, current_project)
         self.task_project_filter.blockSignals(False)
@@ -788,33 +965,31 @@ class OfficeWorkPage(QWidget):
         self.task_missionary_filter.blockSignals(True)
         self.task_missionary_filter.clear()
         self.task_missionary_filter.addItem("All Missionaries", None)
-        for missionary in self.service.missionary_options():
+        if missionary_options is None:
+            missionary_options = self.service.missionary_options()
+        for missionary in missionary_options:
             self.task_missionary_filter.addItem(missionary["name"], missionary["id"])
         self._set_combo_data(self.task_missionary_filter, current_missionary)
         self.task_missionary_filter.blockSignals(False)
 
-    def render_tasks(self):
+    def render_tasks(self, grouped=None):
         if not hasattr(self, "task_content_layout"):
             return
 
+        self._task_widgets_by_id = {}
         self._clear_layout(self.task_content_layout)
 
         completed_tab = self._selected_tab == "completed"
-        grouped = self.service.grouped_tasks(
-            search=self.task_search.text(),
-            status="DONE" if completed_tab else self.task_status_filter.currentData(),
-            priority=self.task_priority_filter.currentData(),
-            project_id=self._project_filter_id,
-            missionary_id=self.task_missionary_filter.currentData(),
-            due_range=self.task_due_filter.currentData(),
-            task_type=self.task_type_filter.currentData(),
-            related_stage=self.task_stage_filter.currentData(),
-            related_document_type=self.task_document_filter.currentData(),
-            automation_state=self.task_source_filter.currentData(),
-            waiting_follow_up=self.task_follow_up_filter.currentData(),
-            waiting_reason=self.task_waiting_reason_filter.currentData(),
-            include_done=completed_tab,
-        )
+        if grouped is None:
+            if (
+                self._background_loads_enabled
+                and self._cached_grouped_tasks is not None
+            ):
+                grouped = self._cached_grouped_tasks
+            else:
+                grouped = self.service.grouped_tasks(
+                    **self._current_task_filters()
+                )
 
         board_groups = self._task_board_groups(grouped)
         if not any(board_groups.values()):
@@ -941,18 +1116,23 @@ class OfficeWorkPage(QWidget):
         column_layout.addStretch()
         return column
 
-    def render_projects(self):
+    def render_projects(self, projects=None):
         if not hasattr(self, "project_content_layout"):
             return
 
+        self._project_widgets_by_id = {}
         self._clear_layout(self.project_content_layout)
 
-        projects = self.service.list_projects(
-            search=self.project_search.text(),
-            status=self.project_status_filter.currentData(),
-            priority=self.project_priority_filter.currentData(),
-            include_done=self.project_status_filter.currentData() == "ALL",
-        )
+        if projects is None:
+            if (
+                self._background_loads_enabled
+                and self._cached_projects is not None
+            ):
+                projects = self._cached_projects
+            else:
+                projects = self.service.list_projects(
+                    **self._current_project_filters()
+                )
         if not projects:
             self.project_content_layout.addWidget(
                 self._empty_state("No projects match the current filters.")
@@ -1120,6 +1300,9 @@ class OfficeWorkPage(QWidget):
         card.clicked.connect(
             lambda task_id=task["id"]: self._open_task_workspace(task_id)
         )
+        task_id = task["id"]
+        card.setEnabled(task_id not in self._pending_task_actions)
+        self._task_widgets_by_id[task_id] = card
         return card
 
     def _handle_task_board_drop(self, task_id, target_lane, target_index):
@@ -1244,6 +1427,11 @@ class OfficeWorkPage(QWidget):
             )
             layout.addWidget(archive_btn)
 
+        project_id = project["id"]
+        card.setEnabled(
+            project_id not in self._pending_project_actions
+        )
+        self._project_widgets_by_id[project_id] = card
         return card
 
     @staticmethod
@@ -1291,17 +1479,25 @@ class OfficeWorkPage(QWidget):
         return card
 
     def _select_tab(self, key):
+        key = (
+            "projects"
+            if key == "projects"
+            else ("completed" if key == "completed" else "tasks")
+        )
+        self._selected_tab = key
         if key == "projects":
             self.stack.setCurrentIndex(self.projects_index)
-            if not self._projects_loaded:
-                self.render_projects()
         else:
-            key = "completed" if key == "completed" else "tasks"
             self.stack.setCurrentIndex(self.tasks_index)
 
-        self._selected_tab = key
-        if key in {"tasks", "completed"}:
-            self.render_tasks()
+        if self._setup_complete:
+            if self._background_loads_enabled:
+                self.request_refresh(force=True)
+            elif key == "projects":
+                if not self._projects_loaded:
+                    self.render_projects()
+            else:
+                self.render_tasks()
         if self.tab_control is not None:
             current_key = getattr(self.tab_control, "currentRouteKey", lambda: None)()
             if current_key != key:
@@ -1320,11 +1516,12 @@ class OfficeWorkPage(QWidget):
         self._project_filter_id = project_id
         self._set_combo_data(self.task_project_filter, project_id)
         self._select_tab("tasks")
-        self.render_tasks()
+        if not self._background_loads_enabled:
+            self.render_tasks()
 
     def _project_filter_changed(self):
         self._project_filter_id = self.task_project_filter.currentData()
-        self.render_tasks()
+        self._task_filters_changed()
 
     def _apply_task_preset(self, preset):
         self.task_search.clear()
@@ -1363,7 +1560,7 @@ class OfficeWorkPage(QWidget):
             self._set_combo_data(self.task_priority_filter, "CRITICAL")
         elif preset == "all":
             pass
-        self.render_tasks()
+        self._task_filters_changed()
 
     def focus_task_context(self, task_id=None, title=""):
         if task_id is not None:
@@ -1374,7 +1571,7 @@ class OfficeWorkPage(QWidget):
             self._set_combo_data(self.task_status_filter, None)
         if hasattr(self, "task_search"):
             self.task_search.setText(title or "")
-        self.render_tasks()
+        self._task_filters_changed()
 
     def _add_task(self, project_id=None, missionary_id=None):
         defaults = {}
@@ -1422,25 +1619,110 @@ class OfficeWorkPage(QWidget):
         if dialog.exec():
             self.load_data()
 
-    def _complete_task(self, task_id):
-        self.service.complete_task(task_id)
+    def _run_task_action(
+        self,
+        task_id,
+        operation,
+        on_success,
+        *,
+        failure_message,
+    ):
+        if not self._background_loads_enabled:
+            result = operation()
+            on_success(result)
+            return True
+        if task_id in self._pending_task_actions:
+            return False
+
+        loader = self._task_action_loaders.get(task_id)
+        if loader is None:
+            loader = LatestRequestLoader(parent=self)
+            self._task_action_loaders[task_id] = loader
+        self._pending_task_actions.add(task_id)
+        self._data_loader.cancel()
+        widget = self._task_widgets_by_id.get(task_id)
+        if widget is not None:
+            widget.setEnabled(False)
+
+        def finish(result):
+            self._pending_task_actions.discard(task_id)
+            current_widget = self._task_widgets_by_id.get(task_id)
+            if current_widget is not None:
+                current_widget.setEnabled(True)
+            on_success(result)
+
+        def fail(error):
+            self._pending_task_actions.discard(task_id)
+            current_widget = self._task_widgets_by_id.get(task_id)
+            if current_widget is not None:
+                current_widget.setEnabled(True)
+            logger.error(
+                "Task action failed for %s: %s",
+                task_id,
+                error,
+            )
+            show_message(
+                self,
+                "Task Update Failed",
+                failure_message,
+                kind="warning",
+            )
+
+        loader.request(
+            operation,
+            on_success=finish,
+            on_error=fail,
+        )
+        return True
+
+    def _finish_task_status_action(self, task_id, status):
+        self.apply_task_status(task_id, status)
         self.load_data()
-        self._refresh_calendar_page()
+        self._refresh_calendar_page(task_id=task_id, status=status)
+
+    def _complete_task(self, task_id):
+        self._run_task_action(
+            task_id,
+            lambda: self.service.complete_task(task_id),
+            lambda _result: self._finish_task_status_action(
+                task_id,
+                "DONE",
+            ),
+            failure_message="The task could not be completed.",
+        )
 
     def _mark_task_ready(self, task_id):
-        self.service.mark_task_ready(task_id)
-        self.load_data()
-        self._refresh_calendar_page()
+        self._run_task_action(
+            task_id,
+            lambda: self.service.mark_task_ready(task_id),
+            lambda _result: self._finish_task_status_action(
+                task_id,
+                "READY",
+            ),
+            failure_message="The task could not be marked ready.",
+        )
 
     def _reopen_task(self, task_id):
-        self.service.reopen_task(task_id)
-        self.load_data()
-        self._refresh_calendar_page()
+        self._run_task_action(
+            task_id,
+            lambda: self.service.reopen_task(task_id),
+            lambda _result: self._finish_task_status_action(
+                task_id,
+                "OPEN",
+            ),
+            failure_message="The task could not be reopened.",
+        )
 
     def _archive_task(self, task_id):
-        self.service.archive_task(task_id)
-        self.load_data()
-        self._refresh_calendar_page()
+        self._run_task_action(
+            task_id,
+            lambda: self.service.archive_task(task_id),
+            lambda _result: self._finish_task_status_action(
+                task_id,
+                "ARCHIVED",
+            ),
+            failure_message="The task could not be archived.",
+        )
 
     def _delete_task(self, task_id):
         response = show_message(
@@ -1452,9 +1734,15 @@ class OfficeWorkPage(QWidget):
         )
         if response not in {1, 16384}:
             return
-        self.service.delete_task(task_id)
-        self.load_data()
-        self._refresh_calendar_page()
+        self._run_task_action(
+            task_id,
+            lambda: self.service.delete_task(task_id),
+            lambda _result: self._finish_task_status_action(
+                task_id,
+                None,
+            ),
+            failure_message="The task could not be deleted.",
+        )
 
     def _show_linked_missionaries(self, task):
         names = task.get("missionary_names") or []
@@ -1472,17 +1760,113 @@ class OfficeWorkPage(QWidget):
         )
 
     def _complete_project(self, project_id):
-        self.service.complete_project(project_id)
-        self.load_data()
+        self._run_project_action(
+            project_id,
+            lambda: self.service.complete_project(project_id),
+            "The project could not be completed.",
+        )
 
     def _archive_project(self, project_id):
-        self.service.archive_project(project_id)
-        self.load_data()
+        self._run_project_action(
+            project_id,
+            lambda: self.service.archive_project(project_id),
+            "The project could not be archived.",
+        )
 
-    def _refresh_calendar_page(self):
+    def _run_project_action(
+        self,
+        project_id,
+        operation,
+        failure_message,
+    ):
+        if not self._background_loads_enabled:
+            operation()
+            self.load_data()
+            return True
+        if project_id in self._pending_project_actions:
+            return False
+        loader = self._project_action_loaders.get(project_id)
+        if loader is None:
+            loader = LatestRequestLoader(parent=self)
+            self._project_action_loaders[project_id] = loader
+        self._pending_project_actions.add(project_id)
+        widget = self._project_widgets_by_id.get(project_id)
+        if widget is not None:
+            widget.setEnabled(False)
+        self._data_loader.cancel()
+
+        def completed(_result):
+            self._pending_project_actions.discard(project_id)
+            self.load_data()
+
+        def failed(error):
+            self._pending_project_actions.discard(project_id)
+            current_widget = self._project_widgets_by_id.get(project_id)
+            if current_widget is not None:
+                current_widget.setEnabled(True)
+            logger.error(
+                "Project action failed for %s: %s",
+                project_id,
+                error,
+            )
+            show_message(
+                self,
+                "Project Update Failed",
+                failure_message,
+                kind="warning",
+            )
+
+        loader.request(
+            operation,
+            on_success=completed,
+            on_error=failed,
+        )
+        return True
+
+    def apply_task_status(self, task_id, status):
+        """Apply a confirmed task status locally before background reconcile."""
+        if self._cached_grouped_tasks is None:
+            return False
+
+        changed = False
+        updated_groups = {}
+        remove_task = status in {None, "ARCHIVED"} or (
+            status == "DONE" and self._selected_tab != "completed"
+        )
+        for group_key, tasks in self._cached_grouped_tasks.items():
+            updated = []
+            for task in tasks:
+                if task.get("id") != task_id:
+                    updated.append(task)
+                    continue
+                changed = True
+                if remove_task:
+                    continue
+                task_snapshot = dict(task)
+                task_snapshot["status"] = status
+                updated.append(task_snapshot)
+            updated_groups[group_key] = updated
+
+        if not changed:
+            return False
+        self._cached_grouped_tasks = updated_groups
+        self.render_tasks(self._cached_grouped_tasks)
+        return True
+
+    def _refresh_calendar_page(self, task_id=None, status=None):
         calendar_page = getattr(self.main_window, "calendar_page", None)
-        if calendar_page is not None and hasattr(calendar_page, "load_data"):
-            calendar_page.load_data()
+        if calendar_page is None:
+            return
+        patch_status = getattr(calendar_page, "apply_task_status", None)
+        if task_id is not None and callable(patch_status):
+            patch_status(task_id, status)
+        request_refresh = getattr(calendar_page, "request_refresh", None)
+        if callable(request_refresh):
+            request_refresh(force=True)
+            return
+        load_data = getattr(calendar_page, "load_data", None)
+        if callable(load_data):
+            load_data()
 
     def _open_missionary(self, missionary_id):
         if not self.main_window:

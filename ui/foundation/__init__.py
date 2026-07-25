@@ -1,3 +1,4 @@
+from ui.foundation.background_loader import LatestRequestLoader
 from ui.foundation.fluent import (
     APP_DIALOG_SHELL_MARGINS,
     APP_DIALOG_SHELL_OBJECT_NAME,
@@ -71,6 +72,7 @@ from ui.foundation.widgets import (
 
 __all__ = [
     "FLUENT_AVAILABLE",
+    "LatestRequestLoader",
     "APP_DIALOG_SHELL_MARGINS",
     "APP_DIALOG_SHELL_OBJECT_NAME",
     "APP_DIALOG_MASK_COLOR",

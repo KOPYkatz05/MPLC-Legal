@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from datetime import date, datetime
+import time
 
 from PySide6.QtCore import QEvent, QRectF, QTimer, Qt, QItemSelectionModel
 from PySide6.QtGui import QAction, QColor, QIcon, QPainter, QPen, QPixmap
@@ -28,6 +29,7 @@ from services.missionary_service import (
     missionary_display_id,
 )
 from services.missionary_group_service import MissionaryGroupService
+from services.client_view_service import ClientViewService
 
 from services.export_service import ExportService
 from services.group_package_export_service import (
@@ -62,6 +64,7 @@ from utils.constants import WORKFLOW_STAGES
 
 from utils.i18n import tr
 from utils.logger import logger
+from ui.foundation.background_loader import LatestRequestLoader
 
 
 @dataclass(frozen=True)
@@ -1016,6 +1019,13 @@ class MissionariesPage(QWidget):
             MissionaryService()
         )
         self.group_service = MissionaryGroupService()
+        self.client_view_service = ClientViewService()
+        self._background_loads_enabled = isinstance(main_window, QWidget)
+        self._data_loader = LatestRequestLoader(parent=self)
+        self._has_loaded_data = False
+        self._last_load_at = 0.0
+        self._cache_ttl_seconds = 20.0
+        self._pending_navigation_restore = None
 
         self.export_service = ExportService()
         self.group_package_export_service = GroupPackageExportService(
@@ -1076,7 +1086,8 @@ class MissionariesPage(QWidget):
             self._create_group
         )
 
-        self.load_data()
+        if not self._background_loads_enabled:
+            self._load_data_synchronously()
 
     def setup_ui(self):
         outer = QVBoxLayout()
@@ -1678,48 +1689,106 @@ class MissionariesPage(QWidget):
     # ==========================================
 
     def load_data(self):
+        """Compatibility entry point for mutation-triggered forced refreshes."""
+        if self._background_loads_enabled:
+            return self.request_refresh(force=True)
+        self._load_data_synchronously()
+        return True
+
+    def request_refresh(self, force=False):
+        """Refresh in the background while retaining the last rendered table."""
+        if not self._background_loads_enabled:
+            cache_is_fresh = (
+                self._has_loaded_data
+                and time.monotonic() - self._last_load_at
+                < self._cache_ttl_seconds
+            )
+            if cache_is_fresh and not force:
+                return False
+            self._load_data_synchronously()
+            return True
+
+        cache_is_fresh = (
+            self._has_loaded_data
+            and time.monotonic() - self._last_load_at
+            < self._cache_ttl_seconds
+        )
+        if cache_is_fresh and not force:
+            return False
+        if self._data_loader.busy and not force:
+            return False
+
+        self._data_loader.request(
+            self.client_view_service.get_missionaries_snapshot,
+            on_success=self._apply_missionaries_snapshot,
+            on_error=self._missionaries_refresh_failed,
+        )
+        return True
+
+    def _load_data_synchronously(self):
         try:
-            self._all_missionaries = (
-                self.missionary_service
-                .get_all_missionaries()
+            get_archived = getattr(
+                self.missionary_service,
+                "get_archived_missionaries",
+                None,
             )
-            self._archived_missionaries = (
-                self.missionary_service
-                .get_archived_missionaries()
-            )
-            self._refresh_group_filter()
-
-            # Update nationality filter dropdown
-            existing = [
-                self.nationality_filter.itemText(i)
-                for i in range(
-                    self.nationality_filter.count()
-                )
-            ]
-
-            for m in self._all_missionaries:
-                nat = (m.nationality or "").strip()
-
-                if nat and nat not in existing:
-                    self.nationality_filter.addItem(
-                        nat, nat
-                    )
-
-                    existing.append(nat)
-
-            self._render_selected_tab()
-
-            logger.info(
-                f"Loaded "
-                f"{len(self._all_missionaries)} active and "
-                f"{len(self._archived_missionaries)} archived "
-                f"missionaries into table"
-            )
-
+            self._apply_missionaries_snapshot({
+                "active": self.missionary_service.get_all_missionaries(),
+                "archived": (
+                    get_archived()
+                    if callable(get_archived)
+                    else []
+                ),
+                "groups": self.group_service.list_groups(),
+            })
         except Exception:
             logger.exception(
                 "Failed to load missionaries table"
             )
+
+    def _apply_missionaries_snapshot(self, snapshot):
+        self._all_missionaries = list(snapshot.get("active") or [])
+        self._archived_missionaries = list(snapshot.get("archived") or [])
+        self._refresh_group_filter(snapshot.get("groups") or [])
+
+        existing = [
+            self.nationality_filter.itemText(i)
+            for i in range(self.nationality_filter.count())
+        ]
+        for missionary in self._all_missionaries:
+            nationality = (missionary.nationality or "").strip()
+            if nationality and nationality not in existing:
+                self.nationality_filter.addItem(nationality, nationality)
+                existing.append(nationality)
+
+        pending_state = self._pending_navigation_restore
+        if pending_state:
+            self._restore_navigation_controls(pending_state)
+
+        self._render_selected_tab()
+        self._has_loaded_data = True
+        self._last_load_at = time.monotonic()
+
+        if pending_state:
+            self._pending_navigation_restore = None
+            QTimer.singleShot(
+                0,
+                lambda state=pending_state:
+                self._restore_table_view_state(state),
+            )
+
+        logger.info(
+            "Loaded %s active and %s archived missionaries into table",
+            len(self._all_missionaries),
+            len(self._archived_missionaries),
+        )
+
+    @staticmethod
+    def _missionaries_refresh_failed(error):
+        logger.error(
+            "Failed to refresh missionaries in background: %s",
+            error,
+        )
 
     def _apply_filters(self):
         source = (
@@ -1951,14 +2020,15 @@ class MissionariesPage(QWidget):
 
         return item
 
-    def _refresh_group_filter(self):
+    def _refresh_group_filter(self, groups=None):
         if not hasattr(self, "group_filter"):
             return
 
         current_group = self.group_filter.currentData()
         if current_group == GROUP_EDIT_ACTION:
             current_group = self._last_group_filter_data
-        groups = self.group_service.list_groups()
+        if groups is None:
+            groups = self.group_service.list_groups()
         self._groups_by_id = {
             group["id"]: group
             for group in groups
@@ -2051,6 +2121,30 @@ class MissionariesPage(QWidget):
         if not state:
             return
 
+        self._restore_navigation_controls(state)
+
+        if self._background_loads_enabled:
+            self._pending_navigation_restore = dict(state)
+            refresh_started = self.request_refresh(force=False)
+            if self._has_loaded_data:
+                self._render_selected_tab()
+                QTimer.singleShot(
+                    0,
+                    lambda snapshot=state:
+                    self._restore_table_view_state(snapshot),
+                )
+            if not refresh_started and not self._data_loader.busy:
+                self._pending_navigation_restore = None
+            return
+
+        self.load_data()
+
+        QTimer.singleShot(
+            0,
+            lambda snapshot=state: self._restore_table_view_state(snapshot),
+        )
+
+    def _restore_navigation_controls(self, state):
         controls = (
             getattr(self, "search_input", None),
             getattr(self, "stage_filter", None),
@@ -2084,13 +2178,6 @@ class MissionariesPage(QWidget):
             for control in controls:
                 if control is not None and hasattr(control, "blockSignals"):
                     control.blockSignals(False)
-
-        self.load_data()
-
-        QTimer.singleShot(
-            0,
-            lambda snapshot=state: self._restore_table_view_state(snapshot),
-        )
 
     def _restore_table_view_state(self, state):
         if not hasattr(self, "table"):

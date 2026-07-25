@@ -4,12 +4,25 @@ import pytest
 
 from services.api_client import ApiCompatibilityError, MissionLegalApiClient
 from ui.update_coordinator import required_update_version_problem
-from version import API_VERSION, APP_VERSION, SCHEMA_VERSION
+from version import (
+    API_VERSION,
+    APP_VERSION,
+    MIN_SUPPORTED_CLIENT_VERSION,
+    SCHEMA_VERSION,
+)
+
+
+def test_server_requires_the_same_application_release():
+    assert MIN_SUPPORTED_CLIENT_VERSION == APP_VERSION
 
 
 def test_compatible_server_versions_are_accepted():
     assert MissionLegalApiClient.validate_compatibility(
-        {"api_version": API_VERSION, "schema_version": SCHEMA_VERSION}
+        {
+            "api_version": API_VERSION,
+            "app_version": APP_VERSION,
+            "schema_version": SCHEMA_VERSION,
+        }
     ) is True
 
 
@@ -18,6 +31,7 @@ def test_incompatible_api_version_is_rejected():
         MissionLegalApiClient.validate_compatibility(
             {
                 "api_version": "999",
+                "app_version": APP_VERSION,
                 "schema_version": SCHEMA_VERSION,
                 "minimum_client_version": "999.0.0",
             }
@@ -48,7 +62,11 @@ def test_older_server_api_requires_server_update_not_client_update():
 
 def test_server_schema_changes_do_not_block_remote_clients():
     assert MissionLegalApiClient.validate_compatibility(
-        {"api_version": API_VERSION, "schema_version": SCHEMA_VERSION + 10}
+        {
+            "api_version": API_VERSION,
+            "app_version": APP_VERSION,
+            "schema_version": SCHEMA_VERSION + 10,
+        }
     ) is True
 
 
@@ -57,6 +75,7 @@ def test_server_can_require_a_newer_client_release():
         MissionLegalApiClient.validate_compatibility(
             {
                 "api_version": API_VERSION,
+                "app_version": APP_VERSION,
                 "minimum_client_version": "999.0.0",
             }
         )
@@ -68,6 +87,7 @@ def test_server_accepts_the_installed_client_release():
     assert MissionLegalApiClient.validate_compatibility(
         {
             "api_version": API_VERSION,
+            "app_version": APP_VERSION,
             "minimum_client_version": APP_VERSION,
         }
     ) is True
@@ -78,6 +98,62 @@ def test_missing_api_metadata_is_rejected():
         MissionLegalApiClient.validate_compatibility({"schema_version": SCHEMA_VERSION})
     assert captured.value.client_update_required is False
     assert captured.value.reason == ApiCompatibilityError.INVALID_METADATA
+
+
+def test_missing_application_version_metadata_is_rejected():
+    with pytest.raises(
+        ApiCompatibilityError,
+        match="application-version metadata is missing",
+    ) as captured:
+        MissionLegalApiClient.validate_compatibility(
+            {"api_version": API_VERSION, "schema_version": SCHEMA_VERSION}
+        )
+
+    assert captured.value.reason == ApiCompatibilityError.INVALID_METADATA
+
+
+def test_invalid_application_version_metadata_is_rejected():
+    with pytest.raises(
+        ApiCompatibilityError,
+        match="application-version metadata is invalid",
+    ) as captured:
+        MissionLegalApiClient.validate_compatibility(
+            {
+                "api_version": API_VERSION,
+                "app_version": "not-a-version",
+            }
+        )
+
+    assert captured.value.reason == ApiCompatibilityError.INVALID_METADATA
+
+
+def test_newer_server_application_requires_matching_client():
+    with pytest.raises(ApiCompatibilityError, match="999.0.0 is required") as captured:
+        MissionLegalApiClient.validate_compatibility(
+            {
+                "api_version": API_VERSION,
+                "app_version": "999.0.0",
+            }
+        )
+
+    assert captured.value.reason == ApiCompatibilityError.CLIENT_UPDATE_REQUIRED
+    assert captured.value.required_client_version == "999.0.0"
+
+
+def test_older_server_application_requires_matching_server():
+    with pytest.raises(
+        ApiCompatibilityError,
+        match="Update Mission Legal Server",
+    ) as captured:
+        MissionLegalApiClient.validate_compatibility(
+            {
+                "api_version": API_VERSION,
+                "app_version": "0.0.0",
+            }
+        )
+
+    assert captured.value.reason == ApiCompatibilityError.SERVER_UPDATE_REQUIRED
+    assert captured.value.client_update_required is False
 
 
 def test_required_update_version_rejects_an_insufficient_feed_release():

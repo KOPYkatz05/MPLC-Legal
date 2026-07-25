@@ -88,6 +88,7 @@ class RpcRequest(BaseModel):
 def _rpc_services():
     from services.alert_service import AlertService
     from services.appointment_service import AppointmentService
+    from services.client_view_service import ClientViewService
     from services.dashboard_service import DashboardService
     from services.daily_digest_service import DailyDigestService
     from services.document_service import DocumentService
@@ -103,6 +104,7 @@ def _rpc_services():
     return {
         "alerts": (AlertService, AlertService.REMOTE_METHODS),
         "appointments": (AppointmentService, AppointmentService.REMOTE_METHODS),
+        "client-views": (ClientViewService, ClientViewService.REMOTE_METHODS),
         "dashboard": (DashboardService, DashboardService.REMOTE_METHODS),
         "daily-digest": (DailyDigestService, DailyDigestService.REMOTE_METHODS),
         "documents": (DocumentService, DocumentService.REMOTE_METHODS),

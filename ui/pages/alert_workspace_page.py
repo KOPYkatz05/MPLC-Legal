@@ -1,3 +1,5 @@
+import time
+
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QFrame,
@@ -16,7 +18,9 @@ from ui.foundation import (
     create_scroll_area,
     show_message,
 )
+from ui.foundation.background_loader import LatestRequestLoader
 from utils.i18n import tr
+from utils.logger import logger
 
 
 PRIORITY_COLORS = {
@@ -61,6 +65,8 @@ class _HeaderCompat:
 
 
 class AlertWorkspacePage(QWidget):
+    CACHE_TTL_SECONDS = 15.0
+
     def __init__(self, main_window=None, service=None):
         super().__init__()
         self.setObjectName("AlertWorkspacePage")
@@ -69,6 +75,12 @@ class AlertWorkspacePage(QWidget):
         self.task_id = None
         self.return_key = "dashboard"
         self.workspace = {}
+        self._workspace_refreshed_at = 0.0
+        self._task_loader = LatestRequestLoader(parent=self)
+        self._mutation_loader = LatestRequestLoader(parent=self)
+        self._mutation_loader.busy_changed.connect(
+            self._set_action_buttons_enabled
+        )
 
         self.setup_ui()
 
@@ -174,6 +186,7 @@ class AlertWorkspacePage(QWidget):
         return top_bar
 
     def load_task(self, task_id, return_key="dashboard"):
+        """Synchronous compatibility path used by focused local callers."""
         self.task_id = task_id
         self.return_key = return_key or "dashboard"
         try:
@@ -183,7 +196,73 @@ class AlertWorkspacePage(QWidget):
             self._render_error(str(exc))
             return
 
+        self._workspace_refreshed_at = time.monotonic()
         self._render_workspace()
+
+    def request_task(self, task_id, return_key="dashboard", *, force=False):
+        now = time.monotonic()
+        cache_is_fresh = (
+            task_id == self.task_id
+            and bool(self.workspace)
+            and now - self._workspace_refreshed_at < self.CACHE_TTL_SECONDS
+        )
+        self.task_id = task_id
+        self.return_key = return_key or "dashboard"
+        if cache_is_fresh and not force:
+            self.subtitle_label.setText(self._breadcrumb_text())
+            return False
+
+        self.workspace = {}
+        self._render_loading()
+        service = self.service
+        self._task_loader.request(
+            lambda: service.get_task_workspace(task_id),
+            on_success=self._apply_task_workspace,
+            on_error=self._task_workspace_failed,
+        )
+        return True
+
+    def _apply_task_workspace(self, workspace):
+        self.workspace = dict(workspace or {})
+        self._workspace_refreshed_at = time.monotonic()
+        self._render_workspace()
+
+    def _task_workspace_failed(self, error):
+        if not isinstance(error, SecretaryWorkError):
+            logger.error(
+                "Failed to load alert workspace task",
+                exc_info=(type(error), error, error.__traceback__),
+            )
+        self.workspace = {}
+        self._render_error(str(error))
+
+    def _render_loading(self):
+        self._clear_layout(self.content_layout)
+        self.title_label.setText(tr("alert_workspace_title"))
+        self.subtitle_label.setText(self._breadcrumb_text())
+        for button in (
+            self.done_btn,
+            self.edit_btn,
+            self.follow_up_btn,
+            self.ready_btn,
+            self.needs_work_btn,
+        ):
+            button.setVisible(False)
+        loading = QLabel("Loading task details…")
+        loading.setObjectName("MutedText")
+        loading.setWordWrap(True)
+        self.content_layout.addWidget(loading)
+        self.content_layout.addStretch()
+
+    def _set_action_buttons_enabled(self, enabled):
+        for button in (
+            self.done_btn,
+            self.edit_btn,
+            self.follow_up_btn,
+            self.ready_btn,
+            self.needs_work_btn,
+        ):
+            button.setEnabled(bool(enabled))
 
     def _render_workspace(self):
         self._clear_layout(self.content_layout)
@@ -565,23 +644,29 @@ class AlertWorkspacePage(QWidget):
         if response not in {1, 16384}:
             return
 
-        self.service.complete_task(self.task_id)
-        self._refresh_related_pages()
-        self.load_task(self.task_id, self.return_key)
+        service = self.service
+        task_id = self.task_id
+        self._run_status_mutation(
+            lambda: service.complete_task(task_id)
+        )
 
     def _mark_ready(self):
         if self.task_id is None:
             return
-        self.service.mark_task_ready(self.task_id)
-        self._refresh_related_pages()
-        self.load_task(self.task_id, self.return_key)
+        service = self.service
+        task_id = self.task_id
+        self._run_status_mutation(
+            lambda: service.mark_task_ready(task_id)
+        )
 
     def _mark_needs_work(self):
         if self.task_id is None:
             return
-        self.service.reopen_task(self.task_id)
-        self._refresh_related_pages()
-        self.load_task(self.task_id, self.return_key)
+        service = self.service
+        task_id = self.task_id
+        self._run_status_mutation(
+            lambda: service.reopen_task(task_id)
+        )
 
     def _edit_task(self):
         if not self.workspace:
@@ -589,7 +674,41 @@ class AlertWorkspacePage(QWidget):
         dialog = TaskDialog(self.service, task=self.workspace, parent=self)
         if dialog.exec():
             self._refresh_related_pages()
-            self.load_task(self.task_id, self.return_key)
+            self.request_task(
+                self.task_id,
+                self.return_key,
+                force=True,
+            )
+
+    def _run_status_mutation(self, operation):
+        if self._mutation_loader.busy:
+            return
+        self._task_loader.cancel()
+        self._mutation_loader.request(
+            operation,
+            on_success=lambda _result: self._status_mutation_succeeded(),
+            on_error=self._status_mutation_failed,
+        )
+
+    def _status_mutation_succeeded(self):
+        self._refresh_related_pages()
+        self.request_task(
+            self.task_id,
+            self.return_key,
+            force=True,
+        )
+
+    def _status_mutation_failed(self, error):
+        logger.error(
+            "Failed to update alert workspace task",
+            exc_info=(type(error), error, error.__traceback__),
+        )
+        show_message(
+            self,
+            tr("alert_workspace_title"),
+            tr("workspace_action_failed"),
+            kind="warning",
+        )
 
     def _open_missionary(self, missionary_id):
         if missionary_id is None or self.main_window is None:
@@ -615,5 +734,12 @@ class AlertWorkspacePage(QWidget):
             return
         for attr in ("dashboard_page", "office_work_page", "calendar_page"):
             page = getattr(self.main_window, attr, None)
-            if page is not None and hasattr(page, "load_data"):
-                page.load_data()
+            if page is None:
+                continue
+            refresher = getattr(page, "request_refresh", None)
+            if callable(refresher):
+                refresher(force=True)
+                continue
+            load_data = getattr(page, "load_data", None)
+            if callable(load_data):
+                load_data()

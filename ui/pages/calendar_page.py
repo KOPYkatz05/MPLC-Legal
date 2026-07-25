@@ -1,6 +1,7 @@
 from dataclasses import dataclass, replace
 from datetime import date, timedelta
 from itertools import groupby
+import time
 
 from PySide6.QtCore import (
     QMimeData,
@@ -33,7 +34,9 @@ from database.models.appointment import (
     APPOINTMENT_STATUS_SCHEDULED,
 )
 from services.appointment_service import AppointmentService
+from services.client_view_service import ClientViewService
 from services.secretary_work_service import SecretaryWorkService
+from ui.foundation.background_loader import LatestRequestLoader
 from ui.dialogs.office_work_dialogs import TaskDialog
 from ui.foundation import (
     BodyLabel,
@@ -365,6 +368,15 @@ class CalendarPage(QWidget):
         super().__init__()
         self.setObjectName("CalendarPage")
         self.main_window = main_window
+        self.client_view_service = ClientViewService()
+        self._background_loads_enabled = isinstance(main_window, QWidget)
+        self._data_loader = LatestRequestLoader(parent=self)
+        self._action_loaders = {}
+        self._pending_actions = set()
+        self._action_widgets = {}
+        self._has_loaded_data = False
+        self._last_load_at = 0.0
+        self._cache_ttl_seconds = 15.0
         self._appointments = []
         self._history_appointments = []
         self._tasks = []
@@ -396,7 +408,8 @@ class CalendarPage(QWidget):
         self._history_render_timer.timeout.connect(self._render_history)
 
         self.setup_ui()
-        self.load_data()
+        if not self._background_loads_enabled:
+            self._load_data_synchronously()
 
     @staticmethod
     def _size_class_for_width(width):
@@ -654,27 +667,142 @@ class CalendarPage(QWidget):
         self.history_filter_bar.add_filter(self.clear_history_date_btn)
 
     def load_data(self):
+        """Compatibility entry point for mutation-triggered forced refreshes."""
+        if self._background_loads_enabled:
+            return self.request_refresh(force=True)
+        self._load_data_synchronously()
+        return True
+
+    def request_refresh(self, force=False):
+        cache_is_fresh = (
+            self._has_loaded_data
+            and time.monotonic() - self._last_load_at
+            < self._cache_ttl_seconds
+        )
+        if cache_is_fresh and not force:
+            return False
+
+        if not self._background_loads_enabled:
+            self._load_data_synchronously()
+            return True
+        if self._data_loader.busy and not force:
+            return False
+
+        self._data_loader.request(
+            self._fetch_calendar_snapshot,
+            on_success=self._apply_calendar_snapshot,
+            on_error=self._calendar_refresh_failed,
+        )
+        return True
+
+    def _fetch_calendar_snapshot(self):
+        snapshot = self.client_view_service.get_calendar_snapshot()
+        return {
+            "appointments": self._appointment_items_from_snapshots(
+                snapshot.get("scheduled") or []
+            ),
+            "history": self._appointment_items_from_snapshots(
+                snapshot.get("history") or [],
+                newest_first=True,
+            ),
+            "tasks": list(snapshot.get("tasks") or []),
+        }
+
+    def _load_data_synchronously(self):
         try:
-            self._appointments = self._collect_appointments()
-            self._history_appointments = self._collect_history_appointments()
-            self._tasks = self._collect_tasks()
-            self._calendar_summary_counts = self._build_summary_counts(
-                self._appointments
-            )
-            self._history_filter_cache = {}
-            self._count_label.setText(
-                tr("calendar_scheduled_count", count=len(self._appointments))
-            )
-            self._render_calendar()
-            self._history_loaded = False
-            if self._selected_tab == TAB_HISTORY:
-                self._render_history()
-            else:
-                timer = getattr(self, "_history_render_timer", None)
-                if timer is not None:
-                    timer.stop()
+            self._apply_calendar_snapshot({
+                "appointments": self._collect_appointments(),
+                "history": self._collect_history_appointments(),
+                "tasks": self._collect_tasks(),
+            })
         except Exception:
             logger.exception("Failed to load calendar data")
+
+    def _apply_calendar_snapshot(self, snapshot):
+        self._appointments = list(snapshot.get("appointments") or [])
+        self._history_appointments = list(snapshot.get("history") or [])
+        self._tasks = list(snapshot.get("tasks") or [])
+        self._calendar_summary_counts = self._build_summary_counts(
+            self._appointments
+        )
+        self._history_filter_cache = {}
+        self._count_label.setText(
+            tr("calendar_scheduled_count", count=len(self._appointments))
+        )
+        self._render_calendar()
+        self._history_loaded = False
+        if self._selected_tab == TAB_HISTORY:
+            self._render_history()
+        else:
+            timer = getattr(self, "_history_render_timer", None)
+            if timer is not None:
+                timer.stop()
+        self._has_loaded_data = True
+        self._last_load_at = time.monotonic()
+
+    @staticmethod
+    def _calendar_refresh_failed(error):
+        logger.error("Failed to refresh calendar in background: %s", error)
+
+    def _register_action_widget(self, kind, item_id, widget):
+        if item_id is None:
+            return
+        key = (kind, item_id)
+        self._action_widgets.setdefault(key, []).append(widget)
+        widget.setEnabled(key not in self._pending_actions)
+
+    def _set_action_pending(self, key, pending):
+        if pending:
+            self._pending_actions.add(key)
+        else:
+            self._pending_actions.discard(key)
+        for widget in self._action_widgets.get(key, []):
+            try:
+                widget.setEnabled(not pending)
+            except RuntimeError:
+                continue
+
+    def _run_action(
+        self,
+        kind,
+        item_id,
+        operation,
+        on_success,
+        on_error,
+    ):
+        if not self._background_loads_enabled:
+            try:
+                result = operation()
+            except Exception as error:
+                on_error(error)
+            else:
+                on_success(result)
+            return True
+
+        key = (kind, item_id)
+        if key in self._pending_actions:
+            return False
+        loader = self._action_loaders.get(key)
+        if loader is None:
+            loader = LatestRequestLoader(parent=self)
+            self._action_loaders[key] = loader
+        self._data_loader.cancel()
+        self._set_action_pending(key, True)
+
+        def finish(result):
+            self._set_action_pending(key, False)
+            on_success(result)
+
+        def fail(error):
+            self._set_action_pending(key, False)
+            on_error(error)
+
+        loader.request(
+            operation,
+            on_success=finish,
+            on_error=fail,
+        )
+        return True
 
     def _appointment_type_options(self):
         return [
@@ -1191,6 +1319,11 @@ class CalendarPage(QWidget):
             lambda checked=False, m_id=appointment.missionary_id:
             self._open_missionary(m_id)
         )
+        self._register_action_widget(
+            "appointment",
+            appointment.appointment_id,
+            pill,
+        )
         return pill
 
     def _task_drag_enter_event(self, event):
@@ -1284,6 +1417,7 @@ class CalendarPage(QWidget):
             lambda checked=False, task_data=task:
             self._edit_task(task_data)
         )
+        self._register_action_widget("task", task.get("id"), pill)
         return pill
 
     def _appointments_by_date(self, appointments):
@@ -1839,6 +1973,11 @@ class CalendarPage(QWidget):
             layout.addWidget(missed_btn)
         layout.addWidget(view_btn)
 
+        self._register_action_widget(
+            "appointment",
+            appointment.appointment_id,
+            row,
+        )
         return row
 
     def _make_section_header(self, bucket, count):
@@ -2010,6 +2149,11 @@ class CalendarPage(QWidget):
             lambda _=False, m_id=appointment.missionary_id:
             self._open_missionary(m_id)
         )
+        self._register_action_widget(
+            "appointment",
+            appointment.appointment_id,
+            row,
+        )
         return row
 
     def _make_task_row(self, task, alternate=False):
@@ -2063,6 +2207,7 @@ class CalendarPage(QWidget):
             lambda _=False, task_data=task:
             self._edit_task(task_data)
         )
+        self._register_action_widget("task", task.get("id"), row)
         return row
 
     def _add_task(self, default_due_date=None, default_work_date=None):
@@ -2099,12 +2244,20 @@ class CalendarPage(QWidget):
     def _complete_task(self, task_id):
         if task_id is None:
             return
-        try:
-            SecretaryWorkService().complete_task(task_id)
-            self.load_data()
+
+        def completed(_result):
+            if self._background_loads_enabled:
+                self.apply_task_status(task_id, "DONE")
+            else:
+                self.load_data()
+            self._pending_peer_task_status = (task_id, "DONE")
             self._refresh_office_work_page()
-        except Exception:
-            logger.exception("Failed to complete calendar task")
+
+        def failed(error):
+            logger.error(
+                "Failed to complete calendar task: %s",
+                error,
+            )
             show_message(
                 self,
                 tr("calendar_task_message_title"),
@@ -2112,18 +2265,66 @@ class CalendarPage(QWidget):
                 kind="warning",
             )
 
-    def _refresh_office_work_page(self):
+        self._run_action(
+            "task",
+            task_id,
+            lambda: SecretaryWorkService().complete_task(task_id),
+            completed,
+            failed,
+        )
+
+    def apply_task_status(self, task_id, status):
+        changed = False
+        updated_tasks = []
+        for task in self._tasks:
+            if task.get("id") != task_id:
+                updated_tasks.append(task)
+                continue
+            updated = dict(task)
+            if status not in {None, "ARCHIVED"}:
+                updated["status"] = status
+                updated_tasks.append(updated)
+            changed = True
+        if not changed:
+            return False
+        self._tasks = updated_tasks
+        self._render_calendar()
+        return True
+
+    def _refresh_office_work_page(self, task_id=None, status=None):
         try:
+            if task_id is None and status is None:
+                task_id, status = getattr(
+                    self,
+                    "_pending_peer_task_status",
+                    (None, None),
+                )
+                self._pending_peer_task_status = (None, None)
             office_work_page = getattr(
                 self.main_window,
                 "office_work_page",
                 None,
             )
-            if office_work_page is not None and hasattr(
+            if office_work_page is None:
+                return
+            patch_status = getattr(
                 office_work_page,
-                "load_data",
-            ):
-                office_work_page.load_data()
+                "apply_task_status",
+                None,
+            )
+            if task_id is not None and status and callable(patch_status):
+                patch_status(task_id, status)
+            request_refresh = getattr(
+                office_work_page,
+                "request_refresh",
+                None,
+            )
+            if callable(request_refresh):
+                request_refresh(force=True)
+                return
+            load_data = getattr(office_work_page, "load_data", None)
+            if callable(load_data):
+                load_data()
         except Exception:
             logger.exception("Failed to refresh office work after calendar task update")
 
@@ -2131,10 +2332,7 @@ class CalendarPage(QWidget):
         if not appointment.appointment_id:
             return
 
-        try:
-            AppointmentService().complete_appointment(
-                appointment.appointment_id
-            )
+        def completed(_result):
             show_message(
                 self,
                 tr("calendar_appointment_completed_title"),
@@ -2144,8 +2342,9 @@ class CalendarPage(QWidget):
                 ),
             )
             self._apply_completed_appointment(appointment)
-        except Exception:
-            logger.exception("Failed to complete appointment")
+
+        def failed(error):
+            logger.error("Failed to complete appointment: %s", error)
             show_message(
                 self,
                 tr("calendar_appointment_error_title"),
@@ -2153,11 +2352,27 @@ class CalendarPage(QWidget):
                 kind="critical",
             )
 
+        self._run_action(
+            "appointment",
+            appointment.appointment_id,
+            lambda: AppointmentService().complete_appointment(
+                appointment.appointment_id
+            ),
+            completed,
+            failed,
+        )
+
     def _apply_completed_appointment(self, appointment):
         """Update calendar state after completion without a full data reload."""
+        self._apply_appointment_status(
+            appointment,
+            APPOINTMENT_STATUS_COMPLETED,
+        )
+
+    def _apply_appointment_status(self, appointment, status):
         completed = replace(
             appointment,
-            status=APPOINTMENT_STATUS_COMPLETED,
+            status=status,
         )
         appointment_id = appointment.appointment_id
         self._appointments = [
@@ -2197,10 +2412,7 @@ class CalendarPage(QWidget):
         if confirm not in {1, 16384}:
             return
 
-        try:
-            AppointmentService().miss_appointment(
-                appointment.appointment_id
-            )
+        def missed(_result):
             show_message(
                 self,
                 tr("calendar_appointment_missed_title"),
@@ -2209,15 +2421,30 @@ class CalendarPage(QWidget):
                     type=appointment.type,
                 ),
             )
+            self._apply_appointment_status(
+                appointment,
+                APPOINTMENT_STATUS_MISSED,
+            )
             self.load_data()
-        except Exception:
-            logger.exception("Failed to mark appointment missed")
+
+        def failed(error):
+            logger.error("Failed to mark appointment missed: %s", error)
             show_message(
                 self,
                 tr("calendar_appointment_error_title"),
                 tr("calendar_appointment_missed_failed"),
                 kind="critical",
             )
+
+        self._run_action(
+            "appointment",
+            appointment.appointment_id,
+            lambda: AppointmentService().miss_appointment(
+                appointment.appointment_id
+            ),
+            missed,
+            failed,
+        )
 
     def _show_history_for_date(self, filter_date):
         self._history_exact_date = filter_date
@@ -2357,7 +2584,10 @@ class CalendarPage(QWidget):
                 if control is not None and hasattr(control, "blockSignals"):
                     control.blockSignals(False)
 
-        self.load_data()
+        if self._background_loads_enabled:
+            self.request_refresh(force=False)
+        else:
+            self.load_data()
         self._select_tab(self._selected_tab)
 
     def _clear_layout(self, layout):

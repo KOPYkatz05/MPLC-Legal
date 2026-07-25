@@ -1,4 +1,5 @@
 from pathlib import Path
+import time
 
 from PySide6.QtCore import QRect, QSize, Qt, QUrl
 from PySide6.QtGui import QDesktopServices
@@ -11,6 +12,7 @@ from PySide6.QtWidgets import (
 )
 
 from services.document_service import DocumentService
+from services.client_view_service import ClientViewService
 from services.secretary_work_service import SecretaryWorkService
 from services.workflow_service import WorkflowService
 from services.workflow_validator import WorkflowValidator
@@ -35,11 +37,14 @@ from ui.foundation import (
     show_message,
     tune_fluent_scrollable,
 )
+from ui.foundation.background_loader import LatestRequestLoader
 from utils.i18n import tr
 from utils.logger import logger
 
 
 class MissionaryWorkspacePage(QWidget):
+    CONTEXT_CACHE_TTL_SECONDS = 30.0
+
     def __init__(self, main_window=None):
         super().__init__()
         self.setObjectName("MissionaryWorkspacePage")
@@ -52,6 +57,14 @@ class MissionaryWorkspacePage(QWidget):
         self.workflow_service = WorkflowService()
         self.secretary_work_service = SecretaryWorkService()
         self.workflow_validator = WorkflowValidator()
+        self._context_cache_key = None
+        self._context_refreshed_at = 0.0
+        self._context_loader = LatestRequestLoader(parent=self)
+        self._context_loader.busy_changed.connect(
+            lambda busy: self.refresh_btn.setEnabled(not busy)
+            if hasattr(self, "refresh_btn")
+            else None
+        )
         self._build_ui()
 
     def _build_ui(self):
@@ -103,12 +116,141 @@ class MissionaryWorkspacePage(QWidget):
         root.addWidget(self.scroll, stretch=1)
 
     def load_workspace(self, missionary, workspace):
+        """Synchronous compatibility path used by focused local callers."""
         self.missionary = missionary
         self.workspace = normalize_workspace_layout(workspace or {})
         self.context = MissionaryWorkspaceContext.load(missionary)
+        self._context_cache_key = self._workspace_context_key(
+            missionary,
+            self.workspace,
+        )
+        self._context_refreshed_at = time.monotonic()
         self.title_label.setText(self.workspace.get("name") or tr("workspace_title"))
         self.subtitle_label.setText(getattr(missionary, "full_name", ""))
         self._render_blocks()
+
+    def request_workspace(
+        self,
+        missionary,
+        workspace,
+        *,
+        force=False,
+        refresh_detail=False,
+    ):
+        normalized_workspace = normalize_workspace_layout(workspace or {})
+        workspace_changed = normalized_workspace != self.workspace
+        context_key = self._workspace_context_key(
+            missionary,
+            normalized_workspace,
+        )
+        now = time.monotonic()
+        cache_is_fresh = (
+            self.context is not None
+            and context_key == self._context_cache_key
+            and (
+                now - self._context_refreshed_at
+                < self.CONTEXT_CACHE_TTL_SECONDS
+            )
+        )
+
+        self.missionary = missionary
+        self.workspace = normalized_workspace
+        self.title_label.setText(
+            self.workspace.get("name") or tr("workspace_title")
+        )
+        self.subtitle_label.setText(
+            getattr(missionary, "full_name", "")
+        )
+
+        if cache_is_fresh and not force:
+            if workspace_changed:
+                self._render_blocks()
+            return False
+
+        self.context = None
+        self._render_context_loading()
+        self._context_cache_key = context_key
+        load_for = missionary
+        load_context = type(self)._load_workspace_context
+        self._context_loader.request(
+            lambda: load_context(load_for),
+            on_success=lambda context: self._apply_workspace_context(
+                context,
+                refresh_detail=refresh_detail,
+            ),
+            on_error=self._workspace_context_failed,
+        )
+        return True
+
+    @staticmethod
+    def _workspace_context_key(missionary, workspace):
+        return (
+            getattr(missionary, "id", None),
+            (workspace or {}).get("id"),
+        )
+
+    @staticmethod
+    def _load_workspace_context(missionary):
+        snapshot = ClientViewService().get_missionary_detail_snapshot(
+            missionary.id
+        )
+        if snapshot is None:
+            raise LookupError(
+                f"Missionary ID {missionary.id} is no longer available."
+            )
+        current_missionary = snapshot["missionary"]
+        documents = list(snapshot.get("documents") or [])
+        return MissionaryWorkspaceContext(
+            missionary=current_missionary,
+            documents=documents,
+            workflows=list(snapshot.get("workflows") or []),
+            tasks=list(snapshot.get("tasks") or []),
+            residency_rows=list(
+                snapshot.get("residency_timeline") or []
+            ),
+            missing_groups=MissionaryWorkspaceContext._missing_groups(
+                current_missionary,
+                documents,
+            ),
+        )
+
+    def _apply_workspace_context(self, context, *, refresh_detail=False):
+        self.context = context
+        self.missionary = context.missionary
+        self.subtitle_label.setText(
+            getattr(self.missionary, "full_name", "")
+        )
+        self._context_refreshed_at = time.monotonic()
+        self._render_blocks()
+        if refresh_detail:
+            self._refresh_detail_page()
+
+    def _render_context_loading(self):
+        self._clear_workspace_widgets()
+        body_width, body_height = self._workspace_body_size()
+        loading = QLabel("Loading workspace details…", self.content)
+        loading.setObjectName("MutedText")
+        loading.setGeometry(QRect(18, 16, body_width - 36, 40))
+        loading.show()
+        self._workspace_block_widgets.append(loading)
+        self.content.setMinimumSize(QSize(body_width, body_height))
+        self.content.resize(body_width, body_height)
+
+    def _workspace_context_failed(self, error):
+        logger.error(
+            "Failed to load missionary workspace context",
+            exc_info=(type(error), error, error.__traceback__),
+        )
+        self._clear_workspace_widgets()
+        body_width, body_height = self._workspace_body_size()
+        message = QLabel(tr("workspace_action_failed"), self.content)
+        message.setObjectName("MutedText")
+        message.setGeometry(QRect(18, 16, body_width - 36, 60))
+        message.setWordWrap(True)
+        message.show()
+        self._workspace_block_widgets.append(message)
+        self.content.setMinimumSize(QSize(body_width, body_height))
+        self.content.resize(body_width, body_height)
 
     def retranslate_ui(self):
         self.back_btn.setText(tr("common_back"))
@@ -194,10 +336,22 @@ class MissionaryWorkspacePage(QWidget):
     def refresh_context(self):
         if self.missionary is None:
             return
-        self.context = MissionaryWorkspaceContext.load(self.missionary)
-        self._render_blocks()
+        self.request_workspace(
+            self.missionary,
+            self.workspace,
+            force=True,
+            refresh_detail=True,
+        )
+
+    def _refresh_detail_page(self):
         detail_page = getattr(self.main_window, "detail_page", None)
-        if detail_page is not None and hasattr(detail_page, "load_missionary"):
+        if detail_page is None:
+            return
+        refresher = getattr(detail_page, "request_refresh", None)
+        if callable(refresher):
+            refresher(force=True)
+            return
+        if hasattr(detail_page, "load_missionary"):
             detail_page.load_missionary(self.missionary)
 
     def document_data(self, doc):

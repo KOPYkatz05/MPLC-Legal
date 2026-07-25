@@ -29,6 +29,7 @@ from ui.foundation import (
 from PySide6.QtCore import QDate, Qt, QTime
 from datetime import date, timedelta
 from types import SimpleNamespace
+import time
 from services.email_digest_service import EmailDigestService
 from services.scheduler_service import SchedulerService
 from services.settings_service import SettingsService
@@ -51,6 +52,7 @@ from ui.dialogs.missionary_workspace_dialog import (
     clear_layout,
 )
 from ui.widgets.workspace_layout_editor import WorkspaceLayoutEditor
+from ui.foundation.background_loader import LatestRequestLoader
 from utils.constants import DOCUMENTS
 from utils.language_helper import ui_text as tr
 from utils.logger import logger
@@ -58,6 +60,8 @@ from version import APP_VERSION
 
 
 class SettingsPage(QWidget):
+    SERVER_CONFIGURATION_CACHE_TTL_SECONDS = 300.0
+
     def __init__(self, main_window):
         super().__init__()
         self.setObjectName("SettingsPage")
@@ -78,6 +82,10 @@ class SettingsPage(QWidget):
         self._update_coordinator = None
         self._update_status = "not-configured"
         self._update_progress = 0
+        self._server_configuration = None
+        self._server_configuration_refreshed_at = 0.0
+        self._server_configuration_input_baseline = ""
+        self._server_configuration_loader = LatestRequestLoader(parent=self)
         self.setup_ui()
 
     def setup_ui(self):
@@ -280,15 +288,10 @@ class SettingsPage(QWidget):
         )
         self.storage_input.setText(self.settings_service.get_storage_root())
         if self.api_client is not None:
-            try:
-                server_configuration = self.api_client.get(
-                    "/v1/server/configuration"
-                )
-                self.storage_input.setText(
-                    server_configuration.get("mission_storage_root") or ""
-                )
-            except Exception:
-                logger.exception("Could not load server storage configuration")
+            self.storage_input.clear()
+            self.storage_input.setPlaceholderText(
+                "Loading server storage location…"
+            )
             self.storage_input.setReadOnly(True)
         storage_row.addWidget(self.storage_input)
 
@@ -360,6 +363,58 @@ class SettingsPage(QWidget):
 
         layout.addStretch()
         return self._build_tab_scroll(content)
+
+    def request_refresh(self, force=False):
+        if self.api_client is None:
+            return False
+
+        now = time.monotonic()
+        cache_is_fresh = (
+            self._server_configuration is not None
+            and (
+                now - self._server_configuration_refreshed_at
+                < self.SERVER_CONFIGURATION_CACHE_TTL_SECONDS
+            )
+        )
+        if cache_is_fresh and not force:
+            return False
+
+        client = self.api_client
+        self._server_configuration_input_baseline = self.storage_input.text()
+        self._server_configuration_loader.request(
+            lambda: client.get("/v1/server/configuration"),
+            on_success=self._apply_server_configuration,
+            on_error=self._server_configuration_refresh_failed,
+        )
+        return True
+
+    def load_data(self):
+        """Compatibility entry point for callers that need a forced refresh."""
+        return self.request_refresh(force=True)
+
+    def _apply_server_configuration(self, configuration):
+        self._server_configuration = dict(configuration or {})
+        self._server_configuration_refreshed_at = time.monotonic()
+        if (
+            self.storage_input.isReadOnly()
+            or (
+                self.storage_input.text()
+                == self._server_configuration_input_baseline
+            )
+        ):
+            self.storage_input.setText(
+                self._server_configuration.get("mission_storage_root") or ""
+            )
+
+    def _server_configuration_refresh_failed(self, error):
+        logger.error(
+            "Could not load server storage configuration",
+            exc_info=(type(error), error, error.__traceback__),
+        )
+        if self._server_configuration is None:
+            self.storage_input.setPlaceholderText(
+                "Server storage location is currently unavailable."
+            )
 
     def _build_notifications_tab(self):
         content, layout = self._build_settings_content()

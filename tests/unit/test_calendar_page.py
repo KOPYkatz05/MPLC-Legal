@@ -1,7 +1,9 @@
 from datetime import date, timedelta
+from threading import Event
+from time import perf_counter
 from types import SimpleNamespace
 
-from PySide6.QtWidgets import QToolButton
+from PySide6.QtWidgets import QToolButton, QWidget
 
 from ui.pages import calendar_page
 from ui.pages.calendar_page import (
@@ -274,6 +276,52 @@ def test_calendar_page_smoke_defaults_to_calendar_month(monkeypatch, qapp):
         assert not hasattr(page.tab_buttons[TAB_CALENDAR], "_calendar_indicator")
     finally:
         page.close()
+
+
+def test_calendar_background_refresh_returns_before_snapshot_and_applies_truth(
+    monkeypatch,
+    qtbot,
+):
+    parent = QWidget()
+    page = CalendarPage(parent)
+    appointment = _appointment(
+        full_name="Responsive Client",
+        days_offset=1,
+    )
+    started = Event()
+    release = Event()
+
+    def blocking_snapshot():
+        started.set()
+        release.wait(timeout=3)
+        return {
+            "appointments": [appointment],
+            "history": [],
+            "tasks": [],
+        }
+
+    monkeypatch.setattr(page, "_fetch_calendar_snapshot", blocking_snapshot)
+
+    try:
+        before = perf_counter()
+        assert page.request_refresh(force=True) is True
+        elapsed = perf_counter() - before
+
+        assert elapsed < 0.2
+        qtbot.waitUntil(started.is_set, timeout=3000)
+        assert page._appointments == []
+
+        release.set()
+        qtbot.waitUntil(lambda: not page._data_loader.busy, timeout=3000)
+
+        assert [item.full_name for item in page._appointments] == [
+            "Responsive Client"
+        ]
+        assert page._count_label.text() == "1 scheduled appointments"
+    finally:
+        release.set()
+        page.close()
+        parent.close()
 
 
 def test_calendar_history_renders_lazily(monkeypatch, qapp):

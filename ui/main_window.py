@@ -20,6 +20,7 @@ from services.settings_service import SettingsService
 from services.workspace_service import WorkspaceService
 from services.notification_feed_service import NotificationFeedService
 from ui.foundation import AppShell, FLUENT_AVAILABLE, fluent_icon
+from ui.foundation.background_loader import LatestRequestLoader
 from ui.pages.alert_workspace_page import AlertWorkspacePage
 from ui.pages.calendar_page import CalendarPage
 from ui.pages.dashboard_page import DashboardPage
@@ -272,6 +273,7 @@ class MainWindow(QMainWindow):
         self._content_overlay_subtitles = []
         self._content_overlay_subtitle_index = 0
         self._startup_alerts = []
+        self._startup_alerts_loader = LatestRequestLoader(parent=self)
         self._native_layout_refresh_pending = False
 
         self.setWindowTitle(tr("app_title"))
@@ -524,24 +526,37 @@ class MainWindow(QMainWindow):
             nav_widget.setText(title)
 
     def _on_nav_changed(self, nav_key, stack_index):
+        page = None
         if nav_key == "dashboard" or stack_index == 0:
-            self.dashboard_page.request_refresh(force=False)
+            page = self.dashboard_page
         elif nav_key == "missionaries" or stack_index == 1:
-            self.missionaries_page.load_data()
+            page = self.missionaries_page
         elif nav_key == "office_work" or stack_index == 4:
-            refresher = getattr(self.office_work_page, "request_refresh", None)
-            if callable(refresher):
-                refresher()
-            else:
-                self.office_work_page.load_data()
+            page = self.office_work_page
         elif nav_key == "appointments" or stack_index == 5:
-            self.calendar_page.load_data()
+            page = self.calendar_page
         elif nav_key == "reports" or stack_index == 6:
-            self.reports_page.load_data()
+            page = self.reports_page
         elif nav_key == "trash" or stack_index == 7:
-            self.trash_page.load_data()
+            page = self.trash_page
         elif nav_key == "workspaces" or stack_index == 8:
-            self.workspaces_page.load_data()
+            page = self.workspaces_page
+        elif nav_key == "settings" or stack_index == 9:
+            page = self.settings_page
+
+        self._request_page_refresh(page)
+
+    @staticmethod
+    def _request_page_refresh(page, *, force=False):
+        if page is None:
+            return False
+        refresher = getattr(page, "request_refresh", None)
+        if callable(refresher):
+            return refresher(force=force)
+        load_data = getattr(page, "load_data", None)
+        if callable(load_data):
+            return load_data()
+        return False
 
     def retranslate_ui(self):
         self.setWindowTitle(tr("app_title"))
@@ -622,9 +637,7 @@ class MainWindow(QMainWindow):
                 self.missionaries_page,
                 "missionaries",
             )
-            load_data = getattr(self.missionaries_page, "load_data", None)
-            if callable(load_data):
-                load_data()
+            self._request_page_refresh(self.missionaries_page)
             return
 
         widget = getattr(context, "widget", None)
@@ -647,15 +660,13 @@ class MainWindow(QMainWindow):
                     widget.objectName() or widget.__class__.__name__,
                 )
 
-        load_data = getattr(widget, "load_data", None)
-        if callable(load_data):
-            try:
-                load_data()
-            except Exception:
-                logger.exception(
-                    "Failed to refresh restored page %s",
-                    widget.objectName() or widget.__class__.__name__,
-                )
+        try:
+            self._request_page_refresh(widget)
+        except Exception:
+            logger.exception(
+                "Failed to refresh restored page %s",
+                widget.objectName() or widget.__class__.__name__,
+            )
 
     def _clear_detail_navigation_stack_if_detail_visible(self):
         if getattr(self.stack, "currentWidget", lambda: None)() is getattr(
@@ -680,19 +691,46 @@ class MainWindow(QMainWindow):
         return True
 
     def open_missionary_detail(self, missionary_id):
+        context = None
+        context_pushed = False
         try:
-            from services.missionary_service import MissionaryService
-
             context = self._capture_current_view_context()
-            missionary = MissionaryService().get_missionary(missionary_id)
-            if missionary is None:
-                logger.warning("Missionary ID %s not found", missionary_id)
-                return False
-
             if context is not None:
                 self._detail_navigation_stack.append(context)
+                context_pushed = True
 
-            self.detail_page.load_missionary(missionary)
+            def handle_not_found():
+                if self.stack.currentWidget() is not self.detail_page:
+                    return
+                requested_id = getattr(
+                    self.detail_page,
+                    "requested_missionary_id",
+                    missionary_id,
+                )
+                if requested_id != missionary_id:
+                    return
+                logger.warning("Missionary ID %s not found", missionary_id)
+                if (
+                    context_pushed
+                    and self._detail_navigation_stack
+                    and self._detail_navigation_stack[-1] is context
+                ):
+                    self._detail_navigation_stack.pop()
+                self._restore_navigation_context(context)
+
+            started = self.detail_page.load_missionary_by_id(
+                missionary_id,
+                on_not_found=handle_not_found,
+            )
+            if not started:
+                if (
+                    context_pushed
+                    and self._detail_navigation_stack
+                    and self._detail_navigation_stack[-1] is context
+                ):
+                    self._detail_navigation_stack.pop()
+                return False
+
             self.stack.setCurrentWidget(self.detail_page)
 
             if (
@@ -706,6 +744,12 @@ class MainWindow(QMainWindow):
             return True
 
         except Exception:
+            if (
+                context_pushed
+                and self._detail_navigation_stack
+                and self._detail_navigation_stack[-1] is context
+            ):
+                self._detail_navigation_stack.pop()
             logger.exception(
                 "Failed to open missionary detail for ID %s",
                 missionary_id,
@@ -715,7 +759,18 @@ class MainWindow(QMainWindow):
     def open_alert_workspace(self, task_id, return_key="dashboard"):
         try:
             self._clear_detail_navigation_stack_if_detail_visible()
-            self.alert_workspace_page.load_task(task_id, return_key=return_key)
+            requester = getattr(
+                self.alert_workspace_page,
+                "request_task",
+                None,
+            )
+            if callable(requester):
+                requester(task_id, return_key=return_key)
+            else:
+                self.alert_workspace_page.load_task(
+                    task_id,
+                    return_key=return_key,
+                )
             self.stack.setCurrentWidget(self.alert_workspace_page)
 
             if (
@@ -737,7 +792,18 @@ class MainWindow(QMainWindow):
     def open_missionary_workspace(self, missionary, workspace):
         try:
             self._clear_detail_navigation_stack_if_detail_visible()
-            self.missionary_workspace_page.load_workspace(missionary, workspace)
+            requester = getattr(
+                self.missionary_workspace_page,
+                "request_workspace",
+                None,
+            )
+            if callable(requester):
+                requester(missionary, workspace)
+            else:
+                self.missionary_workspace_page.load_workspace(
+                    missionary,
+                    workspace,
+                )
             self.stack.setCurrentWidget(self.missionary_workspace_page)
 
             if (
@@ -934,26 +1000,40 @@ class MainWindow(QMainWindow):
         return QPixmap.fromImage(result)
 
     def _load_startup_alerts(self):
-        try:
-            feed_service = NotificationFeedService(self.settings_service)
-            alerts = feed_service.startup_items()
-            self._startup_alerts = list(alerts or [])
+        def load_alerts():
+            feed_service = NotificationFeedService(SettingsService())
+            alerts = list(feed_service.startup_items() or [])
+            return alerts, feed_service.windows_summary(alerts)
 
-            if not alerts:
-                logger.info("No startup notification items.")
-                self.dashboard_page.set_startup_alerts([])
-                return
+        self._startup_alerts_loader.request(
+            load_alerts,
+            on_success=self._apply_startup_alerts,
+            on_error=self._startup_alerts_failed,
+        )
 
-            logger.info(
-                "Loaded %s startup notification item(s)",
-                len(self._startup_alerts),
-            )
-            self.dashboard_page.set_startup_alerts(self._startup_alerts)
-            self._show_windows_startup_notification(feed_service)
-            log_top_level_windows("startup-alerts-loaded", delay_ms=0)
+    def _apply_startup_alerts(self, result):
+        alerts, windows_summary = result
+        self._startup_alerts = list(alerts or [])
 
-        except Exception:
-            logger.exception("Failed to load startup alerts")
+        if not self._startup_alerts:
+            logger.info("No startup notification items.")
+            self.dashboard_page.set_startup_alerts([])
+            return
+
+        logger.info(
+            "Loaded %s startup notification item(s)",
+            len(self._startup_alerts),
+        )
+        self.dashboard_page.set_startup_alerts(self._startup_alerts)
+        self._show_windows_startup_notification(windows_summary)
+        log_top_level_windows("startup-alerts-loaded", delay_ms=0)
+
+    @staticmethod
+    def _startup_alerts_failed(error):
+        logger.error(
+            "Failed to load startup alerts",
+            exc_info=(type(error), error, error.__traceback__),
+        )
 
     def _open_startup_alerts(self):
         if not self._startup_alerts:
@@ -971,8 +1051,7 @@ class MainWindow(QMainWindow):
         except Exception:
             logger.exception("Failed to open startup alerts")
 
-    def _show_windows_startup_notification(self, feed_service):
-        summary = feed_service.windows_summary(self._startup_alerts)
+    def _show_windows_startup_notification(self, summary):
         if not summary:
             return
 

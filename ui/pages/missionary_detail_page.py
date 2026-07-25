@@ -36,6 +36,7 @@ from PySide6.QtCore import (
 )
 
 from services.workflow_service import WorkflowService
+from services.client_view_service import ClientViewService
 from services.document_service import DocumentService
 from services.missionary_service import MissionaryService
 from services.secretary_work_service import SecretaryWorkService
@@ -91,6 +92,7 @@ from ui.widgets.missionary_block_widgets import (
     build_task_card,
     build_workflow_stage_card,
 )
+from ui.foundation.background_loader import LatestRequestLoader
 
 DATE_PLACEHOLDER = QDate(1900, 1, 1)
 DATE_EDIT_MAX_WIDTH = 300
@@ -417,6 +419,15 @@ class MissionaryDetailPage(QWidget):
         self.setObjectName("MissionaryDetailPage")
 
         self.main_window = main_window
+        self.client_view_service = ClientViewService()
+        self._background_loads_enabled = isinstance(main_window, QWidget)
+        self._data_loader = LatestRequestLoader(parent=self)
+        self._task_action_loaders = {}
+        self._pending_task_actions = set()
+        self._detail_task_widgets = {}
+        self._detail_cache = {}
+        self._detail_cache_ttl_seconds = 15.0
+        self._requested_missionary_id = None
 
         logger.info("Initializing MissionaryDetailPage")
 
@@ -455,6 +466,159 @@ class MissionaryDetailPage(QWidget):
         self._deferred_stage_refresh_pending = False
 
         self.setup_ui()
+
+    @property
+    def requested_missionary_id(self):
+        return self._requested_missionary_id
+
+    def load_missionary_by_id(self, missionary_id, on_not_found=None):
+        """Open Detail immediately and resolve the full snapshot off-thread."""
+        self._requested_missionary_id = missionary_id
+        cached = self._detail_cache.get(missionary_id)
+        if cached is not None:
+            self.load_missionary(
+                cached["snapshot"]["missionary"],
+                _detail_snapshot=cached["snapshot"],
+            )
+            if (
+                time.monotonic() - cached["loaded_at"]
+                < self._detail_cache_ttl_seconds
+            ):
+                return True
+            return self._request_detail_snapshot(
+                missionary_id,
+                force=True,
+                on_not_found=on_not_found,
+            )
+
+        if hasattr(self, "current_missionary"):
+            del self.current_missionary
+        self._show_detail_loading_state()
+        return self._request_detail_snapshot(
+            missionary_id,
+            force=True,
+            on_not_found=on_not_found,
+        )
+
+    def request_refresh(self, force=False):
+        missionary_id = self._requested_missionary_id
+        if missionary_id is None:
+            missionary_id = getattr(
+                getattr(self, "current_missionary", None),
+                "id",
+                None,
+            )
+        if missionary_id is None:
+            return False
+        return self._request_detail_snapshot(
+            missionary_id,
+            force=force,
+        )
+
+    def _request_detail_snapshot(
+        self,
+        missionary_id,
+        *,
+        force=False,
+        on_not_found=None,
+    ):
+        cached = self._detail_cache.get(missionary_id)
+        cache_is_fresh = (
+            cached is not None
+            and time.monotonic() - cached["loaded_at"]
+            < self._detail_cache_ttl_seconds
+        )
+        if cache_is_fresh and not force:
+            return False
+
+        if not self._background_loads_enabled:
+            snapshot = self.client_view_service.get_missionary_detail_snapshot(
+                missionary_id
+            )
+            self._detail_snapshot_finished(
+                missionary_id,
+                snapshot,
+                on_not_found,
+            )
+            return True
+        if self._data_loader.busy and not force:
+            return False
+
+        self._data_loader.request(
+            lambda: self.client_view_service.get_missionary_detail_snapshot(
+                missionary_id
+            ),
+            on_success=lambda snapshot:
+            self._detail_snapshot_finished(
+                missionary_id,
+                snapshot,
+                on_not_found,
+            ),
+            on_error=self._detail_refresh_failed,
+        )
+        return True
+
+    def _detail_snapshot_finished(
+        self,
+        missionary_id,
+        snapshot,
+        on_not_found=None,
+    ):
+        if missionary_id != self._requested_missionary_id:
+            return
+        if snapshot is None:
+            if callable(on_not_found):
+                on_not_found()
+            return
+        self._detail_cache[missionary_id] = {
+            "snapshot": snapshot,
+            "loaded_at": time.monotonic(),
+        }
+        current = getattr(self, "current_missionary", None)
+        if (
+            getattr(current, "id", None) == missionary_id
+            and self.has_unsaved_changes()
+        ):
+            logger.info(
+                "Deferred detail snapshot for missionary %s because "
+                "the form has unsaved changes",
+                missionary_id,
+            )
+            return
+        self.load_missionary(
+            snapshot["missionary"],
+            _detail_snapshot=snapshot,
+        )
+
+    @staticmethod
+    def _detail_refresh_failed(error):
+        logger.error(
+            "Failed to refresh missionary detail in background: %s",
+            error,
+        )
+
+    def _show_detail_loading_state(self):
+        if hasattr(self, "name_label"):
+            self.name_label.setText(
+                tr("missionary_detail_loading")
+                if tr("missionary_detail_loading")
+                != "missionary_detail_loading"
+                else "Loading missionary..."
+            )
+        if hasattr(self, "stage_badge"):
+            self.stage_badge.setText("")
+        for list_name in (
+            "workflow_list",
+            "open_tasks_list",
+            "documents_list",
+            "missing_documents_list",
+            "timeline_list",
+        ):
+            widget = getattr(self, list_name, None)
+            if widget is not None:
+                widget.clear()
+        if hasattr(self, "advance_banner"):
+            self.advance_banner.setVisible(False)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -1829,25 +1993,53 @@ class MissionaryDetailPage(QWidget):
             alignment=Qt.AlignRight,
         )
 
-    def _update_advance_banner(self):
+    def _update_advance_banner(self, workflows=None, documents=None):
         if not hasattr(self, "current_missionary"):
             self.advance_banner.setVisible(False)
             return
 
-        stage = self.workflow_service.get_earliest_incomplete_stage(
-            self.current_missionary.id
-        )
+        if workflows is None:
+            stage = self.workflow_service.get_earliest_incomplete_stage(
+                self.current_missionary.id
+            )
+        else:
+            statuses = {
+                workflow.stage_name: workflow.status
+                for workflow in workflows
+            }
+            stage = next(
+                (
+                    stage_name
+                    for stage_name in WORKFLOW_STAGES
+                    if statuses.get(stage_name) != "COMPLETED"
+                ),
+                None,
+            )
 
         if not stage:
             self.advance_banner.setVisible(False)
             return
 
-        missing = (
-            self.workflow_validator
-            .get_missing_documents(
-                self.current_missionary.id, stage
+        if documents is None:
+            missing = (
+                self.workflow_validator
+                .get_missing_documents(
+                    self.current_missionary.id, stage
+                )
             )
-        )
+        else:
+            uploaded_types = {
+                document.document_type
+                for document in documents
+            }
+            missing = [
+                document_type
+                for document_type in required_documents_for_missionary(
+                    stage,
+                    self.current_missionary,
+                )
+                if document_type not in uploaded_types
+            ]
 
         if not missing:
             # Determine next stage label
@@ -1971,10 +2163,28 @@ class MissionaryDetailPage(QWidget):
         calendar_page = getattr(self.main_window, "calendar_page", None)
         load_data = getattr(calendar_page, "load_data", None)
         if callable(load_data):
-            QTimer.singleShot(0, load_data)
+            if getattr(self, "_background_loads_enabled", False):
+                request_refresh = getattr(
+                    calendar_page,
+                    "request_refresh",
+                    None,
+                )
+                if callable(request_refresh):
+                    request_refresh(force=True)
+                else:
+                    QTimer.singleShot(0, load_data)
+            else:
+                load_data()
 
     def _refresh_missionaries_table(self, deferred=False):
         if deferred:
+            if not getattr(
+                self,
+                "_background_loads_enabled",
+                False,
+            ):
+                self._refresh_missionaries_table()
+                return
             if getattr(self, "_deferred_missionaries_refresh_pending", False):
                 return
 
@@ -2007,7 +2217,14 @@ class MissionaryDetailPage(QWidget):
                     missionaries_page = None
 
         load_data = getattr(missionaries_page, "load_data", None)
-        if callable(load_data):
+        request_refresh = getattr(
+            missionaries_page,
+            "request_refresh",
+            None,
+        )
+        if callable(request_refresh):
+            request_refresh(force=True)
+        elif callable(load_data):
             load_data()
 
     def _refresh_stage_related_pages(self):
@@ -2035,6 +2252,10 @@ class MissionaryDetailPage(QWidget):
             "reports_page",
         ):
             page = getattr(main_window, page_name, None)
+            request_refresh = getattr(page, "request_refresh", None)
+            if callable(request_refresh):
+                request_refresh(force=True)
+                continue
             load_data = getattr(page, "load_data", None)
             if callable(load_data):
                 load_data()
@@ -2842,7 +3063,10 @@ class MissionaryDetailPage(QWidget):
                 kind="critical",
             )
 
-    def load_missionary(self, missionary):
+    def load_missionary(self, missionary, *, _detail_snapshot=None):
+        if missionary is None:
+            return
+        self._requested_missionary_id = missionary.id
         self.current_missionary = missionary
 
         logger.info(
@@ -2926,7 +3150,6 @@ class MissionaryDetailPage(QWidget):
                 self._date_empty_on_load.discard("visa_expiration")
 
         self._update_field_sources(missionary)
-        self._refresh_residency_timeline(missionary.id)
 
         folder_path = missionary.folder_path or ""
         self.folder_label.setToolTip(folder_path)
@@ -2937,20 +3160,78 @@ class MissionaryDetailPage(QWidget):
             missionary.notes or ""
         )
 
-        workflows = self.workflow_service.get_workflows(
-            missionary.id
-        )
-        documents = self.document_service.get_documents(
-            missionary.id
-        )
+        if (
+            self._background_loads_enabled
+            and _detail_snapshot is None
+        ):
+            cached = self._detail_cache.get(missionary.id)
+            if cached is not None:
+                cached_snapshot = dict(cached["snapshot"])
+                cached_snapshot["missionary"] = missionary
+                self.load_missionary(
+                    missionary,
+                    _detail_snapshot=cached_snapshot,
+                )
+            else:
+                self._clear_detail_collections()
+            self.request_refresh(force=False)
+            return
 
+        if _detail_snapshot is None:
+            workflows = self.workflow_service.get_workflows(
+                missionary.id
+            )
+            documents = self.document_service.get_documents(
+                missionary.id
+            )
+            tasks = None
+            residency_timeline = None
+            stage_history = None
+        else:
+            workflows = list(
+                _detail_snapshot.get("workflows") or []
+            )
+            documents = list(
+                _detail_snapshot.get("documents") or []
+            )
+            tasks = list(_detail_snapshot.get("tasks") or [])
+            residency_timeline = list(
+                _detail_snapshot.get("residency_timeline") or []
+            )
+            stage_history = list(
+                _detail_snapshot.get("stage_history") or []
+            )
+
+        self._refresh_residency_timeline(
+            missionary.id,
+            residency_timeline,
+        )
         self.load_workflow_stages(workflows)
-        self.load_open_tasks()
+        self.load_open_tasks(tasks)
         self.load_documents(documents)
         self.load_missing_documents(documents)
-        self._refresh_overview_summary(workflows, documents)
-        self._load_timeline()
-        self._update_advance_banner()
+        self._refresh_overview_summary(
+            workflows,
+            documents,
+            stage_history,
+        )
+        self._load_timeline(stage_history)
+        self._update_advance_banner(workflows, documents)
+
+    def _clear_detail_collections(self):
+        for list_name in (
+            "workflow_list",
+            "open_tasks_list",
+            "documents_list",
+            "missing_documents_list",
+            "timeline_list",
+        ):
+            widget = getattr(self, list_name, None)
+            if widget is not None:
+                widget.clear()
+        self._document_data = []
+        if hasattr(self, "advance_banner"):
+            self.advance_banner.setVisible(False)
 
     def _date_edit_value(self, date_edit):
         qd = (
@@ -3039,13 +3320,14 @@ class MissionaryDetailPage(QWidget):
         if callable(opener):
             opener()
 
-    def _refresh_residency_timeline(self, missionary_id):
+    def _refresh_residency_timeline(self, missionary_id, rows=None):
         if not self._residency_timeline_labels:
             return
 
-        rows = self.residency_service.get_residency_timeline(
-            missionary_id
-        )
+        if rows is None:
+            rows = self.residency_service.get_residency_timeline(
+                missionary_id
+            )
         key_map = {
             ("INITIAL_RESIDENCY", 0): "initial",
             ("PRORROGA", 1): "prorroga_1",
@@ -3215,18 +3497,20 @@ class MissionaryDetailPage(QWidget):
                 "ocr_confirmed_data": doc.ocr_confirmed_data,
             })
 
-    def load_open_tasks(self):
+    def load_open_tasks(self, tasks=None):
         if not hasattr(self, "open_tasks_list"):
             return
 
         self.open_tasks_list.clear()
+        self._detail_task_widgets = {}
 
         if not hasattr(self, "current_missionary"):
             return
 
-        tasks = self.secretary_work_service.list_tasks(
-            missionary_id=self.current_missionary.id,
-        )
+        if tasks is None:
+            tasks = self.secretary_work_service.list_tasks(
+                missionary_id=self.current_missionary.id,
+            )
 
         if not tasks:
             empty = QListWidgetItem()
@@ -3244,6 +3528,11 @@ class MissionaryDetailPage(QWidget):
             item = QListWidgetItem()
             item.setData(Qt.UserRole, task["id"])
             widget = self._build_open_task_widget(task)
+            task_id = task["id"]
+            widget.setEnabled(
+                task_id not in self._pending_task_actions
+            )
+            self._detail_task_widgets[task_id] = widget
             item.setSizeHint(widget.sizeHint())
             self.open_tasks_list.addItem(item)
             self.open_tasks_list.setItemWidget(item, widget)
@@ -3277,24 +3566,73 @@ class MissionaryDetailPage(QWidget):
             self._refresh_task_views()
 
     def _complete_missionary_task(self, task_id):
-        self.secretary_work_service.complete_task(task_id)
-        self._refresh_task_views()
+        if not self._background_loads_enabled:
+            self.secretary_work_service.complete_task(task_id)
+            self._refresh_task_views()
+            return
+        if task_id in self._pending_task_actions:
+            return
+        loader = self._task_action_loaders.get(task_id)
+        if loader is None:
+            loader = LatestRequestLoader(parent=self)
+            self._task_action_loaders[task_id] = loader
+        self._data_loader.cancel()
+        self._pending_task_actions.add(task_id)
+        widget = self._detail_task_widgets.get(task_id)
+        if widget is not None:
+            widget.setEnabled(False)
+
+        def completed(_result):
+            self._pending_task_actions.discard(task_id)
+            self._refresh_task_views()
+
+        def failed(error):
+            self._pending_task_actions.discard(task_id)
+            current_widget = self._detail_task_widgets.get(task_id)
+            if current_widget is not None:
+                current_widget.setEnabled(True)
+            logger.error(
+                "Failed to complete missionary task %s: %s",
+                task_id,
+                error,
+            )
+            show_message(
+                self,
+                tr("missionary_detail_error_title"),
+                "The task could not be completed.",
+                kind="warning",
+            )
+
+        loader.request(
+            lambda: self.secretary_work_service.complete_task(task_id),
+            on_success=completed,
+            on_error=failed,
+        )
 
     def _refresh_task_views(self):
-        self.load_open_tasks()
+        if self._background_loads_enabled:
+            self.request_refresh(force=True)
+        else:
+            self.load_open_tasks()
         office_work_page = getattr(
             self.main_window,
             "office_work_page",
             None,
         )
-        if office_work_page is not None and hasattr(office_work_page, "load_data"):
+        request_refresh = getattr(office_work_page, "request_refresh", None)
+        if callable(request_refresh):
+            request_refresh(force=True)
+        elif office_work_page is not None and hasattr(office_work_page, "load_data"):
             office_work_page.load_data()
         calendar_page = getattr(
             self.main_window,
             "calendar_page",
             None,
         )
-        if calendar_page is not None and hasattr(calendar_page, "load_data"):
+        request_refresh = getattr(calendar_page, "request_refresh", None)
+        if callable(request_refresh):
+            request_refresh(force=True)
+        elif calendar_page is not None and hasattr(calendar_page, "load_data"):
             calendar_page.load_data()
 
     def _open_office_work(self):
@@ -3394,7 +3732,12 @@ class MissionaryDetailPage(QWidget):
             self.missing_documents_list.addItem(item)
             self.missing_documents_list.setItemWidget(item, widget)
 
-    def _refresh_overview_summary(self, workflows=None, documents=None):
+    def _refresh_overview_summary(
+        self,
+        workflows=None,
+        documents=None,
+        stage_history=None,
+    ):
         if not hasattr(self, "current_missionary"):
             return
 
@@ -3460,7 +3803,7 @@ class MissionaryDetailPage(QWidget):
             else tr("missionary_detail_no_uploads_yet")
         )
 
-        latest_activity = self._find_latest_activity()
+        latest_activity = self._find_latest_activity(stage_history)
 
         if missing_current:
             next_doc = _document_label(missing_current[0])
@@ -3505,14 +3848,17 @@ class MissionaryDetailPage(QWidget):
             tip = tr("missionary_detail_tip_ready")
         self.summary_tip_label.setText(tip)
 
-    def _find_latest_activity(self):
+    def _find_latest_activity(self, history=None):
         if not hasattr(self, "current_missionary"):
             return None
 
         latest = getattr(self.current_missionary, "created_at", None)
 
         try:
-            history = WorkflowService().get_stage_history(self.current_missionary.id)
+            if history is None:
+                history = WorkflowService().get_stage_history(
+                    self.current_missionary.id
+                )
             first = history[0] if history else None
             if first and first.created_at:
                 latest = (
@@ -3815,14 +4161,17 @@ class MissionaryDetailPage(QWidget):
             self.timeline_list
         )
 
-    def _load_timeline(self):
+    def _load_timeline(self, history=None):
         self.timeline_list.clear()
 
         if not hasattr(self, "current_missionary"):
             return
 
         try:
-            history = WorkflowService().get_stage_history(self.current_missionary.id)
+            if history is None:
+                history = WorkflowService().get_stage_history(
+                    self.current_missionary.id
+                )
 
             if not history:
                 empty = QListWidgetItem(
@@ -3973,6 +4322,9 @@ class MissionaryDetailPage(QWidget):
     # ==========================================
 
     def _reload_missionary(self):
+        if self._background_loads_enabled:
+            self.request_refresh(force=True)
+            return
         refreshed = self.missionary_service.get_missionary(
             self.current_missionary.id
         )

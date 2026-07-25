@@ -1,3 +1,5 @@
+import time
+
 from PySide6.QtWidgets import (
     QWidget,
     QVBoxLayout,
@@ -21,11 +23,14 @@ from ui.foundation import (
     create_table,
     show_message,
 )
+from ui.foundation.background_loader import LatestRequestLoader
 
 from utils.logger import logger
 
 
 class TrashPage(QWidget):
+    CACHE_TTL_SECONDS = 30.0
+
     def __init__(self, main_window):
         super().__init__()
 
@@ -35,9 +40,21 @@ class TrashPage(QWidget):
 
         self.missionary_service = MissionaryService()
 
-        self.setup_ui()
+        self._trashed_snapshot = None
 
-        self.load_data()
+        self._last_refresh_at = 0.0
+
+        self._refresh_loader = LatestRequestLoader(parent=self)
+
+        self._mutation_loader = LatestRequestLoader(parent=self)
+
+        self._row_action_buttons = {}
+
+        self._mutation_loader.busy_changed.connect(
+            self._set_action_buttons_enabled
+        )
+
+        self.setup_ui()
 
     def setup_ui(self):
         outer = QVBoxLayout()
@@ -110,23 +127,42 @@ class TrashPage(QWidget):
         layout.addWidget(subtitle)
         return frame
 
+    def request_refresh(self, force=False):
+        now = time.monotonic()
+        cache_is_fresh = (
+            self._trashed_snapshot is not None
+            and now - self._last_refresh_at < self.CACHE_TTL_SECONDS
+        )
+        if cache_is_fresh and not force:
+            return False
+
+        service = self.missionary_service
+        self._refresh_loader.request(
+            service.get_trashed,
+            on_success=self._apply_trashed_snapshot,
+            on_error=self._trash_refresh_failed,
+        )
+        return True
+
     def load_data(self):
-        try:
-            trashed = (
-                self.missionary_service.get_trashed()
-            )
+        """Compatibility entry point for callers that need a forced refresh."""
+        return self.request_refresh(force=True)
 
-            self._populate_table(trashed)
+    def _apply_trashed_snapshot(self, missionaries):
+        self._trashed_snapshot = list(missionaries or [])
+        self._last_refresh_at = time.monotonic()
+        self._populate_table(self._trashed_snapshot)
+        logger.info(
+            "Loaded %s trashed missionaries",
+            len(self._trashed_snapshot),
+        )
 
-            logger.info(
-                f"Loaded {len(trashed)} "
-                f"trashed missionaries"
-            )
-
-        except Exception:
-            logger.exception(
-                "Failed to load trash data"
-            )
+    @staticmethod
+    def _trash_refresh_failed(error):
+        logger.error(
+            "Failed to load trash data",
+            exc_info=(type(error), error, error.__traceback__),
+        )
 
     def _populate_table(self, missionaries):
         self.table.setSortingEnabled(False)
@@ -134,6 +170,8 @@ class TrashPage(QWidget):
         self.table.clearContents()
 
         self.table.setRowCount(len(missionaries))
+
+        self._row_action_buttons = {}
 
         for row, m in enumerate(missionaries):
             self.table.setRowHeight(row, 40)
@@ -224,35 +262,42 @@ class TrashPage(QWidget):
 
             self.table.setCellWidget(row, 5, actions_widget)
 
+            self._row_action_buttons[m.id] = (restore_btn, delete_btn)
+
         self.table.setSortingEnabled(True)
 
+        self._set_action_buttons_enabled(not self._mutation_loader.busy)
+
+    def _set_action_buttons_enabled(self, enabled):
+        for buttons in self._row_action_buttons.values():
+            for button in buttons:
+                button.setEnabled(bool(enabled))
+
     def _restore_missionary(self, missionary_id):
-        try:
-            self.missionary_service.restore_missionary(
-                missionary_id
-            )
+        if self._mutation_loader.busy:
+            return
 
-            self.load_data()
-
-            # Also refresh the missionaries page
-            if hasattr(self.main_window, "missionaries_page"):
-                self.main_window.missionaries_page.load_data()
-
-            show_message(
-                self,
-                "Restored",
-                "Missionary restored successfully.",
-            )
-
-        except Exception:
-            logger.exception("Restore failed")
-
-            show_message(
-                self,
-                "Error",
+        self._refresh_loader.cancel()
+        service = self.missionary_service
+        self._mutation_loader.request(
+            lambda: service.restore_missionary(missionary_id),
+            on_success=lambda _result: self._restore_succeeded(missionary_id),
+            on_error=lambda error: self._mutation_failed(
+                "Restore failed",
                 "Failed to restore missionary.",
-                kind="critical",
-            )
+                error,
+            ),
+        )
+
+    def _restore_succeeded(self, missionary_id):
+        self._remove_from_snapshot(missionary_id)
+        self.request_refresh(force=True)
+        self._refresh_missionaries_page()
+        show_message(
+            self,
+            "Restored",
+            "Missionary restored successfully.",
+        )
 
     def _hard_delete_missionary(self, missionary_id):
         response = show_message(
@@ -268,25 +313,62 @@ class TrashPage(QWidget):
         if response not in {1, 16384}:
             return
 
-        try:
-            self.missionary_service.hard_delete(
+        if self._mutation_loader.busy:
+            return
+
+        self._refresh_loader.cancel()
+        service = self.missionary_service
+        self._mutation_loader.request(
+            lambda: service.hard_delete(missionary_id),
+            on_success=lambda _result: self._hard_delete_succeeded(
                 missionary_id
-            )
-
-            self.load_data()
-
-            show_message(
-                self,
-                "Deleted",
-                "Missionary permanently deleted.",
-            )
-
-        except Exception:
-            logger.exception("Hard delete failed")
-
-            show_message(
-                self,
-                "Error",
+            ),
+            on_error=lambda error: self._mutation_failed(
+                "Hard delete failed",
                 "Failed to delete missionary.",
-                kind="critical",
-            )
+                error,
+            ),
+        )
+
+    def _hard_delete_succeeded(self, missionary_id):
+        self._remove_from_snapshot(missionary_id)
+        self.request_refresh(force=True)
+        show_message(
+            self,
+            "Deleted",
+            "Missionary permanently deleted.",
+        )
+
+    def _remove_from_snapshot(self, missionary_id):
+        if self._trashed_snapshot is None:
+            return
+        self._trashed_snapshot = [
+            missionary
+            for missionary in self._trashed_snapshot
+            if getattr(missionary, "id", None) != missionary_id
+        ]
+        self._populate_table(self._trashed_snapshot)
+
+    def _refresh_missionaries_page(self):
+        page = getattr(self.main_window, "missionaries_page", None)
+        if page is None:
+            return
+        refresher = getattr(page, "request_refresh", None)
+        if callable(refresher):
+            refresher(force=True)
+            return
+        load_data = getattr(page, "load_data", None)
+        if callable(load_data):
+            load_data()
+
+    def _mutation_failed(self, log_message, user_message, error):
+        logger.error(
+            log_message,
+            exc_info=(type(error), error, error.__traceback__),
+        )
+        show_message(
+            self,
+            "Error",
+            user_message,
+            kind="critical",
+        )

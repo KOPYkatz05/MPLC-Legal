@@ -1,6 +1,7 @@
 from collections import defaultdict
 from datetime import date
 from datetime import datetime
+import time
 
 from PySide6.QtWidgets import (
     QWidget,
@@ -19,6 +20,7 @@ from PySide6.QtGui import QColor, QFont, QPalette
 from services.reports_data_service import ReportsDataService
 
 from ui.foundation import StatCard, create_card, create_scroll_area
+from ui.foundation.background_loader import LatestRequestLoader
 
 from utils.constants import (
     DOCUMENTS,
@@ -30,6 +32,8 @@ from utils.logger import logger
 
 
 class ReportsPage(QWidget):
+    CACHE_TTL_SECONDS = 90.0
+
     def __init__(self, main_window):
         super().__init__()
 
@@ -43,9 +47,11 @@ class ReportsPage(QWidget):
 
         self._analytics_snapshot = None
 
-        self.setup_ui()
+        self._last_refresh_at = 0.0
 
-        self.load_data()
+        self._refresh_loader = LatestRequestLoader(parent=self)
+
+        self.setup_ui()
 
     def setup_ui(self):
         outer = QVBoxLayout()
@@ -438,12 +444,45 @@ class ReportsPage(QWidget):
             return f"{abs(days)} days overdue"
         return f"{days} days"
 
+    def request_refresh(self, force=False):
+        now = time.monotonic()
+        cache_is_fresh = (
+            self._analytics_snapshot is not None
+            and now - self._last_refresh_at < self.CACHE_TTL_SECONDS
+        )
+        if cache_is_fresh and not force:
+            return False
+
+        if self._analytics_snapshot is None and not self._refresh_loader.busy:
+            self._clear_content()
+            self._add_empty_state("Loading analytics…")
+
+        self._refresh_loader.request(
+            self._build_snapshot,
+            on_success=self._apply_snapshot,
+            on_error=self._report_refresh_failed,
+        )
+        return True
+
     def load_data(self):
-        try:
-            self._analytics_snapshot = self._build_snapshot()
-            self._render_selected_tab()
-        except Exception:
-            logger.exception("Failed to load reports")
+        """Compatibility entry point for callers that need a forced refresh."""
+        return self.request_refresh(force=True)
+
+    def _apply_snapshot(self, snapshot):
+        self._analytics_snapshot = snapshot
+        self._last_refresh_at = time.monotonic()
+        self._render_selected_tab()
+
+    def _report_refresh_failed(self, error):
+        logger.error(
+            "Failed to load reports",
+            exc_info=(type(error), error, error.__traceback__),
+        )
+        if self._analytics_snapshot is None:
+            self._clear_content()
+            self._add_empty_state(
+                "Analytics could not be refreshed. Try this page again."
+            )
 
     def _set_tab(self, tab_key):
         if tab_key not in {"general", "process", "documents"}:

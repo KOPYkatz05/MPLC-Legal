@@ -7,6 +7,17 @@ from ui.pages.alert_workspace_page import AlertWorkspacePage
 from utils.i18n import get_i18n
 
 
+class InlineThreadPool:
+    def start(self, task):
+        task.run()
+
+
+def _use_inline_loaders(page):
+    pool = InlineThreadPool()
+    page._task_loader._thread_pool = pool
+    page._mutation_loader._thread_pool = pool
+
+
 class FakeWorkspaceService:
     def __init__(self):
         self.completed = []
@@ -131,7 +142,7 @@ def test_alert_workspace_chrome_uses_active_language(qapp):
         assert page.follow_up_btn.isHidden() is True
         assert "Marcar lista" in buttons
         assert "Marcar hecha" in buttons
-        assert "Trabajo de oficina / Espacio de alerta" in texts
+        assert "Tareas / Espacio de alerta" in texts
         assert "Vista rápida" in texts
         assert "Por qué aparece esta alerta" in texts
         assert "Próximos pasos recomendados" in texts
@@ -160,6 +171,7 @@ def test_alert_workspace_mark_done_confirms_and_reloads(monkeypatch, qapp):
         ),
         service=service,
     )
+    _use_inline_loaders(page)
 
     try:
         page.load_task(12)
@@ -187,6 +199,7 @@ def test_alert_workspace_mark_done_confirmation_is_translated(monkeypatch, qapp)
     try:
         i18n.set_language("es")
         page = AlertWorkspacePage(service=service)
+        _use_inline_loaders(page)
         page.load_task(12)
         page._mark_done()
 
@@ -204,6 +217,7 @@ def test_alert_workspace_ready_actions_reload_and_toggle(qapp):
     _ = qapp
     service = FakeWorkspaceService()
     page = AlertWorkspacePage(service=service)
+    _use_inline_loaders(page)
 
     try:
         page.load_task(12)
@@ -240,6 +254,7 @@ def test_alert_workspace_edit_task_reloads(monkeypatch, qapp):
 
     monkeypatch.setattr(alert_workspace_page, "TaskDialog", FakeTaskDialog)
     page = AlertWorkspacePage(service=service)
+    _use_inline_loaders(page)
 
     try:
         page.load_task(12)
@@ -268,6 +283,7 @@ def test_alert_workspace_set_follow_up_action_opens_waiting_task_editor(
 
     monkeypatch.setattr(alert_workspace_page, "TaskDialog", FakeTaskDialog)
     page = AlertWorkspacePage(service=service)
+    _use_inline_loaders(page)
 
     try:
         page.load_task(12)
