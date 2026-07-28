@@ -38,8 +38,8 @@ def isolated_qsettings(monkeypatch):
         def contains(self, key):
             return key in type(self).values
 
-        def value(self, key):
-            return type(self).values.get(key)
+        def value(self, key, default=None):
+            return type(self).values.get(key, default)
 
         def remove(self, key):
             type(self).values.pop(key, None)
@@ -123,6 +123,53 @@ def test_server_url_is_normalized_without_trailing_slash():
         pairing.normalize_server_url("  https://MAIN-COMPUTER:8765/  ")
         == "https://MAIN-COMPUTER:8765"
     )
+
+
+def test_stale_server_address_recovers_only_from_matching_saved_ca(
+    monkeypatch,
+    tmp_path,
+    isolated_qsettings,
+):
+    from services.lan_discovery import DiscoveredServer, certificate_sha256
+
+    certificate = (
+        "-----BEGIN CERTIFICATE-----\nPUBLIC CA\n-----END CERTIFICATE-----\n"
+    )
+    ca_path = tmp_path / "mission-legal-ca.pem"
+    ca_path.write_text(certificate, encoding="ascii")
+    fingerprint = certificate_sha256(certificate)
+    isolated_qsettings.values = {
+        "server/url": "https://192.168.1.20:8765",
+        "server/ca_certificate": str(ca_path),
+    }
+    monkeypatch.setattr(
+        pairing,
+        "discover_servers",
+        lambda **_kwargs: (
+            DiscoveredServer(
+                server_id=fingerprint,
+                name="Secretary Laptop",
+                server_url="https://192.168.50.40:8765",
+                ca_certificate_pem=certificate,
+                ca_sha256=fingerprint,
+            ),
+        ),
+    )
+    refreshed = []
+    monkeypatch.setattr(
+        pairing.MissionLegalApiClient,
+        "from_environment",
+        lambda: refreshed.append(True),
+    )
+
+    recovered = pairing.recover_configured_server_address()
+
+    assert recovered == "https://192.168.50.40:8765"
+    assert (
+        isolated_qsettings.values["server/url"]
+        == "https://192.168.50.40:8765"
+    )
+    assert refreshed == [True]
 
 
 @pytest.mark.parametrize("value", ["", "12345", "1234567", "ABC123"])
@@ -1165,13 +1212,15 @@ def test_frozen_main_opens_first_run_pairing_dialog():
 def test_first_run_dialog_exposes_pairing_inputs(qtbot):
     from ui.dialogs.client_pairing_dialog import ClientPairingDialog
 
-    dialog = ClientPairingDialog()
+    dialog = ClientPairingDialog(discovery_provider=lambda: ())
     qtbot.addWidget(dialog)
-    assert "Paste the setup code" in dialog.setup_code_edit.placeholderText()
+    assert "advanced recovery" in dialog.setup_code_edit.placeholderText().lower()
     assert dialog.server_edit.placeholderText().startswith("https://")
     assert dialog.code_edit.maxLength() == 6
+    assert dialog.setup_code_edit.isHidden()
     assert dialog.server_edit.isHidden()
     assert dialog.certificate_edit.isHidden()
+    assert dialog.server_combo.count() == 1
     assert dialog.device_edit.text()
     assert dialog.check_updates_button.text() == "Check for updates"
     assert dialog.check_updates_button.isEnabled()
@@ -1208,6 +1257,51 @@ def test_pairing_worker_uses_automatic_setup_code(qapp, monkeypatch):
     assert results == [expected]
 
 
+def test_discovered_server_pairs_with_only_six_digit_code(
+    qapp,
+    qtbot,
+    monkeypatch,
+):
+    from PySide6.QtWidgets import QMessageBox
+    from services.lan_discovery import DiscoveredServer
+    from ui.dialogs import client_pairing_dialog as dialog_module
+
+    observed = {}
+    expected = object()
+
+    def pair(**values):
+        observed.update(values)
+        return expected
+
+    monkeypatch.setattr(dialog_module, "pair_client", pair)
+    monkeypatch.setattr(QMessageBox, "information", lambda *_args: None)
+    dialog = dialog_module.ClientPairingDialog(discovery_provider=lambda: ())
+    qtbot.addWidget(dialog)
+    discovered = DiscoveredServer(
+        server_id="a" * 64,
+        name="Secretary Laptop",
+        server_url="https://192.168.108.50:8765",
+        ca_certificate_pem=(
+            "-----BEGIN CERTIFICATE-----\nPUBLIC CA\n-----END CERTIFICATE-----\n"
+        ),
+        ca_sha256="a" * 64,
+    )
+    dialog._discovery_pending_result = (discovered,)
+    dialog._discovery_finished()
+    dialog.code_edit.setText("123456")
+
+    dialog._start_pairing()
+    qtbot.waitUntil(lambda: dialog._thread is None, timeout=3000)
+
+    assert observed == {
+        "server_url": discovered.server_url,
+        "certificate": discovered.ca_certificate_pem,
+        "pairing_code": "123456",
+        "device_name": dialog.device_edit.text(),
+    }
+    assert dialog.pairing_result is expected
+
+
 def test_optional_update_check_remains_in_pairing_when_no_apply_is_scheduled(
     qapp,
     qtbot,
@@ -1217,7 +1311,7 @@ def test_optional_update_check_remains_in_pairing_when_no_apply_is_scheduled(
     from ui import update_coordinator
     from ui.dialogs.client_pairing_dialog import ClientPairingDialog
 
-    dialog = ClientPairingDialog()
+    dialog = ClientPairingDialog(discovery_provider=lambda: ())
     qtbot.addWidget(dialog)
     observed = []
     monkeypatch.setattr(
@@ -1244,7 +1338,7 @@ def test_optional_update_check_closes_pairing_only_after_apply_is_scheduled(
     from ui import update_coordinator
     from ui.dialogs.client_pairing_dialog import ClientPairingDialog
 
-    dialog = ClientPairingDialog()
+    dialog = ClientPairingDialog(discovery_provider=lambda: ())
     qtbot.addWidget(dialog)
     monkeypatch.setattr(
         update_coordinator,
@@ -1310,8 +1404,9 @@ def test_pairing_thread_preserves_compatibility_error_for_required_update(
         "offer_required_client_update",
         defer_update,
     )
-    dialog = dialog_module.ClientPairingDialog()
+    dialog = dialog_module.ClientPairingDialog(discovery_provider=lambda: ())
     qtbot.addWidget(dialog)
+    dialog._toggle_manual_setup()
     dialog.server_edit.setText("https://main-computer:8765")
     dialog.certificate_edit.setText("mission-legal-ca.pem")
     dialog.code_edit.setText("123456")
@@ -1354,7 +1449,7 @@ def test_required_pairing_update_routes_to_updater_and_remains_when_deferred(
         "offer_required_client_update",
         defer_update,
     )
-    dialog = ClientPairingDialog()
+    dialog = ClientPairingDialog(discovery_provider=lambda: ())
     qtbot.addWidget(dialog)
     dialog._pending_error = problem
 
@@ -1390,7 +1485,7 @@ def test_required_pairing_update_closes_after_apply_is_scheduled(
         "offer_required_client_update",
         lambda *_args, **_kwargs: True,
     )
-    dialog = ClientPairingDialog()
+    dialog = ClientPairingDialog(discovery_provider=lambda: ())
     qtbot.addWidget(dialog)
     dialog._pending_error = problem
 

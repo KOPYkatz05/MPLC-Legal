@@ -7,6 +7,9 @@ from version import APP_VERSION
 
 
 class FakeSettingsService:
+    def __init__(self):
+        self.tab_indicator_thickness = 1
+
     def get_language(self):
         return "en"
 
@@ -30,6 +33,31 @@ class FakeSettingsService:
 
     def get_next_transfer_wednesday(self):
         return None
+
+    def get_tab_indicator_thickness(self):
+        return self.tab_indicator_thickness
+
+    def set_tab_indicator_thickness(self, value):
+        self.tab_indicator_thickness = value
+        return value
+
+    def get_calendar_default_view(self):
+        return "calendar"
+
+    def set_calendar_default_view(self, value):
+        self.calendar_default_view = value
+
+    def get_analytics_default_view(self):
+        return "general"
+
+    def set_analytics_default_view(self, value):
+        self.analytics_default_view = value
+
+    def get_missionaries_default_view(self):
+        return "active"
+
+    def set_missionaries_default_view(self, value):
+        self.missionaries_default_view = value
 
 
 class FakeUpdateCoordinator(QObject):
@@ -57,7 +85,7 @@ def _settings_page(monkeypatch):
     monkeypatch.setattr(
         settings_page_module,
         "WorkspaceService",
-        lambda: SimpleNamespace(),
+        lambda: SimpleNamespace(list_workspaces=lambda: []),
     )
     monkeypatch.setattr(
         settings_page_module.MissionLegalApiClient,
@@ -86,6 +114,46 @@ def test_settings_update_controls_bind_and_start_manual_check(
         page.check_updates_btn.click()
 
         assert coordinator.manual_checks == [True]
+    finally:
+        page.close()
+
+
+def test_ui_tab_updates_tab_indicator_thickness(qapp, monkeypatch):
+    _ = qapp
+    page = _settings_page(monkeypatch)
+    try:
+        assert page.tab_thickness_slider.value() == 1
+        page.tab_thickness_slider.setValue(4)
+
+        assert page.tab_thickness_input.text() == "4"
+        assert page.settings_service.get_tab_indicator_thickness() == 4
+    finally:
+        page.close()
+        page.deleteLater()
+
+
+def test_settings_has_one_real_tab_strip_and_new_tabs_save_defaults(
+    qapp, monkeypatch
+):
+    _ = qapp
+    page = _settings_page(monkeypatch)
+    try:
+        assert page.tabs.count() == 8
+        assert not hasattr(page, "settings_top_tab_labels")
+
+        page.calendar_default_view_combo.setCurrentIndex(
+            page.calendar_default_view_combo.findData("history")
+        )
+        page.analytics_default_view_combo.setCurrentIndex(
+            page.analytics_default_view_combo.findData("documents")
+        )
+        page.missionaries_default_view_combo.setCurrentIndex(
+            page.missionaries_default_view_combo.findData("archive")
+        )
+
+        assert page.settings_service.calendar_default_view == "history"
+        assert page.settings_service.analytics_default_view == "documents"
+        assert page.settings_service.missionaries_default_view == "archive"
     finally:
         page.close()
         page.deleteLater()

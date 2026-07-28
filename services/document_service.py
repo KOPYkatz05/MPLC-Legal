@@ -1,11 +1,12 @@
 import json
 import shutil
+import time
 
 from pathlib import Path
 from database.runtime import get_client_data_dir
 
 from database.db import SessionLocal
-from services.api_client import MissionLegalApiClient
+from services.api_client import ApiUnavailableError, MissionLegalApiClient
 from services.remote_service import RemoteServiceMixin
 
 from database.models.document import (
@@ -17,6 +18,14 @@ from utils.logger import logger
 from services.workflow_validator import (
     WorkflowValidator,
 )
+
+
+class DocumentFileUnavailableError(FileNotFoundError):
+    """The document record exists but its file is unavailable on the server."""
+
+    def __init__(self, document_id):
+        super().__init__(f"Document file {document_id} is unavailable on the server.")
+        self.document_id = document_id
 
 
 class DocumentService(RemoteServiceMixin):
@@ -63,7 +72,7 @@ class DocumentService(RemoteServiceMixin):
             )
             from services.api_client import RemoteRecord
 
-            return self._materialize(RemoteRecord(payload))
+            return RemoteRecord(payload)
         if not document_type:
             raise ValueError("document_type is required")
 
@@ -181,15 +190,21 @@ class DocumentService(RemoteServiceMixin):
 
     def get_documents(self, missionary_id):
         if self.api_client is not None:
+            started_at = time.monotonic()
             payload = self.api_client.get(
                 "/v1/rpc/documents/get_documents",
                 params={"missionary_id": missionary_id},
             )
-            # Dedicated GET is used instead of RPC POST so document content can
-            # subsequently be cached using stable document identifiers.
             from services.api_client import RemoteRecord
 
-            return [self._materialize(RemoteRecord(item)) for item in payload["items"]]
+            documents = [RemoteRecord(item) for item in payload["items"]]
+            logger.info(
+                "Loaded %s document metadata record(s) for missionary %s in %.2fs",
+                len(documents),
+                missionary_id,
+                time.monotonic() - started_at,
+            )
+            return documents
         session = SessionLocal()
 
         try:
@@ -226,12 +241,43 @@ class DocumentService(RemoteServiceMixin):
         finally:
             session.close()
 
-    def _materialize(self, document):
+    def ensure_local_copy(self, document):
+        """Download one remote document only when its local file is needed."""
+        source_path = Path(getattr(document, "file_path", "") or "")
+        if self.api_client is None:
+            if not source_path.is_file():
+                raise DocumentFileUnavailableError(document.id)
+            return source_path
+
         cache_root = get_client_data_dir() / "DocumentCache" / str(document.missionary_id)
-        suffix = Path(getattr(document, "file_path", "")).suffix or ".bin"
+        suffix = source_path.suffix or ".bin"
         destination = cache_root / f"{document.id}{suffix}"
-        self.api_client.download(f"/v1/documents/{document.id}/content", destination)
+        if destination.is_file() and destination.stat().st_size > 0:
+            logger.info("Document cache hit for document %s", document.id)
+            document.file_path = str(destination)
+            return destination
+
+        started_at = time.monotonic()
+        try:
+            self.api_client.download(
+                f"/v1/documents/{document.id}/content",
+                destination,
+            )
+        except ApiUnavailableError as error:
+            if "404" in str(error):
+                raise DocumentFileUnavailableError(document.id) from error
+            raise
+        logger.info(
+            "Downloaded document %s to client cache in %.2fs",
+            document.id,
+            time.monotonic() - started_at,
+        )
         document.file_path = str(destination)
+        return destination
+
+    def _materialize(self, document):
+        """Compatibility wrapper for callers that still need an eager copy."""
+        self.ensure_local_copy(document)
         return document
 
     def document_type_exists(

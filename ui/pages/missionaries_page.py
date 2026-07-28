@@ -47,6 +47,7 @@ from ui.foundation import (
     create_list_widget,
     create_line_edit,
     create_menu,
+    create_pill_button,
     create_plain_text_edit,
     create_search_edit,
     create_table,
@@ -65,6 +66,7 @@ from utils.constants import WORKFLOW_STAGES
 from utils.i18n import tr
 from utils.logger import logger
 from ui.foundation.background_loader import LatestRequestLoader
+from ui.widgets.animated_tab_strip import AnimatedTabStrip
 
 
 @dataclass(frozen=True)
@@ -76,6 +78,21 @@ class MissionaryColumn:
     default_visible: bool = False
     required: bool = False
     copyable: bool = True
+
+
+def create_missionaries_pill_button(
+    text,
+    variant="secondary",
+    fixed_height=34,
+    parent=None,
+    icon=None,
+):
+    """Create a Missionaries-page action using the shared pill button factory."""
+    button = create_pill_button(text, parent=parent, icon=icon)
+    button.setObjectName("MissionariesPillButton")
+    button.setProperty("missionariesTone", variant)
+    button.setFixedHeight(fixed_height)
+    return button
 
 
 def _format_date(value):
@@ -1038,7 +1055,11 @@ class MissionariesPage(QWidget):
         self._groups_by_id = {}
         self._group_members_by_id = {}
         self._last_group_filter_data = None
-        self._selected_tab = "active"
+        self._selected_tab = getattr(
+            self.settings_service,
+            "get_missionaries_default_view",
+            lambda: "active",
+        )()
         self._tab_buttons = {}
         self._hovered_cell = None
         self._applying_column_widths = False
@@ -1098,12 +1119,12 @@ class MissionariesPage(QWidget):
 
         self.setLayout(outer)
 
-        self.add_button = create_button(
+        self.add_button = create_missionaries_pill_button(
             "+ Add Missionary",
             "primary",
         )
 
-        self.export_button = create_button(
+        self.export_button = create_missionaries_pill_button(
             tr("export_menu"),
             "secondary",
         )
@@ -1112,7 +1133,7 @@ class MissionariesPage(QWidget):
             self._show_export_menu
         )
 
-        self.edit_columns_button = create_button(
+        self.edit_columns_button = create_missionaries_pill_button(
             "Edit Columns",
             "secondary",
         )
@@ -1121,7 +1142,7 @@ class MissionariesPage(QWidget):
             self._edit_columns
         )
 
-        self.auto_widths_button = create_button(
+        self.auto_widths_button = create_missionaries_pill_button(
             "Fit Columns",
             "secondary",
         )
@@ -1178,12 +1199,12 @@ class MissionariesPage(QWidget):
             _fallback_edit_icon(),
         )
 
-        self.create_group_button = create_button(
+        self.create_group_button = create_missionaries_pill_button(
             "Create Group",
             "secondary",
         )
 
-        self.batch_button = create_button(
+        self.batch_button = create_missionaries_pill_button(
             "Batch Actions",
             "secondary",
         )
@@ -1281,33 +1302,15 @@ class MissionariesPage(QWidget):
         layout.setSpacing(8)
         top_bar.setLayout(layout)
 
-        tabs = QFrame()
-        tabs.setObjectName("MissionariesTabStrip")
-        tabs.setAttribute(Qt.WA_StyledBackground, True)
-        tabs_layout = QHBoxLayout()
-        tabs_layout.setContentsMargins(0, 0, 0, 0)
-        tabs_layout.setSpacing(0)
-        tabs.setLayout(tabs_layout)
-
-        self._tab_buttons = {}
+        tabs = AnimatedTabStrip()
+        self._tab_buttons = tabs.buttons
         for key, text in [
             ("active", "Active"),
             ("groups", "Groups"),
             ("archive", "Archive"),
         ]:
-            button = QPushButton(text)
-            button.setObjectName("MissionariesTopTab")
-            button.setCheckable(True)
-            button.setChecked(key == self._selected_tab)
-            button.setProperty("active", key == self._selected_tab)
-            button.setFixedHeight(30)
-            button.setCursor(Qt.PointingHandCursor)
-            button.clicked.connect(
-                lambda checked=False, tab_key=key: self._select_tab(tab_key)
-            )
-            self._tab_buttons[key] = button
-            tabs_layout.addWidget(button)
-        tabs_layout.addStretch()
+            tabs.add_tab(key, text, self._select_tab)
+        tabs.set_active(self._selected_tab, animate=False)
         layout.addWidget(tabs)
 
         command_row = QGridLayout()
@@ -1924,6 +1927,12 @@ class MissionariesPage(QWidget):
         self._render_selected_tab()
 
     def _sync_tab_buttons(self):
+        tab_strip = next(
+            (button.parentWidget() for button in self._tab_buttons.values()), None
+        )
+        if isinstance(tab_strip, AnimatedTabStrip):
+            tab_strip.set_active(self._selected_tab, animate=False)
+            return
         for key, button in getattr(self, "_tab_buttons", {}).items():
             active = key == self._selected_tab
             button.setChecked(active)

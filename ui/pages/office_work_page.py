@@ -37,6 +37,7 @@ from services.secretary_work_service import (
 from services.client_view_service import ClientViewService
 from ui.dialogs.office_work_dialogs import ProjectDialog, TaskDialog
 from ui.foundation.background_loader import LatestRequestLoader
+from ui.widgets.animated_tab_strip import AnimatedTabStrip
 from ui.foundation import (
     FilterBar,
     create_button,
@@ -463,35 +464,15 @@ class OfficeWorkPage(QWidget):
         return self.add_task_btn
 
     def _build_tabs(self):
-        self.tab_bar = QFrame()
-        self.tab_bar.setObjectName("OfficeWorkTopTabStrip")
-        self.tab_bar.setAttribute(Qt.WA_StyledBackground, True)
-        layout = QHBoxLayout()
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
-        self.tab_bar.setLayout(layout)
-
         self.tab_control = None
-        self.tab_buttons = {}
-        self.tab_button_group = QButtonGroup(self)
-        self.tab_button_group.setExclusive(True)
+        self.tab_bar = AnimatedTabStrip()
+        self.tab_buttons = self.tab_bar.buttons
         for key, title in [
             ("tasks", "Tasks"),
             ("completed", "Completed"),
             ("projects", "Projects"),
         ]:
-            button = QPushButton(title)
-            button.setObjectName("OfficeWorkTopTab")
-            button.setCheckable(True)
-            button.setFixedHeight(30)
-            button.clicked.connect(
-                lambda checked=False, route_key=key:
-                self._select_tab(route_key)
-            )
-            self.tab_button_group.addButton(button)
-            self.tab_buttons[key] = button
-            layout.addWidget(button)
-        layout.addStretch()
+            self.tab_bar.add_tab(key, title, self._select_tab)
 
     def _build_tasks_tab(self):
         tab = QWidget()
@@ -1507,10 +1488,7 @@ class OfficeWorkPage(QWidget):
         self._refresh_tab_buttons()
 
     def _refresh_tab_buttons(self):
-        for tab_key, button in self.tab_buttons.items():
-            button.setProperty("active", tab_key == self._selected_tab)
-            button.style().unpolish(button)
-            button.style().polish(button)
+        self.tab_bar.set_active(self._selected_tab, animate=False)
 
     def _show_project_tasks(self, project_id):
         self._project_filter_id = project_id

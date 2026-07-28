@@ -188,7 +188,9 @@ function Get-MachineState {
     $FirewallRules = @(
         @(
             Get-NetFirewallRule -Name "MissionLegalServerHTTPS" -ErrorAction SilentlyContinue
+            Get-NetFirewallRule -Name "MissionLegalServerDiscovery" -ErrorAction SilentlyContinue
             Get-NetFirewallRule -DisplayName "Mission Legal Server HTTPS" -ErrorAction SilentlyContinue
+            Get-NetFirewallRule -DisplayName "Mission Legal Server Discovery" -ErrorAction SilentlyContinue
         ) | Sort-Object Name -Unique
     )
     return [pscustomobject]@{
@@ -759,17 +761,21 @@ function Get-ServerFirewallRuleEvidence {
     $ManagedRules = @(
         @(
             Get-NetFirewallRule -Name "MissionLegalServerHTTPS" -ErrorAction SilentlyContinue
+            Get-NetFirewallRule -Name "MissionLegalServerDiscovery" -ErrorAction SilentlyContinue
             Get-NetFirewallRule -DisplayName "Mission Legal Server HTTPS" -ErrorAction SilentlyContinue
+            Get-NetFirewallRule -DisplayName "Mission Legal Server Discovery" -ErrorAction SilentlyContinue
         ) | Sort-Object Name -Unique
     )
     foreach ($Rule in $ManagedRules) {
         $Application = $Rule | Get-NetFirewallApplicationFilter -ErrorAction SilentlyContinue
         $ServiceFilter = $Rule | Get-NetFirewallServiceFilter -ErrorAction SilentlyContinue
         $PortFilter = $Rule | Get-NetFirewallPortFilter -ErrorAction SilentlyContinue
+        $AddressFilter = $Rule | Get-NetFirewallAddressFilter -ErrorAction SilentlyContinue
         $ApplicationPath = ""
         $ServiceTarget = ""
         $Protocol = ""
         $LocalPort = ""
+        $RemoteAddress = ""
         if ($null -ne $Application) {
             $ApplicationPath = [string]$Application.Program
         }
@@ -780,6 +786,9 @@ function Get-ServerFirewallRuleEvidence {
             $Protocol = [string]$PortFilter.Protocol
             $LocalPort = [string]$PortFilter.LocalPort
         }
+        if ($null -ne $AddressFilter) {
+            $RemoteAddress = [string]$AddressFilter.RemoteAddress
+        }
         if ($ApplicationPath -and $ApplicationPath -notin @("Any", "System")) {
             $ApplicationPath = [Environment]::ExpandEnvironmentVariables($ApplicationPath)
             try {
@@ -789,8 +798,13 @@ function Get-ServerFirewallRuleEvidence {
             }
         }
         $TargetsServer = (
-            ([string]$Rule.Name -ceq "MissionLegalServerHTTPS") -and
-            ([string]$Rule.DisplayName -ceq "Mission Legal Server HTTPS")
+            (
+                ([string]$Rule.Name -ceq "MissionLegalServerHTTPS") -and
+                ([string]$Rule.DisplayName -ceq "Mission Legal Server HTTPS")
+            ) -or (
+                ([string]$Rule.Name -ceq "MissionLegalServerDiscovery") -and
+                ([string]$Rule.DisplayName -ceq "Mission Legal Server Discovery")
+            )
         )
         if (-not $TargetsServer) {
             continue
@@ -807,6 +821,7 @@ function Get-ServerFirewallRuleEvidence {
             profile = [string]$Rule.Profile
             protocol = $Protocol
             local_port = $LocalPort
+            remote_address = $RemoteAddress
             program = $ApplicationPath
             service = $ServiceTarget
         }
@@ -826,15 +841,29 @@ function Assert-PrivateServerFirewallRule {
         $_.direction -ceq "Inbound" -and
         $_.action -ceq "Allow" -and
         $_.protocol -in @("TCP", "6") -and
-        $_.profile -match 'Private' -and
-        $_.profile -notmatch 'Public|Domain|Any'
+        $_.profile -ceq "Any" -and
+        $_.remote_address -ceq "LocalSubnet"
     })
-    if ($AllProductRules.Count -ne 1 -or $Candidates.Count -ne 1 -or $Valid.Count -ne 1) {
+    $Discovery = @($AllProductRules | Where-Object {
+        $_.name -ceq "MissionLegalServerDiscovery" -and
+        $_.local_port -ceq "43876" -and
+        $_.enabled -ceq "True" -and
+        $_.direction -ceq "Inbound" -and
+        $_.action -ceq "Allow" -and
+        $_.protocol -in @("UDP", "17") -and
+        $_.profile -ceq "Any" -and
+        $_.remote_address -ceq "LocalSubnet"
+    })
+    if (
+        $AllProductRules.Count -ne 2 -or
+        $Candidates.Count -ne 1 -or
+        $Valid.Count -ne 1 -or
+        $Discovery.Count -ne 1
+    ) {
         throw (
-            "Expected exactly one product firewall rule and it must be enabled, inbound, " +
-            "Private-only TCP for $ServiceName on port $Port. Found " +
+            "Expected same-subnet HTTPS TCP and discovery UDP firewall rules. Found " +
             "$($AllProductRules.Count) product rule(s), $($Candidates.Count) on the port, " +
-            "and $($Valid.Count) valid rule(s)."
+            "$($Valid.Count) valid HTTPS rule(s), and $($Discovery.Count) discovery rule(s)."
         )
     }
     return $Valid[0]

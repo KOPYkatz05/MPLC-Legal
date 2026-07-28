@@ -37,6 +37,69 @@ QWidget#CentralWidget {
     background-color: #FFFFFF;
 }
 
+/* Shared page tabs: based on the Missionaries tab rhythm. */
+QFrame#UnifiedTabStrip {
+    background-color: transparent;
+    min-height: 30px;
+    max-height: 30px;
+    border-bottom: 1px solid #D9D9D9;
+}
+
+QPushButton#UnifiedTopTab {
+    color: #707070;
+    font-size: 12px;
+    font-weight: 400;
+    padding: 0px 9px 7px 9px;
+    border: 0px;
+    border-radius: 0px;
+    background-color: transparent;
+}
+
+QPushButton#UnifiedTopTab:hover {
+    color: #242424;
+}
+
+QPushButton#UnifiedTopTab:checked,
+QPushButton#UnifiedTopTab[active="true"] {
+    color: #242424;
+}
+
+QFrame#UnifiedTabIndicator {
+    background-color: #242424;
+    border: none;
+}
+
+/* Missionaries page actions use the shared pill factory while retaining their
+   established primary and secondary color treatments. */
+QWidget#MissionariesPage QPushButton[missionariesTone] {
+    min-height: 0px;
+    max-height: 34px;
+    border-radius: 17px;
+    padding: 0px 12px;
+    font-size: 13px;
+    font-weight: 500;
+}
+
+QWidget#MissionariesPage QPushButton[missionariesTone="secondary"] {
+    background-color: #FFFFFF;
+    color: #0F5F64;
+    border: 1px solid #9BE3E6;
+}
+
+QWidget#MissionariesPage QPushButton[missionariesTone="secondary"]:hover {
+    background-color: #EFFCFC;
+}
+
+QWidget#MissionariesPage QPushButton[missionariesTone="primary"] {
+    background-color: #0EA5AC;
+    color: #FFFFFF;
+    border: none;
+}
+
+QWidget#MissionariesPage QPushButton[missionariesTone="primary"]:hover {
+    background-color: #0B9299;
+}
+
 QFrame#MissionariesTopBar {
     background-color: #FFFFFF;
     border-bottom: 1px solid #ECECEC;
@@ -278,31 +341,6 @@ QLabel#AlertWorkspaceChip[tone="success"] {
 QWidget#SettingsPage,
 QWidget#SettingsWorkspace {
     background-color: #FFFFFF;
-}
-
-QFrame#SettingsTopBar {
-    background-color: #FFFFFF;
-    border-bottom: 1px solid #ECECEC;
-}
-
-QFrame#SettingsTopTabStrip {
-    background-color: transparent;
-    min-height: 30px;
-    max-height: 30px;
-    border-bottom: 1px solid #D9D9D9;
-}
-
-QLabel#SettingsTopTab {
-    color: #707070;
-    font-size: 12px;
-    font-weight: 400;
-    padding: 0px 9px 7px 9px;
-    border-bottom: 1px solid transparent;
-}
-
-QLabel#SettingsTopTab[active="true"] {
-    color: #242424;
-    border-bottom: 1px solid #242424;
 }
 
 QLabel#SettingsTitle {

@@ -1,4 +1,4 @@
-APP_VERSION = "0.2.1"
+APP_VERSION = "0.2.2"
 API_VERSION = "1"
 SCHEMA_VERSION = 1
 
@@ -8,7 +8,6 @@ SCHEMA_VERSION = 1
 MIN_SUPPORTED_SERVER_API_VERSION = "1"
 MAX_SUPPORTED_SERVER_API_VERSION = "1"
 
-# This responsive-client/server rollout is release-locked: the server tells
-# older installed clients to update to this same application version, while
-# clients also reject a server from a different application release.
+# A server can require a minimum client version. Newer clients may continue to
+# work with an older server when their API versions remain compatible.
 MIN_SUPPORTED_CLIENT_VERSION = APP_VERSION

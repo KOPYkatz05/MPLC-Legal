@@ -985,14 +985,22 @@ begin
     '$rules = @(); ' +
     '$rules += @(Get-NetFirewallRule -Name ''MissionLegalServerHTTPS'' ' +
       '-ErrorAction SilentlyContinue); ' +
+    '$rules += @(Get-NetFirewallRule -Name ''MissionLegalServerDiscovery'' ' +
+      '-ErrorAction SilentlyContinue); ' +
     '$rules += @(Get-NetFirewallRule -DisplayName ''Mission Legal Server HTTPS'' ' +
+      '-ErrorAction SilentlyContinue); ' +
+    '$rules += @(Get-NetFirewallRule -DisplayName ''Mission Legal Server Discovery'' ' +
       '-ErrorAction SilentlyContinue); ' +
     '$rules | Sort-Object -Property Name -Unique | ' +
       'Remove-NetFirewallRule -ErrorAction Stop; ' +
     '$remaining = @(); ' +
     '$remaining += @(Get-NetFirewallRule -Name ''MissionLegalServerHTTPS'' ' +
       '-ErrorAction SilentlyContinue); ' +
+    '$remaining += @(Get-NetFirewallRule -Name ''MissionLegalServerDiscovery'' ' +
+      '-ErrorAction SilentlyContinue); ' +
     '$remaining += @(Get-NetFirewallRule -DisplayName ''Mission Legal Server HTTPS'' ' +
+      '-ErrorAction SilentlyContinue); ' +
+    '$remaining += @(Get-NetFirewallRule -DisplayName ''Mission Legal Server Discovery'' ' +
       '-ErrorAction SilentlyContinue); ' +
     'if ($remaining.Count -ne 0) { throw ''Managed Mission Legal Server ' +
       'firewall rules remain after fallback removal.'' }';

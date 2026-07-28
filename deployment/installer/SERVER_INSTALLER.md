@@ -287,12 +287,15 @@ only through `\\.\pipe\MissionLegal.ServerManager.v1`. The named pipe:
 - is accepted by the Manager only when its owning PID matches the running
   `MissionLegalServer` service reported by the Service Control Manager.
 
-The allowed actions create a short-lived automatic setup code, read status,
+The allowed actions create a short-lived six-digit pairing code (plus an
+advanced recovery package), read status,
 list or revoke paired devices, create and verify a backup, request a controlled
-API/server runtime restart, and return a support summary. The setup package
-contains only the selected LAN HTTPS address, the public CA certificate, and a
-one-use pairing code. It never contains a private key. The Windows SCM service
-remains alive while its Uvicorn runtime recycles. No arbitrary command,
+API/server runtime restart, trust or forget the current LAN for discovery, and
+return a support summary. Normal pairing uses trusted-LAN discovery plus a
+six-digit one-use code. The advanced recovery setup package contains only the
+selected LAN HTTPS address, the public CA certificate, and that code; it never
+contains a private key. The Windows SCM service remains alive while its Uvicorn
+runtime recycles. No arbitrary command,
 executable path, PowerShell text, SQL, or filesystem path crosses this boundary.
 No remote HTTP management route or additional TCP listener is created.
 
@@ -351,9 +354,11 @@ refuses unexpected files or reparse points in the public directory.
 
 Setup checks every Windows command it runs. It grants `LocalSystem` inherited
 Modify access to both configured storage directories and verifies the resulting
-ACL. It also creates or updates the fixed `MissionLegalServerHTTPS` firewall
-rule, verifies its port/direction/action/profile, and removes an older rule with
-the same product display name. Changing `--port` replaces the previous managed
+ACL. It also creates or updates same-subnet firewall rules for
+`MissionLegalServerHTTPS` (TCP on the configured API port) and
+`MissionLegalServerDiscovery` (UDP 43876), verifies their
+port/direction/action/profile/address scope, and removes older rules with the
+same product display names. Changing `--port` replaces the previous managed TCP
 rule instead of leaving the old port open.
 
 ### Existing database migration

@@ -1,4 +1,5 @@
 import asyncio
+import ipaddress
 import logging
 import os
 import secrets
@@ -11,7 +12,17 @@ from pathlib import Path
 # even if the interactive Windows profile has client settings configured.
 os.environ["MISSION_LEGAL_SERVER_PROCESS"] = "1"
 
-from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, UploadFile, status
+from fastapi import (
+    Depends,
+    FastAPI,
+    File,
+    Form,
+    Header,
+    HTTPException,
+    Request,
+    UploadFile,
+    status,
+)
 from fastapi.responses import FileResponse
 from starlette.background import BackgroundTask
 from pydantic import BaseModel, Field
@@ -22,6 +33,7 @@ from database.runtime import get_app_data_dir, get_database_path
 from database.schema import get_schema_version
 from server.security import DeviceCredentialStore, PairingCodeStore
 from server.serialization import model_snapshot, serialize_result
+from services.lan_discovery import certificate_sha256
 from services.remote_service import decode_remote_value
 from services.database_backup_service import DatabaseBackupService
 from version import (
@@ -186,9 +198,22 @@ async def _backup_loop(stop_event):
                 logger.exception("Scheduled database backup failed")
 
 
-def create_app(device_store=None, pairing_store=None, manage_lifecycle=True):
+def create_app(
+    device_store=None,
+    pairing_store=None,
+    manage_lifecycle=True,
+    network_trust_provider=None,
+):
     devices = device_store or DeviceCredentialStore()
     pairing = pairing_store or PairingCodeStore()
+    if network_trust_provider is None:
+        if manage_lifecycle:
+            from server.trusted_networks import TrustedNetworkStore
+
+            network_trust_provider = TrustedNetworkStore().is_current_trusted
+        else:
+            # Explicit lifecycle-free apps are test/in-process instances.
+            network_trust_provider = lambda: True
 
     @asynccontextmanager
     async def lifespan(_app):
@@ -237,6 +262,28 @@ def create_app(device_store=None, pairing_store=None, manage_lifecycle=True):
             )
         return device
 
+    def pairing_network_allowed(request: Request):
+        client_host = str(request.client.host if request.client else "").strip()
+        try:
+            client_address = ipaddress.ip_address(client_host)
+        except ValueError:
+            client_address = None
+        if client_address is not None and client_address.is_loopback:
+            return True
+        try:
+            trusted = bool(network_trust_provider())
+        except Exception:
+            trusted = False
+        if not trusted:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=(
+                    "New-device pairing is disabled until the server trusts "
+                    "its current network"
+                ),
+            )
+        return True
+
     def pairing_confirmation_device(
         x_device_id: str = Header(default=""),
         x_device_credential: str = Header(default=""),
@@ -278,8 +325,36 @@ def create_app(device_store=None, pairing_store=None, manage_lifecycle=True):
             **_compatibility_payload(),
         }
 
+    @app.get("/pair/bootstrap")
+    def pairing_bootstrap():
+        """Publish only the public CA used by trusted-LAN discovery."""
+
+        public_ca = (
+            get_app_data_dir() / "Public" / "mission-legal-ca.pem"
+        )
+        if not public_ca.is_file():
+            from server.tls import default_tls_paths
+
+            public_ca = default_tls_paths()["ca_cert"]
+        try:
+            certificate = public_ca.read_text(encoding="ascii")
+            fingerprint = certificate_sha256(certificate)
+        except (OSError, UnicodeError, ValueError) as exc:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Pairing certificate unavailable",
+            ) from exc
+        return {
+            "server_id": fingerprint,
+            "ca_sha256": fingerprint,
+            "ca_certificate_pem": certificate,
+        }
+
     @app.post("/pair", status_code=status.HTTP_201_CREATED)
-    def pair(request: PairingRequest):
+    def pair(
+        request: PairingRequest,
+        _network_allowed=Depends(pairing_network_allowed),
+    ):
         claimed, registered = pairing.consume_and_execute(
             request.code,
             lambda: devices.register(

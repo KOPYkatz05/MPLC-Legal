@@ -1,8 +1,70 @@
+import shutil
+import tempfile
+import uuid
+from pathlib import Path
+
+import pytest
 from fastapi.testclient import TestClient
 
 from server.app import create_app
 from server.security import DeviceCredentialStore, PairingCodeStore
 from version import APP_VERSION, MIN_SUPPORTED_CLIENT_VERSION
+
+
+@pytest.fixture
+def tmp_path():
+    root = Path(tempfile.gettempdir()).resolve()
+    path = root / f"mission-legal-server-app-{uuid.uuid4().hex}"
+    path.mkdir(mode=0o777)
+    try:
+        yield path
+    finally:
+        shutil.rmtree(path)
+
+
+def test_pairing_bootstrap_returns_only_public_ca_identity(tmp_path, monkeypatch):
+    public_ca = tmp_path / "Public" / "mission-legal-ca.pem"
+    public_ca.parent.mkdir(parents=True)
+    public_ca.write_text(
+        "-----BEGIN CERTIFICATE-----\nPUBLIC CA\n-----END CERTIFICATE-----\n",
+        encoding="ascii",
+    )
+    monkeypatch.setattr("server.app.get_app_data_dir", lambda: tmp_path)
+    client = TestClient(
+        create_app(
+            DeviceCredentialStore(tmp_path / "devices.json"),
+            PairingCodeStore(tmp_path / "pairing.json"),
+            manage_lifecycle=False,
+        )
+    )
+
+    response = client.get("/pair/bootstrap")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["server_id"] == payload["ca_sha256"]
+    assert payload["ca_certificate_pem"].startswith("-----BEGIN CERTIFICATE-----")
+    assert "PRIVATE KEY" not in response.text
+
+
+def test_remote_pairing_is_blocked_when_current_network_is_not_trusted(tmp_path):
+    pairing = PairingCodeStore(tmp_path / "pairing.json")
+    code = pairing.create()["code"]
+    client = TestClient(
+        create_app(
+            DeviceCredentialStore(tmp_path / "devices.json"),
+            pairing,
+            manage_lifecycle=False,
+            network_trust_provider=lambda: False,
+        )
+    )
+
+    response = client.post(
+        "/pair",
+        json={"code": code, "device_name": "Unknown network"},
+    )
+
+    assert response.status_code == 403
 
 
 def test_pairing_and_authenticated_session(tmp_path):

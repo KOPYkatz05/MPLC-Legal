@@ -163,6 +163,8 @@ class ServerManagerWindow(QMainWindow):
         self._current_pairing_code = ""
         self._current_setup_code = ""
         self._server_address = ""
+        self._network_available = False
+        self._network_trusted = False
         self._cached_status: dict[str, Any] = {}
         self._available_update = None
         self._update_request_pending = False
@@ -306,10 +308,36 @@ class ServerManagerWindow(QMainWindow):
             self._section_header(
                 page,
                 "Pair a new computer",
-                "Generate one setup code containing the safe server address, public "
-                "certificate, and one-use pairing credentials.",
+                "Trust the current network, then give the other computer the "
+                "six-digit code shown here.",
             )
         )
+
+        network_card = QFrame(page)
+        network_card.setObjectName("ServerToolCard")
+        network_layout = QHBoxLayout(network_card)
+        network_layout.setContentsMargins(14, 8, 14, 8)
+        network_text = QVBoxLayout()
+        self.network_name_label = QLabel("Checking the current network…", network_card)
+        self.network_name_label.setObjectName("ServerSectionTitle")
+        self.network_name_label.setTextFormat(Qt.PlainText)
+        self.network_trust_label = QLabel(
+            "New-device discovery is unavailable until this network is trusted.",
+            network_card,
+        )
+        self.network_trust_label.setObjectName("ServerSectionSubtitle")
+        self.network_trust_label.setTextFormat(Qt.PlainText)
+        self.network_trust_label.setWordWrap(True)
+        network_text.addWidget(self.network_name_label)
+        network_text.addWidget(self.network_trust_label)
+        network_layout.addLayout(network_text, 1)
+        self.network_trust_button = self._button(
+            "Trust this network", icon_name="shield-check"
+        )
+        self.network_trust_button.setEnabled(False)
+        self.network_trust_button.clicked.connect(self.toggle_current_network_trust)
+        network_layout.addWidget(self.network_trust_button)
+        layout.addWidget(network_card)
 
         card = QFrame(page)
         card.setObjectName("PairingCodeCard")
@@ -330,11 +358,13 @@ class ServerManagerWindow(QMainWindow):
         button_row = QHBoxLayout()
         button_row.addStretch()
         self.generate_code_button = self._button(
-            "Generate setup code",
+            "Generate pairing code",
             icon_name="key-round",
             primary=True,
         )
-        self.copy_code_button = self._button("Copy setup code", icon_name="copy")
+        self.copy_code_button = self._button(
+            "Copy advanced setup code", icon_name="copy"
+        )
         self.copy_code_button.setEnabled(False)
         self.generate_code_button.clicked.connect(self.generate_pairing_code)
         self.copy_code_button.clicked.connect(self.copy_pairing_code)
@@ -700,6 +730,80 @@ class ServerManagerWindow(QMainWindow):
             ),
         )
 
+    def toggle_current_network_trust(self):
+        if not self._network_available:
+            self._set_feedback(
+                self.pairing_feedback,
+                "Connect this laptop to a local network first.",
+                error=True,
+            )
+            return
+        command = (
+            "forget_current_network"
+            if self._network_trusted
+            else "trust_current_network"
+        )
+        self.network_trust_button.setEnabled(False)
+        self._request(
+            command,
+            on_success=self._network_trust_changed,
+            on_error=self._network_trust_failed,
+        )
+
+    def _network_trust_changed(self, result):
+        payload = result if isinstance(result, dict) else {}
+        self._apply_network_status(payload.get("network"))
+        self._set_feedback(
+            self.pairing_feedback,
+            "This network is trusted for discovery and six-digit pairing."
+            if self._network_trusted
+            else "This network is no longer trusted. Localhost remains available.",
+        )
+
+    def _network_trust_failed(self, message):
+        self.network_trust_button.setEnabled(self._network_available)
+        self._set_feedback(
+            self.pairing_feedback,
+            f"Could not change network trust: {self._safe_error(message)}",
+            error=True,
+        )
+
+    def _apply_network_status(self, value):
+        if not isinstance(value, dict):
+            # Compatibility with a manager connected to an older local service.
+            self._network_available = False
+            self._network_trusted = False
+            self.network_name_label.setText("Discovery unavailable")
+            self.network_trust_label.setText(
+                "This server version does not support trusted-LAN discovery. "
+                "Use the advanced recovery setup code."
+            )
+            self.network_trust_button.setEnabled(False)
+            self.generate_code_button.setEnabled(
+                not self._pairing_request_pending
+            )
+            return
+        self._network_available = bool(value.get("available"))
+        self._network_trusted = bool(value.get("trusted"))
+        self.network_name_label.setText(
+            str(value.get("name") or "No active local network")
+        )
+        if not self._network_available:
+            detail = "Localhost is available, but no LAN is connected."
+            button_text = "Trust this network"
+        elif self._network_trusted:
+            detail = "Trusted — nearby computers can discover this server for pairing."
+            button_text = "Remove trust"
+        else:
+            detail = "Not trusted — localhost works, but new-device discovery is off."
+            button_text = "Trust this network"
+        self.network_trust_label.setText(detail)
+        self.network_trust_button.setText(button_text)
+        self.network_trust_button.setEnabled(self._network_available)
+        self.generate_code_button.setEnabled(
+            not self._pairing_request_pending
+        )
+
     def _pairing_code_created(self, result, request_serial=None):
         if (
             request_serial is not None
@@ -745,7 +849,12 @@ class ServerManagerWindow(QMainWindow):
             )
         self._set_feedback(
             self.pairing_feedback,
-            "Setup code ready. Copy it to the other computer; it can be used once.",
+            (
+                "Pairing is ready. On the other computer, enter only these six digits."
+                if self._network_trusted
+                else "Code ready for this laptop. Trust the current network to let "
+                "other computers discover the server."
+            ),
         )
         self._update_pairing_countdown()
 
@@ -776,7 +885,10 @@ class ServerManagerWindow(QMainWindow):
         if not self._current_setup_code:
             return
         if self._copy_text_to_clipboard(self._current_setup_code):
-            self._set_feedback(self.pairing_feedback, "Setup code copied.")
+            self._set_feedback(
+                self.pairing_feedback,
+                "Advanced recovery setup code copied.",
+            )
         else:
             self._set_feedback(
                 self.pairing_feedback,
@@ -825,6 +937,7 @@ class ServerManagerWindow(QMainWindow):
         self._cached_status = status
         state = self._normalize_server_state(status.get("state"))
         self._set_server_state(state)
+        self._apply_network_status(status.get("network"))
 
         address = self._address_from_status(status)
         if address:
@@ -873,6 +986,14 @@ class ServerManagerWindow(QMainWindow):
 
     def _apply_status_failure(self, message):
         self._set_server_state("unavailable")
+        self._network_available = False
+        self._network_trusted = False
+        self.network_name_label.setText("Network status unavailable")
+        self.network_trust_label.setText(
+            "Local network controls will return when the service reconnects."
+        )
+        self.network_trust_button.setEnabled(False)
+        self.generate_code_button.setEnabled(False)
         self._clear_live_status_values()
         self._set_feedback(
             self.status_feedback,

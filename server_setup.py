@@ -17,6 +17,9 @@ from version import APP_VERSION
 SERVICE_NAME = "MissionLegalServer"
 FIREWALL_RULE_NAME = "MissionLegalServerHTTPS"
 FIREWALL_RULE_DISPLAY_NAME = "Mission Legal Server HTTPS"
+DISCOVERY_FIREWALL_RULE_NAME = "MissionLegalServerDiscovery"
+DISCOVERY_FIREWALL_RULE_DISPLAY_NAME = "Mission Legal Server Discovery"
+DISCOVERY_PORT = 43876
 
 
 class ServerSetupError(RuntimeError):
@@ -309,47 +312,80 @@ $ErrorActionPreference = 'Stop'
 $port = [int]$env:MISSION_LEGAL_SERVER_PORT
 $name = '{FIREWALL_RULE_NAME}'
 $displayName = '{FIREWALL_RULE_DISPLAY_NAME}'
-Get-NetFirewallRule -Name $name -ErrorAction SilentlyContinue |
-    Remove-NetFirewallRule -ErrorAction Stop
-Get-NetFirewallRule -DisplayName $displayName -ErrorAction SilentlyContinue |
-    Remove-NetFirewallRule -ErrorAction Stop
+$discoveryName = '{DISCOVERY_FIREWALL_RULE_NAME}'
+$discoveryDisplayName = '{DISCOVERY_FIREWALL_RULE_DISPLAY_NAME}'
+$discoveryPort = {DISCOVERY_PORT}
+foreach ($ruleName in @($name, $discoveryName)) {{
+    Get-NetFirewallRule -Name $ruleName -ErrorAction SilentlyContinue |
+        Remove-NetFirewallRule -ErrorAction Stop
+}}
+foreach ($ruleDisplayName in @($displayName, $discoveryDisplayName)) {{
+    Get-NetFirewallRule -DisplayName $ruleDisplayName -ErrorAction SilentlyContinue |
+        Remove-NetFirewallRule -ErrorAction Stop
+}}
 New-NetFirewallRule `
     -Name $name `
     -DisplayName $displayName `
-    -Description 'Allows authenticated Mission Legal clients to reach the main-computer HTTPS server on Private networks.' `
+    -Description 'Allows same-subnet authenticated Mission Legal clients to reach the HTTPS server.' `
     -Group 'Mission Legal' `
     -Enabled True `
     -Direction Inbound `
     -Action Allow `
-    -Profile Private `
+    -Profile Any `
+    -RemoteAddress LocalSubnet `
     -Protocol TCP `
     -LocalPort $port | Out-Null
-$matches = @(Get-NetFirewallRule -DisplayName $displayName -ErrorAction Stop)
-if ($matches.Count -ne 1) {{
-    throw "Expected exactly one managed firewall rule; found $($matches.Count)."
+New-NetFirewallRule `
+    -Name $discoveryName `
+    -DisplayName $discoveryDisplayName `
+    -Description 'Allows same-subnet Mission Legal discovery; the service responds only on trusted networks.' `
+    -Group 'Mission Legal' `
+    -Enabled True `
+    -Direction Inbound `
+    -Action Allow `
+    -Profile Any `
+    -RemoteAddress LocalSubnet `
+    -Protocol UDP `
+    -LocalPort $discoveryPort | Out-Null
+
+foreach ($expected in @(
+    @{{ Name = $name; Display = $displayName; Protocol = @('TCP', '6'); Port = $port.ToString() }},
+    @{{ Name = $discoveryName; Display = $discoveryDisplayName; Protocol = @('UDP', '17'); Port = $discoveryPort.ToString() }}
+)) {{
+    $matches = @(Get-NetFirewallRule -DisplayName $expected.Display -ErrorAction Stop)
+    if ($matches.Count -ne 1) {{
+        throw "Expected exactly one managed firewall rule named $($expected.Name)."
+    }}
+    $rule = $matches[0]
+    $portFilters = @($rule | Get-NetFirewallPortFilter -ErrorAction Stop)
+    $addressFilters = @($rule | Get-NetFirewallAddressFilter -ErrorAction Stop)
+    $protocol = if ($portFilters.Count -eq 1) {{ [string]$portFilters[0].Protocol }} else {{ '' }}
+    $localPort = if ($portFilters.Count -eq 1) {{ [string]$portFilters[0].LocalPort }} else {{ '' }}
+    $remoteAddress = if ($addressFilters.Count -eq 1) {{ [string]$addressFilters[0].RemoteAddress }} else {{ '' }}
+    if (
+        [string]$rule.Name -cne $expected.Name -or
+        [string]$rule.Enabled -cne 'True' -or
+        [string]$rule.Direction -cne 'Inbound' -or
+        [string]$rule.Action -cne 'Allow' -or
+        [string]$rule.Profile -cne 'Any' -or
+        $portFilters.Count -ne 1 -or
+        $expected.Protocol -notcontains $protocol -or
+        $localPort -cne $expected.Port -or
+        $addressFilters.Count -ne 1 -or
+        $remoteAddress -cne 'LocalSubnet'
+    ) {{
+        throw "Managed firewall rule $($expected.Name) did not match the required same-subnet policy."
+    }}
 }}
-$rule = $matches[0]
-$filters = @($rule | Get-NetFirewallPortFilter -ErrorAction Stop)
-$protocol = if ($filters.Count -eq 1) {{ [string]$filters[0].Protocol }} else {{ '' }}
-$localPort = if ($filters.Count -eq 1) {{ [string]$filters[0].LocalPort }} else {{ '' }}
-if (
-    [string]$rule.Name -cne $name -or
-    [string]$rule.Enabled -cne 'True' -or
-    [string]$rule.Direction -cne 'Inbound' -or
-    [string]$rule.Action -cne 'Allow' -or
-    [string]$rule.Profile -cne 'Private' -or
-    $filters.Count -ne 1 -or
-    $protocol -notin @('TCP', '6') -or
-    $localPort -cne $port.ToString()
-) {{
-    throw 'The managed firewall rule did not match the required enabled, inbound, Private-only TCP policy.'
-}}
-Write-Output "$displayName ($port/TCP, Private)"
+Write-Output "$displayName ($port/TCP) and $discoveryDisplayName ($discoveryPort/UDP), LocalSubnet"
 """
     _run_windows_powershell(
         script,
         environment={"MISSION_LEGAL_SERVER_PORT": str(port)},
-        description=f"Configuring the Private-profile firewall rule on TCP {port}",
+        description=(
+            f"Configuring same-subnet HTTPS TCP {port} and discovery UDP "
+            f"{DISCOVERY_PORT} firewall rules"
+        ),
     )
 
 

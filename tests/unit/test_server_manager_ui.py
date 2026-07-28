@@ -75,6 +75,13 @@ class FakeManagementClient:
             "database_file_present": True,
             "server_process_cpu_percent": 3.5,
             "server_process_memory_bytes": 128 * 1024 * 1024,
+            "network": {
+                "available": True,
+                "trusted": True,
+                "network_id": "office123456",
+                "name": "Mission Office",
+                "addresses": ["192.168.108.50"],
+            },
         }
         self.devices = [
             {
@@ -101,6 +108,12 @@ class FakeManagementClient:
                 "expires_at": expires_at,
                 "lifetime_seconds": 600,
             }
+        if command == "trust_current_network":
+            self.status["network"]["trusted"] = True
+            return {"network": dict(self.status["network"])}
+        if command == "forget_current_network":
+            self.status["network"]["trusted"] = False
+            return {"network": dict(self.status["network"])}
         if command == "list_devices":
             return {"devices": list(self.devices)}
         if command == "revoke_device":
@@ -214,6 +227,23 @@ def test_pairing_code_can_be_generated_copied_and_expires(qapp):
     window._update_pairing_countdown()
     assert window.copy_code_button.isEnabled() is False
     assert "expired" in window.pairing_expiry_label.text().lower()
+    window.deleteLater()
+
+
+def test_current_network_trust_toggle_controls_discovery_copy(qapp):
+    window, client = make_window(qapp)
+    qapp.processEvents()
+
+    assert window._network_trusted is True
+    assert window.network_trust_button.text() == "Remove trust"
+
+    window.network_trust_button.click()
+    qapp.processEvents()
+
+    assert ("forget_current_network", None) in client.calls
+    assert window._network_trusted is False
+    assert window.network_trust_button.text() == "Trust this network"
+    assert "localhost remains available" in window.pairing_feedback.text().lower()
     window.deleteLater()
 
 

@@ -197,6 +197,7 @@ def build_document_card(
     title.setObjectName("StrongText")
     status = QLabel(tr("missionary_detail_uploaded_status"))
     status.setObjectName("MutedText")
+    status.setProperty("document_card_status", True)
     title_row.addWidget(title)
     title_row.addWidget(status)
     title_row.addStretch()

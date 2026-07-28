@@ -19,6 +19,11 @@ from PySide6.QtCore import QSettings
 from app_identity import APP, ORG
 from database.runtime import get_client_data_dir
 from services.api_client import ApiPairingRecoveryRequired, MissionLegalApiClient
+from services.lan_discovery import (
+    DiscoveredServer,
+    certificate_sha256,
+    discover_servers,
+)
 from services.pairing_package import PairingPackageError, decode_pairing_package
 from utils.interprocess_lock import interprocess_file_lock
 
@@ -52,6 +57,55 @@ class ClientPairingResult:
 
 def default_device_name():
     return socket.gethostname()
+
+
+def discover_pairing_servers(timeout=2.0) -> tuple[DiscoveredServer, ...]:
+    """Return local/trusted-LAN servers for the six-digit pairing screen."""
+
+    return discover_servers(timeout=timeout, include_local=True)
+
+
+def recover_configured_server_address(timeout=1.25) -> str | None:
+    """Replace a stale LAN IP only after matching the already trusted CA."""
+
+    settings = QSettings(ORG, APP)
+    current_url = str(settings.value("server/url", "") or "").strip().rstrip("/")
+    certificate_path = str(
+        settings.value("server/ca_certificate", "") or ""
+    ).strip()
+    if not current_url or not certificate_path:
+        return None
+    try:
+        trusted_certificate = Path(certificate_path).read_text(encoding="ascii")
+        trusted_fingerprint = certificate_sha256(trusted_certificate)
+    except (OSError, UnicodeError, ValueError):
+        return None
+    try:
+        candidates = discover_servers(timeout=timeout, include_local=False)
+    except Exception:
+        return None
+    matching = next(
+        (
+            candidate
+            for candidate in candidates
+            if candidate.ca_sha256 == trusted_fingerprint
+        ),
+        None,
+    )
+    if matching is None:
+        return None
+    discovered_url = normalize_server_url(matching.server_url)
+    if discovered_url == current_url:
+        return None
+    settings.setValue("server/url", discovered_url)
+    settings.sync()
+    if settings.status() != QSettings.NoError:
+        return None
+    # Retarget the process-wide owner in place. Existing services and pages
+    # retain this object, so replacing/closing it would leave the running UI
+    # partly connected to the old Wi-Fi address.
+    MissionLegalApiClient.from_environment()
+    return discovered_url
 
 
 def normalize_server_url(value):

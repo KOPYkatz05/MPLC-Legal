@@ -1,6 +1,7 @@
 import argparse
 import os
 import sys
+import threading
 
 
 def _should_enforce_production_tls_key_acl(frozen=None):
@@ -120,15 +121,37 @@ def main():
 
     import uvicorn
 
-    uvicorn.run(
-        "server.app:app",
-        host=args.host,
-        port=args.port,
-        ssl_certfile=args.tls_cert,
-        ssl_keyfile=args.tls_key,
-        proxy_headers=False,
-        server_header=False,
+    from server.tls import default_tls_paths
+    from server.trusted_networks import TrustedNetworkStore
+    from services.lan_discovery import LanDiscoveryResponder
+
+    trusted_networks = TrustedNetworkStore()
+    public_ca = (
+        paths["ca_cert"] if "paths" in locals() else default_tls_paths()["ca_cert"]
     )
+    responder = LanDiscoveryResponder(
+        enabled_provider=trusted_networks.is_current_trusted,
+        ca_certificate_provider=lambda: public_ca.read_text(encoding="ascii"),
+        port_provider=lambda: args.port,
+    )
+    discovery_thread = threading.Thread(
+        target=responder.serve_forever,
+        name="MissionLegalLanDiscovery",
+        daemon=True,
+    )
+    discovery_thread.start()
+    try:
+        uvicorn.run(
+            "server.app:app",
+            host=args.host,
+            port=args.port,
+            ssl_certfile=args.tls_cert,
+            ssl_keyfile=args.tls_key,
+            proxy_headers=False,
+            server_header=False,
+        )
+    finally:
+        responder.stop()
 
 
 if __name__ == "__main__":

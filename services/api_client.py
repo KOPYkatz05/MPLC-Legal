@@ -1,13 +1,16 @@
 import atexit
+import hashlib
 import json
 import os
 import ssl
 import logging
+import sys
 import threading
 import uuid
 from contextlib import contextmanager
 from datetime import date, datetime
 from pathlib import Path
+from urllib.parse import urlparse
 
 import httpx
 from packaging.version import InvalidVersion, Version
@@ -65,6 +68,69 @@ class ApiCompatibilityError(RuntimeError):
         return self.reason == self.CLIENT_UPDATE_REQUIRED
 
 
+def _installed_local_server_url(
+    base_url,
+    certificate,
+    *,
+    platform=None,
+    environment=None,
+    registry_module=None,
+):
+    """Use loopback only for a verified server installation on this machine."""
+
+    platform = sys.platform if platform is None else platform
+    environment = os.environ if environment is None else environment
+    if platform != "win32" or not base_url or not certificate:
+        return None
+    if registry_module is None:
+        try:
+            import winreg as registry_module
+        except ImportError:
+            return None
+    try:
+        access = registry_module.KEY_READ | getattr(
+            registry_module, "KEY_WOW64_64KEY", 0
+        )
+        with registry_module.OpenKey(
+            registry_module.HKEY_LOCAL_MACHINE,
+            r"Software\MissionLegal\Server",
+            0,
+            access,
+        ):
+            pass
+    except OSError:
+        return None
+
+    program_data = environment.get("PROGRAMDATA")
+    if not program_data:
+        return None
+    public_ca = (
+        Path(program_data)
+        / "MissionLegal"
+        / "Public"
+        / "mission-legal-ca.pem"
+    )
+    try:
+        configured_bytes = Path(certificate).expanduser().read_bytes()
+        public_bytes = public_ca.read_bytes()
+    except (OSError, TypeError, ValueError):
+        return None
+    if not configured_bytes or not public_bytes:
+        return None
+    if hashlib.sha256(configured_bytes).digest() != hashlib.sha256(
+        public_bytes
+    ).digest():
+        return None
+    try:
+        parsed = urlparse(str(base_url))
+        port = parsed.port or 8765
+    except (TypeError, ValueError):
+        return None
+    if not 1 <= int(port) <= 65535:
+        return None
+    return f"https://localhost:{int(port)}"
+
+
 class MissionLegalApiClient:
     _environment_lock = threading.RLock()
     _environment_client = None
@@ -99,6 +165,7 @@ class MissionLegalApiClient:
         if os.environ.get("MISSION_LEGAL_SERVER_PROCESS") == "1":
             return None
         base_url = os.environ.get("MISSION_LEGAL_API_URL")
+        explicit_base_url = bool(base_url)
         certificate = os.environ.get("MISSION_LEGAL_API_CERT")
         if not base_url:
             try:
@@ -115,6 +182,10 @@ class MissionLegalApiClient:
         if not base_url:
             return None
         certificate = certificate or True
+        if not explicit_base_url:
+            local_url = _installed_local_server_url(base_url, certificate)
+            if local_url:
+                base_url = local_url
         credential_path = (
             get_client_data_dir() / "Configuration" / "api-device.json"
         )
@@ -133,12 +204,22 @@ class MissionLegalApiClient:
                 and not client.closed
             ):
                 return client
-            stale_client = client
-            client = cls(
-                base_url,
-                certificate=certificate,
-                credential_path=credential_path,
-            )
+            if client is not None and not client.closed:
+                # Long-lived services keep this shared object. Reconfigure it
+                # in place so automatic Wi-Fi recovery heals those references
+                # instead of leaving them pointed at a closed client.
+                client.reconfigure(
+                    base_url,
+                    certificate=certificate,
+                    credential_path=credential_path,
+                )
+            else:
+                stale_client = client
+                client = cls(
+                    base_url,
+                    certificate=certificate,
+                    credential_path=credential_path,
+                )
             cls._environment_client = client
             cls._environment_key = environment_key
         if stale_client is not None:
@@ -161,6 +242,30 @@ class MissionLegalApiClient:
         with self._client_condition:
             return self._closed
 
+    def reconfigure(self, base_url, *, certificate=None, credential_path=None):
+        """Retarget this shared owner after active requests have completed."""
+
+        replacement_url = str(base_url).rstrip("/")
+        replacement_certificate = (
+            certificate if certificate is not None else self.certificate
+        )
+        replacement_credential_path = Path(
+            credential_path or self.credential_path
+        )
+        client_to_close = None
+        with self._client_condition:
+            if self._closed:
+                raise RuntimeError("This Mission Legal API client is closed")
+            while self._active_client_users:
+                self._client_condition.wait()
+            client_to_close = self._http_client
+            self._http_client = None
+            self.base_url = replacement_url
+            self.certificate = replacement_certificate
+            self.credential_path = replacement_credential_path
+        if client_to_close is not None:
+            client_to_close.close()
+
     def _build_client(self):
         verify = self.certificate
         if isinstance(verify, (str, Path)):
@@ -170,6 +275,9 @@ class MissionLegalApiClient:
             verify=verify,
             timeout=self.timeout,
             transport=self._transport,
+            # Mission Legal API endpoints are local/private and must never be
+            # redirected through a machine-wide HTTP(S)_PROXY.
+            trust_env=False,
         )
 
     @contextmanager
@@ -373,14 +481,6 @@ class MissionLegalApiClient:
                 f"This computer is running {installed_version}.",
                 reason=ApiCompatibilityError.CLIENT_UPDATE_REQUIRED,
                 required_client_version=server_version,
-            )
-
-        if server_version < installed_version:
-            raise ApiCompatibilityError(
-                f"Mission Legal Server {server_version} does not match this "
-                f"client {installed_version}. Update Mission Legal Server on "
-                "the main computer.",
-                reason=ApiCompatibilityError.SERVER_UPDATE_REQUIRED,
             )
 
         if required_version is not None and installed_version < required_version:
@@ -696,7 +796,11 @@ class RemoteRecord:
                 try:
                     if key.endswith("_at"):
                         value = datetime.fromisoformat(value)
-                    elif key.endswith("_date") or "expiration" in key:
+                    elif (
+                        key == "date_of_birth"
+                        or key.endswith("_date")
+                        or "expiration" in key
+                    ):
                         value = date.fromisoformat(value)
                 except ValueError:
                     pass

@@ -8,8 +8,26 @@ from sqlalchemy.orm import sessionmaker
 
 from database.db import Base
 from database.models.missionary import Missionary
+from services.api_client import RemoteRecord
 from services import upload_pipeline
 from ui.pages import missionary_detail_page as detail_module
+
+
+def test_detail_back_delegates_to_the_single_window_confirmation():
+    calls = []
+    page = detail_module.MissionaryDetailPage.__new__(
+        detail_module.MissionaryDetailPage
+    )
+    page.main_window = SimpleNamespace(
+        return_from_missionary_detail=lambda: calls.append("return")
+    )
+    page.confirm_leave_detail = lambda: (_ for _ in ()).throw(
+        AssertionError("The detail page must not confirm twice")
+    )
+
+    page._go_back()
+
+    assert calls == ["return"]
 
 
 def test_passport_upload_auto_updates_birthdate_and_source(monkeypatch):
@@ -126,37 +144,39 @@ def test_missionary_detail_page_handles_birthdate_field(monkeypatch, qapp):
     monkeypatch.setattr(page, "_load_timeline", lambda *_: None)
     monkeypatch.setattr(page, "_update_advance_banner", lambda *_: None)
 
-    missionary = SimpleNamespace(
-        id=1,
-        full_name="Test Missionary",
-        current_stage="INTERPOL",
-        nationality="USA",
-        passport_number="P1234567",
-        date_of_birth=date(1990, 2, 3),
-        field_sources=json.dumps(
-            {
-                "date_of_birth": {
-                    "document_id": 77,
-                    "document_type": "PASSPORT",
-                    "label": "Passport",
+    missionary = RemoteRecord(
+        {
+            "id": 1,
+            "full_name": "Test Missionary",
+            "current_stage": "INTERPOL",
+            "nationality": "USA",
+            "passport_number": "P1234567",
+            "date_of_birth": "1990-02-03",
+            "field_sources": json.dumps(
+                {
+                    "date_of_birth": {
+                        "document_id": 77,
+                        "document_type": "PASSPORT",
+                        "label": "Passport",
+                    }
                 }
-            }
-        ),
-        folder_path=None,
-        notes="",
-        arrival_date=None,
-        visa_expiration=None,
-        residency_expiration=None,
-        prorroga_expiration=None,
-        carnet_issue_date=None,
-        cancelacion_date=None,
-        passport_expiration=None,
-        interpol_appointment_date=None,
-        biometric_appointment_date=None,
-        pickup_appointment_date=None,
-        tramite_usuario=None,
-        tramite_contrasena=None,
-        carnet_number=None,
+            ),
+            "folder_path": None,
+            "notes": "",
+            "arrival_date": None,
+            "visa_expiration": None,
+            "residency_expiration": None,
+            "prorroga_expiration": None,
+            "carnet_issue_date": None,
+            "cancelacion_date": None,
+            "passport_expiration": None,
+            "interpol_appointment_date": None,
+            "biometric_appointment_date": None,
+            "pickup_appointment_date": None,
+            "tramite_usuario": None,
+            "tramite_contrasena": None,
+            "carnet_number": None,
+        }
     )
 
     page.load_missionary(missionary)
@@ -190,6 +210,9 @@ def test_missionary_detail_page_handles_birthdate_field(monkeypatch, qapp):
     assert page.folder_open_btn.isEnabled() is False
     assert "Name:" in page.summary_name_chip.text()
     assert "Birthdate:" in page.summary_birthdate_chip.text()
+    assert page.has_unsaved_changes() is False
+    assert page._detail_loaded is True
+    assert page.detail_loading_icon.isHidden()
 
     captured = {}
 

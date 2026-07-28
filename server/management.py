@@ -22,6 +22,7 @@ from database.runtime import get_app_data_dir
 from server.configuration import load_server_configuration
 from server.networking import discover_lan_ipv4_addresses, preferred_server_url
 from server.security import DeviceCredentialStore, PairingCodeStore
+from server.trusted_networks import TrustedNetworkStore
 from services.database_backup_service import DatabaseBackupService
 from services.pairing_package import PairingPackageError, encode_pairing_package
 from version import API_VERSION, APP_VERSION, SCHEMA_VERSION
@@ -37,6 +38,8 @@ COMMAND_ARGUMENTS = {
     "create_verified_backup": frozenset(),
     "restart_server": frozenset(),
     "get_support_summary": frozenset(),
+    "trust_current_network": frozenset(),
+    "forget_current_network": frozenset(),
 }
 ALLOWED_COMMANDS = frozenset(COMMAND_ARGUMENTS)
 METRIC_FIELDS = (
@@ -344,6 +347,7 @@ class MissionLegalManagement:
         lan_address_provider: Callable[[], Iterable[str]] | None = None,
         ca_certificate_provider: Callable[[], str] | None = None,
         metrics_provider: Callable[[], Mapping[str, Any]] | None = None,
+        trusted_network_store: TrustedNetworkStore | None = None,
     ):
         self.pairing_store = (
             PairingCodeStore() if pairing_store is None else pairing_store
@@ -381,6 +385,11 @@ class MissionLegalManagement:
         )
         self.metrics_provider = (
             _WindowsMetricsProvider() if metrics_provider is None else metrics_provider
+        )
+        self.trusted_network_store = (
+            TrustedNetworkStore()
+            if trusted_network_store is None
+            else trusted_network_store
         )
         self._started_at = self.clock()
         self._started_monotonic = self.monotonic()
@@ -463,6 +472,7 @@ class MissionLegalManagement:
             "port": port,
             "server_address": self._server_address(port, hostname),
             "database_file_present": database_file_present,
+            "network": self.trusted_network_store.current_status(),
         }
         status.update(_safe_metrics(self.metrics_provider))
         return status
@@ -511,6 +521,24 @@ class MissionLegalManagement:
             "expires_at": expires_at_text,
             "lifetime_seconds": lifetime_seconds,
         }
+
+    def _command_trust_current_network(self) -> dict[str, Any]:
+        try:
+            return {"network": self.trusted_network_store.trust_current()}
+        except (OSError, RuntimeError) as exc:
+            raise ManagementCommandError(
+                "network_trust_failed",
+                str(exc) or "The current network could not be trusted.",
+            ) from exc
+
+    def _command_forget_current_network(self) -> dict[str, Any]:
+        try:
+            return {"network": self.trusted_network_store.forget_current()}
+        except (OSError, RuntimeError) as exc:
+            raise ManagementCommandError(
+                "network_forget_failed",
+                str(exc) or "The current network could not be removed.",
+            ) from exc
 
     def _device_payload(self) -> list[dict[str, Any]]:
         devices = []

@@ -21,6 +21,10 @@ WINDOWS_NOTIFICATION_DATE_KEY = "notifications/windows_last_date"
 WINDOWS_NOTIFICATION_FINGERPRINT_KEY = "notifications/windows_last_fingerprint"
 UPLOAD_AUTO_OCR_KEY = "upload/auto_ocr_enabled"
 AUTOMATIC_UPDATES_KEY = "updates/automatic_checks_enabled"
+TAB_INDICATOR_THICKNESS_KEY = "ui/tab_indicator_thickness"
+CALENDAR_DEFAULT_VIEW_KEY = "calendar/default_view"
+ANALYTICS_DEFAULT_VIEW_KEY = "analytics/default_view"
+MISSIONARIES_DEFAULT_VIEW_KEY = "missionaries/default_view"
 NOTIFICATION_DEFAULTS = {
     "startup_popup_enabled": True,
     "dashboard_expiration_days": 60,
@@ -137,6 +141,70 @@ class SettingsService:
 
     def set_automatic_updates_enabled(self, enabled):
         self._settings.setValue(AUTOMATIC_UPDATES_KEY, bool(enabled))
+
+    def get_tab_indicator_thickness(self):
+        return max(1, min(6, _int_value(
+            self._settings.value(TAB_INDICATOR_THICKNESS_KEY, 1), 1
+        )))
+
+    def set_tab_indicator_thickness(self, thickness):
+        value = max(1, min(6, _int_value(thickness, 1)))
+        self._settings.setValue(TAB_INDICATOR_THICKNESS_KEY, value)
+        return value
+
+    def _get_choice(self, key, default, choices):
+        value = str(self._settings.value(key, default) or default)
+        return value if value in choices else default
+
+    def _set_choice(self, key, value, default, choices):
+        value = str(value)
+        if value not in choices:
+            value = default
+        self._settings.setValue(key, value)
+        return value
+
+    def get_calendar_default_view(self):
+        return self._get_choice(
+            CALENDAR_DEFAULT_VIEW_KEY, "calendar", {"calendar", "history"}
+        )
+
+    def set_calendar_default_view(self, value):
+        return self._set_choice(
+            CALENDAR_DEFAULT_VIEW_KEY,
+            value,
+            "calendar",
+            {"calendar", "history"},
+        )
+
+    def get_analytics_default_view(self):
+        return self._get_choice(
+            ANALYTICS_DEFAULT_VIEW_KEY,
+            "general",
+            {"general", "process", "documents"},
+        )
+
+    def set_analytics_default_view(self, value):
+        return self._set_choice(
+            ANALYTICS_DEFAULT_VIEW_KEY,
+            value,
+            "general",
+            {"general", "process", "documents"},
+        )
+
+    def get_missionaries_default_view(self):
+        return self._get_choice(
+            MISSIONARIES_DEFAULT_VIEW_KEY,
+            "active",
+            {"active", "groups", "archive"},
+        )
+
+    def set_missionaries_default_view(self, value):
+        return self._set_choice(
+            MISSIONARIES_DEFAULT_VIEW_KEY,
+            value,
+            "active",
+            {"active", "groups", "archive"},
+        )
 
     def get_next_transfer_wednesday(self):
         return _parse_iso_date(

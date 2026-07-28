@@ -1,7 +1,8 @@
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import QDialog, QLabel, QVBoxLayout
 
-from services.api_client import ApiCompatibilityError
+from services.api_client import ApiCompatibilityError, MissionLegalApiClient
+from services.client_pairing_service import recover_configured_server_address
 from ui.foundation import create_button
 
 
@@ -86,6 +87,12 @@ class ServerWaitDialog(QDialog):
                 )
             return
         except Exception as exc:
+            if recover_configured_server_address():
+                refreshed_client = MissionLegalApiClient.from_environment()
+                if refreshed_client is not None:
+                    self.api_client = refreshed_client
+                    QTimer.singleShot(0, self.retry)
+                    return
             self._required_client_version = None
             self.setWindowTitle("Mission Legal Server Unavailable")
             self.update_button.hide()

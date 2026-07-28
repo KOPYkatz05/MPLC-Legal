@@ -140,20 +140,16 @@ def test_newer_server_application_requires_matching_client():
     assert captured.value.required_client_version == "999.0.0"
 
 
-def test_older_server_application_requires_matching_server():
-    with pytest.raises(
-        ApiCompatibilityError,
-        match="Update Mission Legal Server",
-    ) as captured:
-        MissionLegalApiClient.validate_compatibility(
-            {
-                "api_version": API_VERSION,
-                "app_version": "0.0.0",
-            }
-        )
+def test_newer_client_accepts_compatible_older_server(monkeypatch):
+    monkeypatch.setattr("services.api_client.APP_VERSION", "0.2.2")
 
-    assert captured.value.reason == ApiCompatibilityError.SERVER_UPDATE_REQUIRED
-    assert captured.value.client_update_required is False
+    assert MissionLegalApiClient.validate_compatibility(
+        {
+            "api_version": API_VERSION,
+            "app_version": "0.2.1",
+            "minimum_client_version": "0.2.1",
+        }
+    ) is True
 
 
 def test_required_update_version_rejects_an_insufficient_feed_release():

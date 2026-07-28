@@ -452,7 +452,7 @@ class ServerSetupConnectivityTests(unittest.TestCase):
 
         self.assertEqual(actions, ["InstallOrUpdate", "StartAndVerify", "Stop"])
 
-    def test_windows_host_access_contract_is_checked_and_private_only(self):
+    def test_windows_host_access_contract_is_checked_and_local_subnet_only(self):
         setup_source = Path(server_setup.__file__).read_text(encoding="utf-8")
         action_source = (
             Path(__file__).resolve().parent / "server_installer_actions.ps1"
@@ -461,10 +461,16 @@ class ServerSetupConnectivityTests(unittest.TestCase):
         for source in (setup_source, action_source):
             self.assertIn("MissionLegalServerHTTPS", source)
             self.assertIn("Mission Legal Server HTTPS", source)
-            self.assertIn("Profile Private", source)
+            self.assertIn("MissionLegalServerDiscovery", source)
+            self.assertIn("Mission Legal Server Discovery", source)
+            self.assertIn("Profile Any", source)
+            self.assertIn("RemoteAddress LocalSubnet", source)
             self.assertIn("Protocol TCP", source)
+            self.assertIn("Protocol UDP", source)
+            self.assertIn("43876", source)
             self.assertIn("LocalPort", source)
             self.assertIn("Get-NetFirewallPortFilter", source)
+            self.assertIn("Get-NetFirewallAddressFilter", source)
             self.assertIn("*S-1-5-18:(OI)(CI)M", source)
             self.assertIn("LocalSystem Modify access", source)
             self.assertIn("FileSystemRights", source)

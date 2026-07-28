@@ -4,8 +4,16 @@ from concurrent.futures import ThreadPoolExecutor
 import httpx
 import pytest
 
-from services.api_client import MissionLegalApiClient
+from datetime import date
+
+from services.api_client import MissionLegalApiClient, RemoteRecord
 from services.remote_service import RemoteServiceMixin
+
+
+def test_remote_record_decodes_birthdate_as_date():
+    record = RemoteRecord({"date_of_birth": "2001-02-03"})
+
+    assert record.date_of_birth == date(2001, 2, 3)
 
 
 @pytest.fixture(autouse=True)
@@ -84,7 +92,7 @@ def test_close_defers_transport_shutdown_until_concurrent_calls_finish():
     assert client._http_client is None
 
 
-def test_remote_service_calls_share_environment_connection_and_reset_on_change(
+def test_remote_service_calls_share_environment_connection_and_retarget_on_change(
     monkeypatch,
 ):
     built_clients = []
@@ -132,8 +140,9 @@ def test_remote_service_calls_share_environment_connection_and_reset_on_change(
     monkeypatch.setenv("MISSION_LEGAL_API_URL", "https://second-server.test")
     second_owner = MissionLegalApiClient.from_environment()
 
-    assert second_owner is not first_owner
-    assert first_owner.closed is True
+    assert second_owner is first_owner
+    assert first_owner.closed is False
+    assert first_owner.base_url == "https://second-server.test"
     assert built_clients[0].is_closed is True
     assert second_owner.health() == {"status": "ok"}
     assert len(built_clients) == 2

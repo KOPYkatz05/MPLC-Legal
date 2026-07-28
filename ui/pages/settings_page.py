@@ -7,6 +7,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QSizePolicy,
     QSpinBox,
+    QSlider,
     QTabWidget,
     QTimeEdit,
     QWidget,
@@ -25,6 +26,11 @@ from ui.foundation import (
     create_list_widget,
     create_scroll_area,
     show_message,
+)
+from PySide6.QtGui import QIntValidator
+from ui.widgets.animated_tab_strip import (
+    AnimatedTabStrip,
+    set_tab_indicator_thickness,
 )
 from PySide6.QtCore import QDate, Qt, QTime
 from datetime import date, timedelta
@@ -86,6 +92,7 @@ class SettingsPage(QWidget):
         self._server_configuration_refreshed_at = 0.0
         self._server_configuration_input_baseline = ""
         self._server_configuration_loader = LatestRequestLoader(parent=self)
+        self._workspace_settings_loaded = False
         self.setup_ui()
 
     def setup_ui(self):
@@ -93,8 +100,6 @@ class SettingsPage(QWidget):
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
         self.setLayout(outer)
-
-        outer.addWidget(self._build_top_bar())
 
         workspace = QWidget()
         workspace.setObjectName("SettingsWorkspace")
@@ -113,54 +118,70 @@ class SettingsPage(QWidget):
             tr("settings_tab_notifications"),
         )
         self.tabs.addTab(self._build_transfer_tab(), tr("settings_tab_transfer"))
+        self.tabs.addTab(self._build_ui_tab(), tr("settings_tab_ui"))
+        self.tabs.addTab(self._build_workspaces_tab(), tr("settings_tab_workspaces"))
+        self.tabs.addTab(self._build_calendar_settings_tab(), tr("settings_tab_calendar"))
+        self.tabs.addTab(self._build_analytics_settings_tab(), tr("settings_tab_analytics"))
+        self.tabs.addTab(
+            self._build_missionaries_settings_tab(),
+            tr("settings_tab_missionaries"),
+        )
+        self.tabs.tabBar().hide()
+
+        self._settings_tab_keys = (
+            "general",
+            "notifications",
+            "transfer",
+            "ui",
+            "workspaces",
+            "calendar",
+            "analytics",
+            "missionaries",
+        )
+        self.settings_tab_strip = AnimatedTabStrip()
+        for index, (key, label) in enumerate(
+            zip(
+                self._settings_tab_keys,
+                (
+                    tr("settings_tab_general"),
+                    tr("settings_tab_notifications"),
+                    tr("settings_tab_transfer"),
+                    tr("settings_tab_ui"),
+                    tr("settings_tab_workspaces"),
+                    tr("settings_tab_calendar"),
+                    tr("settings_tab_analytics"),
+                    tr("settings_tab_missionaries"),
+                ),
+            )
+        ):
+            self.settings_tab_strip.add_tab(
+                key,
+                label,
+                lambda selected_key, tab_index=index: self.tabs.setCurrentIndex(
+                    tab_index
+                ),
+            )
+        self.tabs.currentChanged.connect(self._settings_tab_changed)
+        self._sync_settings_tab_strip(self.tabs.currentIndex())
+        workspace_layout.addWidget(self.settings_tab_strip)
         workspace_layout.addWidget(self.tabs, stretch=1)
         outer.addWidget(workspace, stretch=1)
 
-    def _build_top_bar(self):
-        top_bar = QFrame()
-        top_bar.setObjectName("SettingsTopBar")
-        top_bar.setAttribute(Qt.WA_StyledBackground, True)
+    def _sync_settings_tab_strip(self, index):
+        if 0 <= index < len(self._settings_tab_keys):
+            self.settings_tab_strip.set_active(
+                self._settings_tab_keys[index], animate=False
+            )
 
-        layout = QVBoxLayout()
-        layout.setContentsMargins(12, 10, 16, 0)
-        layout.setSpacing(0)
-        top_bar.setLayout(layout)
-
-        tabs = QFrame()
-        tabs.setObjectName("SettingsTopTabStrip")
-        tabs.setAttribute(Qt.WA_StyledBackground, True)
-        tabs_layout = QHBoxLayout()
-        tabs_layout.setContentsMargins(0, 0, 0, 0)
-        tabs_layout.setSpacing(0)
-        tabs.setLayout(tabs_layout)
-
-        self.settings_top_tab_labels = {}
-        for key, active in [
-            ("settings_top_tab_main", True),
-            ("settings_top_tab_notifications", False),
-            ("settings_top_tab_workspaces", False),
-            ("settings_top_tab_calendar", False),
-            ("settings_top_tab_analytics", False),
-            ("settings_top_tab_missionaries", False),
-        ]:
-            label = QLabel(tr(key))
-            label.setObjectName("SettingsTopTab")
-            label.setProperty("active", active)
-            label.setFixedHeight(30)
-            label.setAlignment(Qt.AlignCenter)
-            tabs_layout.addWidget(label)
-            self.settings_top_tab_labels[key] = label
-        tabs_layout.addStretch()
-        layout.addWidget(tabs)
-
-        self.settings_title_label = QLabel(tr("settings_title"), top_bar)
-        self.settings_title_label.setObjectName("SettingsTitle")
-        self.settings_title_label.hide()
-        self.settings_subtitle_label = QLabel(tr("settings_subtitle"), top_bar)
-        self.settings_subtitle_label.setObjectName("SettingsSubtitle")
-        self.settings_subtitle_label.hide()
-
-        return top_bar
+    def _settings_tab_changed(self, index):
+        self._sync_settings_tab_strip(index)
+        if (
+            0 <= index < len(self._settings_tab_keys)
+            and self._settings_tab_keys[index] == "workspaces"
+            and not self._workspace_settings_loaded
+        ):
+            self._workspace_settings_loaded = True
+            self._load_workspaces()
 
     def _build_tab_scroll(self, content_widget, *, full_width=False):
         tab = QWidget()
@@ -363,6 +384,121 @@ class SettingsPage(QWidget):
 
         layout.addStretch()
         return self._build_tab_scroll(content)
+
+    def _build_ui_tab(self):
+        content, layout = self._build_settings_content()
+        card, body, _, _ = self._settings_card(
+            tr("settings_ui_tab_thickness"),
+            tr("settings_ui_tab_thickness_hint"),
+        )
+        row = QHBoxLayout()
+        row.setSpacing(10)
+        self.tab_thickness_slider = QSlider(Qt.Horizontal)
+        self.tab_thickness_slider.setObjectName("TabIndicatorThicknessSlider")
+        self.tab_thickness_slider.setRange(1, 6)
+        self.tab_thickness_slider.setFixedWidth(240)
+        self.tab_thickness_input = self._set_field_width(
+            create_line_edit("1", "TabIndicatorThicknessInput"), 72
+        )
+        self.tab_thickness_input.setValidator(QIntValidator(1, 6, self))
+        thickness = getattr(
+            self.settings_service, "get_tab_indicator_thickness", lambda: 1
+        )()
+        self.tab_thickness_slider.setValue(thickness)
+        self.tab_thickness_input.setText(str(thickness))
+        self.tab_thickness_slider.valueChanged.connect(self._set_tab_thickness)
+        self.tab_thickness_input.editingFinished.connect(
+            self._commit_tab_thickness_input
+        )
+        row.addWidget(self.tab_thickness_slider)
+        row.addWidget(self.tab_thickness_input)
+        row.addWidget(QLabel("px"))
+        row.addStretch()
+        body.addLayout(row)
+        layout.addWidget(card)
+        layout.addStretch()
+        return self._build_tab_scroll(content)
+
+    def _build_default_view_tab(self, title_key, hint_key, choices, getter, setter):
+        content, layout = self._build_settings_content()
+        card, body, _, _ = self._settings_card(tr(title_key), tr(hint_key))
+        combo = create_combo_box()
+        for label_key, value in choices:
+            combo.addItem(tr(label_key), value)
+        current = getattr(self.settings_service, getter, lambda: choices[0][1])()
+        index = combo.findData(current)
+        combo.setCurrentIndex(max(0, index))
+        combo.currentIndexChanged.connect(
+            lambda _index: getattr(
+                self.settings_service, setter, lambda value: value
+            )(combo.currentData())
+        )
+        body.addWidget(combo)
+        layout.addWidget(card)
+        layout.addStretch()
+        return self._build_tab_scroll(content), combo
+
+    def _build_calendar_settings_tab(self):
+        tab, self.calendar_default_view_combo = self._build_default_view_tab(
+            "settings_calendar_default_view",
+            "settings_calendar_default_view_hint",
+            (
+                ("settings_calendar_view_calendar", "calendar"),
+                ("settings_calendar_view_history", "history"),
+            ),
+            "get_calendar_default_view",
+            "set_calendar_default_view",
+        )
+        return tab
+
+    def _build_analytics_settings_tab(self):
+        tab, self.analytics_default_view_combo = self._build_default_view_tab(
+            "settings_analytics_default_view",
+            "settings_analytics_default_view_hint",
+            (
+                ("settings_analytics_view_general", "general"),
+                ("settings_analytics_view_process", "process"),
+                ("settings_analytics_view_documents", "documents"),
+            ),
+            "get_analytics_default_view",
+            "set_analytics_default_view",
+        )
+        return tab
+
+    def _build_missionaries_settings_tab(self):
+        tab, self.missionaries_default_view_combo = self._build_default_view_tab(
+            "settings_missionaries_default_view",
+            "settings_missionaries_default_view_hint",
+            (
+                ("settings_missionaries_view_active", "active"),
+                ("settings_missionaries_view_groups", "groups"),
+                ("settings_missionaries_view_archive", "archive"),
+            ),
+            "get_missionaries_default_view",
+            "set_missionaries_default_view",
+        )
+        return tab
+
+    def _set_tab_thickness(self, thickness):
+        save_thickness = getattr(
+            self.settings_service,
+            "set_tab_indicator_thickness",
+            lambda value: max(1, min(6, int(value))),
+        )
+        thickness = save_thickness(thickness)
+        self.tab_thickness_input.setText(str(thickness))
+        set_tab_indicator_thickness(thickness)
+
+    def _commit_tab_thickness_input(self):
+        try:
+            thickness = int(self.tab_thickness_input.text())
+        except ValueError:
+            thickness = getattr(
+                self.settings_service, "get_tab_indicator_thickness", lambda: 1
+            )()
+        thickness = max(1, min(6, thickness))
+        self.tab_thickness_slider.setValue(thickness)
+        self.tab_thickness_input.setText(str(thickness))
 
     def request_refresh(self, force=False):
         if self.api_client is None:
@@ -994,7 +1130,7 @@ class SettingsPage(QWidget):
         shell.addWidget(preview_card, stretch=5)
 
         layout.addStretch()
-        self._load_workspaces()
+        self._set_workspace_editor_enabled(False)
         return self._build_tab_scroll(content, full_width=True)
 
     def _load_workspaces(self):
@@ -1770,13 +1906,14 @@ class SettingsPage(QWidget):
         )
 
     def retranslate_ui(self):
-        self.settings_title_label.setText(tr("settings_title"))
-        self.settings_subtitle_label.setText(tr("settings_subtitle"))
-        for key, label in self.settings_top_tab_labels.items():
-            label.setText(tr(key))
         self.tabs.setTabText(0, tr("settings_tab_general"))
         self.tabs.setTabText(1, tr("settings_tab_notifications"))
         self.tabs.setTabText(2, tr("settings_tab_transfer"))
+        self.tabs.setTabText(3, tr("settings_tab_ui"))
+        self.tabs.setTabText(4, tr("settings_tab_workspaces"))
+        self.tabs.setTabText(5, tr("settings_tab_calendar"))
+        self.tabs.setTabText(6, tr("settings_tab_analytics"))
+        self.tabs.setTabText(7, tr("settings_tab_missionaries"))
         self.lang_label.setText(tr("settings_language"))
         self.hint_label.setText(tr("settings_language_hint"))
         self.storage_label.setText(tr("settings_storage_root"))

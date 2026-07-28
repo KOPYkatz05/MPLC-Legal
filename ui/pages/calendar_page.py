@@ -35,8 +35,11 @@ from database.models.appointment import (
 )
 from services.appointment_service import AppointmentService
 from services.client_view_service import ClientViewService
+from services.settings_service import SettingsService
+from utils.i18n import get_i18n
 from services.secretary_work_service import SecretaryWorkService
 from ui.foundation.background_loader import LatestRequestLoader
+from ui.widgets.animated_tab_strip import AnimatedTabStrip
 from ui.dialogs.office_work_dialogs import TaskDialog
 from ui.foundation import (
     BodyLabel,
@@ -368,6 +371,11 @@ class CalendarPage(QWidget):
         super().__init__()
         self.setObjectName("CalendarPage")
         self.main_window = main_window
+        self.settings_service = getattr(main_window, "settings_service", None)
+        if self.settings_service is None:
+            active_language = get_i18n().get_language()
+            self.settings_service = SettingsService()
+            get_i18n().set_language(active_language)
         self.client_view_service = ClientViewService()
         self._background_loads_enabled = isinstance(main_window, QWidget)
         self._data_loader = LatestRequestLoader(parent=self)
@@ -387,7 +395,11 @@ class CalendarPage(QWidget):
         self._calendar_search_text = ""
         self._calendar_type_filter = "All Types"
         self._history_exact_date = None
-        self._selected_tab = TAB_CALENDAR
+        self._selected_tab = getattr(
+            self.settings_service,
+            "get_calendar_default_view",
+            lambda: TAB_CALENDAR,
+        )()
         self._calendar_render_cache = {}
         self._calendar_summary_counts = {
             "overdue": 0,
@@ -480,7 +492,7 @@ class CalendarPage(QWidget):
         self._build_calendar_tab()
         self._build_history_tab()
         self._apply_responsive_filter_layout()
-        self._select_tab(TAB_CALENDAR)
+        self._select_tab(self._selected_tab)
 
     def _build_top_bar(self):
         frame = QFrame()
@@ -522,40 +534,15 @@ class CalendarPage(QWidget):
         return frame
 
     def _build_top_tabs(self):
-        self.tab_buttons = {}
-        self.tab_button_group = QButtonGroup(self)
         self.tab_control = None
-
-        self.tab_bar = QFrame()
-        self.tab_bar.setObjectName("CalendarTopTabs")
-        self.tab_bar.setAttribute(Qt.WA_StyledBackground, True)
-
-        layout = QHBoxLayout()
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
-        self.tab_bar.setLayout(layout)
-
-        self.tab_button_group.setExclusive(True)
+        self.tab_bar = AnimatedTabStrip()
+        self.tab_buttons = self.tab_bar.buttons
 
         for key, title in [
             (TAB_CALENDAR, tr("calendar_tab_calendar")),
             (TAB_HISTORY, tr("calendar_tab_history")),
         ]:
-            button = QPushButton(title)
-            button.setObjectName("CalendarTabButton")
-            button.setCheckable(True)
-            button.setFixedHeight(30)
-            button.setMinimumWidth(0)
-            button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-            button.clicked.connect(
-                lambda checked=False, tab_key=key:
-                self._select_tab(tab_key)
-            )
-            self.tab_button_group.addButton(button)
-            self.tab_buttons[key] = button
-            layout.addWidget(button)
-
-        layout.addStretch()
+            self.tab_bar.add_tab(key, title, self._select_tab)
 
     def _build_calendar_tab(self):
         tab = QWidget()
@@ -898,11 +885,7 @@ class CalendarPage(QWidget):
         self._refresh_tab_buttons()
 
     def _refresh_tab_buttons(self):
-        for tab_key, button in self.tab_buttons.items():
-            is_active = tab_key == self._selected_tab
-            button.setProperty("active", is_active)
-            button.style().unpolish(button)
-            button.style().polish(button)
+        self.tab_bar.set_active(self._selected_tab, animate=False)
 
     def _schedule_calendar_render(self):
         timer = getattr(self, "_calendar_render_timer", None)

@@ -35,6 +35,9 @@ $OutputEncoding = [Text.UTF8Encoding]::new($false)
 $ServiceName = "MissionLegalServer"
 $FirewallRuleName = "MissionLegalServerHTTPS"
 $FirewallRuleDisplayName = "Mission Legal Server HTTPS"
+$DiscoveryFirewallRuleName = "MissionLegalServerDiscovery"
+$DiscoveryFirewallRuleDisplayName = "Mission Legal Server Discovery"
+$DiscoveryPort = 43876
 $DataDir = [IO.Path]::GetFullPath(
     [Environment]::ExpandEnvironmentVariables($DataDir)
 )
@@ -1007,53 +1010,113 @@ function Grant-ConfiguredStorageAccess {
 function Set-MissionLegalFirewallRule {
     param([Parameter(Mandatory = $true)][int]$Port)
 
-    Get-NetFirewallRule -Name $FirewallRuleName -ErrorAction SilentlyContinue |
-        Remove-NetFirewallRule -ErrorAction Stop
-    # Remove the pre-stable-name rule created by older setup scripts as well.
-    Get-NetFirewallRule -DisplayName $FirewallRuleDisplayName -ErrorAction SilentlyContinue |
-        Remove-NetFirewallRule -ErrorAction Stop
+    foreach ($RuleName in @($FirewallRuleName, $DiscoveryFirewallRuleName)) {
+        Get-NetFirewallRule -Name $RuleName -ErrorAction SilentlyContinue |
+            Remove-NetFirewallRule -ErrorAction Stop
+    }
+    # Remove pre-stable-name/display-name rules created by older setup scripts.
+    foreach ($DisplayName in @(
+        $FirewallRuleDisplayName,
+        $DiscoveryFirewallRuleDisplayName
+    )) {
+        Get-NetFirewallRule -DisplayName $DisplayName -ErrorAction SilentlyContinue |
+            Remove-NetFirewallRule -ErrorAction Stop
+    }
 
     New-NetFirewallRule `
         -Name $FirewallRuleName `
         -DisplayName $FirewallRuleDisplayName `
-        -Description "Allows authenticated Mission Legal clients to reach the main-computer HTTPS server on Private networks." `
+        -Description "Allows same-subnet authenticated Mission Legal clients to reach the HTTPS server." `
         -Group "Mission Legal" `
         -Enabled True `
         -Direction Inbound `
         -Action Allow `
-        -Profile Private `
+        -Profile Any `
+        -RemoteAddress LocalSubnet `
         -Protocol TCP `
         -LocalPort $Port | Out-Null
 
-    $Matches = @(Get-NetFirewallRule -DisplayName $FirewallRuleDisplayName -ErrorAction Stop)
-    if ($Matches.Count -ne 1) {
-        throw "Expected exactly one managed firewall rule; found $($Matches.Count)."
+    New-NetFirewallRule `
+        -Name $DiscoveryFirewallRuleName `
+        -DisplayName $DiscoveryFirewallRuleDisplayName `
+        -Description "Allows same-subnet Mission Legal discovery; the service responds only on trusted networks." `
+        -Group "Mission Legal" `
+        -Enabled True `
+        -Direction Inbound `
+        -Action Allow `
+        -Profile Any `
+        -RemoteAddress LocalSubnet `
+        -Protocol UDP `
+        -LocalPort $DiscoveryPort | Out-Null
+
+    $ExpectedRules = @(
+        @{
+            Name = $FirewallRuleName
+            DisplayName = $FirewallRuleDisplayName
+            Protocols = @("TCP", "6")
+            Port = $Port.ToString()
+        },
+        @{
+            Name = $DiscoveryFirewallRuleName
+            DisplayName = $DiscoveryFirewallRuleDisplayName
+            Protocols = @("UDP", "17")
+            Port = $DiscoveryPort.ToString()
+        }
+    )
+    foreach ($Expected in $ExpectedRules) {
+        $Matches = @(
+            Get-NetFirewallRule `
+                -DisplayName $Expected.DisplayName `
+                -ErrorAction Stop
+        )
+        if ($Matches.Count -ne 1) {
+            throw "Expected exactly one managed firewall rule named $($Expected.Name)."
+        }
+        $Rule = $Matches[0]
+        $PortFilters = @($Rule | Get-NetFirewallPortFilter -ErrorAction Stop)
+        $AddressFilters = @($Rule | Get-NetFirewallAddressFilter -ErrorAction Stop)
+        $Protocol = if ($PortFilters.Count -eq 1) { [string]$PortFilters[0].Protocol } else { "" }
+        $LocalPort = if ($PortFilters.Count -eq 1) { [string]$PortFilters[0].LocalPort } else { "" }
+        $RemoteAddress = if ($AddressFilters.Count -eq 1) { [string]$AddressFilters[0].RemoteAddress } else { "" }
+        if (
+            [string]$Rule.Name -cne $Expected.Name -or
+            [string]$Rule.Enabled -cne "True" -or
+            [string]$Rule.Direction -cne "Inbound" -or
+            [string]$Rule.Action -cne "Allow" -or
+            [string]$Rule.Profile -cne "Any" -or
+            $PortFilters.Count -ne 1 -or
+            $Expected.Protocols -notcontains $Protocol -or
+            $LocalPort -cne $Expected.Port -or
+            $AddressFilters.Count -ne 1 -or
+            $RemoteAddress -cne "LocalSubnet"
+        ) {
+            throw "Managed firewall rule $($Expected.Name) did not match the required same-subnet policy."
+        }
     }
-    $Rule = $Matches[0]
-    $PortFilters = @($Rule | Get-NetFirewallPortFilter -ErrorAction Stop)
-    $Protocol = if ($PortFilters.Count -eq 1) { [string]$PortFilters[0].Protocol } else { "" }
-    $LocalPort = if ($PortFilters.Count -eq 1) { [string]$PortFilters[0].LocalPort } else { "" }
-    if (
-        [string]$Rule.Name -cne $FirewallRuleName -or
-        [string]$Rule.Enabled -cne "True" -or
-        [string]$Rule.Direction -cne "Inbound" -or
-        [string]$Rule.Action -cne "Allow" -or
-        [string]$Rule.Profile -cne "Private" -or
-        $PortFilters.Count -ne 1 -or
-        $Protocol -notin @("TCP", "6") -or
-        $LocalPort -cne $Port.ToString()
-    ) {
-        throw "The managed firewall rule did not match the required enabled, inbound, Private-only TCP policy."
-    }
-    Write-InstallerLog "Verified Private-only inbound TCP firewall rule on port $Port."
+    Write-InstallerLog (
+        "Verified LocalSubnet HTTPS TCP $Port and discovery UDP $DiscoveryPort firewall rules."
+    )
 }
 
 function Remove-MissionLegalFirewallRule {
-    Get-NetFirewallRule -Name $FirewallRuleName -ErrorAction SilentlyContinue |
-        Remove-NetFirewallRule -ErrorAction Stop
-    Get-NetFirewallRule -DisplayName $FirewallRuleDisplayName -ErrorAction SilentlyContinue |
-        Remove-NetFirewallRule -ErrorAction Stop
-    $Remaining = @(Get-NetFirewallRule -DisplayName $FirewallRuleDisplayName -ErrorAction SilentlyContinue)
+    foreach ($RuleName in @($FirewallRuleName, $DiscoveryFirewallRuleName)) {
+        Get-NetFirewallRule -Name $RuleName -ErrorAction SilentlyContinue |
+            Remove-NetFirewallRule -ErrorAction Stop
+    }
+    foreach ($DisplayName in @(
+        $FirewallRuleDisplayName,
+        $DiscoveryFirewallRuleDisplayName
+    )) {
+        Get-NetFirewallRule -DisplayName $DisplayName -ErrorAction SilentlyContinue |
+            Remove-NetFirewallRule -ErrorAction Stop
+    }
+    $Remaining = @()
+    $Remaining += @(
+        Get-NetFirewallRule -DisplayName $FirewallRuleDisplayName -ErrorAction SilentlyContinue
+    )
+    $Remaining += @(
+        Get-NetFirewallRule -DisplayName $DiscoveryFirewallRuleDisplayName -ErrorAction SilentlyContinue
+    )
     if ($Remaining.Count -ne 0) {
         throw "Managed Mission Legal Server firewall rules remain after removal."
     }

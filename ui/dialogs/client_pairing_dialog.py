@@ -6,12 +6,12 @@ from PySide6.QtCore import QObject, QRegularExpression, QThread, Signal, Slot
 from PySide6.QtGui import QCloseEvent, QRegularExpressionValidator
 from PySide6.QtWidgets import (
     QDialog,
+    QComboBox,
     QFileDialog,
     QFormLayout,
     QHBoxLayout,
     QLabel,
     QLineEdit,
-    QMessageBox,
     QPlainTextEdit,
     QPushButton,
     QVBoxLayout,
@@ -20,9 +20,11 @@ from PySide6.QtWidgets import (
 from services.api_client import ApiCompatibilityError
 from services.client_pairing_service import (
     default_device_name,
+    discover_pairing_servers,
     pair_client,
     pair_client_from_setup_code,
 )
+from ui.foundation.fluent import show_message
 
 
 class _ClientPairingWorker(QObject):
@@ -50,16 +52,40 @@ class _ClientPairingWorker(QObject):
         self.succeeded.emit(result)
 
 
-class ClientPairingDialog(QDialog):
-    """Connect a client using one setup code or advanced manual details."""
+class _ServerDiscoveryWorker(QObject):
+    succeeded = Signal(object)
+    failed = Signal(object)
 
-    def __init__(self, parent=None):
+    def __init__(self, provider):
+        super().__init__()
+        self.provider = provider
+
+    @Slot()
+    def run(self):
+        try:
+            servers = self.provider()
+        except Exception as exc:
+            self.failed.emit(exc)
+            return
+        self.succeeded.emit(tuple(servers or ()))
+
+
+class ClientPairingDialog(QDialog):
+    """Connect a client with a six-digit code and automatic LAN discovery."""
+
+    def __init__(self, parent=None, *, discovery_provider=None):
         super().__init__(parent)
         self._thread = None
         self._worker = None
         self._pending_result = None
         self._pending_error = None
         self._checking_updates = False
+        self._discovery_thread = None
+        self._discovery_worker = None
+        self._discovery_pending_result = None
+        self._discovery_pending_error = None
+        self._discovery_started = False
+        self.discovery_provider = discovery_provider or discover_pairing_servers
         self.pairing_result = None
         self.update_scheduled = False
         self._manual_setup_visible = False
@@ -70,9 +96,8 @@ class ClientPairingDialog(QDialog):
 
         layout = QVBoxLayout(self)
         intro = QLabel(
-            "On the main computer, open Mission Legal Server Manager, generate "
-            "a setup code, and copy it here. The HTTPS server address, "
-            "public certificate, and one-use pairing code are filled in "
+            "On the main computer, trust the current network and generate a "
+            "six-digit pairing code. Mission Legal will find that computer "
             "automatically."
         )
         intro.setWordWrap(True)
@@ -80,13 +105,41 @@ class ClientPairingDialog(QDialog):
 
         form = QFormLayout()
         self.pairing_form = form
+        server_row = QHBoxLayout()
+        self.server_combo = QComboBox()
+        self.server_combo.setAccessibleName("Discovered Mission Legal server")
+        self.server_combo.addItem("Searching for the main computer…", None)
+        server_row.addWidget(self.server_combo, 1)
+        self.refresh_button = QPushButton("Search again")
+        self.refresh_button.clicked.connect(self.refresh_servers)
+        server_row.addWidget(self.refresh_button)
+        form.addRow("Main computer", server_row)
+
+        self.code_edit = QLineEdit()
+        self.code_edit.setMaxLength(6)
+        self.code_edit.setPlaceholderText("123456")
+        self.code_edit.setAccessibleName("Six-digit pairing code")
+        self.code_edit.setValidator(
+            QRegularExpressionValidator(QRegularExpression(r"[0-9]{0,6}"), self)
+        )
+        form.addRow("Pairing code", self.code_edit)
+
+        self.device_edit = QLineEdit(default_device_name())
+        self.device_edit.setMaxLength(100)
+        self.device_edit.setAccessibleName("Computer name")
+        form.addRow("Computer name", self.device_edit)
+
+        self.advanced_button = QPushButton("Advanced recovery")
+        self.advanced_button.clicked.connect(self._toggle_manual_setup)
+        form.addRow("", self.advanced_button)
+
         self.setup_code_edit = QPlainTextEdit()
         self.setup_code_edit.setPlaceholderText(
-            "Paste the setup code copied from Server Manager"
+            "Paste the advanced recovery setup code copied from Server Manager"
         )
         self.setup_code_edit.setAccessibleName("Mission Legal setup code")
         self.setup_code_edit.setFixedHeight(92)
-        form.addRow("Setup code", self.setup_code_edit)
+        form.addRow("Recovery setup code", self.setup_code_edit)
 
         self.server_edit = QLineEdit()
         self.server_edit.setPlaceholderText("https://MAIN-COMPUTER:8765")
@@ -102,30 +155,12 @@ class ClientPairingDialog(QDialog):
         self.browse_button.clicked.connect(self._browse_certificate)
         certificate_row.addWidget(self.browse_button)
         form.addRow("CA certificate", certificate_row)
-
-        self.code_edit = QLineEdit()
-        self.code_edit.setMaxLength(6)
-        self.code_edit.setPlaceholderText("123456")
-        self.code_edit.setAccessibleName("Six-digit pairing code")
-        self.code_edit.setValidator(
-            QRegularExpressionValidator(QRegularExpression(r"[0-9]{0,6}"), self)
-        )
-        form.addRow("Pairing code", self.code_edit)
-
-        self.advanced_button = QPushButton("Use manual setup")
-        self.advanced_button.clicked.connect(self._toggle_manual_setup)
-        form.addRow("", self.advanced_button)
-
-        self.device_edit = QLineEdit(default_device_name())
-        self.device_edit.setMaxLength(100)
-        self.device_edit.setAccessibleName("Computer name")
-        form.addRow("Computer name", self.device_edit)
         layout.addLayout(form)
-        self._manual_row_indexes = (1, 2, 3)
+        self._manual_row_indexes = (4, 5, 6)
         for row in self._manual_row_indexes:
             form.setRowVisible(row, False)
 
-        self.status_label = QLabel("Nothing is sent until you choose Connect.")
+        self.status_label = QLabel("Searching for the main computer on this network…")
         self.status_label.setWordWrap(True)
         layout.addWidget(self.status_label)
 
@@ -147,7 +182,91 @@ class ClientPairingDialog(QDialog):
     def busy(self):
         return self._checking_updates or (
             self._thread is not None and self._thread.isRunning()
+        ) or (
+            self._discovery_thread is not None
+            and self._discovery_thread.isRunning()
         )
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        if not self._discovery_started:
+            self.refresh_servers()
+
+    @Slot()
+    def refresh_servers(self):
+        if self._discovery_thread is not None:
+            return
+        self._discovery_started = True
+        self._discovery_pending_result = None
+        self._discovery_pending_error = None
+        self.server_combo.clear()
+        self.server_combo.addItem("Searching for the main computer…", None)
+        self.server_combo.setEnabled(False)
+        self.refresh_button.setEnabled(False)
+        self.status_label.setText(
+            "Searching for Mission Legal on this computer and trusted local networks…"
+        )
+
+        thread = QThread(self)
+        worker = _ServerDiscoveryWorker(self.discovery_provider)
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.succeeded.connect(self._store_discovered_servers)
+        worker.failed.connect(self._store_discovery_failure)
+        worker.succeeded.connect(worker.deleteLater)
+        worker.failed.connect(worker.deleteLater)
+        thread.finished.connect(self._discovery_finished)
+        thread.finished.connect(thread.deleteLater)
+        self._discovery_thread = thread
+        self._discovery_worker = worker
+        thread.start()
+
+    @Slot(object)
+    def _store_discovered_servers(self, servers):
+        self._discovery_pending_result = tuple(servers or ())
+        if self._discovery_thread is not None:
+            self._discovery_thread.quit()
+
+    @Slot(object)
+    def _store_discovery_failure(self, error):
+        self._discovery_pending_error = error
+        if self._discovery_thread is not None:
+            self._discovery_thread.quit()
+
+    @Slot()
+    def _discovery_finished(self):
+        servers = self._discovery_pending_result or ()
+        error = self._discovery_pending_error
+        self._discovery_worker = None
+        self._discovery_thread = None
+        self.server_combo.clear()
+        for server in servers:
+            name = str(getattr(server, "name", "") or "").strip()
+            address = str(getattr(server, "server_url", "") or "").strip()
+            certificate = str(
+                getattr(server, "ca_certificate_pem", "") or ""
+            ).strip()
+            if name and address and certificate:
+                self.server_combo.addItem(name, server)
+        available = self.server_combo.count() > 0
+        if not available:
+            self.server_combo.addItem("No trusted Mission Legal server found", None)
+        self.server_combo.setEnabled(available)
+        self.refresh_button.setEnabled(True)
+        if available:
+            self.status_label.setText(
+                "Server found. Enter the six-digit code shown in Server Manager."
+            )
+            self.code_edit.setFocus()
+        elif error:
+            self.status_label.setText(
+                f"The server search failed. Try again or use Advanced recovery. {error}"
+            )
+        else:
+            self.status_label.setText(
+                "No server was found. Confirm that both computers are on the same "
+                "trusted network, then search again."
+            )
 
     @Slot()
     def _browse_certificate(self):
@@ -166,16 +285,20 @@ class ClientPairingDialog(QDialog):
         for row in self._manual_row_indexes:
             self.pairing_form.setRowVisible(row, self._manual_setup_visible)
         self.advanced_button.setText(
-            "Hide manual setup"
+            "Hide advanced recovery"
             if self._manual_setup_visible
-            else "Use manual setup"
+            else "Advanced recovery"
         )
 
     @Slot()
     def _start_pairing(self):
         if self.busy:
             return
-        setup_code = self.setup_code_edit.toPlainText().strip()
+        setup_code = (
+            self.setup_code_edit.toPlainText().strip()
+            if self._manual_setup_visible
+            else ""
+        )
         if setup_code:
             values = {
                 "setup_code": setup_code,
@@ -183,19 +306,34 @@ class ClientPairingDialog(QDialog):
             }
             missing = not values["device_name"].strip()
         else:
+            discovered = self.server_combo.currentData()
+            if discovered is not None:
+                server_url = getattr(discovered, "server_url", "")
+                certificate = getattr(discovered, "ca_certificate_pem", "")
+            else:
+                server_url = (
+                    self.server_edit.text() if self._manual_setup_visible else ""
+                )
+                certificate = (
+                    self.certificate_edit.text()
+                    if self._manual_setup_visible
+                    else ""
+                )
             values = {
-                "server_url": self.server_edit.text(),
-                "certificate": self.certificate_edit.text(),
+                "server_url": server_url,
+                "certificate": certificate,
                 "pairing_code": self.code_edit.text(),
                 "device_name": self.device_edit.text(),
             }
             missing = not all(str(value).strip() for value in values.values())
         if missing:
-            QMessageBox.warning(
+            show_message(
                 self,
                 "Pairing Information Required",
-                "Paste the setup code and enter this computer's name. You can "
-                "also choose manual setup for separate connection details.",
+                "Select the discovered main computer, enter all six digits, and "
+                "confirm this computer's name. Advanced recovery remains available "
+                "when local discovery is blocked.",
+                kind="warning",
             )
             return
 
@@ -250,19 +388,21 @@ class ClientPairingDialog(QDialog):
             self.status_label.setText(
                 "This computer was not paired. Check the details and retry."
             )
-            QMessageBox.warning(
+            show_message(
                 self,
                 "Mission Legal Pairing Failed",
                 detail,
+                kind="warning",
             )
             return
 
         self.pairing_result = result
         self.status_label.setText("This computer is paired and ready to open Mission Legal.")
-        QMessageBox.information(
+        show_message(
             self,
             "Mission Legal Is Connected",
             "This computer was paired successfully.",
+            kind="information",
         )
         self.accept()
 
@@ -282,10 +422,11 @@ class ClientPairingDialog(QDialog):
             scheduled = offer_optional_client_update(self)
         except Exception as exc:
             scheduled = False
-            QMessageBox.warning(
+            show_message(
                 self,
                 "Mission Legal Update Check Failed",
                 f"The update check could not be completed.\n\n{exc}",
+                kind="warning",
             )
         finally:
             self._checking_updates = False
@@ -314,10 +455,11 @@ class ClientPairingDialog(QDialog):
             )
         except Exception as exc:
             scheduled = False
-            QMessageBox.warning(
+            show_message(
                 self,
                 "Mission Legal Update Failed",
                 f"The required update could not be started.\n\n{exc}",
+                kind="warning",
             )
         finally:
             self._checking_updates = False
@@ -344,6 +486,8 @@ class ClientPairingDialog(QDialog):
         enabled = not bool(busy)
         for widget in (
             self.setup_code_edit,
+            self.server_combo,
+            self.refresh_button,
             self.server_edit,
             self.certificate_edit,
             self.code_edit,

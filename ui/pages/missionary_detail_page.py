@@ -37,7 +37,10 @@ from PySide6.QtCore import (
 
 from services.workflow_service import WorkflowService
 from services.client_view_service import ClientViewService
-from services.document_service import DocumentService
+from services.document_service import (
+    DocumentFileUnavailableError,
+    DocumentService,
+)
 from services.missionary_service import MissionaryService
 from services.secretary_work_service import SecretaryWorkService
 from services.expiration_rules import add_years
@@ -64,6 +67,7 @@ from ui.foundation import (
     create_date_picker,
     create_line_edit,
     create_list_widget,
+    create_loading_icon,
     create_menu,
     create_plain_text_edit,
     create_pill_button,
@@ -73,6 +77,7 @@ from ui.foundation import (
     setup_dialog_shell,
     tune_fluent_scrollable,
 )
+from ui.widgets.animated_tab_strip import AnimatedTabStrip
 from utils.constants import (
     DOCUMENTS,
     WORKFLOW_STATUSES,
@@ -425,9 +430,14 @@ class MissionaryDetailPage(QWidget):
         self._task_action_loaders = {}
         self._pending_task_actions = set()
         self._detail_task_widgets = {}
+        self._document_loaders = {}
+        self._pending_document_actions = set()
+        self._document_records = {}
+        self._document_widgets = {}
         self._detail_cache = {}
         self._detail_cache_ttl_seconds = 15.0
         self._requested_missionary_id = None
+        self._detail_loaded = False
 
         logger.info("Initializing MissionaryDetailPage")
 
@@ -476,10 +486,19 @@ class MissionaryDetailPage(QWidget):
         self._requested_missionary_id = missionary_id
         cached = self._detail_cache.get(missionary_id)
         if cached is not None:
-            self.load_missionary(
-                cached["snapshot"]["missionary"],
-                _detail_snapshot=cached["snapshot"],
-            )
+            try:
+                self.load_missionary(
+                    cached["snapshot"]["missionary"],
+                    _detail_snapshot=cached["snapshot"],
+                )
+            except Exception as error:
+                self._detail_cache.pop(missionary_id, None)
+                self._detail_load_failed(error)
+                return self._request_detail_snapshot(
+                    missionary_id,
+                    force=True,
+                    on_not_found=on_not_found,
+                )
             if (
                 time.monotonic() - cached["loaded_at"]
                 < self._detail_cache_ttl_seconds
@@ -531,6 +550,7 @@ class MissionaryDetailPage(QWidget):
         if cache_is_fresh and not force:
             return False
 
+        self._set_detail_loading(True)
         if not self._background_loads_enabled:
             snapshot = self.client_view_service.get_missionary_detail_snapshot(
                 missionary_id
@@ -554,7 +574,7 @@ class MissionaryDetailPage(QWidget):
                 snapshot,
                 on_not_found,
             ),
-            on_error=self._detail_refresh_failed,
+            on_error=self._detail_load_failed,
         )
         return True
 
@@ -567,37 +587,61 @@ class MissionaryDetailPage(QWidget):
         if missionary_id != self._requested_missionary_id:
             return
         if snapshot is None:
+            self._set_detail_loading(False)
             if callable(on_not_found):
                 on_not_found()
             return
-        self._detail_cache[missionary_id] = {
-            "snapshot": snapshot,
-            "loaded_at": time.monotonic(),
-        }
         current = getattr(self, "current_missionary", None)
         if (
             getattr(current, "id", None) == missionary_id
+            and self._detail_loaded
             and self.has_unsaved_changes()
         ):
+            self._detail_cache[missionary_id] = {
+                "snapshot": snapshot,
+                "loaded_at": time.monotonic(),
+            }
+            self._set_detail_loading(False)
             logger.info(
                 "Deferred detail snapshot for missionary %s because "
                 "the form has unsaved changes",
                 missionary_id,
             )
             return
-        self.load_missionary(
-            snapshot["missionary"],
-            _detail_snapshot=snapshot,
-        )
+        try:
+            self.load_missionary(
+                snapshot["missionary"],
+                _detail_snapshot=snapshot,
+            )
+        except Exception as error:
+            self._detail_cache.pop(missionary_id, None)
+            self._detail_load_failed(error)
+            return
+        self._detail_cache[missionary_id] = {
+            "snapshot": snapshot,
+            "loaded_at": time.monotonic(),
+        }
 
-    @staticmethod
-    def _detail_refresh_failed(error):
+    def _detail_load_failed(self, error):
         logger.error(
-            "Failed to refresh missionary detail in background: %s",
+            "Failed to load missionary detail: %s",
             error,
         )
+        self._detail_loaded = False
+        self._set_detail_loading(False)
+
+    def _set_detail_loading(self, loading):
+        icon = getattr(self, "detail_loading_icon", None)
+        if icon is None:
+            return
+        if loading:
+            icon.start()
+        else:
+            icon.stop()
 
     def _show_detail_loading_state(self):
+        self._detail_loaded = False
+        self._set_detail_loading(True)
         if hasattr(self, "name_label"):
             self.name_label.setText(
                 tr("missionary_detail_loading")
@@ -1009,15 +1053,32 @@ class MissionaryDetailPage(QWidget):
 
         name_stage.setSpacing(4)
 
+        name_row = QHBoxLayout()
+        name_row.setContentsMargins(0, 0, 0, 0)
+        name_row.setSpacing(8)
+
         self.name_label = QLabel("-")
 
         self.name_label.setObjectName("MissionaryDetailTitle")
+
+        self.detail_loading_icon = create_loading_icon(self, size=16)
+        self.detail_loading_icon.setObjectName("MissionaryDetailLoadingIcon")
+        self.detail_loading_icon.setToolTip(
+            tr("missionary_detail_loading")
+            if tr("missionary_detail_loading")
+            != "missionary_detail_loading"
+            else "Loading missionary..."
+        )
 
         self.stage_badge = QLabel("")
 
         self.stage_badge.setObjectName("StageBadge")
 
-        name_stage.addWidget(self.name_label)
+        name_row.addWidget(self.name_label)
+        name_row.addWidget(self.detail_loading_icon)
+        name_row.addStretch()
+
+        name_stage.addLayout(name_row)
 
         name_stage.addWidget(
             self.stage_badge,
@@ -1166,17 +1227,10 @@ class MissionaryDetailPage(QWidget):
         self.tab_stack = QStackedWidget()
         self._tab_route_indexes = {}
         self.tab_buttons = {}
-        self.tab_button_group = QButtonGroup(self)
-        self.tab_button_group.setExclusive(True)
         self.tab_stack.setObjectName("StaticTabStack")
 
-        self.tab_bar = QFrame()
-        self.tab_bar.setObjectName("MissionaryDetailTopTabs")
-        self.tab_bar.setAttribute(Qt.WA_StyledBackground, True)
-        self.tab_bar_layout = QHBoxLayout()
-        self.tab_bar_layout.setContentsMargins(12, 0, 16, 0)
-        self.tab_bar_layout.setSpacing(8)
-        self.tab_bar.setLayout(self.tab_bar_layout)
+        self.tab_bar = AnimatedTabStrip()
+        self.tab_buttons = self.tab_bar.buttons
         main_layout.addWidget(self.tab_bar)
 
         self._build_overview_tab()
@@ -1187,7 +1241,6 @@ class MissionaryDetailPage(QWidget):
 
         self._build_timeline_tab()
 
-        self.tab_bar_layout.addStretch()
         self._select_static_tab("overview")
 
         self._apply_responsive_layout(self.width())
@@ -1204,31 +1257,14 @@ class MissionaryDetailPage(QWidget):
     def _add_static_tab(self, route_key, title, widget):
         index = self.tab_stack.addWidget(widget)
         self._tab_route_indexes[route_key] = index
-        button = QPushButton(title)
-        button.setObjectName("MissionaryDetailTopTab")
-        button.setCheckable(True)
-        button.setFixedHeight(35)
-        button.setMinimumWidth(0)
-        button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        button.clicked.connect(
-            lambda checked=False, key=route_key:
-            self._select_static_tab(key)
-        )
-        self.tab_button_group.addButton(button)
-        self.tab_buttons[route_key] = button
-        self.tab_bar_layout.addWidget(button)
+        self.tab_bar.add_tab(route_key, title, self._select_static_tab)
         return index
 
     def _select_static_tab(self, route_key):
         index = self._tab_route_indexes.get(route_key)
         if index is not None:
             self.tab_stack.setCurrentIndex(index)
-        for tab_key, button in self.tab_buttons.items():
-            active = tab_key == route_key
-            button.setChecked(active)
-            button.setProperty("active", active)
-            button.style().unpolish(button)
-            button.style().polish(button)
+        self.tab_bar.set_active(route_key, animate=False)
 
     def _build_overview_tab(self):
         overview_tab = QWidget()
@@ -2959,67 +2995,93 @@ class MissionaryDetailPage(QWidget):
             doc["notes"] = dialog.get_notes()
 
     def _open_document_file(self, doc_id):
-        doc = self._find_doc_data(doc_id)
-
-        if not doc:
-            return
-
-        try:
-            file_path = doc["file_path"]
-
-            if not Path(file_path).exists():
-                show_message(
-                    self,
-                    tr("missionary_detail_file_not_found_title"),
-                    tr(
-                        "missionary_detail_cannot_open_file",
-                        file_path=file_path,
-                    ),
-                    kind="warning",
-                )
-
-                return
-
-            open_document_with_default_app(file_path)
-
-        except Exception:
-            logger.exception("Failed to open file")
+        self._ensure_local_document(
+            doc_id,
+            lambda file_path: open_document_with_default_app(file_path),
+        )
 
     def _open_document_viewer(self, doc_id):
-        doc = self._find_doc_data(doc_id)
-
-        if not doc:
-            return
-
-        try:
-            file_path = doc.get("file_path")
-
-            if not file_path or not Path(
-                file_path
-            ).exists():
-                show_message(
-                    self,
-                    tr("missionary_detail_file_not_found_title"),
-                    tr("missionary_detail_cannot_open_document"),
-                    kind="warning",
-                )
-
-                return
-
+        def open_viewer(file_path):
             from ui.dialogs.document_viewer_dialog import (
                 DocumentViewerDialog,
             )
 
-            dialog = DocumentViewerDialog(
-                file_path, parent=self
-            )
-
+            dialog = DocumentViewerDialog(file_path, parent=self)
             dialog.exec()
 
-        except Exception:
-            logger.exception(
-                "Document viewer failed"
+        self._ensure_local_document(doc_id, open_viewer)
+
+    def _set_document_loading(self, doc_id, loading):
+        widget = self._document_widgets.get(doc_id)
+        if widget is None:
+            return
+        status = next(
+            (
+                label
+                for label in widget.findChildren(QLabel)
+                if label.property("document_card_status")
+            ),
+            None,
+        )
+        if status is not None:
+            status.setText(
+                tr("missionary_detail_document_loading")
+                if loading
+                else tr("missionary_detail_uploaded_status")
             )
+        widget.setEnabled(not loading)
+
+    def _ensure_local_document(self, doc_id, on_ready):
+        record = self._document_records.get(doc_id)
+        if record is None or doc_id in self._pending_document_actions:
+            return
+
+        def complete(local_path):
+            self._pending_document_actions.discard(doc_id)
+            path_text = str(local_path)
+            record.file_path = path_text
+            doc_data = self._find_doc_data(doc_id)
+            if doc_data is not None:
+                doc_data["file_path"] = path_text
+            self._set_document_loading(doc_id, False)
+            try:
+                on_ready(path_text)
+            except Exception:
+                logger.exception("Document action failed for document %s", doc_id)
+
+        def failed(error):
+            self._pending_document_actions.discard(doc_id)
+            self._set_document_loading(doc_id, False)
+            logger.error("Document %s could not be loaded: %s", doc_id, error)
+            if isinstance(error, DocumentFileUnavailableError):
+                message = tr("missionary_detail_document_server_unavailable")
+            else:
+                message = tr("missionary_detail_document_download_failed")
+            show_message(
+                self,
+                tr("missionary_detail_file_not_found_title"),
+                message,
+                kind="warning",
+            )
+
+        self._pending_document_actions.add(doc_id)
+        self._set_document_loading(doc_id, True)
+        if not self._background_loads_enabled:
+            try:
+                complete(self.document_service.ensure_local_copy(record))
+            except Exception as error:
+                failed(error)
+            return
+
+        loader = self._document_loaders.get(doc_id)
+        if loader is None:
+            loader = LatestRequestLoader(parent=self)
+            self._document_loaders[doc_id] = loader
+        loader.request(
+            lambda: self.document_service.ensure_local_copy(record),
+            on_success=complete,
+            on_error=failed,
+        )
 
     def _delete_document(self, doc_id):
         doc = self._find_doc_data(doc_id)
@@ -3066,6 +3128,8 @@ class MissionaryDetailPage(QWidget):
     def load_missionary(self, missionary, *, _detail_snapshot=None):
         if missionary is None:
             return
+        self._detail_loaded = False
+        self._set_detail_loading(True)
         self._requested_missionary_id = missionary.id
         self.current_missionary = missionary
 
@@ -3217,6 +3281,8 @@ class MissionaryDetailPage(QWidget):
         )
         self._load_timeline(stage_history)
         self._update_advance_banner(workflows, documents)
+        self._detail_loaded = True
+        self._set_detail_loading(False)
 
     def _clear_detail_collections(self):
         for list_name in (
@@ -3272,6 +3338,8 @@ class MissionaryDetailPage(QWidget):
         return add_years(arrival_date, 1)
 
     def has_unsaved_changes(self):
+        if not getattr(self, "_detail_loaded", False):
+            return False
         missionary = getattr(self, "current_missionary", None)
         if missionary is None:
             return False
@@ -3309,9 +3377,6 @@ class MissionaryDetailPage(QWidget):
 
     def _go_back(self, checked=False):
         _ = checked
-        if not self.confirm_leave_detail():
-            return
-
         opener = getattr(
             self.main_window,
             "return_from_missionary_detail",
@@ -3422,6 +3487,8 @@ class MissionaryDetailPage(QWidget):
     def load_documents(self, documents=None):
         self.documents_list.clear()
         self._document_data = []
+        self._document_records = {}
+        self._document_widgets = {}
 
         if not hasattr(self, "current_missionary"):
             return
@@ -3470,27 +3537,21 @@ class MissionaryDetailPage(QWidget):
             item = QListWidgetItem()
             item.setData(Qt.UserRole, doc.id)
 
-            try:
-                pixmap = self.thumb_service.get_pixmap(
-                    doc.file_path
-                )
-            except Exception:
-                pixmap = None
-
             widget = self._build_document_item_widget(
                 doc,
                 label,
-                pixmap,
             )
             item.setSizeHint(widget.sizeHint())
             self.documents_list.addItem(item)
             self.documents_list.setItemWidget(item, widget)
+            self._document_records[doc.id] = doc
+            self._document_widgets[doc.id] = widget
 
             self._document_data.append({
                 "id": doc.id,
                 "document_type": doc.document_type,
                 "label": label,
-                "file_path": doc.file_path,
+                "file_path": None,
                 "file_name": doc.file_name,
                 "notes": doc.notes or "",
                 "ocr_raw_data": doc.ocr_raw_data,
@@ -3963,11 +4024,10 @@ class MissionaryDetailPage(QWidget):
             return tr("missionary_detail_workflow_active_hint")
         return tr("missionary_detail_workflow_update_hint")
 
-    def _build_document_item_widget(self, doc, label, pixmap=None):
+    def _build_document_item_widget(self, doc, label):
         return build_document_card(
             doc,
             label=label,
-            pixmap=pixmap,
             on_view=lambda doc_data: self._open_document_viewer(doc_data.id),
             on_notes=lambda doc_data: self._open_document_notes(doc_data.id),
             on_open=lambda doc_data: self._open_document_file(doc_data.id),

@@ -203,6 +203,9 @@ else:
             self.server = None
             self.management_broker = None
             self.management_thread = None
+            self.discovery_responder = None
+            self.discovery_thread = None
+            self.trusted_network_store = None
             self.restart_requested = threading.Event()
             self.stopping = threading.Event()
 
@@ -212,6 +215,8 @@ else:
                 self.stopping.set()
             if getattr(self, "management_broker", None) is not None:
                 self.management_broker.stop()
+            if getattr(self, "discovery_responder", None) is not None:
+                self.discovery_responder.stop()
             if self.server is not None:
                 self.server.should_exit = True
             win32event.SetEvent(self.stop_event)
@@ -246,14 +251,35 @@ else:
                 f"{DISPLAY_NAME} management channel error: {exc}"
             )
 
+        def _network_addresses_changed(self, _addresses):
+            """Refresh the leaf certificate and reload Uvicorn after a move."""
+
+            try:
+                if self.trusted_network_store is not None:
+                    self.trusted_network_store.current_status(refresh=True)
+                from server.tls import generate_local_tls
+
+                generate_local_tls()
+                if self._api_runtime_state() == "running":
+                    self._request_api_restart()
+            except Exception as exc:
+                self._log_management_error(
+                    RuntimeError(f"network certificate refresh failed: {exc}")
+                )
+
         def _start_management_broker(self):
             from server.management import MissionLegalManagement
             from server.management_pipe import MissionLegalManagementPipeServer
+            from server.trusted_networks import TrustedNetworkStore
+            from services.lan_discovery import LanDiscoveryResponder
 
             operator_sid = _resolve_manager_operator_sid()
+            self.trusted_network_store = TrustedNetworkStore()
+            self.trusted_network_store.current_status(refresh=True)
             management = MissionLegalManagement(
                 restart_callback=self._request_api_restart,
                 state_provider=self._api_runtime_state,
+                trusted_network_store=self.trusted_network_store,
             )
             self.management_broker = MissionLegalManagementPipeServer(
                 management,
@@ -266,8 +292,20 @@ else:
                 daemon=True,
             )
             self.management_thread.start()
+            self.discovery_responder = LanDiscoveryResponder(
+                enabled_provider=self.trusted_network_store.is_current_trusted,
+                ca_certificate_provider=management.ca_certificate_provider,
+                port_provider=management._configured_port,
+                network_changed_callback=self._network_addresses_changed,
+            )
+            self.discovery_thread = threading.Thread(
+                target=self.discovery_responder.serve_forever,
+                name="MissionLegalLanDiscovery",
+                daemon=True,
+            )
+            self.discovery_thread.start()
             servicemanager.LogInfoMsg(
-                f"{DISPLAY_NAME} local management channel started"
+                f"{DISPLAY_NAME} local management and LAN discovery channels started"
             )
 
         def SvcDoRun(self):
@@ -284,6 +322,12 @@ else:
                     self.management_broker = None
                 if not hasattr(self, "management_thread"):
                     self.management_thread = None
+                if not hasattr(self, "discovery_responder"):
+                    self.discovery_responder = None
+                if not hasattr(self, "discovery_thread"):
+                    self.discovery_thread = None
+                if not hasattr(self, "trusted_network_store"):
+                    self.trusted_network_store = None
                 cert = os.environ.get("MISSION_LEGAL_TLS_CERT")
                 key = os.environ.get("MISSION_LEGAL_TLS_KEY")
                 if not cert or not key:
@@ -304,28 +348,34 @@ else:
                     # separately requires the management connection smoke test,
                     # so a new release cannot be accepted in this degraded state.
                     self._log_management_error(exc)
-                config = uvicorn.Config(
-                    "server.app:app",
-                    host=os.environ.get(
-                        "MISSION_LEGAL_SERVER_HOST", saved.get("host", "0.0.0.0")
-                    ),
-                    port=int(
-                        os.environ.get(
-                            "MISSION_LEGAL_SERVER_PORT", saved.get("port", 8765)
-                        )
-                    ),
-                    ssl_certfile=cert,
-                    ssl_keyfile=key,
-                    # Windows services do not have normal stdout/stderr streams.
-                    # Uvicorn's automatic colour detection calls isatty() on
-                    # those streams while configuring its formatters.
-                    use_colors=False,
-                    proxy_headers=False,
-                    server_header=False,
-                )
+                def build_config():
+                    return uvicorn.Config(
+                        "server.app:app",
+                        host=os.environ.get(
+                            "MISSION_LEGAL_SERVER_HOST",
+                            saved.get("host", "0.0.0.0"),
+                        ),
+                        port=int(
+                            os.environ.get(
+                                "MISSION_LEGAL_SERVER_PORT",
+                                saved.get("port", 8765),
+                            )
+                        ),
+                        ssl_certfile=cert,
+                        ssl_keyfile=key,
+                        # Windows services do not have normal stdout/stderr streams.
+                        # Uvicorn's automatic colour detection calls isatty() on
+                        # those streams while configuring its formatters.
+                        use_colors=False,
+                        proxy_headers=False,
+                        server_header=False,
+                    )
+
                 while not self.stopping.is_set():
                     self.restart_requested.clear()
-                    self.server = uvicorn.Server(config)
+                    # Build a new Config so a network-triggered restart reloads
+                    # the refreshed TLS leaf certificate from disk.
+                    self.server = uvicorn.Server(build_config())
                     self.server.run()
                     self.server = None
                     if self.stopping.is_set() or not self.restart_requested.is_set():
@@ -336,6 +386,8 @@ else:
             finally:
                 if getattr(self, "management_broker", None) is not None:
                     self.management_broker.stop()
+                if getattr(self, "discovery_responder", None) is not None:
+                    self.discovery_responder.stop()
                 self.server = None
                 servicemanager.LogInfoMsg(f"{DISPLAY_NAME} stopped")
 

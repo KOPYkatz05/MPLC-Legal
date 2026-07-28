@@ -153,15 +153,24 @@ def main():
 
     app = QApplication(sys.argv)
 
+    from ui.dialogs.startup_splash import StartupSplash
+
+    startup_splash = StartupSplash()
+    startup_splash.show_centered()
+    app.processEvents()
+
     from services.api_client import ApiCompatibilityError, MissionLegalApiClient
     from services.client_pairing_service import (
         ClientPairingRecoveryError,
+        recover_configured_server_address,
         recover_interrupted_pairing,
     )
 
     try:
         recover_interrupted_pairing()
+        startup_splash.advance_to(10)
     except ClientPairingRecoveryError as exc:
+        startup_splash.dismiss()
         QMessageBox.critical(
             None,
             "Mission Legal Pairing Recovery Required",
@@ -174,6 +183,7 @@ def main():
     def pair_installed_client():
         from ui.dialogs.client_pairing_dialog import ClientPairingDialog
 
+        startup_splash.dismiss()
         load_stylesheet(app)
         pairing_dialog = ClientPairingDialog()
         if pairing_dialog.exec() != QDialog.Accepted:
@@ -191,6 +201,7 @@ def main():
         return paired_client
 
     api_client = MissionLegalApiClient.from_environment()
+    startup_splash.advance_to(25)
     if (
         api_client is None
         and is_frozen()
@@ -215,6 +226,7 @@ def main():
         if get_database_path().exists():
             DatabaseBackupService().create_snapshot(reason="pre-migration")
         init_db()
+        startup_splash.advance_to(65)
     else:
         # Modules imported by the UI expose both local and remote services. Mark
         # this process before importing them so database.db cannot create a
@@ -226,6 +238,7 @@ def main():
                 api_client.validate_compatibility(health)
                 session = api_client.session()
                 api_client.validate_compatibility(session)
+                startup_splash.advance_to(65)
                 break
             except ApiCompatibilityError as exc:
                 if exc.client_update_required:
@@ -250,6 +263,12 @@ def main():
                     )
                 return
             except Exception as exc:
+                if recover_configured_server_address():
+                    refreshed_client = MissionLegalApiClient.from_environment()
+                    if refreshed_client is not None:
+                        api_client = refreshed_client
+                        continue
+                startup_splash.dismiss()
                 dialog = QMessageBox()
                 dialog.setIcon(QMessageBox.Warning)
                 dialog.setWindowTitle("Mission Legal Server Unavailable")
@@ -287,6 +306,8 @@ def main():
     install_window_diagnostics(app)
 
     window = MainWindow()
+    startup_splash.advance_to(90)
+    startup_splash.dismiss()
 
     if api_client is not None:
         from services.api_connection_state import api_connection_state

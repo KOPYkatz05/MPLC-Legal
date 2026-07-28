@@ -18,9 +18,12 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QFont, QPalette
 
 from services.reports_data_service import ReportsDataService
+from services.settings_service import SettingsService
+from utils.i18n import get_i18n
 
 from ui.foundation import StatCard, create_card, create_scroll_area
 from ui.foundation.background_loader import LatestRequestLoader
+from ui.widgets.animated_tab_strip import AnimatedTabStrip
 
 from utils.constants import (
     DOCUMENTS,
@@ -41,7 +44,17 @@ class ReportsPage(QWidget):
 
         self.main_window = main_window
 
-        self._selected_tab = "general"
+        self.settings_service = getattr(main_window, "settings_service", None)
+        if self.settings_service is None:
+            active_language = get_i18n().get_language()
+            self.settings_service = SettingsService()
+            get_i18n().set_language(active_language)
+
+        self._selected_tab = getattr(
+            self.settings_service,
+            "get_analytics_default_view",
+            lambda: "general",
+        )()
 
         self._tab_buttons = {}
 
@@ -111,31 +124,15 @@ class ReportsPage(QWidget):
         return frame
 
     def _build_tab_strip(self):
-        strip = QFrame()
-        strip.setObjectName("ReportsTabStrip")
-
-        strip_layout = QHBoxLayout()
-        strip_layout.setContentsMargins(0, 6, 0, 0)
-        strip_layout.setSpacing(6)
-        strip.setLayout(strip_layout)
+        strip = AnimatedTabStrip()
 
         for key, label in (
             ("general", "General"),
             ("process", "Process"),
             ("documents", "Documents"),
         ):
-            button = QPushButton(label)
-            button.setObjectName("ReportsTabButton")
-            button.setCheckable(True)
-            button.setCursor(Qt.PointingHandCursor)
-            button.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
-            button.clicked.connect(
-                lambda checked=False, tab_key=key: self._set_tab(tab_key)
-            )
-            self._tab_buttons[key] = button
-            strip_layout.addWidget(button)
-
-        strip_layout.addStretch()
+            strip.add_tab(key, label, self._set_tab)
+        self._tab_buttons = strip.buttons
         self._sync_tab_buttons()
         return strip
 
@@ -493,6 +490,12 @@ class ReportsPage(QWidget):
         self._render_selected_tab()
 
     def _sync_tab_buttons(self):
+        tab_strip = next(
+            (button.parentWidget() for button in self._tab_buttons.values()), None
+        )
+        if isinstance(tab_strip, AnimatedTabStrip):
+            tab_strip.set_active(self._selected_tab, animate=False)
+            return
         for key, button in getattr(self, "_tab_buttons", {}).items():
             button.setChecked(key == self._selected_tab)
 

@@ -1,11 +1,15 @@
 from pathlib import Path
 
+import pytest
+
 from services import document_service as module
+from services.api_client import ApiUnavailableError, RemoteRecord
 
 
 class FakeDocumentClient:
     def __init__(self):
         self.upload_data = None
+        self.download_calls = []
 
     def get(self, path, **kwargs):
         if path.endswith("get_documents"):
@@ -22,6 +26,7 @@ class FakeDocumentClient:
         raise AssertionError(path)
 
     def download(self, path, destination):
+        self.download_calls.append(path)
         destination = Path(destination)
         destination.parent.mkdir(parents=True, exist_ok=True)
         destination.write_bytes(b"document")
@@ -39,7 +44,21 @@ class FakeDocumentClient:
         }
 
 
-def test_remote_documents_are_materialized_in_local_cache(monkeypatch, tmp_path):
+def test_remote_document_listing_keeps_server_metadata_until_requested(monkeypatch):
+    client = FakeDocumentClient()
+    monkeypatch.setattr(
+        module.MissionLegalApiClient,
+        "from_environment",
+        classmethod(lambda cls: client),
+    )
+
+    documents = module.DocumentService().get_documents(9)
+
+    assert documents[0].file_path == "C:/server/passport.pdf"
+    assert client.download_calls == []
+
+
+def test_remote_document_is_downloaded_once_when_requested(monkeypatch, tmp_path):
     client = FakeDocumentClient()
     monkeypatch.setattr(
         module.MissionLegalApiClient,
@@ -47,15 +66,17 @@ def test_remote_documents_are_materialized_in_local_cache(monkeypatch, tmp_path)
         classmethod(lambda cls: client),
     )
     monkeypatch.setattr(module, "get_client_data_dir", lambda: tmp_path)
+    service = module.DocumentService()
+    document = service.get_documents(9)[0]
 
-    documents = module.DocumentService().get_documents(9)
-
-    cached = Path(documents[0].file_path)
+    cached = service.ensure_local_copy(document)
     assert cached.read_bytes() == b"document"
     assert cached.parent == tmp_path / "DocumentCache" / "9"
+    assert service.ensure_local_copy(document) == cached
+    assert client.download_calls == ["/v1/documents/3/content"]
 
 
-def test_remote_upload_sends_file_and_materializes_response(monkeypatch, tmp_path):
+def test_remote_upload_sends_file_without_downloading_response(monkeypatch, tmp_path):
     client = FakeDocumentClient()
     monkeypatch.setattr(
         module.MissionLegalApiClient,
@@ -72,7 +93,7 @@ def test_remote_upload_sends_file_and_materializes_response(monkeypatch, tmp_pat
     )
 
     assert document.id == 5
-    assert Path(document.file_path).read_bytes() == b"document"
+    assert document.file_path == "C:/server/new.pdf"
 
 
 def test_remote_ocr_upload_serializes_multipart_json_fields(monkeypatch):
@@ -102,3 +123,28 @@ def test_remote_ocr_upload_serializes_multipart_json_fields(monkeypatch):
     assert client.upload_data["ocr_confirmed_data"] == (
         '{"passport_number": "redacted"}'
     )
+
+
+def test_missing_remote_document_is_reported_as_server_unavailable(monkeypatch):
+    class MissingDocumentClient(FakeDocumentClient):
+        def download(self, path, destination):
+            raise ApiUnavailableError("Client error '404 Not Found'")
+
+    client = MissingDocumentClient()
+    monkeypatch.setattr(
+        module.MissionLegalApiClient,
+        "from_environment",
+        classmethod(lambda cls: client),
+    )
+    monkeypatch.setattr(module, "get_client_data_dir", lambda: Path("cache-root"))
+    service = module.DocumentService()
+    document = RemoteRecord(
+        {
+            "id": 3,
+            "missionary_id": 9,
+            "file_path": "C:/server/passport.pdf",
+        }
+    )
+
+    with pytest.raises(module.DocumentFileUnavailableError):
+        service.ensure_local_copy(document)

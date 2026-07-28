@@ -19,6 +19,32 @@ from services.database_backup_service import DatabaseBackupService
 from services.pairing_package import decode_pairing_package
 
 
+class FakeTrustedNetworkStore:
+    def __init__(self, *, trusted=True):
+        self.trusted = trusted
+
+    def current_status(self, *, refresh=False):
+        _ = refresh
+        return {
+            "available": True,
+            "trusted": self.trusted,
+            "network_id": "office123456",
+            "name": "Mission Office",
+            "addresses": ["192.168.108.50"],
+        }
+
+    def trust_current(self):
+        self.trusted = True
+        return self.current_status()
+
+    def forget_current(self):
+        self.trusted = False
+        return self.current_status()
+
+    def is_current_trusted(self):
+        return self.trusted
+
+
 @pytest.fixture
 def management_tmp_path():
     """Avoid pytest's Windows 0o700 base-temp ACL under restricted test tokens."""
@@ -72,6 +98,7 @@ def _management(tmp_path, **overrides):
             "system_memory_used_bytes": 8_000_000_000,
             "system_memory_total_bytes": 16_000_000_000,
         },
+        "trusted_network_store": FakeTrustedNetworkStore(),
     }
     defaults.update(overrides)
     return MissionLegalManagement(**defaults)
@@ -165,6 +192,13 @@ def test_status_devices_revoke_and_support_summary_are_sanitized(
         "host": "0.0.0.0",
         "port": 8765,
         "server_address": "https://192.168.108.50:8765",
+        "network": {
+            "available": True,
+            "trusted": True,
+            "network_id": "office123456",
+            "name": "Mission Office",
+            "addresses": ["192.168.108.50"],
+        },
         "database_file_present": True,
         "server_process_cpu_percent": 4.5,
         "server_process_memory_bytes": 120_000_000,
@@ -245,6 +279,20 @@ def test_pairing_lifetime_uses_injected_clock_without_accepting_duration(
 
     assert result["lifetime_seconds"] == 600
     assert result["expires_at"] == "2026-07-24T12:10:00+00:00"
+
+
+def test_typed_network_commands_change_discovery_trust(management_tmp_path):
+    networks = FakeTrustedNetworkStore(trusted=False)
+    management = _management(
+        management_tmp_path,
+        trusted_network_store=networks,
+    )
+
+    trusted = management.execute("trust_current_network", {})
+    forgotten = management.execute("forget_current_network", {})
+
+    assert trusted["network"]["trusted"] is True
+    assert forgotten["network"]["trusted"] is False
 
 
 def test_status_metrics_fail_to_null_without_breaking_status(management_tmp_path):
