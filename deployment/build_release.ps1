@@ -339,6 +339,9 @@ if ($HasServerSigning -or $RequireSigning) {
 $ClientReleaseRoot = [IO.Path]::GetFullPath((Join-Path $RepoRoot "dist\client-releases\$Channel"))
 $ClientFeedPath = Join-Path $ClientReleaseRoot "releases.$Channel.json"
 $ClientAssetsPath = Join-Path $ClientReleaseRoot "assets.$Channel.json"
+if ([string]::IsNullOrWhiteSpace([string]$ReleaseConfig.installerFileName)) {
+    throw "client_release.json is missing installerFileName."
+}
 $ClientInstallerPath = Join-Path $ClientReleaseRoot ([string]$ReleaseConfig.installerFileName)
 
 # Build the immutable client feed last. A prior interrupted orchestrator run may

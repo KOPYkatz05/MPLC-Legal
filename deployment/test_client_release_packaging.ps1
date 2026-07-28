@@ -412,6 +412,19 @@ exit 0
     if (Test-Path -LiteralPath (Join-Path $InputDir "mission-legal-update.json")) {
         throw "The release-specific update configuration was not removed from the verified raw package."
     }
+    $InstallerFileName = "MissionLegalClientSetup.exe"
+    $RenamedInstallerPath = Join-Path $OutputDir $InstallerFileName
+    if (-not (Test-Path -LiteralPath $RenamedInstallerPath -PathType Leaf)) {
+        throw "The branded client installer was not created: $RenamedInstallerPath"
+    }
+    if (Test-Path -LiteralPath (Join-Path $OutputDir "MissionLegal.MissionLegalTracker-stable-Setup.exe")) {
+        throw "The default Velopack installer name was not removed."
+    }
+    $LatestAssets = Get-Content -LiteralPath (Join-Path $OutputDir "assets.stable.json") -Raw | ConvertFrom-Json
+    $InstallerAsset = @($LatestAssets | Where-Object { $_.Type -eq "Installer" })
+    if ($InstallerAsset.Count -ne 1 -or $InstallerAsset[0].RelativeFileName -ne $InstallerFileName) {
+        throw "The latest-assets manifest does not reference the branded client installer."
+    }
 
     $RejectedInsecurePreviousFeed = $false
     try {
