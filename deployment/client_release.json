@@ -5,6 +5,7 @@
   "vpkTargetFramework": "net8.0",
   "packId": "MissionLegal.MissionLegalTracker",
   "packTitle": "Mission Legal",
+  "installerFileName": "MissionLegalClientSetup.exe",
   "packAuthors": "MissionLegal",
   "mainExe": "MissionLegal.exe",
   "runtime": "win-x64",

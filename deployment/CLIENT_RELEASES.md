@@ -43,7 +43,7 @@ The static-host-ready result is written to:
 
 ```text
 dist\client-releases\stable\
-  MissionLegal.MissionLegalTracker-stable-Setup.exe
+  MissionLegalClientSetup.exe
   MissionLegal.MissionLegalTracker-<version>-stable-full.nupkg
   releases.stable.json
   assets.stable.json

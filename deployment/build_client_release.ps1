@@ -408,6 +408,48 @@ function Test-ReleaseArtifacts {
     }
 }
 
+function Rename-ClientInstallerArtifact {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$ReleaseRoot,
+        [Parameter(Mandatory = $true)]
+        [string]$GeneratedInstallerPath,
+        [Parameter(Mandatory = $true)]
+        [string]$InstallerFileName,
+        [Parameter(Mandatory = $true)]
+        [string]$ReleaseChannel
+    )
+
+    if (-not (Test-MissionLegalSafeWindowsLeafName $InstallerFileName)) {
+        throw "Configured installerFileName is unsafe: '$InstallerFileName'."
+    }
+    $GeneratedPath = [IO.Path]::GetFullPath($GeneratedInstallerPath)
+    $GeneratedName = [IO.Path]::GetFileName($GeneratedPath)
+    if (-not (Test-Path -LiteralPath $GeneratedPath -PathType Leaf)) {
+        throw "Velopack generated installer is missing: $GeneratedPath"
+    }
+    $InstallerPath = Join-Path $ReleaseRoot $InstallerFileName
+    if (-not $GeneratedPath.Equals($InstallerPath, [StringComparison]::OrdinalIgnoreCase)) {
+        if (Test-Path -LiteralPath $InstallerPath) {
+            Remove-Item -LiteralPath $InstallerPath -Force
+        }
+        Move-Item -LiteralPath $GeneratedPath -Destination $InstallerPath
+    }
+
+    $LatestAssetsPath = Join-Path $ReleaseRoot "assets.$ReleaseChannel.json"
+    $LatestAssets = @(Get-LatestAssetEntries -ManifestPath $LatestAssetsPath)
+    $InstallerEntries = @($LatestAssets | Where-Object { ([string]$_.Type) -ieq "Installer" })
+    if ($InstallerEntries.Count -ne 1) {
+        throw "Velopack latest-assets manifest must contain exactly one installer: $LatestAssetsPath"
+    }
+    if (-not ([string]$InstallerEntries[0].RelativeFileName).Equals($GeneratedName, [StringComparison]::OrdinalIgnoreCase)) {
+        throw "Velopack latest-assets manifest does not reference its generated installer '$GeneratedName'."
+    }
+    $InstallerEntries[0].RelativeFileName = $InstallerFileName
+    Write-MissionLegalJsonAtomic -Value @($LatestAssets) -Path $LatestAssetsPath -Depth 8 | Out-Null
+    return $InstallerPath
+}
+
 function Get-VpkVersion {
     param(
         [Parameter(Mandatory = $true)]
@@ -663,6 +705,7 @@ $VpkPackageSha256 = [string]$Config.vpkPackageSha256
 $VpkTargetFramework = [string]$Config.vpkTargetFramework
 $PackId = [string]$Config.packId
 $PackTitle = [string]$Config.packTitle
+$InstallerFileName = [string]$Config.installerFileName
 $PackAuthors = [string]$Config.packAuthors
 $MainExe = [string]$Config.mainExe
 $Runtime = [string]$Config.runtime
@@ -676,6 +719,7 @@ foreach ($RequiredValue in @(
     @{ Name = "vpkTargetFramework"; Value = $VpkTargetFramework },
     @{ Name = "packId"; Value = $PackId },
     @{ Name = "packTitle"; Value = $PackTitle },
+    @{ Name = "installerFileName"; Value = $InstallerFileName },
     @{ Name = "packAuthors"; Value = $PackAuthors },
     @{ Name = "mainExe"; Value = $MainExe },
     @{ Name = "runtime"; Value = $Runtime },
@@ -692,6 +736,9 @@ if ($VpkPackageSha256 -notmatch '^[0-9A-Fa-f]{64}$') {
 
 if ($PackId -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]*$') {
     throw "Configured packId contains unsupported characters: $PackId"
+}
+if (-not (Test-MissionLegalSafeWindowsLeafName $InstallerFileName)) {
+    throw "Configured installerFileName is unsafe: '$InstallerFileName'."
 }
 if (
     [IO.Path]::IsPathRooted($MainExe) -or
@@ -1204,6 +1251,13 @@ Invoke-Vpk `
     -Arguments $PackArguments `
     -Operation "packing the client release"
 
+    $GeneratedInstallerPath = Join-Path $OutputDir "$PackId-$Channel-Setup.exe"
+    $RenamedInstallerPath = Rename-ClientInstallerArtifact `
+        -ReleaseRoot $OutputDir `
+        -GeneratedInstallerPath $GeneratedInstallerPath `
+        -InstallerFileName $InstallerFileName `
+        -ReleaseChannel $Channel
+
     $Result = Test-ReleaseArtifacts `
         -ReleaseRoot $OutputDir `
         -ReleaseChannel $Channel `
@@ -1216,6 +1270,7 @@ Invoke-Vpk `
         -ExpectedSignerThumbprint $ExpectedSignerThumbprint `
         -SignatureTemporaryRoot (Join-Path $RepoRoot "build\release-validation") `
         -RequireTimestamp:$RequireSigning
+    $Result.Setup = $RenamedInstallerPath
 }
 finally {
     if ($HadOriginalUpdateConfig) {
