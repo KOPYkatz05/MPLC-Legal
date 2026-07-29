@@ -11,7 +11,7 @@ from pathlib import Path
 
 import fitz
 
-from PySide6.QtGui import QAction
+from PySide6.QtGui import QAction, QPixmap
 from PySide6.QtWidgets import (
     QButtonGroup,
     QDialog,
@@ -431,6 +431,7 @@ class MissionaryDetailPage(QWidget):
         self._pending_task_actions = set()
         self._detail_task_widgets = {}
         self._document_loaders = {}
+        self._document_thumbnail_loaders = {}
         self._pending_document_actions = set()
         self._document_records = {}
         self._document_widgets = {}
@@ -2149,6 +2150,9 @@ class MissionaryDetailPage(QWidget):
         dialog.appointment_dates_updated.connect(
             self._refresh_calendar_after_appointment_upload
         )
+        document_uploaded = getattr(dialog, "document_uploaded", None)
+        if document_uploaded is not None:
+            document_uploaded.connect(self._refresh_after_document_upload)
         dialog.exec()
 
         if dialog.saved_any():
@@ -2174,6 +2178,9 @@ class MissionaryDetailPage(QWidget):
         dialog.appointment_dates_updated.connect(
             self._refresh_calendar_after_appointment_upload
         )
+        document_uploaded = getattr(dialog, "document_uploaded", None)
+        if document_uploaded is not None:
+            document_uploaded.connect(self._refresh_after_document_upload)
         dialog.exec()
 
         if dialog.saved_any():
@@ -2211,6 +2218,27 @@ class MissionaryDetailPage(QWidget):
                     QTimer.singleShot(0, load_data)
             else:
                 load_data()
+
+    def _refresh_after_document_upload(self, missionary_id, document_id):
+        """Add one uploaded document without reloading the detail snapshot."""
+        current_id = getattr(
+            getattr(self, "current_missionary", None),
+            "id",
+            None,
+        )
+        if current_id != missionary_id or document_id is None:
+            return
+
+        document = self.document_service.get_document_by_id(document_id)
+        if document is None:
+            return
+
+        documents = list(getattr(self, "_document_records", {}).values())
+        documents = [doc for doc in documents if getattr(doc, "id", None) != document_id]
+        documents.append(document)
+        self.load_documents(documents)
+        self.load_missing_documents(documents)
+        self._upload_detail_reload_seen = True
 
     def _refresh_missionaries_table(self, deferred=False):
         if deferred:
@@ -4025,7 +4053,7 @@ class MissionaryDetailPage(QWidget):
         return tr("missionary_detail_workflow_update_hint")
 
     def _build_document_item_widget(self, doc, label):
-        return build_document_card(
+        widget = build_document_card(
             doc,
             label=label,
             on_view=lambda doc_data: self._open_document_viewer(doc_data.id),
@@ -4033,6 +4061,54 @@ class MissionaryDetailPage(QWidget):
             on_open=lambda doc_data: self._open_document_file(doc_data.id),
             on_delete=lambda doc_data: self._delete_document(doc_data.id),
             pill_actions=True,
+        )
+        self._request_document_thumbnail(doc, widget)
+        return widget
+
+    def _request_document_thumbnail(self, doc, widget):
+        thumbnail = next(
+            (
+                label
+                for label in widget.findChildren(QLabel)
+                if label.property("document_thumbnail")
+            ),
+            None,
+        )
+        if thumbnail is None:
+            return
+
+        def apply_thumbnail(path):
+            pixmap = QPixmap(str(path))
+            if not pixmap.isNull() and thumbnail is not None:
+                thumbnail.setPixmap(
+                    pixmap.scaled(48, 60, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                )
+                thumbnail.setText("")
+
+        if self.document_service.api_client is None:
+            path = getattr(doc, "file_path", None)
+            if path:
+                pixmap = self.thumb_service.get_pixmap(path)
+                if pixmap is not None and not pixmap.isNull():
+                    thumbnail.setPixmap(
+                        pixmap.scaled(48, 60, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                    )
+                    thumbnail.setText("")
+            return
+
+        doc_id = getattr(doc, "id", None)
+        if doc_id is None:
+            return
+        loader = self._document_thumbnail_loaders.get(doc_id)
+        if loader is None:
+            loader = LatestRequestLoader(parent=self)
+            self._document_thumbnail_loaders[doc_id] = loader
+        loader.request(
+            lambda doc=doc: self.document_service.ensure_local_thumbnail(doc),
+            on_success=apply_thumbnail,
+            on_error=lambda error, doc_id=doc_id: logger.info(
+                "Document thumbnail unavailable for %s: %s", doc_id, error
+            ),
         )
 
     def _build_missing_stage_widget(self, stage_name, missing_docs, is_current=False):

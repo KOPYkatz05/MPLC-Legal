@@ -77,6 +77,10 @@ class MissionaryUpdateRequest(BaseModel):
     fields: dict
 
 
+class MissionaryRowColorRequest(BaseModel):
+    color: str
+
+
 class OcrUpdatesRequest(BaseModel):
     document_type: str
     confirmed_data: dict = Field(default_factory=dict)
@@ -461,6 +465,33 @@ def create_app(
             raise HTTPException(status_code=404, detail="Missionary not found")
         return {"updated": True}
 
+    @app.patch("/v1/missionaries/{missionary_id}/row-color")
+    def set_missionary_row_color(
+        missionary_id: int,
+        request: MissionaryRowColorRequest,
+        _device=Depends(authenticated_device),
+    ):
+        from services.missionary_service import MissionaryService
+
+        try:
+            missionary = MissionaryService().set_missionary_row_color(
+                missionary_id, request.color
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        if missionary is None:
+            raise HTTPException(status_code=404, detail="Missionary not found")
+        return model_snapshot(missionary)
+
+    @app.delete("/v1/missionaries/{missionary_id}/row-color")
+    def clear_missionary_row_color(missionary_id: int, _device=Depends(authenticated_device)):
+        from services.missionary_service import MissionaryService
+
+        missionary = MissionaryService().clear_missionary_row_color(missionary_id)
+        if missionary is None:
+            raise HTTPException(status_code=404, detail="Missionary not found")
+        return model_snapshot(missionary)
+
     @app.post("/v1/missionaries/{missionary_id}/archive")
     def archive_missionary(
         missionary_id: int,
@@ -549,6 +580,19 @@ def create_app(
             raise HTTPException(status_code=404, detail="Document file not found")
         return FileResponse(path, filename=path.name)
 
+    @app.get("/v1/documents/{document_id}/thumbnail")
+    def document_thumbnail(document_id: int, _device=Depends(authenticated_device)):
+        from services.document_thumbnail_service import DocumentThumbnailService
+        from services.document_service import DocumentService
+
+        row = DocumentService().get_document_by_id(document_id)
+        if row is None:
+            raise HTTPException(status_code=404, detail="Document not found")
+        thumbnail = DocumentThumbnailService().get_thumbnail(row)
+        if thumbnail is None:
+            raise HTTPException(status_code=404, detail="Document thumbnail unavailable")
+        return FileResponse(thumbnail, media_type="image/jpeg")
+
     @app.post("/v1/documents/upload", status_code=status.HTTP_201_CREATED)
     async def upload_document(
         missionary_id: int = Form(),
@@ -632,7 +676,22 @@ def create_app(
         service = service_type()
         args = decode_remote_value(request.args)
         kwargs = decode_remote_value(request.kwargs)
-        result = getattr(service, method_name)(*args, **kwargs)
+        try:
+            result = getattr(service, method_name)(*args, **kwargs)
+        except Exception as exc:
+            from services.secretary_work_service import (
+                SecretaryWorkError,
+                TaskBoardCompatibilityError,
+            )
+            if method_name == "save_task_board_orders" and isinstance(
+                exc, TaskBoardCompatibilityError
+            ):
+                raise HTTPException(status_code=409, detail=str(exc)) from exc
+            if method_name == "save_task_board_orders" and isinstance(
+                exc, SecretaryWorkError
+            ):
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
+            raise
         return {"result": serialize_result(result)}
 
     return app

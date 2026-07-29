@@ -2649,6 +2649,32 @@ QLineEdit:focus {
     border-color: #0EA5AC;
 }
 
+/* Reusable ChatGPT-style text inputs */
+QLineEdit[chatTextBox="true"],
+QPlainTextEdit[chatTextBox="true"] {
+    background-color: #FFFFFF;
+    border: 1px solid #DADADF;
+    border-radius: 12px;
+    padding: 8px 13px;
+    color: #18181B;
+    font-size: 13px;
+}
+
+QLineEdit[chatTextBox="true"]:hover,
+QPlainTextEdit[chatTextBox="true"]:hover {
+    border-color: #C8C8CF;
+}
+
+QLineEdit[chatTextBox="true"]:focus,
+QPlainTextEdit[chatTextBox="true"]:focus {
+    border-color: #0EA5AC;
+    background-color: #FFFFFF;
+}
+
+QPlainTextEdit[chatTextBox="true"] {
+    padding: 10px 13px;
+}
+
 QComboBox {
     background-color: #FFFFFF;
     border: 1px solid #D4D4D8;
@@ -4276,4 +4302,66 @@ QPushButton#WorkspacePropertiesApplyButton:hover {
 QPushButton#WorkspacePropertiesCancelButton:pressed,
 QPushButton#WorkspacePropertiesApplyButton:pressed {
     background-color: #ECECEF;
+}
+
+/* Chat-style inputs override legacy object-name input rules. */
+QLineEdit[chatTextBox="true"],
+QPlainTextEdit[chatTextBox="true"] {
+    background-color: #FFFFFF;
+    border: 1px solid #DADADF;
+    border-radius: 12px;
+    color: #18181B;
+    font-size: 13px;
+}
+
+QLineEdit[chatTextBox="true"]:focus,
+QPlainTextEdit[chatTextBox="true"]:focus {
+    border-color: #0EA5AC;
+}
+
+/* Keep reusable dialog child panels inside the rounded surface. */
+QFrame#MissionariesDialogHeader {
+    border-top-left-radius: 20px;
+    border-top-right-radius: 20px;
+}
+
+QFrame#MissionariesDialogFooter {
+    border-bottom-left-radius: 20px;
+    border-bottom-right-radius: 20px;
+}
+
+/* Standard Qt reusable dialog factory */
+QFrame#AppDialogSurface {
+    background-color: #FFFFFF;
+    border: 1px solid #DADADF;
+    border-radius: 20px;
+}
+
+QFrame#AppDialogHeader {
+    background-color: #FFFFFF;
+    border-bottom: 1px solid #ECECEC;
+    border-top-left-radius: 20px;
+    border-top-right-radius: 20px;
+}
+
+QLabel#AppDialogTitle {
+    color: #18181B;
+    font-size: 15px;
+    font-weight: 700;
+}
+
+QLabel#AppDialogSubtitle {
+    color: #71717A;
+    font-size: 11px;
+}
+
+QWidget#AppDialogBody {
+    background-color: #FFFFFF;
+}
+
+QFrame#AppDialogFooter {
+    background-color: #FFFFFF;
+    border-top: 1px solid #ECECEC;
+    border-bottom-left-radius: 20px;
+    border-bottom-right-radius: 20px;
 }

@@ -2,8 +2,21 @@ from dataclasses import dataclass
 from datetime import date, datetime
 import time
 
-from PySide6.QtCore import QEvent, QRectF, QTimer, Qt, QItemSelectionModel
-from PySide6.QtGui import QAction, QColor, QIcon, QPainter, QPen, QPixmap
+from PySide6.QtCore import (
+    QEvent,
+    QRectF,
+    QTimer,
+    Qt,
+    QItemSelectionModel,
+)
+from PySide6.QtGui import (
+    QAction,
+    QColor,
+    QIcon,
+    QPainter,
+    QPen,
+    QPixmap,
+)
 from PySide6.QtWidgets import (
     QApplication,
     QAbstractItemView,
@@ -38,6 +51,7 @@ from services.group_package_export_service import (
 )
 from services.settings_service import SettingsService
 from ui.foundation import (
+    AppDialog,
     DialogFooter,
     FLUENT_AVAILABLE,
     MaskDialogBase,
@@ -67,6 +81,36 @@ from utils.i18n import tr
 from utils.logger import logger
 from ui.foundation.background_loader import LatestRequestLoader
 from ui.widgets.animated_tab_strip import AnimatedTabStrip
+
+
+MISSIONARY_ROW_COLOR_STYLES = {
+    "teal": ("#E6FFFB", "#0EA5AC"),
+    "blue": ("#EFF6FF", "#2563EB"),
+    "purple": ("#F5F3FF", "#7C3AED"),
+    "amber": ("#FFFBEB", "#D97706"),
+    "green": ("#ECFDF5", "#059669"),
+    "red": ("#FEF2F2", "#DC2626"),
+    "gray": ("#F4F4F5", "#71717A"),
+}
+
+
+def _missionary_row_color_icon(color):
+    fill, accent = MISSIONARY_ROW_COLOR_STYLES[color]
+    pixmap = QPixmap(18, 18)
+    pixmap.fill(Qt.transparent)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.Antialiasing)
+    painter.setBrush(QColor(fill))
+    painter.setPen(QPen(QColor(accent), 1.5))
+    painter.drawEllipse(2, 2, 14, 14)
+    painter.end()
+    return QIcon(pixmap)
+
+
+def _empty_missionary_row_color_icon():
+    pixmap = QPixmap(18, 18)
+    pixmap.fill(Qt.transparent)
+    return QIcon(pixmap)
 
 
 @dataclass(frozen=True)
@@ -477,6 +521,19 @@ def _icon_slot_for_names(names):
     return ""
 
 
+def _arrival_date_sort_key(missionary):
+    """Return the stable default ordering for the missionaries list."""
+    arrival_date = _date_sort_value(
+        getattr(missionary, "arrival_date", None)
+    )
+    return (
+        not arrival_date,
+        arrival_date,
+        (getattr(missionary, "full_name", None) or "").casefold(),
+        getattr(missionary, "id", 0),
+    )
+
+
 class MissionaryTableItem(QTableWidgetItem):
     def __lt__(self, other):
         left = self.data(SORT_VALUE_ROLE) or ""
@@ -702,7 +759,7 @@ class EditMissionaryColumnsDialog(MaskDialogBase):
         self._load_items(DEFAULT_COLUMN_KEYS)
 
 
-class CreateMissionaryGroupDialog(MaskDialogBase):
+class CreateMissionaryGroupDialog(AppDialog):
     def __init__(
         self,
         group_service,
@@ -711,16 +768,6 @@ class CreateMissionaryGroupDialog(MaskDialogBase):
         group=None,
         selected_missionary_ids=None,
     ):
-        fluent_parent = parent.window() if parent is not None else None
-        self._use_fluent_dialog = (
-            FLUENT_AVAILABLE and fluent_parent is not None
-        )
-
-        if self._use_fluent_dialog:
-            super().__init__(fluent_parent)
-        else:
-            QDialog.__init__(self, parent)
-
         self.group_service = group_service
         self.missionaries = list(missionaries)
         self.group = group or {}
@@ -729,82 +776,44 @@ class CreateMissionaryGroupDialog(MaskDialogBase):
             self.group["missionary_ids"] = list(selected_missionary_ids)
         self.saved_group = None
 
-        self.setWindowTitle("Edit Group" if self._is_editing else "Create Group")
-        self.surface = setup_dialog_shell(
-            self,
-            surface_width=560,
-            surface_min_height=620,
+        super().__init__(
+            parent,
+            title="Edit Group" if self._is_editing else "Create Group",
+            subtitle=(
+                "Update who belongs to this reusable missionary group."
+                if self._is_editing
+                else "Save a reusable missionary group for filtering and shared tasks."
+            ),
+            width=520,
+            min_height=560,
         )
         self.setup_ui()
 
-    def _onDone(self, code):
-        if self._use_fluent_dialog:
-            super()._onDone(code)
-        else:
-            QDialog.done(self, code)
-
-    def done(self, code):
-        if self._use_fluent_dialog:
-            super().done(code)
-        else:
-            QDialog.done(self, code)
-
     def setup_ui(self):
-        root = QVBoxLayout()
-        root.setContentsMargins(0, 0, 0, 0)
-        root.setSpacing(0)
-        self.surface.setLayout(root)
-
-        root.addWidget(
-            _missionaries_dialog_header(
-                "Edit Group" if self._is_editing else "Create Group",
-                (
-                    "Update who belongs to this reusable missionary group."
-                    if self._is_editing
-                    else "Save a reusable missionary group for filtering and shared tasks."
-                ),
-            )
-        )
-
-        body = QWidget()
-        body.setObjectName("MissionariesDialogBody")
-        body.setAttribute(Qt.WA_StyledBackground, True)
-        body_layout = QVBoxLayout()
-        body_layout.setContentsMargins(18, 16, 18, 16)
-        body_layout.setSpacing(12)
-        body.setLayout(body_layout)
-
         self.name_input = create_line_edit("Group name")
         self.name_input.setText(self.group.get("name", ""))
-        body_layout.addWidget(self._field("Name", self.name_input))
+        self.body_layout.addWidget(self._field("Name", self.name_input))
 
         self.description_input = create_plain_text_edit()
         self.description_input.setPlaceholderText("Optional description")
         self.description_input.setFixedHeight(76)
         self.description_input.setPlainText(self.group.get("description", ""))
-        body_layout.addWidget(self._field("Description", self.description_input))
+        self.body_layout.addWidget(self._field("Description", self.description_input))
 
         self.search_input = create_search_edit("Search missionaries")
         self.search_input.textChanged.connect(self._filter_items)
-        body_layout.addWidget(self.search_input)
+        self.body_layout.addWidget(self.search_input)
 
         self.member_list = create_list_widget("MissionaryGroupMemberList")
-        self.member_list.setMinimumHeight(260)
-        body_layout.addWidget(self.member_list, stretch=1)
+        self.member_list.setMinimumHeight(220)
+        self.body_layout.addWidget(self.member_list, stretch=1)
         self._load_members()
-
-        root.addWidget(body, stretch=1)
-
-        footer = DialogFooter()
-        footer.setObjectName("MissionariesDialogFooter")
-        footer.setObjectName("MissionariesDialogFooter")
         cancel_btn = create_button("Cancel", "secondary")
         cancel_btn.clicked.connect(self.reject)
-        footer.add_action(cancel_btn)
+        self.footer.add_action(cancel_btn)
         save_btn = create_button("Save", "primary")
         save_btn.clicked.connect(self._save)
-        footer.add_action(save_btn)
-        root.addWidget(footer)
+        self.footer.add_action(save_btn)
 
     def _field(self, label_text, control):
         wrapper = QWidget()
@@ -1055,6 +1064,7 @@ class MissionariesPage(QWidget):
         self._groups_by_id = {}
         self._group_members_by_id = {}
         self._last_group_filter_data = None
+        self._default_sort_initialized = False
         self._selected_tab = getattr(
             self.settings_service,
             "get_missionaries_default_view",
@@ -1338,6 +1348,7 @@ class MissionariesPage(QWidget):
             self.export_button,
             self.add_button,
         ]
+
 
         layout.addLayout(command_row)
 
@@ -1978,6 +1989,29 @@ class MissionariesPage(QWidget):
     def _populate_table(self, missionaries):
         # Disable sorting while populating to
         # avoid row index issues
+        if not self._default_sort_initialized:
+            dated = [m for m in missionaries if _date_sort_value(getattr(m, "arrival_date", None))]
+            undated = [m for m in missionaries if not _date_sort_value(getattr(m, "arrival_date", None))]
+            missionaries = sorted(
+                dated,
+                key=_arrival_date_sort_key,
+                reverse=True,
+            ) + undated
+        else:
+            columns = self._visible_columns()
+            header = self.table.horizontalHeader()
+            sort_column = header.sortIndicatorSection()
+            if 0 <= sort_column < len(columns):
+                column = columns[sort_column]
+                missionaries = sorted(
+                    missionaries,
+                    key=lambda missionary: _sort_value_for_column(
+                        column,
+                        missionary,
+                        str(column.getter(missionary) or ""),
+                    ),
+                    reverse=header.sortIndicatorOrder() == Qt.DescendingOrder,
+                )
         self.table.setSortingEnabled(False)
         self._hovered_cell = None
 
@@ -2008,7 +2042,40 @@ class MissionariesPage(QWidget):
                     item,
                 )
 
+            self._apply_missionary_row_color(row, m)
+
         self.table.setSortingEnabled(True)
+        if not self._default_sort_initialized:
+            columns = self._visible_columns()
+            arrival_index = next(
+                (index for index, column in enumerate(columns) if column.key == "arrival_date"),
+                0,
+            )
+            self.table.horizontalHeader().setSortIndicator(
+                arrival_index,
+                Qt.DescendingOrder,
+            )
+            self._default_sort_initialized = True
+
+    def _apply_missionary_row_color(self, row, missionary):
+        fill, accent = MISSIONARY_ROW_COLOR_STYLES.get(
+            getattr(missionary, "row_color", None),
+            (None, None),
+        )
+        for column in range(self.table.columnCount()):
+            item = self.table.item(row, column)
+            if item is None:
+                continue
+            item.setData(Qt.BackgroundRole, QColor(fill) if fill else None)
+            item.setData(Qt.ForegroundRole, QColor("#18181B"))
+            item.setData(Qt.UserRole + 1, accent)
+
+    def _replace_cached_missionary(self, updated):
+        for collection_name in ("_all_missionaries", "_archived_missionaries"):
+            collection = getattr(self, collection_name)
+            for index, missionary in enumerate(collection):
+                if missionary.id == updated.id:
+                    collection[index] = updated
 
     def _make_table_item(self, text, missionary_id, sort_value=None):
         item = MissionaryTableItem(text or "")
@@ -2587,7 +2654,7 @@ class MissionariesPage(QWidget):
         self._apply_filters()
 
     def _show_archive_context_menu(self, position):
-        if self._selected_tab != "archive":
+        if self._selected_tab == "groups":
             return
 
         index = self.table.indexAt(position)
@@ -2602,22 +2669,107 @@ class MissionariesPage(QWidget):
 
         menu = create_menu("", self)
 
-        delete_action = QAction("Delete", self)
-        recover_action = QAction("Recover", self)
-
-        delete_action.triggered.connect(
-            lambda checked=False, mid=missionary_id:
-            self._delete_archived_missionary(mid)
+        color_menu = create_menu("Change Color", menu)
+        for color in sorted(MissionaryService.ROW_COLORS):
+            action = QAction(color.title(), color_menu)
+            action.setIcon(_missionary_row_color_icon(color))
+            action.triggered.connect(
+                lambda _checked=False, value=color, mid=missionary_id:
+                self._set_missionary_row_color(mid, value)
+            )
+            color_menu.addAction(action)
+        color_menu.addSeparator()
+        clear_color = QAction("Remove", color_menu)
+        clear_color.setIcon(_empty_missionary_row_color_icon())
+        clear_color.triggered.connect(
+            lambda _checked=False, mid=missionary_id:
+            self._set_missionary_row_color(mid, None)
         )
-        recover_action.triggered.connect(
-            lambda checked=False, mid=missionary_id:
-            self._recover_archived_missionary(mid)
-        )
+        color_menu.addAction(clear_color)
+        menu.addMenu(color_menu)
 
-        menu.addAction(delete_action)
-        menu.addAction(recover_action)
+        group_menu = create_menu("Add to group", menu)
+        groups = sorted(
+            self._groups_by_id.values(),
+            key=lambda group: (group.get("name") or "").casefold(),
+        )
+        if groups:
+            for group in groups:
+                group_id = group.get("id")
+                action = QAction(group.get("name") or "Unnamed group", group_menu)
+                action.triggered.connect(
+                    lambda _checked=False, gid=group_id, mid=missionary_id:
+                    self._add_missionary_to_group(mid, gid)
+                )
+                group_menu.addAction(action)
+        else:
+            empty_action = QAction("No groups available", group_menu)
+            empty_action.setEnabled(False)
+            group_menu.addAction(empty_action)
+        menu.addMenu(group_menu)
+
+        if self._selected_tab == "archive":
+            delete_action = QAction("Delete", self)
+            recover_action = QAction("Recover", self)
+
+            delete_action.triggered.connect(
+                lambda checked=False, mid=missionary_id:
+                self._delete_archived_missionary(mid)
+            )
+            recover_action.triggered.connect(
+                lambda checked=False, mid=missionary_id:
+                self._recover_archived_missionary(mid)
+            )
+
+            menu.addAction(delete_action)
+            menu.addAction(recover_action)
         self._archive_context_menu = menu
         menu.exec(self.table.viewport().mapToGlobal(position))
+
+    def _add_missionary_to_group(self, missionary_id, group_id):
+        try:
+            existing_ids = self.group_service.missionary_ids_for_group(group_id)
+            existing_ids = list(existing_ids or [])
+            if missionary_id in existing_ids:
+                return
+
+            self.group_service.update_group(
+                group_id,
+                missionary_ids=[*existing_ids, missionary_id],
+            )
+            self._refresh_group_filter()
+            self._apply_filters()
+        except Exception as exc:
+            logger.exception(
+                "Failed to add missionary %s to group %s",
+                missionary_id,
+                group_id,
+            )
+            show_message(
+                self,
+                "Add to Group",
+                f"Could not add the missionary to the group: {exc}",
+                kind="error",
+            )
+
+    def _set_missionary_row_color(self, missionary_id, color):
+        try:
+            updated = (
+                self.missionary_service.clear_missionary_row_color(missionary_id)
+                if color is None
+                else self.missionary_service.set_missionary_row_color(missionary_id, color)
+            )
+            if updated is not None:
+                self._replace_cached_missionary(updated)
+                self._apply_filters()
+        except Exception as exc:
+            logger.exception("Failed to save missionary row color")
+            show_message(
+                self,
+                "Row Color",
+                f"Could not save the row color: {exc}",
+                kind="error",
+            )
 
     def _delete_archived_missionary(self, missionary_id):
         response = show_message(

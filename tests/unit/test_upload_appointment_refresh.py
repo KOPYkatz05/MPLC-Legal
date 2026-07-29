@@ -492,6 +492,52 @@ def test_passport_ocr_replaces_prefilled_values_with_mrz_data(
     }
 
 
+def test_render_ocr_fields_preserves_values_during_initial_population(qapp):
+    missionary = SimpleNamespace(
+        id=42,
+        full_name="Test Missionary",
+        passport_number=None,
+        date_of_birth=None,
+        nationality=None,
+        passport_expiration=None,
+    )
+    controller = UploadSessionController(missionary)
+    controller.add_files(["passport.pdf"])
+    controller.set_document_type(0, "PASSPORT")
+    item = controller.items[0]
+    item.confirmed_data = {
+        "passport_number": "OCR123456",
+        "full_name": "OCR PASSPORT NAME",
+        "date_of_birth": "2002-03-04",
+        "nationality": "USA",
+        "passport_expiration": "2032-05-06",
+    }
+
+    parent = QWidget()
+    parent.resize(1200, 800)
+    dialog = UploadSessionDialog(missionary, parent=parent)
+    dialog.controller = controller
+    dialog.render_ocr_fields(item)
+
+    assert item.confirmed_data == {
+        "passport_number": "OCR123456",
+        "full_name": "OCR PASSPORT NAME",
+        "date_of_birth": "2002-03-04",
+        "nationality": "USA",
+        "passport_expiration": "2032-05-06",
+    }
+    assert dialog.field_edits["passport_number"].text() == "OCR123456"
+    assert dialog.field_edits["full_name"].text() == "OCR PASSPORT NAME"
+    date_value = dialog._date_picker_value(dialog.date_edits["date_of_birth"])
+    assert date_value.toString("yyyy-MM-dd") == "2002-03-04"
+
+    dialog.field_edits["full_name"].setText("MANUALLY CONFIRMED")
+    assert item.confirmed_data["full_name"] == "MANUALLY CONFIRMED"
+
+    dialog.close()
+    parent.close()
+
+
 def test_non_passport_ocr_fills_blank_without_overwriting_existing(
     monkeypatch,
 ):

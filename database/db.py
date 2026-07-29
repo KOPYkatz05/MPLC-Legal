@@ -88,6 +88,7 @@ def _run_migrations():
         "ALTER TABLE documents ADD COLUMN invalidated_at DATETIME",
         "ALTER TABLE documents ADD COLUMN invalidated_reason VARCHAR",
         "ALTER TABLE missionaries ADD COLUMN missionary_code TEXT",
+        "ALTER TABLE missionaries ADD COLUMN row_color VARCHAR",
         "ALTER TABLE missionaries ADD COLUMN deleted_at DATETIME",
         "ALTER TABLE missionaries ADD COLUMN date_of_birth DATE",
         "ALTER TABLE missionaries ADD COLUMN passport_expiration DATE",

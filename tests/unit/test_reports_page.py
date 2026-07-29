@@ -92,6 +92,48 @@ def test_expiration_items_are_sorted_by_urgency_and_include_overdue():
     assert items[1]["days"] == 15
 
 
+def test_expiration_items_hide_superseded_visa_dates():
+    items = ReportsPage._expiration_items(
+        [
+            MissionaryStub(
+                full_name="Prorroga",
+                visa_expiration=date(2026, 7, 1),
+                prorroga_expiration=date(2026, 7, 20),
+            ),
+            MissionaryStub(
+                full_name="Carnet",
+                visa_expiration=date(2026, 7, 1),
+                carnet_issue_date=date(2026, 6, 15),
+            ),
+        ],
+        date(2026, 7, 5),
+    )
+
+    assert [(item["name"], item["label"]) for item in items] == [
+        ("Prorroga", "Prorroga"),
+    ]
+
+
+def test_expiration_items_hide_archived_missionaries():
+    items = ReportsPage._expiration_items(
+        [
+            MissionaryStub(
+                full_name="Archived",
+                status="ARCHIVED",
+                visa_expiration=date(2026, 7, 1),
+            ),
+            MissionaryStub(
+                full_name="Active",
+                status="ACTIVE",
+                visa_expiration=date(2026, 7, 1),
+            ),
+        ],
+        date(2026, 7, 5),
+    )
+
+    assert [item["name"] for item in items] == ["Active"]
+
+
 def test_general_summary_does_not_include_detailed_attention_rows():
     snapshot = {
         "total": 1,

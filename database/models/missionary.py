@@ -31,6 +31,10 @@ class Missionary(Base):
         default="ACTIVE"
     )
 
+    row_color = Column(
+        String
+    )
+
     # ======================================
     # Basic Information
     # ======================================

@@ -198,6 +198,8 @@ class NotificationFeedService(RemoteServiceMixin):
         critical_window = int(settings.get("critical_expiration_days", 7) or 7)
         items = []
         for missionary in missionaries:
+            if getattr(missionary, "status", "ACTIVE") != "ACTIVE":
+                continue
             for field, label in EXPIRY_FIELDS:
                 if not should_track_expiration_field(missionary, field):
                     continue

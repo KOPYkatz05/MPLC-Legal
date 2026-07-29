@@ -25,3 +25,13 @@ def test_startup_splash_loads_server_manager_logo(qapp):
     labels = splash.findChildren(QLabel)
     assert any(not label.pixmap().isNull() for label in labels)
     splash.dismiss()
+
+
+def test_startup_splash_dismiss_is_idempotent(qapp):
+    splash = StartupSplash()
+
+    splash.dismiss()
+    splash.dismiss()
+
+    assert splash._dismissed is True
+    assert splash._cursor_overridden is False

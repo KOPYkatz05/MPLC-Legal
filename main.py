@@ -159,7 +159,11 @@ def main():
     startup_splash.show_centered()
     app.processEvents()
 
-    from services.api_client import ApiCompatibilityError, MissionLegalApiClient
+    from services.api_client import (
+        ApiCompatibilityError,
+        MissionLegalApiClient,
+        connection_configuration_diagnostics,
+    )
     from services.client_pairing_service import (
         ClientPairingRecoveryError,
         recover_configured_server_address,
@@ -201,6 +205,11 @@ def main():
         return paired_client
 
     api_client = MissionLegalApiClient.from_environment()
+    print(
+        "Mission Legal connection configuration: "
+        f"{connection_configuration_diagnostics()}",
+        flush=True,
+    )
     startup_splash.advance_to(25)
     if (
         api_client is None
@@ -279,11 +288,10 @@ def main():
                 )
                 retry = dialog.addButton("Retry", QMessageBox.AcceptRole)
                 change_connection = None
-                if is_frozen():
-                    change_connection = dialog.addButton(
-                        "Change connection",
-                        QMessageBox.ActionRole,
-                    )
+                change_connection = dialog.addButton(
+                    "Change connection",
+                    QMessageBox.ActionRole,
+                )
                 dialog.addButton("Exit", QMessageBox.RejectRole)
                 dialog.exec()
                 clicked = dialog.clickedButton()

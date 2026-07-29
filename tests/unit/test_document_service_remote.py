@@ -76,6 +76,49 @@ def test_remote_document_is_downloaded_once_when_requested(monkeypatch, tmp_path
     assert client.download_calls == ["/v1/documents/3/content"]
 
 
+def test_remote_thumbnail_is_downloaded_without_full_document(monkeypatch, tmp_path):
+    client = FakeDocumentClient()
+    monkeypatch.setattr(
+        module.MissionLegalApiClient,
+        "from_environment",
+        classmethod(lambda cls: client),
+    )
+    monkeypatch.setattr(module, "get_client_data_dir", lambda: tmp_path)
+    service = module.DocumentService()
+    document = service.get_documents(9)[0]
+
+    cached = service.ensure_local_thumbnail(document)
+
+    assert cached.parent == tmp_path / "DocumentCache" / "9" / "thumbnails"
+    assert client.download_calls == ["/v1/documents/3/thumbnail"]
+
+
+def test_remote_get_document_by_id_keeps_metadata_only(monkeypatch):
+    class MetadataClient(FakeDocumentClient):
+        def get(self, path, **kwargs):
+            if path == "/v1/documents/3":
+                return {
+                    "id": 3,
+                    "missionary_id": 9,
+                    "document_type": "PASSPORT",
+                    "file_name": "passport.pdf",
+                    "file_path": "C:/server/passport.pdf",
+                }
+            return super().get(path, **kwargs)
+
+    client = MetadataClient()
+    monkeypatch.setattr(
+        module.MissionLegalApiClient,
+        "from_environment",
+        classmethod(lambda cls: client),
+    )
+
+    document = module.DocumentService().get_document_by_id(3)
+
+    assert document.file_path == "C:/server/passport.pdf"
+    assert client.download_calls == []
+
+
 def test_remote_upload_sends_file_without_downloading_response(monkeypatch, tmp_path):
     client = FakeDocumentClient()
     monkeypatch.setattr(

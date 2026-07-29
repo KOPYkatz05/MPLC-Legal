@@ -15,6 +15,7 @@ class StartupSplash(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._allow_close = False
+        self._dismissed = False
         self._cursor_overridden = False
         self._progress_animation = None
         self.setObjectName("StartupSplash")
@@ -114,12 +115,14 @@ class StartupSplash(QWidget):
         self.activateWindow()
 
     def dismiss(self):
+        if self._dismissed:
+            return
+        self._dismissed = True
         self._allow_close = True
         if self._cursor_overridden:
             QApplication.restoreOverrideCursor()
             self._cursor_overridden = False
         self.close()
-        self.deleteLater()
 
     def closeEvent(self, event: QCloseEvent):
         event.accept() if self._allow_close else event.ignore()

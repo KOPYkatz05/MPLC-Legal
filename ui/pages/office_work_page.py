@@ -366,6 +366,7 @@ class OfficeWorkPage(QWidget):
         self._board_lane_orders = {}
         self._board_task_lanes = {}
         self._board_tasks_by_id = {}
+        self._pending_task_board_move = False
         self._projects_loaded = False
         self._last_load_at = 0.0
         self._office_cache_ttl_seconds = 20.0
@@ -1287,6 +1288,12 @@ class OfficeWorkPage(QWidget):
         return card
 
     def _handle_task_board_drop(self, task_id, target_lane, target_index):
+        if self._pending_task_board_move:
+            return
+        previous_orders = {
+            lane: list(order) for lane, order in self._board_lane_orders.items()
+        }
+        self._pending_task_board_move = True
         source_lane = self._board_task_lanes.get(task_id)
         if source_lane is None:
             snapshot = self._task_snapshot_by_id(task_id) or {}
@@ -1323,15 +1330,27 @@ class OfficeWorkPage(QWidget):
 
         try:
             self.service.save_task_board_orders(lane_orders)
-            self.render_tasks()
-        except Exception:
+            self.request_refresh(force=True)
+        except Exception as exc:
+            self._board_lane_orders = previous_orders
             logger.exception("Failed to move office work task on board")
+            message = "Could not save the board move."
+            response = getattr(exc, "response", None)
+            if response is not None:
+                try:
+                    message = str(response.json().get("detail") or message)
+                except Exception:
+                    pass
+            elif str(exc).strip():
+                message = str(exc).strip()
             show_message(
                 self,
                 "Office Work",
-                "Could not save the board move.",
+                message,
                 kind="warning",
             )
+        finally:
+            self._pending_task_board_move = False
 
     def _task_snapshot_by_id(self, task_id):
         return self._board_tasks_by_id.get(task_id)

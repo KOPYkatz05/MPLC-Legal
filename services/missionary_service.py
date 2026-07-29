@@ -56,6 +56,9 @@ def missionary_display_id(missionary):
 
 
 class MissionaryService:
+    ROW_COLORS = {
+        "teal", "blue", "purple", "amber", "green", "red", "gray",
+    }
     def __init__(self):
         self.api_client = MissionLegalApiClient.from_environment()
         if self.api_client is not None:
@@ -367,6 +370,40 @@ class MissionaryService:
 
             raise
 
+        finally:
+            session.close()
+
+    def set_missionary_row_color(self, missionary_id, color):
+        color = (color or "").strip().lower()
+        if color not in self.ROW_COLORS:
+            raise ValueError("Unsupported missionary row color")
+        if self.api_client is not None:
+            return RemoteRecord(self.api_client.patch(
+                f"/v1/missionaries/{missionary_id}/row-color",
+                json={"color": color},
+            ))
+        return self._save_missionary_row_color(missionary_id, color)
+
+    def clear_missionary_row_color(self, missionary_id):
+        if self.api_client is not None:
+            return RemoteRecord(self.api_client.delete(
+                f"/v1/missionaries/{missionary_id}/row-color"
+            ))
+        return self._save_missionary_row_color(missionary_id, None)
+
+    def _save_missionary_row_color(self, missionary_id, color):
+        session = SessionLocal()
+        try:
+            missionary = session.query(Missionary).filter_by(id=missionary_id).first()
+            if missionary is None:
+                return None
+            missionary.row_color = color
+            session.commit()
+            session.refresh(missionary)
+            return missionary
+        except Exception:
+            session.rollback()
+            raise
         finally:
             session.close()
 

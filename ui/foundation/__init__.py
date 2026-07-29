@@ -1,4 +1,12 @@
 from ui.foundation.background_loader import LatestRequestLoader
+from ui.foundation.dialog_factory import AppDialog
+from ui.foundation.text_inputs import (
+    ChatLineEdit,
+    ChatPlainTextEdit,
+    create_line_edit,
+    create_plain_text_edit,
+    create_search_edit,
+)
 from ui.foundation.loading import LoadingIcon, create_loading_icon
 from ui.foundation.fluent import (
     APP_DIALOG_SHELL_MARGINS,
@@ -25,13 +33,10 @@ from ui.foundation.fluent import (
     create_header_card,
     create_info_badge,
     create_list_widget,
-    create_line_edit,
     create_menu,
-    create_plain_text_edit,
     create_pill_button,
     create_pivot,
     create_scroll_area,
-    create_search_edit,
     create_slider,
     create_tab_widget,
     create_table,
@@ -74,6 +79,12 @@ from ui.foundation.widgets import (
 __all__ = [
     "FLUENT_AVAILABLE",
     "LatestRequestLoader",
+    "AppDialog",
+    "ChatLineEdit",
+    "ChatPlainTextEdit",
+    "create_line_edit",
+    "create_plain_text_edit",
+    "create_search_edit",
     "LoadingIcon",
     "create_loading_icon",
     "APP_DIALOG_SHELL_MARGINS",

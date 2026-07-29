@@ -127,6 +127,7 @@ BUTTON_OBJECT_NAMES = {
     "success": "SuccessButton",
 }
 
+
 APP_DIALOG_SHELL_OBJECT_NAME = "AppDialogShell"
 APP_DIALOG_SURFACE_OBJECT_NAME = "AppDialogSurface"
 APP_DIALOG_SURFACE_RADIUS = 20
@@ -808,24 +809,6 @@ def create_pill_button(text, parent=None, icon=None):
     return button
 
 
-def create_line_edit(placeholder="", object_name="SearchInput", parent=None):
-    line_edit = FluentLineEdit(parent)
-    if object_name and not FLUENT_AVAILABLE:
-        line_edit.setObjectName(object_name)
-    line_edit.setPlaceholderText(placeholder)
-    return _set_fixed_height(line_edit, 34)
-
-
-def create_search_edit(placeholder="", object_name="SearchInput", parent=None):
-    edit = SearchLineEdit(parent)
-    if object_name and not FLUENT_AVAILABLE:
-        edit.setObjectName(object_name)
-    edit.setPlaceholderText(placeholder)
-    if hasattr(edit, "setClearButtonEnabled"):
-        edit.setClearButtonEnabled(True)
-    return _set_fixed_height(edit, 34)
-
-
 def create_info_badge(value, level=None, parent=None, object_name="InfoBadge"):
     if FLUENT_AVAILABLE and InfoBadge is not None:
         if level is None:
@@ -840,13 +823,6 @@ def create_info_badge(value, level=None, parent=None, object_name="InfoBadge"):
 
 def create_text_edit(object_name="NotesEditor", parent=None):
     edit = FluentTextEdit(parent)
-    if object_name and not FLUENT_AVAILABLE:
-        edit.setObjectName(object_name)
-    return edit
-
-
-def create_plain_text_edit(object_name="DocumentNotesEditor", parent=None):
-    edit = FluentPlainTextEdit(parent)
     if object_name and not FLUENT_AVAILABLE:
         edit.setObjectName(object_name)
     return edit

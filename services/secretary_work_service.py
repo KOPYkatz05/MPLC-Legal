@@ -1,5 +1,7 @@
 from datetime import date, datetime, timedelta
 
+from sqlalchemy import inspect as sqlalchemy_inspect
+
 from database.db import SessionLocal
 from services.remote_service import RemoteServiceMixin
 from database.models.document import Document
@@ -19,6 +21,7 @@ from database.models.secretary_work import (
 )
 from utils.constants import DOCUMENTS, WORKFLOW_STAGES
 from utils.logger import logger
+from version import APP_VERSION
 
 
 VISIBLE_TASK_STATUSES = ("OPEN", "READY", "WAITING")
@@ -65,6 +68,10 @@ TEMPORARY_GROUP_TYPE = "TEMPORARY_AUTOMATION"
 
 class SecretaryWorkError(ValueError):
     pass
+
+
+class TaskBoardCompatibilityError(SecretaryWorkError):
+    """The server cannot persist task-board ordering yet."""
 
 
 def _clean_text(value):
@@ -532,8 +539,40 @@ class SecretaryWorkService(RemoteServiceMixin):
             session.close()
 
     def save_task_board_orders(self, lane_orders):
+        if not isinstance(lane_orders, dict):
+            raise SecretaryWorkError("Task board orders must be a mapping of lanes to task IDs.")
+        invalid_lanes = set(lane_orders) - set(TASK_BOARD_LANES)
+        if invalid_lanes:
+            raise SecretaryWorkError(
+                "Unsupported task board lane(s): " + ", ".join(sorted(map(str, invalid_lanes)))
+            )
         session = SessionLocal()
         try:
+            try:
+                column_names = {
+                    column.get("name")
+                    for column in sqlalchemy_inspect(session.bind).get_columns(
+                        "secretary_tasks"
+                    )
+                }
+            except Exception as exc:
+                logger.exception(
+                    "Task-board schema inspection failed on server %s (RPC secretary-work/save_task_board_orders)",
+                    APP_VERSION,
+                )
+                raise TaskBoardCompatibilityError(
+                    "The server could not verify task-board storage. Update the server and retry."
+                ) from exc
+            required_columns = {"board_lane", "board_position"}
+            if not required_columns.issubset(column_names):
+                logger.error(
+                    "Task-board schema is missing %s on server %s (RPC secretary-work/save_task_board_orders)",
+                    sorted(required_columns - column_names),
+                    APP_VERSION,
+                )
+                raise TaskBoardCompatibilityError(
+                    "The server needs its database update before task positions can be saved."
+                )
             task_ids = [
                 task_id
                 for ordered_ids in lane_orders.values()
@@ -547,6 +586,8 @@ class SecretaryWorkService(RemoteServiceMixin):
                     .all()
                 )
                 tasks = {task.id: task for task in rows}
+            if set(task_ids) - set(tasks):
+                raise SecretaryWorkError("Cannot save task-board order: task not found.")
 
             for lane, ordered_ids in lane_orders.items():
                 if lane not in TASK_BOARD_LANES:
@@ -562,7 +603,11 @@ class SecretaryWorkService(RemoteServiceMixin):
             session.commit()
         except Exception:
             session.rollback()
-            logger.exception("Failed to save secretary task board order")
+            logger.exception(
+                "Failed to save secretary task board order on server %s (RPC secretary-work/save_task_board_orders; %d task IDs)",
+                APP_VERSION,
+                len(task_ids),
+            )
             raise
         finally:
             session.close()

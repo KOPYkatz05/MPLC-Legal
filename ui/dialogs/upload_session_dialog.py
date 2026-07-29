@@ -855,6 +855,7 @@ class UploadSessionController:
 class UploadSessionDialog(MaskDialogBase):
     ocr_finished_on_ui = Signal(int, bool, str, object, str)
     appointment_dates_updated = Signal(int, list)
+    document_uploaded = Signal(int, int)
 
     def __init__(self, missionary, initial_files=None, parent=None):
         super().__init__(parent)
@@ -2523,11 +2524,9 @@ class UploadSessionDialog(MaskDialogBase):
                 if hasattr(edit, "setSpecialValueText"):
                     edit.setSpecialValueText("--")
                 parsed = self._to_qdate(value)
+                edit.blockSignals(True)
                 edit.setDate(parsed or DATE_PLACEHOLDER)
-                if hasattr(edit, "dateChanged"):
-                    edit.dateChanged.connect(
-                        lambda _value, self=self: self._sync_current_ocr_data()
-                    )
+                edit.blockSignals(False)
                 self.date_edits[field] = edit
                 if _widget_alive(self.ocr_form):
                     field_widget = QWidget()
@@ -2542,13 +2541,19 @@ class UploadSessionDialog(MaskDialogBase):
                     field_layout.addWidget(edit)
 
                     self.ocr_form.addRow(field_widget)
+                if hasattr(edit, "dateChanged"):
+                    edit.dateChanged.connect(
+                        lambda _value, self=self: self._sync_current_ocr_data()
+                    )
             else:
                 edit = create_line_edit()
+                edit.blockSignals(True)
                 edit.setText(
                     normalize_passport_number(value)
                     if field == "passport_number"
                     else str(value or "")
                 )
+                edit.blockSignals(False)
                 if field == "passport_number":
                     edit.textChanged.connect(
                         lambda text, edit=edit: self._normalize_passport_edit(
@@ -2732,11 +2737,15 @@ class UploadSessionDialog(MaskDialogBase):
                 True,
                 f"Saving {index + 1} of {total}: {item.file_name}...",
             )
-            self.controller.save_item(
+            result = self.controller.save_item(
                 item,
                 parent=self,
                 run_ocr=False,
             )
+            document_id = getattr(result.document, "id", None)
+            missionary_id = getattr(self.controller.missionary, "id", None)
+            if result.succeeded and document_id is not None and missionary_id is not None:
+                self.document_uploaded.emit(missionary_id, document_id)
             self._save_all_completed += 1
             self._update_save_progress_dialog()
             self.refresh_queue()

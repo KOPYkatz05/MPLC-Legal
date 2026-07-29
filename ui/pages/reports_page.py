@@ -334,7 +334,21 @@ class ReportsPage(QWidget):
         )
         items = []
         for missionary in missionaries:
+            if getattr(missionary, "status", "ACTIVE") != "ACTIVE":
+                continue
             for field, label in fields:
+                if (
+                    field == "visa_expiration"
+                    and any(
+                        getattr(missionary, name, None)
+                        for name in (
+                            "residency_expiration",
+                            "prorroga_expiration",
+                            "carnet_issue_date",
+                        )
+                    )
+                ):
+                    continue
                 value = cls._as_date(getattr(missionary, field, None))
                 if value is None:
                     continue

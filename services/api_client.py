@@ -27,6 +27,45 @@ KEYRING_SERVICE = "MissionLegalLocalAPI"
 logger = logging.getLogger(__name__)
 
 
+def connection_configuration_diagnostics():
+    """Return safe metadata describing the configured client connection."""
+
+    explicit_url = os.environ.get("MISSION_LEGAL_API_URL")
+    explicit_certificate = os.environ.get("MISSION_LEGAL_API_CERT")
+    source = "environment" if explicit_url else "none"
+    base_url = explicit_url
+    certificate = explicit_certificate
+    if not base_url:
+        try:
+            from PySide6.QtCore import QSettings
+            from app_identity import APP, ORG
+
+            settings = QSettings(ORG, APP)
+            base_url = settings.value("server/url", None)
+            certificate = certificate or settings.value(
+                "server/ca_certificate", None
+            )
+            if base_url:
+                source = "qsettings"
+        except Exception:
+            base_url = None
+
+    parsed = urlparse(str(base_url)) if base_url else None
+    credential_path = (
+        get_client_data_dir() / "Configuration" / "api-device.json"
+    )
+    return {
+        "mode": "frozen" if getattr(sys, "frozen", False) else "source",
+        "source": source,
+        "host": parsed.hostname if parsed else None,
+        "port": parsed.port if parsed else None,
+        "certificate_configured": bool(certificate),
+        "certificate_exists": bool(certificate)
+        and Path(str(certificate)).is_file(),
+        "credential_exists": credential_path.is_file(),
+    }
+
+
 class ApiUnavailableError(RuntimeError):
     pass
 

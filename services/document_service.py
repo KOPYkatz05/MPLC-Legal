@@ -1,4 +1,5 @@
 import json
+import hashlib
 import shutil
 import time
 
@@ -275,6 +276,23 @@ class DocumentService(RemoteServiceMixin):
         document.file_path = str(destination)
         return destination
 
+    def ensure_local_thumbnail(self, document):
+        """Download one lightweight thumbnail without downloading the document."""
+        source_path = Path(getattr(document, "file_path", "") or "")
+        version = f"{getattr(document, 'file_name', '')}|{getattr(document, 'uploaded_at', '')}"
+        version_key = hashlib.sha256(version.encode("utf-8")).hexdigest()[:16]
+        cache_root = get_client_data_dir() / "DocumentCache" / str(document.missionary_id) / "thumbnails"
+        destination = cache_root / f"{document.id}-{version_key}.jpg"
+        if destination.is_file() and destination.stat().st_size > 0:
+            return destination
+        if self.api_client is None:
+            raise DocumentFileUnavailableError(document.id)
+        self.api_client.download(
+            f"/v1/documents/{document.id}/thumbnail",
+            destination,
+        )
+        return destination
+
     def _materialize(self, document):
         """Compatibility wrapper for callers that still need an eager copy."""
         self.ensure_local_copy(document)
@@ -429,7 +447,7 @@ class DocumentService(RemoteServiceMixin):
             payload = self.api_client.get(f"/v1/documents/{document_id}")
             from services.api_client import RemoteRecord
 
-            return self._materialize(RemoteRecord(payload))
+            return RemoteRecord(payload)
         session = SessionLocal()
 
         try:

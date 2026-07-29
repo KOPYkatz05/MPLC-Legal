@@ -181,6 +181,7 @@ def build_document_card(
         thumb.setObjectName("DocumentThumb")
         thumb.setFixedSize(54, 64)
         thumb.setAlignment(Qt.AlignCenter)
+        thumb.setProperty("document_thumbnail", True)
         if pixmap and not pixmap.isNull():
             thumb.setPixmap(pixmap.scaled(48, 60, Qt.KeepAspectRatio, Qt.SmoothTransformation))
         else:
