@@ -36,6 +36,7 @@ from PySide6.QtCore import QDate, Qt, QTime
 from datetime import date, timedelta
 from types import SimpleNamespace
 import time
+import json
 from services.email_digest_service import EmailDigestService
 from services.scheduler_service import SchedulerService
 from services.settings_service import SettingsService
@@ -326,6 +327,31 @@ class SettingsPage(QWidget):
         body.addLayout(storage_row)
         layout.addWidget(card)
 
+        card, body, _, _ = self._settings_card(
+            "Interpol packet contact details",
+            "These server-managed values print beneath the passport copy.",
+        )
+        self.interpol_address_input = self._set_field_width(
+            create_line_edit("Area Office address", "InterpolAreaOfficeAddress"),
+            760,
+        )
+        self.interpol_phone_input = self._set_field_width(
+            create_line_edit("Secretary phone", "InterpolSecretaryPhone"),
+            420,
+        )
+        if self.api_client is None:
+            from server.configuration import load_server_configuration
+            local_configuration = load_server_configuration()
+            self.interpol_address_input.setText(
+                local_configuration.get("interpol_area_office_address", "")
+            )
+            self.interpol_phone_input.setText(
+                local_configuration.get("interpol_secretary_phone", "")
+            )
+        body.addWidget(self.interpol_address_input)
+        body.addWidget(self.interpol_phone_input)
+        layout.addWidget(card)
+
         card, body, self.upload_behavior_title, self.upload_behavior_hint_label = (
             self._settings_card(
                 tr("settings_upload_behavior"),
@@ -541,6 +567,14 @@ class SettingsPage(QWidget):
             self.storage_input.setText(
                 self._server_configuration.get("mission_storage_root") or ""
             )
+        self.interpol_address_input.setText(
+            self._server_configuration.get(
+                "interpol_area_office_address", ""
+            )
+        )
+        self.interpol_phone_input.setText(
+            self._server_configuration.get("interpol_secretary_phone", "")
+        )
 
     def _server_configuration_refresh_failed(self, error):
         logger.error(
@@ -1633,6 +1667,28 @@ class SettingsPage(QWidget):
         if self.api_client is None:
             self.settings_service.set_storage_root(
                 self.storage_input.text().strip()
+            )
+            from server.configuration import (
+                load_server_configuration,
+                save_server_configuration,
+            )
+            configuration = load_server_configuration()
+            configuration.update({
+                "interpol_area_office_address":
+                    self.interpol_address_input.text().strip(),
+                "interpol_secretary_phone":
+                    self.interpol_phone_input.text().strip(),
+            })
+            save_server_configuration(configuration)
+        else:
+            self.api_client.patch(
+                "/v1/server/configuration",
+                json={
+                    "interpol_area_office_address":
+                        self.interpol_address_input.text().strip(),
+                    "interpol_secretary_phone":
+                        self.interpol_phone_input.text().strip(),
+                },
             )
         self.settings_service.set_upload_auto_ocr_enabled(
             self.auto_ocr_check.isChecked()

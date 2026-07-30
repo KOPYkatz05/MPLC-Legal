@@ -155,17 +155,22 @@ def test_prorroga_windows_generate_from_residency_expiration(automation_env):
     finally:
         session.close()
 
-    _service().run(today=expiration - timedelta(days=75))
+    _service().run(today=expiration - timedelta(days=61))
 
+    session = automation_env()
+    try:
+        assert _tasks(session) == []
+    finally:
+        session.close()
+
+    _service().run(today=expiration - timedelta(days=60))
     session = automation_env()
     try:
         tasks = _tasks(session)
         assert [task.automation_key for task in tasks] == [
-            "prorroga:1:75:2026-09-08"
+            "prorroga:1:60:2026-09-08"
         ]
-        assert tasks[0].title == (
-            "Prepare Prorroga documents and request Carta MINJUS/Jurada"
-        )
+        assert tasks[0].title == "Prorroga submission window is open"
     finally:
         session.close()
 
@@ -181,25 +186,13 @@ def test_prorroga_uses_only_current_strongest_window(automation_env):
 
     service = _service()
 
-    service.run(today=expiration - timedelta(days=75))
+    service.run(today=expiration - timedelta(days=60))
     session = automation_env()
     try:
         assert {
             task.automation_key: task.status
             for task in _tasks(session)
-        } == {"prorroga:1:75:2026-09-08": "OPEN"}
-    finally:
-        session.close()
-
-    service.run(today=expiration - timedelta(days=60))
-    session = automation_env()
-    try:
-        statuses = {
-            task.automation_key: task.status
-            for task in _tasks(session)
-        }
-        assert statuses["prorroga:1:75:2026-09-08"] == "ARCHIVED"
-        assert statuses["prorroga:1:60:2026-09-08"] == "OPEN"
+        } == {"prorroga:1:60:2026-09-08": "OPEN"}
     finally:
         session.close()
 
@@ -210,7 +203,6 @@ def test_prorroga_uses_only_current_strongest_window(automation_env):
             task.automation_key: task.status
             for task in _tasks(session)
         }
-        assert statuses["prorroga:1:75:2026-09-08"] == "ARCHIVED"
         assert statuses["prorroga:1:60:2026-09-08"] == "ARCHIVED"
         assert statuses["prorroga:1:30:2026-09-08"] == "OPEN"
     finally:
@@ -239,7 +231,7 @@ def test_prorroga_windows_group_missionaries_in_same_week(automation_env):
     finally:
         session.close()
 
-    _service().run(today=expiration - timedelta(days=30))
+    _service().run(today=expiration - timedelta(days=28))
 
     session = automation_env()
     try:
@@ -293,7 +285,7 @@ def test_completed_grouped_automation_removes_temporary_group(automation_env):
     finally:
         session.close()
 
-    _service().run(today=expiration - timedelta(days=30))
+    _service().run(today=expiration - timedelta(days=28))
     work = SecretaryWorkService()
     grouped = next(
         task
@@ -338,7 +330,7 @@ def test_deleting_grouped_automation_removes_temporary_group(automation_env):
     finally:
         session.close()
 
-    _service().run(today=expiration - timedelta(days=30))
+    _service().run(today=expiration - timedelta(days=28))
     work = SecretaryWorkService()
     grouped = next(
         task
@@ -373,6 +365,70 @@ def test_prorroga_not_generated_without_residency_expiration(automation_env):
     finally:
         session.close()
 
+
+def test_cancelacion_starts_exactly_21_days_before_release(automation_env):
+    release = date(2026, 10, 1)
+    session = automation_env()
+    try:
+        _missionary(session, release_date=release, dynamics_status="In-field")
+        session.commit()
+    finally:
+        session.close()
+
+    service = _service()
+    service.run(today=release - timedelta(days=22))
+    session = automation_env()
+    try:
+        assert not any(
+            (task.automation_key or "").startswith("cancelacion:")
+            for task in _tasks(session)
+        )
+    finally:
+        session.close()
+
+    service.run(today=release - timedelta(days=21))
+    session = automation_env()
+    try:
+        assert any(
+            task.automation_key == "cancelacion:1:2026-10-01"
+            for task in _tasks(session)
+        )
+    finally:
+        session.close()
+
+
+@pytest.mark.parametrize(
+    "fields",
+    [
+        {"dynamics_status": "Delay"},
+        {"dynamics_status": "In-field", "tracking_profile": "PERUVIAN_DNI"},
+    ],
+)
+def test_delay_and_peruvian_profiles_have_no_legal_automation(
+    automation_env, fields
+):
+    session = automation_env()
+    try:
+        _missionary(
+            session,
+            residency_expiration=date(2026, 8, 1),
+            release_date=date(2026, 8, 1),
+            **fields,
+        )
+        session.commit()
+    finally:
+        session.close()
+    _service().run(today=date(2026, 7, 15))
+    session = automation_env()
+    try:
+        assert not [
+            task for task in _tasks(session)
+            if (task.automation_key or "").startswith(
+                ("prorroga:", "cancelacion:", "after-", "gvm:")
+            )
+        ]
+    finally:
+        session.close()
 
 def test_obsolete_prorroga_archives_after_approval_document(automation_env):
     expiration = date(2026, 9, 8)

@@ -1,16 +1,31 @@
 from PySide6.QtCore import QEvent, QEasingCurve, QPropertyAnimation, Qt
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QApplication,
     QDialog,
     QFrame,
     QGraphicsBlurEffect,
     QGraphicsDropShadowEffect,
+    QHBoxLayout,
     QLabel,
     QVBoxLayout,
     QWidget,
 )
 
-from ui.foundation.widgets import DialogFooter
+
+class AppDialogFooter(QFrame):
+    """Standard Qt action strip used by AppDialog surfaces."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("AppDialogFooter")
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(16, 12, 16, 12)
+        layout.setSpacing(8)
+        layout.addStretch()
+
+    def add_action(self, button):
+        self.layout().addWidget(button)
 
 
 class DialogBackdrop(QWidget):
@@ -20,6 +35,7 @@ class DialogBackdrop(QWidget):
         super().__init__(host)
         self._host = host
         self._blur_radius = blur_radius
+        self._disposed = False
 
         self.snapshot = QLabel(self)
         self.snapshot.setScaledContents(True)
@@ -34,32 +50,39 @@ class DialogBackdrop(QWidget):
         )
 
         host.installEventFilter(self)
-        self.refresh()
+        self.refresh(capture=True)
 
-    def refresh(self):
+    def refresh(self, *, capture=False):
         if self._host is None:
             return
-        was_visible = self.isVisible()
-        if was_visible:
-            self.hide()
         self.setGeometry(self._host.rect())
         self.snapshot.setGeometry(self.rect())
         self.dim.setGeometry(self.rect())
-        self.snapshot.setPixmap(self._host.grab())
-        if was_visible:
-            self.show()
-            self.raise_()
+        if capture:
+            self.snapshot.setPixmap(self._host.grab())
 
     def eventFilter(self, watched, event):
         if watched is self._host and event.type() == QEvent.Resize:
-            self.refresh()
+            self.refresh(capture=True)
         return super().eventFilter(watched, event)
 
-    def dispose(self):
+    def deactivate(self):
+        self.hide()
+
+    def dispose(self, *_args):
+        if self._disposed:
+            return
+        self._disposed = True
         if self._host is not None:
-            self._host.removeEventFilter(self)
+            try:
+                self._host.removeEventFilter(self)
+            except RuntimeError:
+                # Qt may delete a parent before the Python destroyed callback
+                # runs.  There is no remaining event filter to remove then.
+                pass
             self._host = None
         self.hide()
+        self.setParent(None)
         self.deleteLater()
 
 
@@ -91,6 +114,8 @@ class AppDialog(QDialog):
             "dim_alpha": dim_alpha,
         }
         self._backdrop = None
+        if self._host is not None:
+            self._host.installEventFilter(self)
 
         self.setWindowTitle(title)
         self.setModal(True)
@@ -117,9 +142,7 @@ class AppDialog(QDialog):
             self._shadow = QGraphicsDropShadowEffect(self.surface_container)
             self._shadow.setBlurRadius(18)
             self._shadow.setOffset(0, 5)
-            self._shadow.setColor(Qt.black)
-            self._shadow.setColor(self._shadow.color().darker(100))
-            self._shadow.setColor(self._shadow.color())
+            self._shadow.setColor(QColor(15, 23, 42, 42))
             self._shadow.setEnabled(True)
             self.surface_container.setGraphicsEffect(self._shadow)
         else:
@@ -139,8 +162,7 @@ class AppDialog(QDialog):
         self.body_layout.setSpacing(10)
         surface_layout.addWidget(self.body, stretch=1)
 
-        self.footer = DialogFooter(self.surface)
-        self.footer.setObjectName("AppDialogFooter")
+        self.footer = AppDialogFooter(self.surface)
         surface_layout.addWidget(self.footer)
 
         self._fade = QPropertyAnimation(self, b"windowOpacity", self)
@@ -189,16 +211,24 @@ class AppDialog(QDialog):
         self.surface.setMaximumHeight(min(requested_maximum, maximum_height))
 
     def _ensure_backdrop(self):
-        if self._backdrop is not None or self._host is None or not self._host.isVisible():
+        if self._host is None or not self._host.isVisible():
             return
-        self._backdrop = DialogBackdrop(self._host, **self._backdrop_options)
+        if self._backdrop is None:
+            self._backdrop = DialogBackdrop(
+                self._host,
+                **self._backdrop_options,
+            )
+            self.destroyed.connect(self._backdrop.dispose)
+        else:
+            self._backdrop.refresh(capture=True)
         self._backdrop.show()
         self._backdrop.raise_()
 
     def _remove_backdrop(self):
         if self._backdrop is not None:
-            self._backdrop.dispose()
+            backdrop = self._backdrop
             self._backdrop = None
+            backdrop.dispose()
 
     def _center_on_host(self):
         self.adjustSize()

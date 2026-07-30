@@ -52,6 +52,18 @@ class Missionary(Base):
         String
     )
 
+    tracking_profile = Column(String, default="LEGAL")
+    dynamics_contact_id = Column(String)
+    dynamics_row_checksum = Column(String)
+    dynamics_modified_at = Column(DateTime(timezone=True))
+    dynamics_status = Column(String)
+    release_date = Column(Date)
+    home_address = Column(String)
+    father_name = Column(String)
+    mother_name = Column(String)
+    father_first_name_override = Column(String)
+    mother_first_name_override = Column(String)
+
     passport_number = Column(
         String
     )
@@ -153,3 +165,19 @@ class Missionary(Base):
         DateTime(timezone=True),
         server_default=func.now()
     )
+
+
+class DynamicsRosterImport(Base):
+    __tablename__ = "dynamics_roster_imports"
+
+    id = Column(Integer, primary_key=True)
+    preview_id = Column(String, unique=True, nullable=False)
+    status = Column(String, nullable=False, default="PREVIEW")
+    filename = Column(String, nullable=False)
+    filename_timestamp = Column(String)
+    file_sha256 = Column(String, nullable=False)
+    dynamics_modified_at = Column(DateTime(timezone=True))
+    summary_json = Column(String)
+    applying_device = Column(String)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    completed_at = Column(DateTime(timezone=True))

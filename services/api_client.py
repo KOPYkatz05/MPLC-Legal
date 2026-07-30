@@ -811,7 +811,13 @@ class MissionLegalApiClient:
                 response.raise_for_status()
                 temporary.write_bytes(response.content)
             temporary.replace(destination)
-        except (httpx.HTTPError, OSError) as exc:
+        except httpx.HTTPStatusError as exc:
+            # A response such as a missing document proves the server is
+            # reachable. Let the caller describe that resource-level error
+            # without opening the application-wide server recovery dialog.
+            temporary.unlink(missing_ok=True)
+            raise ApiUnavailableError(str(exc)) from exc
+        except (httpx.RequestError, OSError) as exc:
             temporary.unlink(missing_ok=True)
             self._report_unavailable(exc)
             raise ApiUnavailableError(str(exc)) from exc

@@ -349,6 +349,11 @@ def test_print_interpol_packet_uses_default_viewer_after_build(monkeypatch):
 
     monkeypatch.setattr(
         page,
+        "_validated_interpol_annotation_lines",
+        lambda: ["complete"],
+    )
+    monkeypatch.setattr(
+        page,
         "_collect_interpol_packet_docs",
         lambda: ([{"label": "Passport", "file_path": "passport.pdf"}], []),
     )
@@ -379,6 +384,61 @@ def test_print_interpol_packet_uses_default_viewer_after_build(monkeypatch):
         ),
         ("open", "C:/Temp/interpol_packet.pdf"),
     ]
+
+
+def test_interpol_annotation_uses_ordered_labels_and_blank_name_override(
+    monkeypatch,
+):
+    from server import configuration as configuration_module
+
+    monkeypatch.setattr(
+        configuration_module,
+        "load_server_configuration",
+        lambda: {
+            "interpol_area_office_address": "Area Office",
+            "interpol_secretary_phone": "999-111-222",
+        },
+    )
+    page = detail_module.MissionaryDetailPage.__new__(
+        detail_module.MissionaryDetailPage
+    )
+    page.document_service = SimpleNamespace(api_client=None)
+    page.current_missionary = SimpleNamespace(
+        home_address="Home Address",
+        father_name="",
+        father_first_name_override="Carlos",
+        mother_name="Maria Smith",
+        mother_first_name_override="",
+    )
+
+    assert page._validated_interpol_annotation_lines() == [
+        "Dirección Actual: Area Office",
+        "Dirección en País de Origen: Home Address",
+        "Nombre de Padre: Carlos",
+        "Nombre de Madre: Maria",
+        "Teléfono: 999-111-222",
+    ]
+
+
+def test_interpol_annotation_blocks_missing_official_data(monkeypatch):
+    import pytest
+    from server import configuration as configuration_module
+
+    monkeypatch.setattr(
+        configuration_module,
+        "load_server_configuration",
+        lambda: {},
+    )
+    page = detail_module.MissionaryDetailPage.__new__(
+        detail_module.MissionaryDetailPage
+    )
+    page.document_service = SimpleNamespace(api_client=None)
+    page.current_missionary = SimpleNamespace(
+        home_address="", father_name="", mother_name="",
+        father_first_name_override="", mother_first_name_override="",
+    )
+    with pytest.raises(ValueError, match="Area Office address"):
+        page._validated_interpol_annotation_lines()
 
 
 def test_run_migrations_adds_birthdate_column(monkeypatch):

@@ -57,7 +57,7 @@ def init_db():
     if REMOTE_CLIENT:
         _remote_database_error()
 
-    from database.models.missionary import Missionary
+    from database.models.missionary import DynamicsRosterImport, Missionary
     from database.models.workflow import WorkflowStage
     from database.models.document import Document
     from database.models.stage_history import StageHistory
@@ -99,6 +99,32 @@ def _run_migrations():
         "ALTER TABLE missionaries ADD COLUMN tramite_usuario TEXT",
         "ALTER TABLE missionaries ADD COLUMN tramite_contrasena TEXT",
         "ALTER TABLE missionaries ADD COLUMN carnet_number TEXT",
+        "ALTER TABLE missionaries ADD COLUMN tracking_profile VARCHAR DEFAULT 'LEGAL'",
+        "ALTER TABLE missionaries ADD COLUMN dynamics_contact_id VARCHAR",
+        "ALTER TABLE missionaries ADD COLUMN dynamics_row_checksum VARCHAR",
+        "ALTER TABLE missionaries ADD COLUMN dynamics_modified_at DATETIME",
+        "ALTER TABLE missionaries ADD COLUMN dynamics_status VARCHAR",
+        "ALTER TABLE missionaries ADD COLUMN release_date DATE",
+        "ALTER TABLE missionaries ADD COLUMN home_address TEXT",
+        "ALTER TABLE missionaries ADD COLUMN father_name VARCHAR",
+        "ALTER TABLE missionaries ADD COLUMN mother_name VARCHAR",
+        "ALTER TABLE missionaries ADD COLUMN father_first_name_override VARCHAR",
+        "ALTER TABLE missionaries ADD COLUMN mother_first_name_override VARCHAR",
+        """
+        CREATE TABLE dynamics_roster_imports (
+            id INTEGER PRIMARY KEY,
+            preview_id VARCHAR NOT NULL UNIQUE,
+            status VARCHAR NOT NULL DEFAULT 'PREVIEW',
+            filename VARCHAR NOT NULL,
+            filename_timestamp VARCHAR,
+            file_sha256 VARCHAR NOT NULL,
+            dynamics_modified_at DATETIME,
+            summary_json TEXT,
+            applying_device VARCHAR,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            completed_at DATETIME
+        )
+        """,
         "ALTER TABLE documents ADD COLUMN ocr_raw_data TEXT",
         "ALTER TABLE documents ADD COLUMN ocr_confirmed_data TEXT",
         "ALTER TABLE appointments ADD COLUMN appointment_uid VARCHAR",

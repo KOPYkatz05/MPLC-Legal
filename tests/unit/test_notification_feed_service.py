@@ -5,6 +5,7 @@ from sqlalchemy.orm import sessionmaker
 
 from database.db import Base
 from database.models.appointment import Appointment
+from database.models.document import Document
 from database.models.missionary import Missionary
 from database.models.secretary_work import SecretaryTask
 from services import notification_feed_service as feed_module
@@ -48,6 +49,83 @@ def _missionary(session, name="Test Person"):
     session.add(missionary)
     session.flush()
     return missionary
+
+
+def test_peruvian_dni_attention_starts_at_arrival_and_clears_on_upload(
+    monkeypatch,
+):
+    today = date(2026, 6, 22)
+    session = _session(monkeypatch)
+    try:
+        missionary = _missionary(session, "Peruvian Missionary")
+        missionary.tracking_profile = "PERUVIAN_DNI"
+        missionary.current_stage = "DNI"
+        missionary.dynamics_status = "In-field"
+        missionary.arrival_date = today + timedelta(days=1)
+        session.commit()
+        missionary_id = missionary.id
+    finally:
+        session.close()
+
+    service = NotificationFeedService(FakeSettings())
+    assert not any(
+        item["type"] == "missing_document"
+        for item in service.build_feed(today=today)
+    )
+
+    session = feed_module.SessionLocal()
+    try:
+        session.get(Missionary, missionary_id).arrival_date = today
+        session.commit()
+    finally:
+        session.close()
+    assert [
+        item["doc_type"] for item in service.build_feed(today=today)
+        if item["type"] == "missing_document"
+    ] == ["DNI"]
+
+    session = feed_module.SessionLocal()
+    try:
+        session.add(Document(
+            missionary_id=missionary_id, document_type="DNI",
+            workflow_stage="DNI", status="ACTIVE", file_name="dni.pdf",
+            file_path="C:/test/dni.pdf",
+        ))
+        session.commit()
+    finally:
+        session.close()
+    assert not any(
+        item["type"] == "missing_document"
+        for item in service.build_feed(today=today)
+    )
+
+
+def test_delay_record_is_dormant_across_feed_consumers(monkeypatch):
+    today = date(2026, 6, 22)
+    session = _session(monkeypatch)
+    try:
+        missionary = _missionary(session, "Delayed Missionary")
+        missionary.dynamics_status = "Delay"
+        missionary.residency_expiration = today
+        session.add(Appointment(
+            missionary_id=missionary.id,
+            appointment_field="interpol_appointment_date",
+            appointment_type="Interpol", scheduled_date=today,
+            status="SCHEDULED",
+        ))
+        session.add(SecretaryTask(
+            missionary_id=missionary.id, title="Legal task",
+            status="OPEN", priority="IMPORTANT", due_date=today,
+        ))
+        session.commit()
+    finally:
+        session.close()
+    feed = NotificationFeedService(FakeSettings()).build_feed(today=today)
+    assert not [
+        item for item in feed
+        if item.get("missionary_name") == "Delayed Missionary"
+        or item.get("missionary_id") == 1
+    ]
 
 
 def test_feed_includes_appointments_through_current_week(monkeypatch):

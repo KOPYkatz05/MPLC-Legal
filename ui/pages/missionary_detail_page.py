@@ -42,6 +42,7 @@ from services.document_service import (
     DocumentService,
 )
 from services.missionary_service import MissionaryService
+from services.settings_service import SettingsService
 from services.secretary_work_service import SecretaryWorkService
 from services.expiration_rules import add_years
 from services.residency_service import ResidencyService
@@ -1660,6 +1661,18 @@ class MissionaryDetailPage(QWidget):
         self.passport_label = self._build_value_label()
         self.carnet_number_input = create_line_edit(field_label("carnet_number"))
         self._text_edits["carnet_number"] = self.carnet_number_input
+        self.father_first_name_override_input = create_line_edit(
+            "Father first name for Interpol"
+        )
+        self._text_edits[
+            "father_first_name_override"
+        ] = self.father_first_name_override_input
+        self.mother_first_name_override_input = create_line_edit(
+            "Mother first name for Interpol"
+        )
+        self._text_edits[
+            "mother_first_name_override"
+        ] = self.mother_first_name_override_input
         self.tramite_usuario_input = create_line_edit(
             field_label("tramite_usuario")
         )
@@ -1709,6 +1722,14 @@ class MissionaryDetailPage(QWidget):
                 birthdate_shell,
                 birthdate_source_lbl,
             )
+        father_override_field = self._build_field_block(
+            "Father first name for Interpol",
+            self.father_first_name_override_input,
+        )
+        mother_override_field = self._build_field_block(
+            "Mother first name for Interpol",
+            self.mother_first_name_override_input,
+        )
 
         folder_widget = QWidget()
         folder_layout = QVBoxLayout()
@@ -1742,6 +1763,8 @@ class MissionaryDetailPage(QWidget):
             passport_field,
             carnet_field,
             birthdate_field,
+            father_override_field,
+            mother_override_field,
             folder_field,
         ]
         self._reflow_grid(identity_grid, self.identity_field_widgets, 2)
@@ -2782,6 +2805,17 @@ class MissionaryDetailPage(QWidget):
         if not hasattr(self, "current_missionary"):
             return
 
+        try:
+            self._validated_interpol_annotation_lines()
+        except ValueError as exc:
+            show_message(
+                self,
+                "Interpol packet information is incomplete",
+                str(exc),
+                kind="warning",
+            )
+            return
+
         packet_docs, missing_labels = self._collect_interpol_packet_docs()
 
         if missing_labels:
@@ -2859,6 +2893,7 @@ class MissionaryDetailPage(QWidget):
 
             packet_docs.append(
                 {
+                    "document_type": doc_type,
                     "label": label,
                     "file_path": str(file_path),
                 }
@@ -2933,6 +2968,7 @@ class MissionaryDetailPage(QWidget):
 
         try:
             for doc in packet_docs:
+                first_page = packet.page_count
                 source_path = doc["file_path"]
                 source = fitz.open(source_path)
 
@@ -2950,15 +2986,80 @@ class MissionaryDetailPage(QWidget):
                             image_pdf.close()
                 finally:
                     source.close()
+                if doc.get("document_type") == "PASSPORT" and packet.page_count > first_page:
+                    self._annotate_interpol_passport(packet[first_page])
 
             if packet.page_count == 0:
                 raise ValueError("Interpol packet has no printable pages")
 
-            self._add_print_open_action(packet)
             packet.save(output_path)
 
         finally:
             packet.close()
+
+    def _annotate_interpol_passport(self, page):
+        lines = self._validated_interpol_annotation_lines()
+        rect = page.rect
+        point = fitz.Point(rect.width * 0.14, rect.height * 0.72)
+        page.insert_textbox(
+            fitz.Rect(point.x, point.y, rect.width * 0.9, rect.height * 0.95),
+            "\n".join(lines),
+            fontsize=10,
+            fontname="helv",
+            color=(0, 0, 0),
+            lineheight=1.45,
+        )
+
+    def _validated_interpol_annotation_lines(self):
+        document_service = getattr(self, "document_service", None)
+        api_client = getattr(document_service, "api_client", None)
+        if api_client is not None:
+            details = api_client.get("/v1/server/configuration")
+        else:
+            from server.configuration import load_server_configuration
+            details = load_server_configuration()
+        missionary = self.current_missionary
+
+        def first_name(value, override):
+            override = str(override or "").strip()
+            if override:
+                return override
+            tokens = str(value or "").strip().split()
+            return tokens[0] if tokens else ""
+
+        values = {
+            "Area Office address": str(
+                details.get("interpol_area_office_address") or ""
+            ).strip(),
+            "home address": str(
+                getattr(missionary, "home_address", "") or ""
+            ).strip(),
+            "father name": first_name(
+                getattr(missionary, "father_name", ""),
+                getattr(missionary, "father_first_name_override", ""),
+            ),
+            "mother name": first_name(
+                getattr(missionary, "mother_name", ""),
+                getattr(missionary, "mother_first_name_override", ""),
+            ),
+            "secretary phone": str(
+                details.get("interpol_secretary_phone") or ""
+            ).strip(),
+        }
+        missing = [label for label, value in values.items() if not value]
+        if missing:
+            raise ValueError(
+                "Add the following before generating the official copy: "
+                + ", ".join(missing)
+                + "."
+            )
+        return [
+            f"Dirección Actual: {values['Area Office address']}",
+            f"Dirección en País de Origen: {values['home address']}",
+            f"Nombre de Padre: {values['father name']}",
+            f"Nombre de Madre: {values['mother name']}",
+            f"Teléfono: {values['secretary phone']}",
+        ]
 
     def _add_print_open_action(self, packet):
         js = (
@@ -3193,6 +3294,13 @@ class MissionaryDetailPage(QWidget):
             self.tramite_contrasena_input.setText(
                 getattr(missionary, "tramite_contrasena", None) or ""
             )
+        for field_key in (
+            "father_first_name_override",
+            "mother_first_name_override",
+        ):
+            widget = self._text_edits.get(field_key)
+            if widget is not None:
+                widget.setText(getattr(missionary, field_key, None) or "")
         self._set_value_text(
             self.folder_label,
             missionary.folder_path,
@@ -3472,6 +3580,21 @@ class MissionaryDetailPage(QWidget):
 
         if not hasattr(self, "current_missionary"):
             return
+        if (
+            getattr(self.current_missionary, "tracking_profile", "LEGAL")
+            == "PERUVIAN_DNI"
+        ):
+            item = QListWidgetItem()
+            widget = self._build_empty_state_card(
+                "Peruvian DNI tracking",
+                "This missionary only requires an active copy of the DNI.",
+                tone="muted",
+            )
+            item.setSizeHint(widget.sizeHint())
+            item.setFlags(item.flags() & ~Qt.ItemIsSelectable)
+            self.workflow_list.addItem(item)
+            self.workflow_list.setItemWidget(item, widget)
+            return
 
         if workflows is None:
             workflows = self.workflow_service.get_workflows(
@@ -3745,6 +3868,7 @@ class MissionaryDetailPage(QWidget):
         uploaded_types = {
             doc.document_type
             for doc in documents
+            if getattr(doc, "status", "ACTIVE") == "ACTIVE"
         }
         current_stage = getattr(
             self.current_missionary,
@@ -3753,8 +3877,26 @@ class MissionaryDetailPage(QWidget):
         )
 
         missing_groups = []
+        if (
+            getattr(self.current_missionary, "tracking_profile", "LEGAL")
+            == "PERUVIAN_DNI"
+        ):
+            if "DNI" not in uploaded_types:
+                missing_groups.append(("DNI", ["DNI"], True))
+            else:
+                empty = QListWidgetItem()
+                widget = self._build_empty_state_card(
+                    "DNI copy uploaded",
+                    "No other legal documents are required.",
+                    tone="success",
+                )
+                empty.setSizeHint(widget.sizeHint())
+                empty.setFlags(empty.flags() & ~Qt.ItemIsSelectable)
+                self.missing_documents_list.addItem(empty)
+                self.missing_documents_list.setItemWidget(empty, widget)
+                return
 
-        general_missing = [
+        general_missing = [] if missing_groups else [
             doc_key
             for doc_key, config in DOCUMENTS.items()
             if config.get("required")

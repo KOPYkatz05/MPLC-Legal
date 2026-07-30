@@ -336,6 +336,14 @@ class ReportsPage(QWidget):
         for missionary in missionaries:
             if getattr(missionary, "status", "ACTIVE") != "ACTIVE":
                 continue
+            if (
+                (getattr(missionary, "dynamics_status", "In-field") or "In-field")
+                != "In-field"
+                or (
+                    getattr(missionary, "tracking_profile", "LEGAL") or "LEGAL"
+                ) == "PERUVIAN_DNI"
+            ):
+                continue
             for field, label in fields:
                 if (
                     field == "visa_expiration"
@@ -399,6 +407,14 @@ class ReportsPage(QWidget):
         durations = defaultdict(list)
 
         for missionary in missionaries:
+            if (
+                (getattr(missionary, "dynamics_status", "In-field") or "In-field")
+                != "In-field"
+                or (
+                    getattr(missionary, "tracking_profile", "LEGAL") or "LEGAL"
+                ) == "PERUVIAN_DNI"
+            ):
+                continue
             for key, label, start_field, end_field in pairs:
                 start = cls._as_date(getattr(missionary, start_field, None))
                 end = cls._as_date(getattr(missionary, end_field, None))

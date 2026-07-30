@@ -704,7 +704,7 @@ TRANSLATIONS = {
         "missionary_detail_update_status": "Update status",
         "missionary_detail_uploaded_status": "Uploaded",
         "missionary_detail_document_loading": "Loading...",
-        "missionary_detail_document_server_unavailable": "This document file is unavailable on the server.",
+        "missionary_detail_document_server_unavailable": "This document is not currently available. Please sync OneDrive and try again.",
         "missionary_detail_document_download_failed": "The document could not be downloaded. Check the connection and try again.",
         "missionary_detail_uploaded_date": "Uploaded {date}",
         "missionary_detail_document_stage": "Stage: {stage}",

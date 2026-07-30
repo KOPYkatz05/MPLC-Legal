@@ -75,6 +75,15 @@ def set_entry_based_expiration(
 
 
 def should_track_expiration_field(missionary, field):
+    if (
+        (getattr(missionary, "dynamics_status", "In-field") or "In-field")
+        != "In-field"
+    ):
+        return False
+    if (
+        getattr(missionary, "tracking_profile", "LEGAL") or "LEGAL"
+    ) == "PERUVIAN_DNI":
+        return False
     if field == "visa_expiration" and getattr(
         missionary,
         "residency_expiration",

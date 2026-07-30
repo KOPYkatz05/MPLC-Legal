@@ -1,12 +1,13 @@
 import threading
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 
 import httpx
 import pytest
 
 from datetime import date
 
-from services.api_client import MissionLegalApiClient, RemoteRecord
+from services.api_client import ApiUnavailableError, MissionLegalApiClient, RemoteRecord
 from services.remote_service import RemoteServiceMixin
 
 
@@ -50,6 +51,29 @@ def test_instance_reuses_mock_transport_client_until_closed():
     assert transport_owner.is_closed is True
     with pytest.raises(RuntimeError, match="closed"):
         client.health()
+
+
+def test_download_404_does_not_mark_the_server_unavailable(monkeypatch):
+    destination = Path("test-download-404-document.pdf")
+    destination.unlink(missing_ok=True)
+    client = MissionLegalApiClient(
+        "https://mission-server.test",
+        credential_path="unused-device.json",
+        transport=httpx.MockTransport(lambda _request: httpx.Response(404)),
+    )
+    unavailable_reports = []
+    monkeypatch.setattr(client, "_headers", lambda: {})
+    monkeypatch.setattr(
+        client,
+        "_report_unavailable",
+        lambda detail: unavailable_reports.append(detail),
+    )
+
+    with pytest.raises(ApiUnavailableError, match="404 Not Found"):
+        client.download("/v1/documents/882/content", destination)
+
+    assert unavailable_reports == []
+    assert not destination.exists()
 
 
 def test_close_defers_transport_shutdown_until_concurrent_calls_finish():

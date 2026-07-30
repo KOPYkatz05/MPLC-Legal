@@ -3,6 +3,7 @@ import ipaddress
 import logging
 import os
 import secrets
+import json
 from contextlib import asynccontextmanager
 from datetime import date
 from pathlib import Path
@@ -81,6 +82,11 @@ class MissionaryRowColorRequest(BaseModel):
     color: str
 
 
+class ServerConfigurationUpdateRequest(BaseModel):
+    interpol_area_office_address: str = ""
+    interpol_secretary_phone: str = ""
+
+
 class OcrUpdatesRequest(BaseModel):
     document_type: str
     confirmed_data: dict = Field(default_factory=dict)
@@ -147,6 +153,7 @@ MISSIONARY_DATE_FIELDS = {
     "interpol_appointment_date",
     "biometric_appointment_date",
     "pickup_appointment_date",
+    "release_date",
 }
 
 
@@ -415,6 +422,37 @@ def create_app(
         return {
             "mission_storage_root": saved.get("mission_storage_root"),
             "backup_configured": bool(saved.get("onedrive_backup_dir")),
+            "interpol_area_office_address": saved.get(
+                "interpol_area_office_address", ""
+            ),
+            "interpol_secretary_phone": saved.get(
+                "interpol_secretary_phone", ""
+            ),
+        }
+
+    @app.patch("/v1/server/configuration")
+    def update_server_configuration(
+        request: ServerConfigurationUpdateRequest,
+        _device=Depends(authenticated_device),
+    ):
+        from server.configuration import (
+            load_server_configuration,
+            save_server_configuration,
+        )
+
+        saved = load_server_configuration()
+        saved["interpol_area_office_address"] = (
+            request.interpol_area_office_address.strip()
+        )
+        saved["interpol_secretary_phone"] = (
+            request.interpol_secretary_phone.strip()
+        )
+        save_server_configuration(saved)
+        return {
+            "interpol_area_office_address": saved[
+                "interpol_area_office_address"
+            ],
+            "interpol_secretary_phone": saved["interpol_secretary_phone"],
         }
 
     @app.get("/v1/missionaries")
@@ -464,6 +502,42 @@ def create_app(
         if not updated:
             raise HTTPException(status_code=404, detail="Missionary not found")
         return {"updated": True}
+
+    @app.post("/v1/dynamics-roster/preview")
+    async def dynamics_roster_preview(file: UploadFile = File(...), _device=Depends(authenticated_device)):
+        from services.dynamics_roster_service import DynamicsRosterError, DynamicsRosterService
+        try:
+            return DynamicsRosterService().preview(await file.read(), file.filename or "")
+        except DynamicsRosterError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/v1/dynamics-roster/apply")
+    async def dynamics_roster_apply(
+        file: UploadFile = File(...),
+        preview_id: str = Form(...),
+        resolutions: str = Form("{}"),
+        device=Depends(authenticated_device),
+    ):
+        from services.dynamics_roster_service import DynamicsRosterError, DynamicsRosterService
+        try:
+            resolution_map = json.loads(resolutions)
+            if not isinstance(resolution_map, dict):
+                raise ValueError
+            return DynamicsRosterService().apply(
+                await file.read(),
+                file.filename or "",
+                preview_id,
+                resolution_map,
+                applying_device=device.get("device_id"),
+            )
+        except (DynamicsRosterError, ValueError, json.JSONDecodeError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.get("/v1/dynamics-roster/last")
+    def dynamics_roster_last(_device=Depends(authenticated_device)):
+        from services.dynamics_roster_service import DynamicsRosterService
+
+        return {"item": DynamicsRosterService().last_import()}
 
     @app.patch("/v1/missionaries/{missionary_id}/row-color")
     def set_missionary_row_color(

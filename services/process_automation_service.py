@@ -76,6 +76,7 @@ class ProcessAutomationService(RemoteServiceMixin):
                         "prorroga:",
                         "after-interpol:",
                         "after-biometric:",
+                        "cancelacion:",
                     ),
                     reason="No longer needed based on current documents or process state.",
                 )
@@ -166,13 +167,37 @@ class ProcessAutomationService(RemoteServiceMixin):
         prorroga_payloads = []
         for missionary in missionaries:
             docs = docs_by_missionary.get(missionary.id, set())
+            if (getattr(missionary, "dynamics_status", "In-field") or "In-field") != "In-field":
+                continue
+            if getattr(missionary, "tracking_profile", "LEGAL") == "PERUVIAN_DNI":
+                continue
             prorroga_payloads.extend(
                 self._prorroga_payloads(missionary, docs, today)
             )
             payloads.extend(self._gvm_payloads(missionary, docs, today))
             payloads.extend(self._after_event_payloads(missionary, docs, today))
+            payloads.extend(self._cancelacion_payloads(missionary, today))
         payloads.extend(self._group_prorroga_payloads(prorroga_payloads))
         return payloads
+
+    @staticmethod
+    def _cancelacion_payloads(missionary, today):
+        release = getattr(missionary, "release_date", None)
+        if release is None:
+            return []
+        work_date = release - timedelta(days=21)
+        if work_date > today:
+            return []
+        return [{
+            "automation_key": f"cancelacion:{missionary.id}:{_iso(release)}",
+            "automation_source": AUTOMATION_SOURCE,
+            "title": "Prepare Cancelacion documents",
+            "description": f"{missionary.full_name}: release date is {_iso(release)}.",
+            "priority": "IMPORTANT" if work_date >= today else "CRITICAL",
+            "work_date": work_date, "due_date": work_date,
+            "missionary_id": missionary.id, "task_type": "DOCUMENT",
+            "related_stage": "CANCELACION",
+        }]
 
     @staticmethod
     def _active_docs_by_missionary(session):
@@ -195,13 +220,6 @@ class ProcessAutomationService(RemoteServiceMixin):
 
         windows = [
             (
-                75,
-                "Prepare Prorroga documents and request Carta MINJUS/Jurada",
-                "Prepare payment, Carne copy, PassyVisa, Carta MINJUS, "
-                "and Declaracion Jurada before the submission window opens.",
-                "NORMAL",
-            ),
-            (
                 60,
                 "Prorroga submission window is open",
                 "Submit Prorroga only inside the 60-day window before "
@@ -220,7 +238,7 @@ class ProcessAutomationService(RemoteServiceMixin):
         eligible = []
         for offset, title, description, priority in windows:
             work_date = expiration - timedelta(days=offset)
-            if work_date > today + timedelta(days=6):
+            if work_date > today:
                 continue
             eligible.append({
                 "offset": offset,

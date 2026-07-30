@@ -82,6 +82,14 @@ DOCUMENTS = {
         ],
     },
 
+    "DNI": {
+        "label": "DNI Copy",
+        "stage": None,
+        "required": False,
+        "ocr_fields": [],
+        "auto_updates": [],
+    },
+
     "FBI": {
         "label": "FBI",
         "stage": "INTERPOL",
@@ -342,6 +350,8 @@ def visible_document_keys_for_missionary(missionary):
 
 
 def required_documents_for_missionary(stage, missionary):
+    if getattr(missionary, "tracking_profile", "LEGAL") == "PERUVIAN_DNI":
+        return ["DNI"] if stage == "DNI" else []
     required = list(WORKFLOW_REQUIREMENTS.get(stage, []))
     if stage == "INTERPOL" and requires_fbi_document(missionary):
         required.append("FBI")

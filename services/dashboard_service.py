@@ -100,6 +100,16 @@ class DashboardService(RemoteServiceMixin):
                 .filter(SecretaryTask.status.in_(VISIBLE_TASK_STATUSES))
                 .all()
             )
+            missionaries_by_id = {
+                missionary.id: missionary for missionary in missionaries
+            }
+            open_tasks = [
+                task for task in open_tasks
+                if task.missionary_id is None
+                or self._missionary_is_actionable(
+                    missionaries_by_id.get(task.missionary_id)
+                )
+            ]
             today_appointment_rows = (
                 session.query(Appointment, Missionary)
                 .join(Missionary, Appointment.missionary_id == Missionary.id)
@@ -111,6 +121,10 @@ class DashboardService(RemoteServiceMixin):
                 .order_by(Missionary.full_name)
                 .all()
             )
+            today_appointment_rows = [
+                row for row in today_appointment_rows
+                if self._missionary_is_actionable(row[1])
+            ]
             today_tasks = [
                 task for task in open_tasks
                 if today in {
@@ -200,6 +214,10 @@ class DashboardService(RemoteServiceMixin):
 
         items = []
         for task in tasks:
+            if task.missionary_id:
+                missionary = session.get(Missionary, task.missionary_id)
+                if not self._missionary_is_actionable(missionary):
+                    continue
             target_date = task.work_date or task.due_date
             if target_date is None:
                 continue
@@ -218,6 +236,21 @@ class DashboardService(RemoteServiceMixin):
             })
 
         return sorted(items, key=notification_sort_key)
+
+    @staticmethod
+    def _missionary_is_actionable(missionary):
+        if missionary is None:
+            return False
+        return (
+            getattr(missionary, "status", "ACTIVE") == "ACTIVE"
+            and (
+                getattr(missionary, "dynamics_status", "In-field")
+                or "In-field"
+            ) == "In-field"
+            and (
+                getattr(missionary, "tracking_profile", "LEGAL") or "LEGAL"
+            ) != "PERUVIAN_DNI"
+        )
 
     @staticmethod
     def _severity_for_days(days_left):

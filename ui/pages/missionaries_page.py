@@ -45,6 +45,7 @@ from services.missionary_group_service import MissionaryGroupService
 from services.client_view_service import ClientViewService
 
 from services.export_service import ExportService
+from services.dynamics_roster_client_service import DynamicsRosterClientService
 from services.group_package_export_service import (
     GroupPackageExportError,
     GroupPackageExportService,
@@ -92,6 +93,98 @@ MISSIONARY_ROW_COLOR_STYLES = {
     "red": ("#FEF2F2", "#DC2626"),
     "gray": ("#F4F4F5", "#71717A"),
 }
+
+
+class DynamicsRosterPreviewDialog(QDialog):
+    """Review every roster outcome and explicitly resolve identity conflicts."""
+
+    RESOLUTION_LABELS = {
+        "same": "Same missionary — update existing record",
+        "different": "Different missionary",
+        "restore": "Restore and update",
+        "skip": "Keep inactive and skip",
+    }
+
+    def __init__(self, preview, parent=None):
+        super().__init__(parent)
+        self.preview = preview
+        self._conflict_inputs = {}
+        self.setWindowTitle("Review Dynamics Roster")
+        self.resize(760, 620)
+        layout = QVBoxLayout(self)
+        summary = preview.get("summary", {})
+        filename = preview.get("filename", "")
+        stamp = preview.get("filename_timestamp") or "timestamp not found"
+        heading = QLabel(
+            f"{filename}\nExport time: {stamp}\n\n"
+            f"Create: {summary.get('creates', 0)}   "
+            f"Update: {summary.get('changes', 0)}   "
+            f"Unchanged: {summary.get('unchanged', 0)}   "
+            f"Skipped: {summary.get('skipped', 0)}   "
+            f"Invalid: {summary.get('invalid', 0)}"
+        )
+        heading.setWordWrap(True)
+        layout.addWidget(heading)
+
+        list_widget = create_list_widget()
+        for key, label in (
+            ("creates", "CREATE"), ("changes", "UPDATE"),
+            ("unchanged", "UNCHANGED"), ("skipped", "SKIP"),
+            ("invalid", "INVALID"),
+        ):
+            for item in preview.get(key, []):
+                detail = item.get("reason") or ", ".join(item.get("fields", []))
+                list_widget.addItem(
+                    f"{label} · Row {item.get('row')} · "
+                    f"{item.get('missionary_code')} · {item.get('name')}"
+                    + (f" · {detail}" if detail else "")
+                )
+        layout.addWidget(list_widget, 1)
+
+        for conflict in preview.get("conflicts", []):
+            existing = (conflict.get("existing") or [{}])[0]
+            label = QLabel(
+                f"Row {conflict.get('row')} — {conflict.get('reason')}\n"
+                f"Dynamics: {conflict.get('missionary_code')} · "
+                f"{conflict.get('name')}\n"
+                f"Existing: {existing.get('missionary_code', '')} · "
+                f"{existing.get('name', '')} · {existing.get('status', '')}"
+            )
+            label.setWordWrap(True)
+            layout.addWidget(label)
+            combo = create_combo_box()
+            combo.addItem("Choose a resolution…", None)
+            for resolution in conflict.get("resolutions", []):
+                combo.addItem(
+                    self.RESOLUTION_LABELS.get(resolution, resolution),
+                    resolution,
+                )
+            combo.currentIndexChanged.connect(self._update_apply_enabled)
+            self._conflict_inputs[str(conflict.get("row"))] = combo
+            layout.addWidget(combo)
+
+        button_row = QHBoxLayout()
+        button_row.addStretch()
+        cancel = create_button("Cancel", "secondary")
+        cancel.clicked.connect(self.reject)
+        self.apply_button = create_button("Apply Roster", "primary")
+        self.apply_button.clicked.connect(self.accept)
+        button_row.addWidget(cancel)
+        button_row.addWidget(self.apply_button)
+        layout.addLayout(button_row)
+        self._update_apply_enabled()
+
+    def _update_apply_enabled(self):
+        blocked = bool(self.preview.get("invalid"))
+        unresolved = any(combo.currentData() is None for combo in self._conflict_inputs.values())
+        self.apply_button.setEnabled(not blocked and not unresolved)
+
+    def resolutions(self):
+        return {
+            row: combo.currentData()
+            for row, combo in self._conflict_inputs.items()
+            if combo.currentData() is not None
+        }
 
 
 def _missionary_row_color_icon(color):
@@ -1054,6 +1147,7 @@ class MissionariesPage(QWidget):
         self._pending_navigation_restore = None
 
         self.export_service = ExportService()
+        self.dynamics_roster_service = DynamicsRosterClientService()
         self.group_package_export_service = GroupPackageExportService(
             self.export_service
         )
@@ -1142,6 +1236,11 @@ class MissionariesPage(QWidget):
         self.export_button.clicked.connect(
             self._show_export_menu
         )
+
+        self.import_roster_button = create_missionaries_pill_button(
+            "Import Dynamics Roster", "secondary"
+        )
+        self.import_roster_button.clicked.connect(self._import_dynamics_roster)
 
         self.edit_columns_button = create_missionaries_pill_button(
             "Edit Columns",
@@ -1346,6 +1445,7 @@ class MissionariesPage(QWidget):
             self.edit_columns_button,
             self.auto_widths_button,
             self.export_button,
+            self.import_roster_button,
             self.add_button,
         ]
 
@@ -2445,6 +2545,50 @@ class MissionariesPage(QWidget):
             logger.exception(
                 "Failed to open AddMissionaryDialog"
             )
+
+    def _import_dynamics_roster(self):
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, "Import Dynamics Roster", "", "Excel Files (*.xlsx)"
+        )
+        if not file_path:
+            return
+        try:
+            preview = self.dynamics_roster_service.preview(file_path)
+            dialog = DynamicsRosterPreviewDialog(preview, self)
+            if dialog.exec() != QDialog.Accepted:
+                return
+            result = self.dynamics_roster_service.apply(
+                file_path,
+                preview["preview_id"],
+                dialog.resolutions(),
+            )
+            show_message(
+                self,
+                "Roster Imported",
+                f"Created: {result['created']}\n"
+                f"Updated: {result['updated']}\n"
+                f"Unchanged: {result['unchanged_count']}\n"
+                f"Restored: {result['restored']}",
+            )
+            self.request_refresh(force=True)
+            detail_page = getattr(
+                self.main_window, "missionary_detail_page", None
+            )
+            current = getattr(detail_page, "current_missionary", None)
+            if (
+                detail_page is not None
+                and current is not None
+                and current.id in result.get("affected_missionary_ids", [])
+                and hasattr(detail_page, "_reload_missionary")
+            ):
+                detail_page._reload_missionary()
+            for page_name in ("dashboard_page", "calendar_page", "reports_page"):
+                page = getattr(self.main_window, page_name, None)
+                if page and hasattr(page, "load_data"):
+                    page.load_data()
+        except Exception as exc:
+            logger.exception("Dynamics roster import failed")
+            show_message(self, "Roster Import Failed", str(exc), kind="critical")
 
     def _edit_columns(self):
         dialog = EditMissionaryColumnsDialog(

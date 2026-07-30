@@ -69,7 +69,7 @@ class NotificationFeedService(RemoteServiceMixin):
                 self._document_items(session, missionaries, today, settings)
             )
             items.extend(
-                self._missing_document_items(session, missionaries, settings)
+                self._missing_document_items(session, missionaries, settings, today)
             )
             items.extend(self._appointment_items(session, today, settings))
             items.extend(self._task_items(session, today, settings))
@@ -128,6 +128,8 @@ class NotificationFeedService(RemoteServiceMixin):
             uploaded = self._uploaded_documents_by_missionary(session)
             missing = []
             for missionary in missionaries:
+                if not self._missing_documents_are_actionable(missionary, date.today()):
+                    continue
                 missionary_missing = self._missing_for_missionary(
                     missionary,
                     uploaded.get(missionary.id, set()),
@@ -238,12 +240,14 @@ class NotificationFeedService(RemoteServiceMixin):
                 })
         return items
 
-    def _missing_document_items(self, session, missionaries, settings):
+    def _missing_document_items(self, session, missionaries, settings, today):
         if not settings.get("include_missing_documents", True):
             return []
         uploaded = self._uploaded_documents_by_missionary(session)
         items = []
         for missionary in missionaries:
+            if not self._missing_documents_are_actionable(missionary, today):
+                continue
             missing = self._missing_for_missionary(
                 missionary,
                 uploaded.get(missionary.id, set()),
@@ -294,6 +298,14 @@ class NotificationFeedService(RemoteServiceMixin):
         )
         items = []
         for appointment, missionary in rows:
+            if (
+                (getattr(missionary, "dynamics_status", "In-field") or "In-field")
+                != "In-field"
+                or (
+                    getattr(missionary, "tracking_profile", "LEGAL") or "LEGAL"
+                ) == "PERUVIAN_DNI"
+            ):
+                continue
             days = (appointment.scheduled_date - today).days
             label = appointment.appointment_type or "Appointment"
             missionary_name = self._missionary_name(missionary)
@@ -424,6 +436,16 @@ class NotificationFeedService(RemoteServiceMixin):
         target_date,
         date_kind,
     ):
+        if task.missionary_id:
+            missionary = session.get(Missionary, task.missionary_id)
+            if missionary is not None and (
+                (getattr(missionary, "dynamics_status", "In-field") or "In-field")
+                != "In-field"
+                or (
+                    getattr(missionary, "tracking_profile", "LEGAL") or "LEGAL"
+                ) == "PERUVIAN_DNI"
+            ):
+                return None
         days = (target_date - today).days
         automation_key = task.automation_key or ""
         is_transfer = automation_key.startswith("transfer:")
@@ -486,6 +508,9 @@ class NotificationFeedService(RemoteServiceMixin):
 
     @staticmethod
     def _missing_for_missionary(missionary, uploaded):
+        profile = getattr(missionary, "tracking_profile", "LEGAL") or "LEGAL"
+        if profile == "PERUVIAN_DNI":
+            return [] if "DNI" in uploaded else [{"stage": "DNI", "label": "DNI Copy", "doc_type": "DNI"}]
         stage = missionary.current_stage
         missing = []
         for doc_type in required_documents_for_missionary(stage, missionary):
@@ -498,6 +523,21 @@ class NotificationFeedService(RemoteServiceMixin):
                 "doc_type": doc_type,
             })
         return missing
+
+    @staticmethod
+    def _missing_documents_are_actionable(missionary, today):
+        if (getattr(missionary, "dynamics_status", "In-field") or "In-field") != "In-field":
+            return False
+        if getattr(missionary, "tracking_profile", "LEGAL") == "PERUVIAN_DNI":
+            return bool(getattr(missionary, "arrival_date", None) and missionary.arrival_date <= today)
+        stage = getattr(missionary, "current_stage", "")
+        if stage == "PRORROGA":
+            expiry = getattr(missionary, "residency_expiration", None)
+            return bool(expiry and (expiry - today).days <= 60)
+        if stage == "CANCELACION":
+            release = getattr(missionary, "release_date", None)
+            return bool(release and (release - today).days <= 21)
+        return True
 
     @staticmethod
     def _document_detail(name, exp_date, days):

@@ -153,6 +153,10 @@ def main():
 
     app = QApplication(sys.argv)
 
+    from ui.foundation.text_input_style import install_pixel_crisp_text_input_style
+
+    install_pixel_crisp_text_input_style(app)
+
     from ui.dialogs.startup_splash import StartupSplash
 
     startup_splash = StartupSplash()
