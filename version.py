@@ -1,12 +1,12 @@
-APP_VERSION = "0.2.2"
-API_VERSION = "1"
-SCHEMA_VERSION = 1
+APP_VERSION = "0.3.0"
+API_VERSION = "2"
+SCHEMA_VERSION = 2
 
 # Client/server releases are allowed to roll out independently while they use a
 # compatible API.  Keep this range wider than one value when a future API
 # release remains backward compatible.
-MIN_SUPPORTED_SERVER_API_VERSION = "1"
-MAX_SUPPORTED_SERVER_API_VERSION = "1"
+MIN_SUPPORTED_SERVER_API_VERSION = "2"
+MAX_SUPPORTED_SERVER_API_VERSION = "2"
 
 # A server can require a minimum client version. Newer clients may continue to
 # work with an older server when their API versions remain compatible.
