@@ -86,8 +86,8 @@ DOCUMENTS = {
         "label": "DNI Copy",
         "stage": None,
         "required": False,
-        "ocr_fields": [],
-        "auto_updates": [],
+        "ocr_fields": ["dni_number"],
+        "auto_updates": ["dni_number"],
     },
 
     "FBI": {
@@ -368,6 +368,7 @@ def required_documents_for_missionary(stage, missionary):
 
 OCR_FIELDS = [
     "passport_number",
+    "dni_number",
     "full_name",
     "date_of_birth",
     "nationality",

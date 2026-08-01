@@ -722,7 +722,8 @@ QLabel#ResultLabel {
    MISSIONARIES TABLE
    ========================================== */
 
-QTableWidget#MissionaryTable {
+QTableWidget#MissionaryTable,
+QTableView#MissionaryTable {
     background-color: #FFFFFF;
     alternate-background-color: #F9F9FA;
     border: none;
@@ -735,12 +736,14 @@ QTableWidget#MissionaryTable {
     outline: 0;
 }
 
-QTableWidget#MissionaryTable::item {
+QTableWidget#MissionaryTable::item,
+QTableView#MissionaryTable::item {
     padding: 0px 12px;
     border-bottom: 1px solid #F1F1F1;
 }
 
-QTableWidget#MissionaryTable::item:selected {
+QTableWidget#MissionaryTable::item:selected,
+QTableView#MissionaryTable::item:selected {
     background-color: #F4F4F5;
     color: #18181B;
 }

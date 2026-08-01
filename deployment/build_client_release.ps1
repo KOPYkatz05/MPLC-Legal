@@ -78,6 +78,12 @@ if (-not (Test-Path -LiteralPath $ReleaseSafetyPath -PathType Leaf)) {
 }
 . $ReleaseSafetyPath
 
+# Keep the client executable, shortcut, and Velopack installer consistently
+# branded even when callers do not provide an explicit icon override.
+if ([string]::IsNullOrWhiteSpace($IconPath)) {
+    $IconPath = Join-Path $RepoRoot "assets\icons\mission_legal\mission_legal_icon.ico"
+}
+
 function Get-RepoPath {
     param(
         [Parameter(Mandatory = $true)]

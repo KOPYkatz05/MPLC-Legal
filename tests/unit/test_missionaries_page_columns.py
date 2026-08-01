@@ -1,7 +1,8 @@
 from datetime import date
 from types import SimpleNamespace
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QItemSelectionModel, Qt
+from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QDialog
 
 from ui.pages.missionaries_page import (
@@ -12,9 +13,23 @@ from ui.pages.missionaries_page import (
     MISSIONARY_COLUMNS,
     MIN_TABLE_COLUMN_WIDTH,
     MissionariesPage,
+    create_missionaries_pill_button,
     _last_name_first,
     _sort_value_for_column,
 )
+
+
+def _table_text(page, row, column):
+    return page.table.model().index(row, column).data(Qt.DisplayRole)
+
+
+def _select_table_rows(page, *rows):
+    selection_model = page.table.selectionModel()
+    for row in rows:
+        selection_model.select(
+            page.table.model().index(row, 0),
+            QItemSelectionModel.Select | QItemSelectionModel.Rows,
+        )
 
 
 def test_missionary_table_includes_detail_page_fields():
@@ -105,6 +120,18 @@ def test_date_columns_sort_by_iso_date_values():
     )
 
     assert sort_value == "2026-01-05"
+
+
+def test_missionaries_action_pill_does_not_latch_checked(qapp):
+    button = create_missionaries_pill_button("Action")
+    button.show()
+
+    try:
+        assert not button.isCheckable()
+        QTest.mouseClick(button, Qt.LeftButton)
+        assert not button.isChecked()
+    finally:
+        button.close()
 
 
 def test_column_widths_balance_to_available_space():
@@ -200,10 +227,10 @@ def test_missionaries_page_sorts_date_columns_chronologically(
     page = MissionariesPage(window)
 
     try:
-        page.table.sortItems(2, Qt.AscendingOrder)
+        page.table.sortByColumn(2, Qt.AscendingOrder)
 
-        assert page.table.item(0, 2).text() == "15/01/2026"
-        assert page.table.item(1, 2).text() == "01/02/2026"
+        assert _table_text(page, 0, 2) == "15/01/2026"
+        assert _table_text(page, 1, 2) == "01/02/2026"
     finally:
         page.close()
 
@@ -302,8 +329,8 @@ def test_missionaries_page_group_filter_shows_only_members(monkeypatch, qapp):
     try:
         page.group_filter.setCurrentIndex(page.group_filter.findData(33))
 
-        assert page.table.rowCount() == 1
-        assert page.table.item(0, 1).text() == "Group Member"
+        assert page.table.model().rowCount() == 1
+        assert _table_text(page, 0, 1) == "Group Member"
     finally:
         page.close()
 
@@ -366,14 +393,15 @@ def test_missionaries_page_search_includes_last_name_first(monkeypatch, qapp):
 
     try:
         page.search_input.setText("Lopez Garcia")
+        QTest.qWait(150)
 
-        assert page.table.rowCount() == 1
-        assert page.table.item(0, 1).text() == "Maria Fernanda Lopez Garcia"
+        assert page.table.model().rowCount() == 1
+        assert _table_text(page, 0, 1) == "Maria Fernanda Lopez Garcia"
     finally:
         page.close()
 
 
-def test_column_export_uses_current_filtered_view(monkeypatch, qapp, tmp_path):
+def test_column_export_uses_current_filtered_view(monkeypatch, qapp):
     _ = qapp
     from ui.pages import missionaries_page as page_module
 
@@ -472,7 +500,7 @@ def test_column_export_uses_current_filtered_view(monkeypatch, qapp, tmp_path):
     monkeypatch.setattr(
         page_module.QFileDialog,
         "getSaveFileName",
-        lambda *args, **kwargs: (str(tmp_path / "export.xlsx"), ""),
+        lambda *args, **kwargs: ("missionaries-export-test.xlsx", ""),
     )
     monkeypatch.setattr(
         page_module,
@@ -710,8 +738,7 @@ def test_create_group_uses_selected_table_rows(monkeypatch, qapp):
     page = MissionariesPage(window)
 
     try:
-        page.table.item(0, 0).setSelected(True)
-        page.table.item(1, 0).setSelected(True)
+        _select_table_rows(page, 0, 1)
         page._create_group()
 
         assert captured["ids"] == [1, 2]
@@ -822,8 +849,7 @@ def test_batch_actions_archive_selected_rows(monkeypatch, qapp):
     page = MissionariesPage(window)
 
     try:
-        page.table.item(0, 0).setSelected(True)
-        page.table.item(1, 0).setSelected(True)
+        _select_table_rows(page, 0, 1)
         page._batch_actions()
 
         assert shown_actions == ["Advance Stage", "Archive"]
@@ -938,8 +964,7 @@ def test_batch_actions_group_archives_selected_rows(monkeypatch, qapp):
     page = MissionariesPage(window)
 
     try:
-        page.table.item(0, 0).setSelected(True)
-        page.table.item(1, 0).setSelected(True)
+        _select_table_rows(page, 0, 1)
         page._batch_actions()
 
         assert page.missionary_service.group_archive == (

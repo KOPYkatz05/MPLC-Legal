@@ -1192,6 +1192,7 @@ class MissionaryDetailPage(QWidget):
         self.advance_banner_layout = banner_layout
 
         banner_icon = QLabel("OK")
+        self.banner_icon = banner_icon
 
         banner_icon.setObjectName("SuccessIcon")
 
@@ -1659,6 +1660,8 @@ class MissionaryDetailPage(QWidget):
 
         self.nationality_label = self._build_value_label()
         self.passport_label = self._build_value_label()
+        self.dni_number_input = create_line_edit(field_label("dni_number"))
+        self._text_edits["dni_number"] = self.dni_number_input
         self.carnet_number_input = create_line_edit(field_label("carnet_number"))
         self._text_edits["carnet_number"] = self.carnet_number_input
         self.father_first_name_override_input = create_line_edit(
@@ -1713,6 +1716,10 @@ class MissionaryDetailPage(QWidget):
                 field_label("passport_number"),
                 self.passport_label,
             )
+        dni_field = self._build_field_block(
+                field_label("dni_number"),
+                self.dni_number_input,
+            )
         carnet_field = self._build_field_block(
                 field_label("carnet_number"),
                 self.carnet_number_input,
@@ -1761,6 +1768,7 @@ class MissionaryDetailPage(QWidget):
         self.identity_field_widgets = [
             nationality_field,
             passport_field,
+            dni_field,
             carnet_field,
             birthdate_field,
             father_override_field,
@@ -2058,6 +2066,29 @@ class MissionaryDetailPage(QWidget):
             self.advance_banner.setVisible(False)
             return
 
+        if self._uses_peruvian_dni_tracking(self.current_missionary):
+            if documents is None:
+                documents = self.document_service.get_documents(
+                    self.current_missionary.id
+                )
+            has_dni = any(
+                document.document_type == "DNI"
+                and getattr(document, "status", "ACTIVE") == "ACTIVE"
+                for document in documents
+            )
+            self._set_advance_banner_tone(warning=True)
+            self.banner_now_btn.setVisible(False)
+            if not has_dni:
+                self.banner_text.setText(
+                    "DNI copy missing - upload an active DNI copy for this "
+                    "missionary."
+                )
+            self.advance_banner.setVisible(not has_dni)
+            return
+
+        self._set_advance_banner_tone(warning=False)
+        self.banner_now_btn.setVisible(True)
+
         if workflows is None:
             stage = self.workflow_service.get_earliest_incomplete_stage(
                 self.current_missionary.id
@@ -2141,6 +2172,9 @@ class MissionaryDetailPage(QWidget):
 
     def _advance_stage(self):
         if not hasattr(self, "current_missionary"):
+            return
+
+        if self._uses_peruvian_dni_tracking(self.current_missionary):
             return
 
         dialog = StageAdvanceDialog(
@@ -3261,6 +3295,7 @@ class MissionaryDetailPage(QWidget):
         self._set_detail_loading(True)
         self._requested_missionary_id = missionary.id
         self.current_missionary = missionary
+        self._update_tracking_profile_controls(missionary)
 
         logger.info(
             f"Loading missionary details for "
@@ -3285,6 +3320,10 @@ class MissionaryDetailPage(QWidget):
         if hasattr(self, "carnet_number_input"):
             self.carnet_number_input.setText(
                 getattr(missionary, "carnet_number", None) or ""
+            )
+        if hasattr(self, "dni_number_input"):
+            self.dni_number_input.setText(
+                getattr(missionary, "dni_number", None) or ""
             )
         if hasattr(self, "tramite_usuario_input"):
             self.tramite_usuario_input.setText(
@@ -3419,6 +3458,32 @@ class MissionaryDetailPage(QWidget):
         self._update_advance_banner(workflows, documents)
         self._detail_loaded = True
         self._set_detail_loading(False)
+
+    @staticmethod
+    def _uses_peruvian_dni_tracking(missionary):
+        return (
+            getattr(missionary, "tracking_profile", "LEGAL") or "LEGAL"
+        ) == "PERUVIAN_DNI"
+
+    def _update_tracking_profile_controls(self, missionary):
+        if hasattr(self, "advance_button"):
+            self.advance_button.setVisible(
+                not self._uses_peruvian_dni_tracking(missionary)
+            )
+
+    def _set_advance_banner_tone(self, *, warning):
+        banner_name = "WarningBanner" if warning else "SuccessBanner"
+        text_name = "WarningBannerText" if warning else "SuccessBannerText"
+        icon_text = "!" if warning else "OK"
+        changed = self.advance_banner.objectName() != banner_name
+        self.advance_banner.setObjectName(banner_name)
+        self.banner_text.setObjectName(text_name)
+        self.banner_icon.setText(icon_text)
+        if changed:
+            for widget in (self.advance_banner, self.banner_text):
+                style = widget.style()
+                style.unpolish(widget)
+                style.polish(widget)
 
     def _clear_detail_collections(self):
         for list_name in (

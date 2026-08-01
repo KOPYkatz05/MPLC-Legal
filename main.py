@@ -143,6 +143,7 @@ def main():
         return
 
     from PySide6.QtCore import QCoreApplication, QTimer
+    from PySide6.QtGui import QIcon
     from PySide6.QtWidgets import QApplication, QDialog, QMessageBox
     from app_identity import APP, ORG
     from version import APP_VERSION
@@ -152,6 +153,15 @@ def main():
     QCoreApplication.setApplicationVersion(APP_VERSION)
 
     app = QApplication(sys.argv)
+    app.setWindowIcon(
+        QIcon(
+            str(
+                resource_path(
+                    "assets", "icons", "mission_legal", "mission_legal_icon.png"
+                )
+            )
+        )
+    )
 
     from ui.foundation.text_input_style import install_pixel_crisp_text_input_style
 
@@ -176,7 +186,7 @@ def main():
 
     try:
         recover_interrupted_pairing()
-        startup_splash.advance_to(10)
+        startup_splash.advance_to(10, wait=True)
     except ClientPairingRecoveryError as exc:
         startup_splash.dismiss()
         QMessageBox.critical(
@@ -214,7 +224,7 @@ def main():
         f"{connection_configuration_diagnostics()}",
         flush=True,
     )
-    startup_splash.advance_to(25)
+    startup_splash.advance_to(25, wait=True)
     if (
         api_client is None
         and is_frozen()
@@ -239,7 +249,7 @@ def main():
         if get_database_path().exists():
             DatabaseBackupService().create_snapshot(reason="pre-migration")
         init_db()
-        startup_splash.advance_to(65)
+        startup_splash.advance_to(65, wait=True)
     else:
         # Modules imported by the UI expose both local and remote services. Mark
         # this process before importing them so database.db cannot create a
@@ -251,7 +261,7 @@ def main():
                 api_client.validate_compatibility(health)
                 session = api_client.session()
                 api_client.validate_compatibility(session)
-                startup_splash.advance_to(65)
+                startup_splash.advance_to(65, wait=True)
                 break
             except ApiCompatibilityError as exc:
                 if exc.client_update_required:
@@ -318,7 +328,7 @@ def main():
     install_window_diagnostics(app)
 
     window = MainWindow()
-    startup_splash.advance_to(90)
+    startup_splash.advance_to(100, wait=True)
     startup_splash.dismiss()
 
     if api_client is not None:

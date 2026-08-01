@@ -272,7 +272,10 @@ class AppointmentService(RemoteServiceMixin):
                     appointment,
                 )
 
-            return appointment
+            # Return a detached-safe payload for RPC callers.  The session is
+            # closed in ``finally``; returning the ORM instance here leaves it
+            # detached/expired before the API serializer reads it.
+            return self._appointment_snapshot(appointment, missionary)
         except Exception:
             session.rollback()
             logger.exception("Failed to mark appointment")

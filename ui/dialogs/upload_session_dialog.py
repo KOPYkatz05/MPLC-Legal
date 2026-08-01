@@ -637,7 +637,7 @@ class UploadSessionController:
         )
 
     def _ocr_should_replace_prefill(self, item, field, confirmed_value):
-        if item.document_type != "PASSPORT":
+        if item.document_type not in {"PASSPORT", "DNI"}:
             return False
 
         prefilled_value = (item.prefilled_data or {}).get(field)

@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -975,6 +976,10 @@ def apply_missionary_updates(
         value = confirmed_data.get(field, "")
         if field == "passport_number":
             value = normalize_passport_number(value)
+        elif field == "dni_number":
+            value = re.sub(r"\D", "", str(value or ""))[:8]
+            if len(value) != 8:
+                continue
         if not value:
             continue
         if field in DATE_AUTO_UPDATE_FIELDS:

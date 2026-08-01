@@ -81,3 +81,23 @@ def test_advance_final_stage_archives_and_moves_folder(monkeypatch):
     assert missionary.folder_path.startswith("archived/")
     assert session.query(StageHistory).one().to_stage == "ARCHIVED"
     session.close()
+
+
+def test_peruvian_dni_tracking_cannot_advance(monkeypatch):
+    service, sessions = _service(monkeypatch)
+    missionary_id = _missionary_with_workflows(sessions, WORKFLOW_STAGES[0])
+
+    session = sessions()
+    missionary = session.get(Missionary, missionary_id)
+    missionary.tracking_profile = "PERUVIAN_DNI"
+    missionary.current_stage = "DNI"
+    session.commit()
+    session.close()
+
+    assert service.advance_missionary(missionary_id) is False
+
+    session = sessions()
+    missionary = session.get(Missionary, missionary_id)
+    assert missionary.current_stage == "DNI"
+    assert session.query(StageHistory).count() == 0
+    session.close()

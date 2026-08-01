@@ -30,7 +30,9 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QPushButton,
     QRadioButton,
+    QScrollArea,
     QStackedWidget,
+    QTableView,
     QTableWidgetItem,
     QVBoxLayout,
     QWidget,
@@ -81,7 +83,14 @@ from utils.constants import WORKFLOW_STAGES
 from utils.i18n import tr
 from utils.logger import logger
 from ui.foundation.background_loader import LatestRequestLoader
+from ui.models.missionary_table_model import (
+    MISSIONARY_ID_ROLE,
+    MissionaryFilterProxyModel,
+    MissionaryTableModel,
+)
+from ui.delegates.missionary_row_delegate import MissionaryRowDelegate
 from ui.widgets.animated_tab_strip import AnimatedTabStrip
+from ui.widgets.missionary_row_move_animator import MissionaryRowMoveAnimator
 
 
 MISSIONARY_ROW_COLOR_STYLES = {
@@ -110,23 +119,52 @@ class DynamicsRosterPreviewDialog(QDialog):
         self.preview = preview
         self._conflict_inputs = {}
         self.setWindowTitle("Review Dynamics Roster")
-        self.resize(760, 620)
-        layout = QVBoxLayout(self)
+        self.resize(800, 700)
+        self.setMinimumSize(640, 520)
+        root_layout = QVBoxLayout(self)
+        root_layout.setContentsMargins(20, 18, 20, 14)
+        root_layout.setSpacing(12)
+
+        scroll = QScrollArea()
+        scroll.setObjectName("DynamicsRosterScroll")
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        content = QWidget()
+        layout = QVBoxLayout(content)
+        layout.setContentsMargins(0, 2, 4, 2)
+        layout.setSpacing(12)
         summary = preview.get("summary", {})
         filename = preview.get("filename", "")
         stamp = preview.get("filename_timestamp") or "timestamp not found"
         heading = QLabel(
-            f"{filename}\nExport time: {stamp}\n\n"
-            f"Create: {summary.get('creates', 0)}   "
-            f"Update: {summary.get('changes', 0)}   "
-            f"Unchanged: {summary.get('unchanged', 0)}   "
-            f"Skipped: {summary.get('skipped', 0)}   "
-            f"Invalid: {summary.get('invalid', 0)}"
+            "<span style=\"font-size:19px; font-weight:700;\">Dynamics roster review</span><br>"
+            f"<span style=\"font-weight:600;\">{filename or 'Selected workbook'}</span><br>"
+            f"<span style=\"color:#64748B;\">Exported {stamp}</span>"
         )
         heading.setWordWrap(True)
+        heading.setObjectName("DynamicsRosterHeader")
+        heading.setMargin(16)
         layout.addWidget(heading)
 
+        summary_bar = QLabel(
+            f"{summary.get('creates', 0)} to create     "
+            f"{summary.get('changes', 0)} to update     "
+            f"{summary.get('unchanged', 0)} unchanged     "
+            f"{summary.get('skipped', 0)} skipped     "
+            f"{summary.get('invalid', 0)} invalid"
+        )
+        summary_bar.setObjectName("DynamicsRosterSummary")
+        summary_bar.setWordWrap(True)
+        summary_bar.setMargin(12)
+        layout.addWidget(summary_bar)
+
+        outcomes_title = QLabel("Planned changes")
+        outcomes_title.setObjectName("DynamicsRosterSectionTitle")
+        layout.addWidget(outcomes_title)
         list_widget = create_list_widget()
+        list_widget.setObjectName("DynamicsRosterOutcomes")
+        list_widget.setMinimumHeight(120)
+        list_widget.setMaximumHeight(170)
         for key, label in (
             ("creates", "CREATE"), ("changes", "UPDATE"),
             ("unchanged", "UNCHANGED"), ("skipped", "SKIP"),
@@ -141,6 +179,18 @@ class DynamicsRosterPreviewDialog(QDialog):
                 )
         layout.addWidget(list_widget, 1)
 
+        conflicts = preview.get("conflicts", [])
+        if conflicts:
+            conflict_title = QLabel(f"Needs your decision ({len(conflicts)})")
+            conflict_title.setObjectName("DynamicsRosterSectionTitle")
+            layout.addWidget(conflict_title)
+            conflict_hint = QLabel(
+                "Confirm how each incoming record should be handled before applying this roster."
+            )
+            conflict_hint.setObjectName("DynamicsRosterHint")
+            conflict_hint.setWordWrap(True)
+            layout.addWidget(conflict_hint)
+
         for conflict in preview.get("conflicts", []):
             existing = (conflict.get("existing") or [{}])[0]
             label = QLabel(
@@ -151,8 +201,11 @@ class DynamicsRosterPreviewDialog(QDialog):
                 f"{existing.get('name', '')} · {existing.get('status', '')}"
             )
             label.setWordWrap(True)
+            label.setObjectName("DynamicsRosterConflict")
+            label.setMargin(12)
             layout.addWidget(label)
             combo = create_combo_box()
+            combo.setObjectName("DynamicsRosterResolution")
             combo.addItem("Choose a resolution…", None)
             for resolution in conflict.get("resolutions", []):
                 combo.addItem(
@@ -172,7 +225,49 @@ class DynamicsRosterPreviewDialog(QDialog):
         button_row.addWidget(cancel)
         button_row.addWidget(self.apply_button)
         layout.addLayout(button_row)
+        layout.removeItem(button_row)
+        scroll.setWidget(content)
+        root_layout.addWidget(scroll, 1)
+        root_layout.addLayout(button_row)
         self._update_apply_enabled()
+        self.setStyleSheet("""
+            #DynamicsRosterHeader {
+                background: #F0F7FF;
+                border: 1px solid #D7E8FA;
+                border-radius: 12px;
+                color: #173A5E;
+                font-size: 13px;
+                font-weight: 600;
+            }
+            #DynamicsRosterSectionTitle {
+                color: #1E293B;
+                font-size: 15px;
+                font-weight: 700;
+                margin-top: 4px;
+            }
+            #DynamicsRosterSummary {
+                background: #F8FAFC;
+                border: 1px solid #E2E8F0;
+                border-radius: 9px;
+                color: #475569;
+                font-weight: 600;
+            }
+            #DynamicsRosterHint { color: #64748B; margin-bottom: 2px; }
+            #DynamicsRosterOutcomes {
+                background: #FFFFFF;
+                border: 1px solid #E2E8F0;
+                border-radius: 10px;
+                padding: 4px;
+            }
+            #DynamicsRosterConflict {
+                background: #FFFFFF;
+                border: 1px solid #E2E8F0;
+                border-left: 4px solid #60A5FA;
+                border-radius: 10px;
+                color: #334155;
+            }
+            #DynamicsRosterResolution { margin-bottom: 8px; }
+        """)
 
     def _update_apply_enabled(self):
         blocked = bool(self.preview.get("invalid"))
@@ -228,6 +323,9 @@ def create_missionaries_pill_button(
     button = create_pill_button(text, parent=parent, icon=icon)
     button.setObjectName("MissionariesPillButton")
     button.setProperty("missionariesTone", variant)
+    # qfluentwidgets' PillPushButton is checkable by default.  These are
+    # one-shot page actions, so they must not retain a selected teal state.
+    button.setCheckable(False)
     button.setFixedHeight(fixed_height)
     return button
 
@@ -469,6 +567,7 @@ def _missionaries_dialog_header(title_text, subtitle_text):
 
 
 SORT_VALUE_ROLE = Qt.UserRole + 1
+ROW_ACCENT_ROLE = Qt.UserRole + 2
 MIN_TABLE_COLUMN_WIDTH = 64
 DATE_COLUMN_KEYS = {
     "date_of_birth",
@@ -1141,6 +1240,7 @@ class MissionariesPage(QWidget):
         self.client_view_service = ClientViewService()
         self._background_loads_enabled = isinstance(main_window, QWidget)
         self._data_loader = LatestRequestLoader(parent=self)
+        self._row_color_mutation_loaders = {}
         self._has_loaded_data = False
         self._last_load_at = 0.0
         self._cache_ttl_seconds = 20.0
@@ -1159,6 +1259,10 @@ class MissionariesPage(QWidget):
         self._group_members_by_id = {}
         self._last_group_filter_data = None
         self._default_sort_initialized = False
+        self._tab_view_states = {
+            "active": None,
+            "archive": None,
+        }
         self._selected_tab = getattr(
             self.settings_service,
             "get_missionaries_default_view",
@@ -1167,6 +1271,7 @@ class MissionariesPage(QWidget):
         self._tab_buttons = {}
         self._hovered_cell = None
         self._applying_column_widths = False
+        self._configured_column_keys = None
         self._visible_column_keys = (
             self._load_visible_column_keys()
         )
@@ -1175,16 +1280,21 @@ class MissionariesPage(QWidget):
 
         self.setup_ui()
 
+        self._filter_timer = QTimer(self)
+        self._filter_timer.setSingleShot(True)
+        self._filter_timer.setInterval(120)
+        self._filter_timer.timeout.connect(self._apply_filters)
+
         self.add_button.clicked.connect(
             self.open_add_dialog
         )
 
-        self.table.cellDoubleClicked.connect(
+        self.table.doubleClicked.connect(
             self.open_missionary_detail
         )
 
-        self.table.cellEntered.connect(
-            self._set_hovered_cell
+        self.table.entered.connect(
+            self._set_hovered_index
         )
 
         self.groups_table.cellDoubleClicked.connect(
@@ -1192,15 +1302,15 @@ class MissionariesPage(QWidget):
         )
 
         self.search_input.textChanged.connect(
-            self._apply_filters
+            self._schedule_filter_update
         )
 
         self.stage_filter.currentIndexChanged.connect(
-            self._apply_filters
+            self._filter_control_changed
         )
 
         self.nationality_filter.currentIndexChanged.connect(
-            self._apply_filters
+            self._filter_control_changed
         )
 
         self.group_filter.currentIndexChanged.connect(
@@ -1343,7 +1453,46 @@ class MissionariesPage(QWidget):
         # Table
         # ==========================================
 
-        self.table = create_table()
+        self._missionary_model = MissionaryTableModel(parent=self)
+        self._missionary_proxy = MissionaryFilterProxyModel(parent=self)
+        self._missionary_proxy.setSourceModel(self._missionary_model)
+
+        # Missionary records use Qt's model/view stack directly.  The Groups
+        # table below intentionally remains on its existing small table widget.
+        self.table = QTableView(self)
+        self.table.setObjectName("MissionaryTable")
+        self.table.setModel(self._missionary_proxy)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.table.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.table.setAlternatingRowColors(True)
+        self.table.setShowGrid(False)
+        self.table.setWordWrap(False)
+        self.table.verticalHeader().setVisible(False)
+        self.table.setItemDelegate(
+            MissionaryRowDelegate(
+                self.table,
+                color_styles=MISSIONARY_ROW_COLOR_STYLES,
+                row_height=40,
+            )
+        )
+        self._row_move_animator = MissionaryRowMoveAnimator(
+            self.table,
+            parent=self,
+        )
+        self.table.setStyleSheet("""
+            QTableView#MissionaryTable {
+                background-color: #FFFFFF;
+                border: none;
+                border-top: 1px solid #ECECEC;
+                gridline-color: transparent;
+                selection-background-color: transparent;
+                selection-color: #18181B;
+                color: #3F3F46;
+                font-size: 13px;
+                outline: 0;
+            }
+        """)
         self.table.setMouseTracking(True)
         self.table.viewport().setMouseTracking(True)
         self.table.viewport().installEventFilter(self)
@@ -1353,6 +1502,8 @@ class MissionariesPage(QWidget):
         )
 
         self._configure_table_columns()
+        self.table.setSortingEnabled(True)
+        self._apply_default_table_sort()
         self._create_copy_button()
         self.table.horizontalHeader().sectionResized.connect(
             self._save_column_widths
@@ -1365,6 +1516,9 @@ class MissionariesPage(QWidget):
         )
         self.table.horizontalScrollBar().valueChanged.connect(
             lambda value: self._position_copy_button()
+        )
+        self.table.horizontalHeader().sortIndicatorChanged.connect(
+            self._table_sort_changed
         )
 
         self.table_surface = QFrame()
@@ -1561,25 +1715,19 @@ class MissionariesPage(QWidget):
     def _configure_table_columns(self):
         self._applying_column_widths = True
         columns = self._visible_columns()
+        column_keys = tuple(column.key for column in columns)
+        sort_column = self._missionary_proxy.sortColumn()
+        sort_key = self._missionary_model.column_key(sort_column)
+        sort_order = self._missionary_proxy.sortOrder()
 
         try:
-            self.table.setColumnCount(len(columns))
-            self.table.setHorizontalHeaderLabels([
-                column.label
-                for column in columns
-            ])
-
-            configure_data_table(
-                self.table,
-                {
-                    index: QHeaderView.Interactive
-                    for index, column in enumerate(columns)
-                },
-                selection_mode=QAbstractItemView.ExtendedSelection,
-                sorting=True,
-            )
+            if column_keys != self._configured_column_keys:
+                self._missionary_model.set_columns(columns)
+                self._configured_column_keys = column_keys
 
             header = self.table.horizontalHeader()
+            for index in range(len(columns)):
+                header.setSectionResizeMode(index, QHeaderView.Interactive)
             header.setMinimumSectionSize(72)
             header.setStretchLastSection(False)
             self.table.verticalHeader().setSectionResizeMode(
@@ -1591,6 +1739,45 @@ class MissionariesPage(QWidget):
             self._applying_column_widths = False
 
         self._apply_column_widths()
+
+        if self._default_sort_initialized:
+            self._sort_table_by_key(sort_key, sort_order)
+
+    def _sort_table_by_key(self, column_key, order=Qt.DescendingOrder):
+        columns = self._visible_columns()
+        index = next(
+            (
+                column_index
+                for column_index, column in enumerate(columns)
+                if column.key == column_key
+            ),
+            -1,
+        )
+        if index >= 0:
+            self.table.sortByColumn(index, order)
+            self.table.horizontalHeader().setSortIndicatorShown(True)
+            return True
+
+        # Preserve the source model's stable arrival-date ordering when the
+        # arrival column is not part of the user's configured columns.
+        self._missionary_proxy.sort(-1, order)
+        self.table.horizontalHeader().setSortIndicatorShown(False)
+        return False
+
+    def _apply_default_table_sort(self):
+        if self._default_sort_initialized:
+            return
+
+        self._sort_table_by_key("arrival_date", Qt.DescendingOrder)
+        self._default_sort_initialized = True
+
+    def _table_sort_changed(self, logical_index, order):
+        _ = order
+        self.table.horizontalHeader().setSortIndicatorShown(
+            logical_index >= 0
+        )
+        self._hide_copy_button()
+        self._sync_filtered_missionaries()
 
     def _build_groups_surface(self):
         surface = QFrame()
@@ -1861,8 +2048,30 @@ class MissionariesPage(QWidget):
             )
 
     def _apply_missionaries_snapshot(self, snapshot):
+        current_view_state = None
+        animate_reorder = (
+            self._has_loaded_data
+            and self._pending_navigation_restore is None
+            and self._selected_tab in {"active", "archive"}
+        )
+        if animate_reorder:
+            current_view_state = self._capture_table_view_state()
+            self._row_move_animator.capture_before()
+
         self._all_missionaries = list(snapshot.get("active") or [])
         self._archived_missionaries = list(snapshot.get("archived") or [])
+        ordered_active = self._default_missionary_order(
+            self._all_missionaries
+        )
+        ordered_archive = self._default_missionary_order(
+            self._archived_missionaries
+        )
+        # One shared source model serves both tabs.  Tab changes and filters
+        # now operate on proxy state instead of reconstructing cell widgets.
+        self._missionary_model.set_records([
+            *ordered_active,
+            *ordered_archive,
+        ])
         self._refresh_group_filter(snapshot.get("groups") or [])
 
         existing = [
@@ -1880,6 +2089,8 @@ class MissionariesPage(QWidget):
             self._restore_navigation_controls(pending_state)
 
         self._render_selected_tab()
+        if animate_reorder:
+            self._row_move_animator.animate_after()
         self._has_loaded_data = True
         self._last_load_at = time.monotonic()
 
@@ -1890,12 +2101,43 @@ class MissionariesPage(QWidget):
                 lambda state=pending_state:
                 self._restore_table_view_state(state),
             )
+        elif current_view_state:
+            QTimer.singleShot(
+                0,
+                lambda state=current_view_state:
+                self._restore_table_view_state(state),
+            )
 
         logger.info(
             "Loaded %s active and %s archived missionaries into table",
             len(self._all_missionaries),
             len(self._archived_missionaries),
         )
+
+    @staticmethod
+    def _default_missionary_order(missionaries):
+        dated = [
+            missionary
+            for missionary in missionaries
+            if _date_sort_value(
+                getattr(missionary, "arrival_date", None)
+            )
+        ]
+        undated = [
+            missionary
+            for missionary in missionaries
+            if not _date_sort_value(
+                getattr(missionary, "arrival_date", None)
+            )
+        ]
+        dated.sort(key=_arrival_date_sort_key, reverse=True)
+        undated.sort(
+            key=lambda missionary: (
+                (getattr(missionary, "full_name", None) or "").casefold(),
+                getattr(missionary, "id", 0),
+            )
+        )
+        return [*dated, *undated]
 
     @staticmethod
     def _missionaries_refresh_failed(error):
@@ -1905,82 +2147,41 @@ class MissionariesPage(QWidget):
         )
 
     def _apply_filters(self):
+        if hasattr(self, "_filter_timer"):
+            self._filter_timer.stop()
+
         source = (
             self._archived_missionaries
             if self._selected_tab == "archive"
             else self._all_missionaries
         )
-        search_text = (
-            self.search_input.text().strip().lower()
-        )
-
-        selected_stage = (
-            self.stage_filter.currentData()
-        )
-
-        selected_nationality = (
-            self.nationality_filter.currentData()
-        )
-
         selected_group = (
             None
             if self._selected_tab == "archive"
             else self.group_filter.currentData()
         )
 
-        group_member_ids = set(
+        self._missionary_proxy.set_view_mode(
+            "archive" if self._selected_tab == "archive" else "active"
+        )
+        self._missionary_proxy.set_search_text(self.search_input.text())
+        self._missionary_proxy.set_stage_filter(
+            self.stage_filter.currentData()
+        )
+        self._missionary_proxy.set_nationality_filter(
+            self.nationality_filter.currentData()
+        )
+        self._missionary_proxy.set_group_member_ids(
             self._group_members_by_id.get(selected_group, [])
+            if selected_group is not None
+            else None
         )
 
-        filtered = []
-
-        for m in source:
-            display_id = (
-                missionary_display_id(m).lower()
-            )
-
-            name = (m.full_name or "").lower()
-
-            preferred = (
-                (m.preferred_name or "").lower()
-            )
-
-            last_name_first = (
-                _last_name_first_attr(m).lower()
-            )
-
-            if search_text and (
-                search_text not in display_id
-                and search_text not in name
-                and search_text not in preferred
-                and search_text not in last_name_first
-            ):
-                continue
-
-            if (
-                selected_stage
-                and m.current_stage != selected_stage
-            ):
-                continue
-
-            if (
-                selected_nationality
-                and (m.nationality or "")
-                != selected_nationality
-            ):
-                continue
-
-            if selected_group and m.id not in group_member_ids:
-                continue
-
-            filtered.append(m)
-
-        self._populate_table(filtered)
-        self._filtered_missionaries = list(filtered)
+        self._sync_filtered_missionaries()
 
         total = len(source)
 
-        shown = len(filtered)
+        shown = len(self._filtered_missionaries)
 
         if shown == total:
             self.result_label.setText(
@@ -1991,6 +2192,21 @@ class MissionariesPage(QWidget):
             self.result_label.setText(
                 f"{shown} of {total} missionaries"
             )
+
+    def _schedule_filter_update(self, *_args):
+        self._row_move_animator.cancel()
+        self._filter_timer.start()
+
+    def _filter_control_changed(self, *_args):
+        self._row_move_animator.cancel()
+        self._apply_filters()
+
+    def _sync_filtered_missionaries(self):
+        if not hasattr(self, "_missionary_proxy"):
+            return
+        self._filtered_missionaries = (
+            self._missionary_proxy.records_in_view()
+        )
 
     def _render_selected_tab(self):
         self._sync_tab_buttons()
@@ -2034,8 +2250,23 @@ class MissionariesPage(QWidget):
         if self._selected_tab == tab_key:
             return
 
+        self._row_move_animator.cancel()
+        previous_tab = self._selected_tab
+        if previous_tab in self._tab_view_states:
+            self._tab_view_states[previous_tab] = (
+                self._capture_table_view_state()
+            )
+
         self._selected_tab = tab_key
         self._render_selected_tab()
+
+        state = self._tab_view_states.get(tab_key)
+        if state:
+            QTimer.singleShot(
+                0,
+                lambda snapshot=state:
+                self._restore_table_view_state(snapshot),
+            )
 
     def _sync_tab_buttons(self):
         tab_strip = next(
@@ -2086,115 +2317,26 @@ class MissionariesPage(QWidget):
 
         return group.get("group_type") or "Manual"
 
-    def _populate_table(self, missionaries):
-        # Disable sorting while populating to
-        # avoid row index issues
-        if not self._default_sort_initialized:
-            dated = [m for m in missionaries if _date_sort_value(getattr(m, "arrival_date", None))]
-            undated = [m for m in missionaries if not _date_sort_value(getattr(m, "arrival_date", None))]
-            missionaries = sorted(
-                dated,
-                key=_arrival_date_sort_key,
-                reverse=True,
-            ) + undated
-        else:
-            columns = self._visible_columns()
-            header = self.table.horizontalHeader()
-            sort_column = header.sortIndicatorSection()
-            if 0 <= sort_column < len(columns):
-                column = columns[sort_column]
-                missionaries = sorted(
-                    missionaries,
-                    key=lambda missionary: _sort_value_for_column(
-                        column,
-                        missionary,
-                        str(column.getter(missionary) or ""),
-                    ),
-                    reverse=header.sortIndicatorOrder() == Qt.DescendingOrder,
-                )
-        self.table.setSortingEnabled(False)
-        self._hovered_cell = None
-
-        if hasattr(self, "copy_button"):
-            self.copy_button.hide()
-
-        self.table.clearContents()
-
-        self.table.setRowCount(len(missionaries))
-        self.table.verticalHeader().setDefaultSectionSize(40)
-
-        columns = self._visible_columns()
-
-        for row, m in enumerate(missionaries):
-            self.table.setRowHeight(row, 40)
-
-            for column_index, column in enumerate(columns):
-                text = str(column.getter(m) or "")
-                item = self._make_table_item(
-                    text,
-                    m.id,
-                    _sort_value_for_column(column, m, text),
-                )
-
-                self.table.setItem(
-                    row,
-                    column_index,
-                    item,
-                )
-
-            self._apply_missionary_row_color(row, m)
-
-        self.table.setSortingEnabled(True)
-        if not self._default_sort_initialized:
-            columns = self._visible_columns()
-            arrival_index = next(
-                (index for index, column in enumerate(columns) if column.key == "arrival_date"),
-                0,
-            )
-            self.table.horizontalHeader().setSortIndicator(
-                arrival_index,
-                Qt.DescendingOrder,
-            )
-            self._default_sort_initialized = True
-
-    def _apply_missionary_row_color(self, row, missionary):
-        fill, accent = MISSIONARY_ROW_COLOR_STYLES.get(
-            getattr(missionary, "row_color", None),
-            (None, None),
-        )
-        for column in range(self.table.columnCount()):
-            item = self.table.item(row, column)
-            if item is None:
-                continue
-            item.setData(Qt.BackgroundRole, QColor(fill) if fill else None)
-            item.setData(Qt.ForegroundRole, QColor("#18181B"))
-            item.setData(Qt.UserRole + 1, accent)
-
     def _replace_cached_missionary(self, updated):
         for collection_name in ("_all_missionaries", "_archived_missionaries"):
             collection = getattr(self, collection_name)
             for index, missionary in enumerate(collection):
                 if missionary.id == updated.id:
                     collection[index] = updated
+                    break
 
-    def _make_table_item(self, text, missionary_id, sort_value=None):
-        item = MissionaryTableItem(text or "")
+    def _update_missionary_record(self, updated, *, animate_move=True):
+        def update_model():
+            return self._missionary_model.update_record(updated)
 
-        item.setTextAlignment(
-            Qt.AlignVCenter | Qt.AlignLeft
-        )
+        if animate_move:
+            changed = self._row_move_animator.animate_update(update_model)
+        else:
+            changed = update_model()
 
-        item.setData(
-            Qt.UserRole,
-            missionary_id,
-        )
-
-        item.setData(
-            SORT_VALUE_ROLE,
-            text if sort_value is None else sort_value,
-        )
-
-        return item
+        if changed:
+            self._sync_filtered_missionaries()
+        return changed
 
     def _refresh_group_filter(self, groups=None):
         if not hasattr(self, "group_filter"):
@@ -2253,6 +2395,7 @@ class MissionariesPage(QWidget):
         return label
 
     def _group_filter_changed(self, *_args):
+        self._row_move_animator.cancel()
         current_group = self.group_filter.currentData()
         if current_group == GROUP_EDIT_ACTION:
             group_id = self._last_group_filter_data
@@ -2277,20 +2420,41 @@ class MissionariesPage(QWidget):
             combo.setCurrentIndex(index)
 
     def capture_navigation_state(self):
-        selected_ids = self._selected_missionary_ids() if hasattr(self, "table") else []
-        current_item = self.table.currentItem() if hasattr(self, "table") else None
-        current_id = current_item.data(Qt.UserRole) if current_item is not None else None
-
+        table_state = self._capture_table_view_state()
         return {
             "search_text": self.search_input.text() if hasattr(self, "search_input") else "",
             "stage_filter": self.stage_filter.currentData() if hasattr(self, "stage_filter") else None,
             "nationality_filter": self.nationality_filter.currentData() if hasattr(self, "nationality_filter") else None,
             "group_filter": self.group_filter.currentData() if hasattr(self, "group_filter") else None,
             "selected_tab": self._selected_tab,
-            "selected_ids": selected_ids,
+            **table_state,
+        }
+
+    def _capture_table_view_state(self):
+        if not hasattr(self, "table"):
+            return {
+                "selected_ids": [],
+                "current_id": None,
+                "vertical_scroll": 0,
+                "horizontal_scroll": 0,
+                "sort_column_key": None,
+                "sort_order": Qt.DescendingOrder,
+            }
+
+        current_index = self.table.currentIndex()
+        current_id = (
+            current_index.data(MISSIONARY_ID_ROLE)
+            if current_index.isValid()
+            else None
+        )
+        sort_column = self._missionary_proxy.sortColumn()
+        return {
+            "selected_ids": self._selected_missionary_ids(),
             "current_id": current_id,
-            "vertical_scroll": self.table.verticalScrollBar().value() if hasattr(self, "table") else 0,
-            "horizontal_scroll": self.table.horizontalScrollBar().value() if hasattr(self, "table") else 0,
+            "vertical_scroll": self.table.verticalScrollBar().value(),
+            "horizontal_scroll": self.table.horizontalScrollBar().value(),
+            "sort_column_key": self._missionary_model.column_key(sort_column),
+            "sort_order": self._missionary_proxy.sortOrder(),
         }
 
     def restore_navigation_state(self, state):
@@ -2359,33 +2523,37 @@ class MissionariesPage(QWidget):
         if not hasattr(self, "table"):
             return
 
+        sort_key = state.get("sort_column_key")
+        sort_order = state.get("sort_order", Qt.DescendingOrder)
+        if sort_key:
+            self._sort_table_by_key(sort_key, sort_order)
+
         selected_ids = state.get("selected_ids") or []
         current_id = state.get("current_id")
-        row_to_focus = None
+        index_to_focus = None
         selection_model = self.table.selectionModel()
         if selection_model is not None:
             selection_model.clearSelection()
 
-        for row in range(self.table.rowCount()):
-            missionary_id = self._missionary_id_for_row(row)
-            if missionary_id is None:
+        for missionary_id in selected_ids:
+            index = self._missionary_proxy.index_for_id(missionary_id)
+            if not index.isValid():
                 continue
-            if missionary_id in selected_ids:
-                index = self.table.model().index(row, 0)
-                if selection_model is not None:
-                    selection_model.select(
-                        index,
-                        QItemSelectionModel.Select | QItemSelectionModel.Rows,
-                    )
-                if row_to_focus is None:
-                    row_to_focus = row
-            if row_to_focus is None and missionary_id == current_id:
-                row_to_focus = row
+            if selection_model is not None:
+                selection_model.select(
+                    index,
+                    QItemSelectionModel.Select | QItemSelectionModel.Rows,
+                )
+            if index_to_focus is None:
+                index_to_focus = index
 
-        if row_to_focus is not None:
-            index = self.table.model().index(row_to_focus, 0)
-            self.table.setCurrentIndex(index)
-            self.table.scrollTo(index)
+        current_index = self._missionary_proxy.index_for_id(current_id)
+        if current_index.isValid():
+            index_to_focus = current_index
+
+        if index_to_focus is not None and index_to_focus.isValid():
+            self.table.setCurrentIndex(index_to_focus)
+            self.table.scrollTo(index_to_focus)
 
         if hasattr(self, "table"):
             self.table.verticalScrollBar().setValue(
@@ -2431,6 +2599,12 @@ class MissionariesPage(QWidget):
         self._hovered_cell = (row, column)
         self._position_copy_button()
 
+    def _set_hovered_index(self, index):
+        if not index.isValid():
+            self._hide_copy_button()
+            return
+        self._set_hovered_cell(index.row(), index.column())
+
     def _hide_copy_button(self):
         self._hovered_cell = None
 
@@ -2446,24 +2620,23 @@ class MissionariesPage(QWidget):
             return
 
         row, column = self._hovered_cell
-        item = self.table.item(row, column)
+        index = self._missionary_proxy.index(row, column)
         visible_columns = self._visible_columns()
 
         if (
-            not item
+            not index.isValid()
             or column >= len(visible_columns)
             or not visible_columns[column].copyable
         ):
             self.copy_button.hide()
             return
 
-        text = item.data(SORT_VALUE_ROLE) or item.text()
+        text = index.data(Qt.DisplayRole)
 
-        if not text:
+        if text is None or str(text) == "":
             self.copy_button.hide()
             return
 
-        index = self.table.model().index(row, column)
         rect = self.table.visualRect(index)
 
         if not rect.isValid() or rect.width() <= 0:
@@ -2490,14 +2663,14 @@ class MissionariesPage(QWidget):
             return
 
         row, column = self._hovered_cell
-        item = self.table.item(row, column)
+        index = self._missionary_proxy.index(row, column)
 
-        if not item:
+        if not index.isValid():
             return
 
-        text = item.data(SORT_VALUE_ROLE) or item.text()
+        text = index.data(Qt.DisplayRole)
 
-        if not text:
+        if text is None or str(text) == "":
             return
 
         QApplication.clipboard().setText(str(text))
@@ -2762,13 +2935,20 @@ class MissionariesPage(QWidget):
         safe = " ".join(safe.split())
         return safe.strip(" .") or "missionary_group"
 
-    def open_missionary_detail(self, row, column):
+    def open_missionary_detail(self, index_or_row, column=None):
         _ = column
+        row = (
+            index_or_row.row()
+            if hasattr(index_or_row, "row")
+            else int(index_or_row)
+        )
 
-        selected_rows = {
-            item.row()
-            for item in self.table.selectedItems()
-        }
+        selection_model = self.table.selectionModel()
+        selected_rows = (
+            selection_model.selectedRows(0)
+            if selection_model is not None
+            else []
+        )
 
         # Only open detail if a single row is selected.
         if len(selected_rows) > 1:
@@ -2897,23 +3077,73 @@ class MissionariesPage(QWidget):
             )
 
     def _set_missionary_row_color(self, missionary_id, color):
+        if self._background_loads_enabled:
+            self._queue_missionary_row_color_save(missionary_id, color)
+            return
+
         try:
-            updated = (
-                self.missionary_service.clear_missionary_row_color(missionary_id)
-                if color is None
-                else self.missionary_service.set_missionary_row_color(missionary_id, color)
-            )
-            if updated is not None:
-                self._replace_cached_missionary(updated)
-                self._apply_filters()
+            updated = self._save_missionary_row_color(missionary_id, color)
+            self._missionary_row_color_saved(missionary_id, updated)
         except Exception as exc:
-            logger.exception("Failed to save missionary row color")
-            show_message(
-                self,
-                "Row Color",
-                f"Could not save the row color: {exc}",
-                kind="error",
+            self._missionary_row_color_save_failed(missionary_id, exc)
+
+    def _queue_missionary_row_color_save(self, missionary_id, color):
+        loader = self._row_color_mutation_loaders.get(missionary_id)
+        if loader is None:
+            loader = LatestRequestLoader(parent=self)
+            self._row_color_mutation_loaders[missionary_id] = loader
+
+        self._missionary_model.set_pending(missionary_id, True)
+        loader.request(
+            lambda mid=missionary_id, value=color:
+            self._save_missionary_row_color(mid, value),
+            on_success=lambda updated, mid=missionary_id:
+            self._missionary_row_color_saved(mid, updated),
+            on_error=lambda error, mid=missionary_id:
+            self._missionary_row_color_save_failed(mid, error),
+        )
+
+    def _save_missionary_row_color(self, missionary_id, color):
+        if color is None:
+            return self.missionary_service.clear_missionary_row_color(
+                missionary_id
             )
+        return self.missionary_service.set_missionary_row_color(
+            missionary_id,
+            color,
+        )
+
+    def _missionary_row_color_saved(self, missionary_id, updated):
+        self._discard_row_color_loader(missionary_id)
+        if updated is not None:
+            self._replace_cached_missionary(updated)
+            # Color is a visual role, not a sort key. Update only this source
+            # row and let the delegate repaint it in place.
+            self._update_missionary_record(updated, animate_move=False)
+        self._missionary_model.set_pending(missionary_id, False)
+
+    def _missionary_row_color_save_failed(self, missionary_id, error):
+        self._discard_row_color_loader(missionary_id)
+        self._missionary_model.set_pending(missionary_id, False)
+        logger.error(
+            "Failed to save missionary %s row color: %s",
+            missionary_id,
+            error,
+        )
+        show_message(
+            self,
+            "Row Color",
+            f"Could not save the row color: {error}",
+            kind="error",
+        )
+
+    def _discard_row_color_loader(self, missionary_id):
+        loader = self._row_color_mutation_loaders.pop(
+            missionary_id,
+            None,
+        )
+        if loader is not None and hasattr(loader, "deleteLater"):
+            loader.deleteLater()
 
     def _delete_archived_missionary(self, missionary_id):
         response = show_message(
@@ -2972,36 +3202,26 @@ class MissionariesPage(QWidget):
             refresh()
 
     def _missionary_id_for_row(self, row):
-        for column in range(self.table.columnCount()):
-            item = self.table.item(row, column)
-
-            if not item:
-                continue
-
-            missionary_id = item.data(
-                Qt.UserRole
-            )
-
-            if missionary_id is not None:
-                return missionary_id
-
-        return None
+        index = self._missionary_proxy.index(row, 0)
+        if not index.isValid():
+            return None
+        return index.data(MISSIONARY_ID_ROLE)
 
     def _selected_missionary_ids(self):
-        selected_rows = {
-            item.row()
-            for item in self.table.selectedItems()
+        selection_model = self.table.selectionModel()
+        if selection_model is None:
+            return []
+
+        ids = {
+            index.data(MISSIONARY_ID_ROLE)
+            for index in selection_model.selectedRows(0)
+            if index.data(MISSIONARY_ID_ROLE) is not None
         }
 
-        ids = []
-
-        for row in sorted(selected_rows):
-            missionary_id = self._missionary_id_for_row(row)
-
-            if missionary_id is not None and missionary_id not in ids:
-                ids.append(missionary_id)
-
-        return ids
+        # Table rows can be reordered by the active column sort.  Keep batch
+        # requests deterministic instead of coupling their ID order to that
+        # presentation order.
+        return sorted(ids)
 
     def _open_missionary_by_id(self, missionary_id):
         try:
@@ -3032,24 +3252,26 @@ class MissionariesPage(QWidget):
             return
 
         menu = create_menu("", self)
-
-        advance_action = QAction(
-            "Advance Stage",
-            self,
-        )
         archive_action = QAction(
             "Archive",
             self,
-        )
-
-        advance_action.triggered.connect(
-            lambda checked=False: self._batch_advance_stage(ids)
         )
         archive_action.triggered.connect(
             lambda checked=False: self._batch_archive(ids)
         )
 
-        menu.addAction(advance_action)
+        advanceable_ids = self._advanceable_missionary_ids(ids)
+        if advanceable_ids:
+            advance_action = QAction(
+                "Advance Stage",
+                self,
+            )
+            advance_action.triggered.connect(
+                lambda checked=False: self._batch_advance_stage(
+                    advanceable_ids
+                )
+            )
+            menu.addAction(advance_action)
         menu.addAction(archive_action)
         self._batch_menu = menu
 
@@ -3058,6 +3280,17 @@ class MissionariesPage(QWidget):
                 self.batch_button.rect().bottomLeft()
             )
         )
+
+    def _advanceable_missionary_ids(self, missionary_ids):
+        selected = set(missionary_ids or [])
+        return [
+            missionary.id
+            for missionary in getattr(self, "_all_missionaries", [])
+            if missionary.id in selected
+            and (
+                getattr(missionary, "tracking_profile", "LEGAL") or "LEGAL"
+            ) != "PERUVIAN_DNI"
+        ]
 
     def _batch_advance_stage(self, missionary_ids):
         from ui.dialogs.batch_stage_advance_dialog import (

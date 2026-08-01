@@ -300,6 +300,13 @@ class MissionaryService:
             field_updates["passport_number"] = normalize_passport_number(
                 field_updates["passport_number"]
             )
+        if "dni_number" in field_updates:
+            dni_number = re.sub(
+                r"\D", "", str(field_updates["dni_number"] or "")
+            )[:8]
+            field_updates["dni_number"] = (
+                dni_number if len(dni_number) == 8 else None
+            )
         if self.api_client is not None:
             payload = self.api_client.patch(
                 f"/v1/missionaries/{missionary_id}",

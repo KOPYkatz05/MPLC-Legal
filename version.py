@@ -1,6 +1,6 @@
 APP_VERSION = "0.3.0"
 API_VERSION = "2"
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 # Client/server releases are allowed to roll out independently while they use a
 # compatible API.  Keep this range wider than one value when a future API

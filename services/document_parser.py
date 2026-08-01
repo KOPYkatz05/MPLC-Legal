@@ -191,6 +191,9 @@ class DocumentParser:
 
         if document_type == "PASSPORT":
             return self._parse_passport(text)
+        if document_type == "DNI":
+            dni_number = self._extract_dni_number(text)
+            return {"dni_number": dni_number} if dni_number else {}
         if document_type == TRAMITE_DOCUMENT_TYPE:
             return self._parse_tramite_credentials(
                 text,
@@ -669,6 +672,24 @@ class DocumentParser:
                     result[field] = carnet
 
         return result
+
+    def _extract_dni_number(self, text):
+        normalized = self._normalize(text).upper()
+        patterns = (
+            # Printed labels on current and older Peruvian DNI cards.
+            r"\bDNI\s*(?:N(?:RO|UMERO)?[.°º]*|NO\.?|#)?\s*[:.-]?\s*(\d(?:[ .-]?\d){7})\b",
+            r"\bCUI\s*(?:N(?:RO|UMERO)?[.°º]*|NO\.?|#)?\s*[:.-]?\s*(\d(?:[ .-]?\d){7})\b",
+            r"DOCUMENTO\s+NACIONAL\s+DE\s+IDENTIDAD[^\d\n]{0,24}(\d(?:[ .-]?\d){7})\b",
+            # ICAO TD1 machine-readable zone used by Peruvian DNI cards.
+            r"I<PER\s*(\d{8})(?:[0-9<])",
+        )
+        for pattern in patterns:
+            match = re.search(pattern, normalized)
+            if match:
+                digits = re.sub(r"\D", "", match.group(1))
+                if len(digits) == 8:
+                    return digits
+        return None
 
     def _extract_credential_value(
         self,

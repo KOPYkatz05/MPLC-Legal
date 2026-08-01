@@ -99,6 +99,7 @@ def _run_migrations():
         "ALTER TABLE missionaries ADD COLUMN tramite_usuario TEXT",
         "ALTER TABLE missionaries ADD COLUMN tramite_contrasena TEXT",
         "ALTER TABLE missionaries ADD COLUMN carnet_number TEXT",
+        "ALTER TABLE missionaries ADD COLUMN dni_number TEXT",
         "ALTER TABLE missionaries ADD COLUMN tracking_profile VARCHAR DEFAULT 'LEGAL'",
         "ALTER TABLE missionaries ADD COLUMN dynamics_contact_id VARCHAR",
         "ALTER TABLE missionaries ADD COLUMN dynamics_row_checksum VARCHAR",

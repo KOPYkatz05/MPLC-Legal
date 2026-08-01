@@ -68,6 +68,10 @@ class Missionary(Base):
         String
     )
 
+    dni_number = Column(
+        String
+    )
+
     carnet_number = Column(
         String
     )

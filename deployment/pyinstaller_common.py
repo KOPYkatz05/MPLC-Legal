@@ -120,6 +120,14 @@ def application_datas(repo_root):
             "assets/icons",
         ),
         (
+            str(repo_root / "assets" / "icons" / "mission_legal" / "mission_legal_icon.png"),
+            "assets/icons/mission_legal",
+        ),
+        (
+            str(repo_root / "assets" / "icons" / "mission_legal" / "mission_legal_splash.png"),
+            "assets/icons/mission_legal",
+        ),
+        (
             str(repo_root / "data" / "country_names_by_code.json"),
             "data",
         ),

@@ -119,6 +119,8 @@ class WorkflowService(RemoteServiceMixin):
             missionary = session.query(Missionary).filter_by(id=missionary_id).first()
             if missionary is None:
                 return False
+            if (missionary.tracking_profile or "LEGAL") == "PERUVIAN_DNI":
+                return False
             workflows = (
                 session.query(WorkflowStage)
                 .filter_by(missionary_id=missionary_id)
