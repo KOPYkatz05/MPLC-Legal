@@ -1,4 +1,5 @@
 from PySide6.QtCore import QEasingCurve, Qt
+from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QLabel, QPushButton
 
 from ui.dialogs.startup_splash import LiquidProgressBar, StartupSplash
@@ -36,6 +37,9 @@ def test_startup_splash_can_render_a_checkpoint_before_main_event_loop(qapp):
 
     assert splash.progress.value() == 65
     assert splash.progress._wave_timer.isActive()
+    initial_wave_offset = splash.progress._wave_offset
+    QTest.qWait(80)
+    assert splash.progress._wave_offset != initial_wave_offset
     splash.dismiss()
 
 

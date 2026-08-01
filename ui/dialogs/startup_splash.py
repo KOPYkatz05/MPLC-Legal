@@ -37,10 +37,10 @@ class LiquidProgressBar(QWidget):
         self._maximum = 100
         self._value = 0.0
         self._wave_offset = 0.0
-        self.setFixedHeight(14)
+        self.setFixedHeight(20)
 
         self._wave_timer = QTimer(self)
-        self._wave_timer.setInterval(33)
+        self._wave_timer.setInterval(28)
         self._wave_timer.timeout.connect(self._advance_wave)
 
     def minimum(self) -> int:
@@ -75,7 +75,7 @@ class LiquidProgressBar(QWidget):
     animatedValue = Property(float, _get_animated_value, _set_animated_value)
 
     def _advance_wave(self):
-        self._wave_offset = (self._wave_offset + 0.18) % (2 * math.pi)
+        self._wave_offset = (self._wave_offset + 0.28) % (2 * math.pi)
         self.update()
 
     def showEvent(self, event):
@@ -114,13 +114,13 @@ class LiquidProgressBar(QWidget):
             return
 
         leading_edge = track.left() + (fraction * track.width())
-        amplitude = min(2.4, track.height() * 0.2) * math.sin(math.pi * fraction)
+        amplitude = min(4.5, track.height() * 0.24) * math.sin(math.pi * fraction)
 
         back_wave = self._wave_path(
             track,
             leading_edge,
             amplitude,
-            self._wave_offset + 1.8,
+            self._wave_offset + 2.2,
         )
         painter.fillPath(back_wave, QColor("#55BFBC"))
         front_wave = self._wave_path(
@@ -146,7 +146,7 @@ class LiquidProgressBar(QWidget):
         for index in range(sample_count + 1):
             ratio = index / sample_count
             y = track.top() + (track.height() * ratio)
-            x = leading_edge + amplitude * math.sin((ratio * math.tau * 1.2) + phase)
+            x = leading_edge + amplitude * math.sin((ratio * math.tau * 1.45) + phase)
             path.lineTo(x, y)
         path.lineTo(track.left(), track.bottom())
         path.closeSubpath()
