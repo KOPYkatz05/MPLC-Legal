@@ -220,6 +220,45 @@ def test_dashboard_still_tracks_residency_expiration(dashboard_env):
     )
 
 
+def test_residency_card_tracks_next_90_days_and_prorroga_progress(
+    dashboard_env,
+):
+    today = date.today()
+    session = dashboard_env()
+    try:
+        due = _missionary(
+            session,
+            full_name="Due Resident",
+            residency_expiration=today + timedelta(days=90),
+        )
+        _missionary(
+            session,
+            missionary_code="10002",
+            full_name="Later Resident",
+            residency_expiration=today + timedelta(days=91),
+        )
+        for document_type in ("PAGO_PRORROGA", "CARTA_MINJUS"):
+            session.add(Document(
+                missionary_id=due.id,
+                document_type=document_type,
+                workflow_stage="PRORROGA",
+                file_name=f"{document_type}.pdf",
+                file_path=f"{document_type}.pdf",
+                status="ACTIVE",
+            ))
+        session.commit()
+    finally:
+        session.close()
+
+    items = DashboardService().get_summary()["residency_expirations"]
+
+    assert len(items) == 1
+    assert items[0]["name"] == "Due Resident"
+    assert items[0]["days_left"] == 90
+    assert items[0]["has_pago"] is True
+    assert items[0]["papers_started"] is True
+
+
 def test_dashboard_renders_attention_section(monkeypatch, qapp):
     _ = qapp
 
@@ -321,7 +360,7 @@ def test_dashboard_renders_daily_digest_section(monkeypatch, qapp):
     page = DashboardPage()
 
     try:
-        card = page.findChild(dashboard_page.QFrame, "DashboardBriefingCard")
+        card = page.findChild(dashboard_page.QFrame, "DashboardResidencyCard")
         assert card is not None
     finally:
         page.close()
@@ -544,6 +583,22 @@ def test_dashboard_merges_priorities_without_duplicate_tasks(qapp):
     assert [item.get("task_id") for item in priorities] == [7, 8]
 
 
+def test_missing_document_priority_detail_names_the_document():
+    text = DashboardPage._priority_detail_text(
+        {
+            "type": "missing_document",
+            "title": "Missing Documents",
+            "document_label": "Passport Bio Page",
+            "detail": "Test Missionary needs this for INTERPOL.",
+        }
+    )
+
+    assert text == (
+        "Missing Passport Bio Page. "
+        "Test Missionary needs this for INTERPOL."
+    )
+
+
 def test_simplified_dashboard_limits_and_expands_priorities(monkeypatch, qapp):
     data = {
         "total": 12,
@@ -615,7 +670,7 @@ def test_simplified_dashboard_limits_and_expands_priorities(monkeypatch, qapp):
             == "DashboardPrioritiesCard"
         )
         assert len(priorities_card.findChildren(dashboard_page.QFrame, "DashboardPriorityRow")) == 8
-        assert page.findChild(dashboard_page.QFrame, "DashboardBriefingCard") is not None
+        assert page.findChild(dashboard_page.QFrame, "DashboardResidencyCard") is not None
         assert page.findChild(dashboard_page.QFrame, "DashboardUpcomingCard") is not None
         exceptions_row = next(
             page.content_layout.itemAt(index).widget()

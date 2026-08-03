@@ -15,6 +15,8 @@ from ui.pages.missionaries_page import (
     MissionariesPage,
     create_missionaries_pill_button,
     _last_name_first,
+    _format_date,
+    _format_datetime,
     _sort_value_for_column,
 )
 
@@ -41,6 +43,60 @@ def test_missionary_table_includes_detail_page_fields():
     assert "tramite_contrasena" in keys
     assert "last_name_first" in keys
     assert "folder_path" not in keys
+
+
+def test_edit_columns_includes_dynamics_roster_fields():
+    keys = {column.key for column in MISSIONARY_COLUMNS}
+
+    assert {
+        "tracking_profile",
+        "dynamics_status",
+        "dynamics_contact_id",
+        "release_date",
+        "home_address",
+        "father_name",
+        "mother_name",
+        "father_first_name_override",
+        "mother_first_name_override",
+        "dynamics_modified_at",
+    } <= keys
+
+
+def test_dynamics_columns_render_imported_values():
+    missionary = SimpleNamespace(
+        tracking_profile="PERUVIAN_DNI",
+        dynamics_status="In-field",
+        dynamics_contact_id="contact-guid",
+        release_date=date(2027, 1, 15),
+        home_address="123 Home Street",
+        father_name="Carlos Example",
+        mother_name="Maria Example",
+        father_first_name_override="Carl",
+        mother_first_name_override="Mary",
+        dynamics_modified_at=None,
+    )
+
+    assert COLUMN_BY_KEY["tracking_profile"].getter(missionary) == "PERUVIAN_DNI"
+    assert COLUMN_BY_KEY["dynamics_status"].getter(missionary) == "In-field"
+    assert COLUMN_BY_KEY["dynamics_contact_id"].getter(missionary) == "contact-guid"
+    assert COLUMN_BY_KEY["release_date"].getter(missionary) == "15/JAN/2027"
+    assert COLUMN_BY_KEY["home_address"].getter(missionary) == "123 Home Street"
+    assert COLUMN_BY_KEY["father_name"].getter(missionary) == "Carlos Example"
+    assert COLUMN_BY_KEY["mother_name"].getter(missionary) == "Maria Example"
+
+
+def test_edit_columns_popup_receives_dynamics_roster_columns():
+    page = MissionariesPage.__new__(MissionariesPage)
+    page._selected_tab = "active"
+
+    keys = {column.key for column in page._column_dialog_columns()}
+
+    assert "release_date" in keys
+    assert "tracking_profile" in keys
+    assert "dynamics_status" in keys
+    assert "home_address" in keys
+    assert "father_name" in keys
+    assert "mother_name" in keys
 
 
 def test_default_visible_columns_still_focus_on_core_summary():
@@ -120,6 +176,14 @@ def test_date_columns_sort_by_iso_date_values():
     )
 
     assert sort_value == "2026-01-05"
+
+
+def test_table_dates_use_uppercase_english_month_abbreviations():
+    assert _format_date(date(2006, 5, 12)) == "12/MAY/2006"
+    assert _format_date("2026-01-05") == "05/JAN/2026"
+    assert _format_datetime("2026-09-07T14:30:00") == (
+        "07/SEP/2026 14:30"
+    )
 
 
 def test_missionaries_action_pill_does_not_latch_checked(qapp):
@@ -229,8 +293,8 @@ def test_missionaries_page_sorts_date_columns_chronologically(
     try:
         page.table.sortByColumn(2, Qt.AscendingOrder)
 
-        assert _table_text(page, 0, 2) == "15/01/2026"
-        assert _table_text(page, 1, 2) == "01/02/2026"
+        assert _table_text(page, 0, 2) == "15/JAN/2026"
+        assert _table_text(page, 1, 2) == "01/FEB/2026"
     finally:
         page.close()
 

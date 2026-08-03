@@ -32,7 +32,6 @@ from PySide6.QtWidgets import (
     QRadioButton,
     QScrollArea,
     QStackedWidget,
-    QTableView,
     QTableWidgetItem,
     QVBoxLayout,
     QWidget,
@@ -88,9 +87,11 @@ from ui.models.missionary_table_model import (
     MissionaryFilterProxyModel,
     MissionaryTableModel,
 )
+from utils.nationalities import normalize_nationality
 from ui.delegates.missionary_row_delegate import MissionaryRowDelegate
 from ui.widgets.animated_tab_strip import AnimatedTabStrip
 from ui.widgets.missionary_row_move_animator import MissionaryRowMoveAnimator
+from ui.widgets.smooth_table_view import SmoothTableView
 
 
 MISSIONARY_ROW_COLOR_STYLES = {
@@ -295,9 +296,15 @@ def _missionary_row_color_icon(color):
     return QIcon(pixmap)
 
 
-def _empty_missionary_row_color_icon():
+def _remove_missionary_row_color_icon():
     pixmap = QPixmap(18, 18)
     pixmap.fill(Qt.transparent)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.Antialiasing)
+    painter.setPen(QPen(QColor("#64748B"), 1.8, Qt.SolidLine, Qt.RoundCap))
+    painter.drawLine(5, 5, 13, 13)
+    painter.drawLine(13, 5, 5, 13)
+    painter.end()
     return QIcon(pixmap)
 
 
@@ -330,14 +337,60 @@ def create_missionaries_pill_button(
     return button
 
 
+MONTH_ABBREVIATIONS = (
+    "JAN", "FEB", "MAR", "APR", "MAY", "JUN",
+    "JUL", "AUG", "SEP", "OCT", "NOV", "DEC",
+)
+
+
+def _coerce_table_datetime(value):
+    if isinstance(value, datetime):
+        return value
+    if isinstance(value, date):
+        return datetime.combine(value, datetime.min.time())
+
+    text = str(value or "").strip()
+    if not text:
+        return None
+
+    try:
+        return datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        pass
+
+    for fmt in ("%d/%m/%Y", "%m/%d/%Y"):
+        try:
+            return datetime.strptime(text, fmt)
+        except ValueError:
+            continue
+    return None
+
+
 def _format_date(value):
     if not value:
         return ""
 
-    try:
-        return value.strftime("%d/%m/%Y")
-    except AttributeError:
+    parsed = _coerce_table_datetime(value)
+    if parsed is None:
         return str(value)
+    return (
+        f"{parsed.day:02d}/"
+        f"{MONTH_ABBREVIATIONS[parsed.month - 1]}/"
+        f"{parsed.year:04d}"
+    )
+
+
+def _format_datetime(value):
+    if not value:
+        return ""
+
+    parsed = _coerce_table_datetime(value)
+    if parsed is None:
+        return str(value)
+    formatted_date = _format_date(parsed)
+    if isinstance(value, date) and not isinstance(value, datetime):
+        return formatted_date
+    return f"{formatted_date} {parsed:%H:%M}"
 
 
 def _text_attr(field_name):
@@ -405,9 +458,29 @@ MISSIONARY_COLUMNS = [
     MissionaryColumn(
         "nationality",
         "Nationality",
-        _text_attr("nationality"),
+        lambda missionary: normalize_nationality(
+            getattr(missionary, "nationality", None)
+        ) or "",
         120,
         default_visible=True,
+    ),
+    MissionaryColumn(
+        "tracking_profile",
+        "Tracking Profile",
+        _text_attr("tracking_profile"),
+        155,
+    ),
+    MissionaryColumn(
+        "dynamics_status",
+        "Dynamics Status",
+        _text_attr("dynamics_status"),
+        155,
+    ),
+    MissionaryColumn(
+        "dynamics_contact_id",
+        "Dynamics Contact ID",
+        _text_attr("dynamics_contact_id"),
+        240,
     ),
     MissionaryColumn(
         "passport_number",
@@ -452,6 +525,50 @@ MISSIONARY_COLUMNS = [
         "Arrival Date",
         lambda missionary: _format_date(missionary.arrival_date),
         145,
+    ),
+    MissionaryColumn(
+        "release_date",
+        "Release Date",
+        lambda missionary: _format_date(missionary.release_date),
+        145,
+    ),
+    MissionaryColumn(
+        "home_address",
+        "Home Address",
+        _text_attr("home_address"),
+        320,
+    ),
+    MissionaryColumn(
+        "father_name",
+        "Father Name",
+        _text_attr("father_name"),
+        210,
+    ),
+    MissionaryColumn(
+        "mother_name",
+        "Mother Name",
+        _text_attr("mother_name"),
+        210,
+    ),
+    MissionaryColumn(
+        "father_first_name_override",
+        "Father First Name (Interpol)",
+        _text_attr("father_first_name_override"),
+        220,
+    ),
+    MissionaryColumn(
+        "mother_first_name_override",
+        "Mother First Name (Interpol)",
+        _text_attr("mother_first_name_override"),
+        220,
+    ),
+    MissionaryColumn(
+        "dynamics_modified_at",
+        "Dynamics Modified On",
+        lambda missionary: _format_datetime(
+            missionary.dynamics_modified_at
+        ),
+        190,
     ),
     MissionaryColumn(
         "visa_expiration",
@@ -572,6 +689,8 @@ MIN_TABLE_COLUMN_WIDTH = 64
 DATE_COLUMN_KEYS = {
     "date_of_birth",
     "arrival_date",
+    "release_date",
+    "dynamics_modified_at",
     "visa_expiration",
     "passport_expiration",
     "residency_expiration",
@@ -1459,12 +1578,20 @@ class MissionariesPage(QWidget):
 
         # Missionary records use Qt's model/view stack directly.  The Groups
         # table below intentionally remains on its existing small table widget.
-        self.table = QTableView(self)
+        self.table = SmoothTableView(self, scroll_duration=180)
         self.table.setObjectName("MissionaryTable")
         self.table.setModel(self._missionary_proxy)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.table.setVerticalScrollMode(
+            QAbstractItemView.ScrollPerPixel
+        )
+        self.table.setHorizontalScrollMode(
+            QAbstractItemView.ScrollPerPixel
+        )
+        self.table.verticalScrollBar().setSingleStep(18)
+        self.table.horizontalScrollBar().setSingleStep(24)
         self.table.setAlternatingRowColors(True)
         self.table.setShowGrid(False)
         self.table.setWordWrap(False)
@@ -1505,6 +1632,12 @@ class MissionariesPage(QWidget):
         self.table.setSortingEnabled(True)
         self._apply_default_table_sort()
         self._create_copy_button()
+        self.table.scrollingStarted.connect(
+            self._missionary_scroll_started
+        )
+        self.table.scrollingFinished.connect(
+            self._missionary_scroll_finished
+        )
         self.table.horizontalHeader().sectionResized.connect(
             self._save_column_widths
         )
@@ -2048,6 +2181,7 @@ class MissionariesPage(QWidget):
             )
 
     def _apply_missionaries_snapshot(self, snapshot):
+        self.table.stop_smooth_scroll()
         current_view_state = None
         animate_reorder = (
             self._has_loaded_data
@@ -2079,7 +2213,7 @@ class MissionariesPage(QWidget):
             for i in range(self.nationality_filter.count())
         ]
         for missionary in self._all_missionaries:
-            nationality = (missionary.nationality or "").strip()
+            nationality = normalize_nationality(missionary.nationality) or ""
             if nationality and nationality not in existing:
                 self.nationality_filter.addItem(nationality, nationality)
                 existing.append(nationality)
@@ -2250,6 +2384,7 @@ class MissionariesPage(QWidget):
         if self._selected_tab == tab_key:
             return
 
+        self.table.stop_smooth_scroll()
         self._row_move_animator.cancel()
         previous_tab = self._selected_tab
         if previous_tab in self._tab_view_states:
@@ -2523,6 +2658,7 @@ class MissionariesPage(QWidget):
         if not hasattr(self, "table"):
             return
 
+        self.table.stop_smooth_scroll()
         sort_key = state.get("sort_column_key")
         sort_order = state.get("sort_order", Qt.DescendingOrder)
         if sort_key:
@@ -2615,6 +2751,9 @@ class MissionariesPage(QWidget):
         if not hasattr(self, "copy_button"):
             return
 
+        if getattr(self.table, "is_gliding", False):
+            return
+
         if self._hovered_cell is None:
             self.copy_button.hide()
             return
@@ -2657,6 +2796,16 @@ class MissionariesPage(QWidget):
         self.copy_button.move(x, y)
         self.copy_button.raise_()
         self.copy_button.show()
+
+    def _missionary_scroll_started(self):
+        self._hide_copy_button()
+        self._row_move_animator.cancel()
+        self.table.setMouseTracking(False)
+        self.table.viewport().setMouseTracking(False)
+
+    def _missionary_scroll_finished(self):
+        self.table.setMouseTracking(True)
+        self.table.viewport().setMouseTracking(True)
 
     def _copy_hovered_cell(self):
         if self._hovered_cell is None:
@@ -3004,7 +3153,7 @@ class MissionariesPage(QWidget):
             color_menu.addAction(action)
         color_menu.addSeparator()
         clear_color = QAction("Remove", color_menu)
-        clear_color.setIcon(_empty_missionary_row_color_icon())
+        clear_color.setIcon(_remove_missionary_row_color_icon())
         clear_color.triggered.connect(
             lambda _checked=False, mid=missionary_id:
             self._set_missionary_row_color(mid, None)

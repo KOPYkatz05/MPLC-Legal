@@ -11,9 +11,8 @@ from collections.abc import Mapping
 from typing import Any
 
 from PySide6.QtCore import QSize, Qt
-from PySide6.QtGui import QBrush, QColor, QPainter, QPalette, QPen
+from PySide6.QtGui import QColor, QPainter, QPalette, QPen
 from PySide6.QtWidgets import (
-    QApplication,
     QStyle,
     QStyledItemDelegate,
     QStyleOptionViewItem,
@@ -22,6 +21,7 @@ from PySide6.QtWidgets import (
 
 from ui.models.missionary_table_model import (
     MISSIONARY_ID_ROLE,
+    PAINT_DATA_ROLE,
     PENDING_ROLE,
     ROW_ACCENT_ROLE,
     ROW_COLOR_ROLE,
@@ -80,11 +80,24 @@ class MissionaryRowDelegate(QStyledItemDelegate):
 
     def paint(self, painter: QPainter, option, index):
         view = self._table_view(option)
-        missionary_id = index.data(MISSIONARY_ID_ROLE)
+        paint_data = index.data(PAINT_DATA_ROLE)
+        if paint_data is None:
+            value = index.data(Qt.DisplayRole)
+            missionary_id = index.data(MISSIONARY_ID_ROLE)
+            semantic_color = index.data(ROW_COLOR_ROLE)
+            accent_value = index.data(ROW_ACCENT_ROLE)
+            pending = bool(index.data(PENDING_ROLE))
+        else:
+            (
+                value,
+                missionary_id,
+                semantic_color,
+                accent_value,
+                pending,
+            ) = paint_data
         hidden_ids = getattr(view, ANIMATION_HIDDEN_IDS_ATTRIBUTE, ()) if view else ()
 
         styled_option = QStyleOptionViewItem(option)
-        self.initStyleOption(styled_option, index)
 
         painter.save()
         try:
@@ -92,14 +105,16 @@ class MissionaryRowDelegate(QStyledItemDelegate):
                 self._paint_empty_cell(painter, styled_option)
                 return
 
-            fill, accent = self._row_colors(index, styled_option)
+            fill, accent = self._colors_for_values(
+                semantic_color,
+                accent_value,
+                styled_option,
+            )
             painter.fillRect(styled_option.rect, fill)
 
             selected = bool(styled_option.state & QStyle.State_Selected)
             hovered = bool(styled_option.state & QStyle.State_MouseOver)
             focused = bool(styled_option.state & QStyle.State_HasFocus)
-            pending = bool(index.data(PENDING_ROLE))
-
             if hovered and not selected:
                 painter.fillRect(styled_option.rect, QColor(15, 23, 42, 14))
             if selected:
@@ -111,8 +126,8 @@ class MissionaryRowDelegate(QStyledItemDelegate):
             self._paint_content(
                 painter,
                 styled_option,
-                view,
-                force_dark_text=index.data(ROW_COLOR_ROLE) is not None,
+                value,
+                force_dark_text=semantic_color is not None,
             )
 
             if accent is not None and self._is_first_visible_column(view, index.column()):
@@ -143,9 +158,19 @@ class MissionaryRowDelegate(QStyledItemDelegate):
         return parent if isinstance(parent, QTableView) else None
 
     def _row_colors(self, index, option) -> tuple[QColor, QColor | None]:
-        semantic_color = index.data(ROW_COLOR_ROLE)
+        return self._colors_for_values(
+            index.data(ROW_COLOR_ROLE),
+            index.data(ROW_ACCENT_ROLE),
+            option,
+        )
+
+    def _colors_for_values(
+        self,
+        semantic_color,
+        accent_value,
+        option,
+    ) -> tuple[QColor, QColor | None]:
         fill_value = None
-        accent_value = index.data(ROW_ACCENT_ROLE)
         accent_is_semantic = (
             isinstance(accent_value, str)
             and accent_value.casefold() in self._color_styles
@@ -202,34 +227,32 @@ class MissionaryRowDelegate(QStyledItemDelegate):
             painter.drawLine(x, rect.bottom(), x + rect.height(), rect.top())
 
     @staticmethod
-    def _paint_content(painter, option, view, *, force_dark_text):
-        content_option = QStyleOptionViewItem(option)
-        content_option.state &= ~(
-            QStyle.State_Selected
-            | QStyle.State_MouseOver
-            | QStyle.State_HasFocus
-        )
-        content_option.features &= ~QStyleOptionViewItem.Alternate
-        content_option.backgroundBrush = QBrush(Qt.NoBrush)
-        content_option.showDecorationSelected = False
+    def _paint_content(painter, option, value, *, force_dark_text):
+        if value is None:
+            return
 
-        transparent = QBrush(Qt.transparent)
-        palette = QPalette(content_option.palette)
-        palette.setBrush(QPalette.Base, transparent)
-        palette.setBrush(QPalette.AlternateBase, transparent)
-        palette.setBrush(QPalette.Highlight, transparent)
+        painter.setFont(option.font)
         if force_dark_text:
-            text_brush = QBrush(QColor("#18181B"))
-            palette.setBrush(QPalette.Text, text_brush)
-            palette.setBrush(QPalette.HighlightedText, text_brush)
-        content_option.palette = palette
+            text_color = QColor("#18181B")
+        elif not option.state & QStyle.State_Enabled:
+            text_color = option.palette.color(
+                QPalette.Disabled,
+                QPalette.Text,
+            )
+        else:
+            text_color = option.palette.text().color()
+        painter.setPen(text_color)
 
-        style = view.style() if view is not None else QApplication.style()
-        style.drawControl(
-            QStyle.CE_ItemViewItem,
-            content_option,
-            painter,
-            view,
+        text_rect = option.rect.adjusted(12, 0, -12, 0)
+        text = painter.fontMetrics().elidedText(
+            str(value),
+            Qt.ElideRight,
+            max(0, text_rect.width()),
+        )
+        painter.drawText(
+            text_rect,
+            Qt.AlignLeft | Qt.AlignVCenter,
+            text,
         )
 
     @staticmethod

@@ -4,6 +4,7 @@ from database.db import SessionLocal
 from services.remote_service import RemoteServiceMixin
 
 from database.models.missionary import Missionary
+from database.models.document import Document
 from database.models.appointment import Appointment, APPOINTMENT_STATUS_SCHEDULED
 
 from database.models.secretary_work import SecretaryTask
@@ -22,6 +23,11 @@ from utils.logger import logger
 
 
 VISIBLE_TASK_STATUSES = ("OPEN", "READY", "WAITING")
+PRORROGA_PROGRESS_DOCUMENT_TYPES = frozenset({
+    "PAGO_PRORROGA",
+    "CARTA_MINJUS",
+    "DECLARACION_JURADA",
+})
 
 
 class DashboardService(RemoteServiceMixin):
@@ -60,6 +66,11 @@ class DashboardService(RemoteServiceMixin):
                     stage_counts[stage] += 1
 
             today = date.today()
+            residency_expirations = self._residency_expirations(
+                session,
+                missionaries,
+                today,
+            )
             attention_items = self.notification_feed_service.build_feed(
                 today=today
             )
@@ -175,6 +186,7 @@ class DashboardService(RemoteServiceMixin):
                         ),
                     )
                 ],
+                "residency_expirations": residency_expirations,
             }
 
         except Exception:
@@ -196,10 +208,58 @@ class DashboardService(RemoteServiceMixin):
                 "open_task_count": 0,
                 "today_appointments": [],
                 "today_tasks": [],
+                "residency_expirations": [],
             }
 
         finally:
             session.close()
+
+    def _residency_expirations(self, session, missionaries, today):
+        window_end = today + timedelta(days=90)
+        eligible = [
+            missionary
+            for missionary in missionaries
+            if self._missionary_is_actionable(missionary)
+            and missionary.residency_expiration is not None
+            and today <= missionary.residency_expiration <= window_end
+        ]
+        if not eligible:
+            return []
+
+        missionary_ids = [missionary.id for missionary in eligible]
+        document_rows = (
+            session.query(Document.missionary_id, Document.document_type)
+            .filter(
+                Document.missionary_id.in_(missionary_ids),
+                Document.document_type.in_(PRORROGA_PROGRESS_DOCUMENT_TYPES),
+                Document.status == "ACTIVE",
+            )
+            .all()
+        )
+        documents_by_missionary = {}
+        for missionary_id, document_type in document_rows:
+            documents_by_missionary.setdefault(missionary_id, set()).add(
+                document_type
+            )
+
+        items = []
+        for missionary in eligible:
+            document_types = documents_by_missionary.get(missionary.id, set())
+            expiration = missionary.residency_expiration
+            items.append({
+                "missionary_id": missionary.id,
+                "name": missionary.full_name,
+                "expiration_date": expiration,
+                "days_left": (expiration - today).days,
+                "has_pago": "PAGO_PRORROGA" in document_types,
+                "papers_started": bool(
+                    document_types & {"CARTA_MINJUS", "DECLARACION_JURADA"}
+                ),
+            })
+        return sorted(
+            items,
+            key=lambda item: (item["expiration_date"], item["name"].casefold()),
+        )
 
     def _recommended_tasks(self, session, today):
         week_end = today + timedelta(days=6 - today.weekday())

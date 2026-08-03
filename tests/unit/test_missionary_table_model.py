@@ -7,6 +7,7 @@ from PySide6.QtCore import Qt
 from ui.models.missionary_table_model import (
     COLUMN_KEY_ROLE,
     MISSIONARY_ID_ROLE,
+    PAINT_DATA_ROLE,
     PENDING_ROLE,
     RECORD_ROLE,
     ROW_ACCENT_ROLE,
@@ -71,6 +72,13 @@ def test_model_exposes_semantic_roles_and_typed_sort_values(qapp):
     assert name_index.data(PENDING_ROLE) is False
     assert name_index.data(RECORD_ROLE) is record
     assert name_index.data(COLUMN_KEY_ROLE) == "full_name"
+    assert name_index.data(PAINT_DATA_ROLE) == (
+        "Ada Example",
+        7,
+        "teal",
+        None,
+        False,
+    )
     assert date_index.data(SORT_VALUE_ROLE) == date(2026, 2, 5)
     assert model.headerData(1, Qt.Horizontal) == "Arrival Date"
     assert model.column_key(1) == "arrival_date"
@@ -104,7 +112,7 @@ def test_update_record_targets_one_row_and_preserves_id_lookup(qapp):
     model.set_pending(1, True)
     assert model.index_for_id(1).data(PENDING_ROLE) is True
     assert changes[-1][0:3] == (0, 0, 1)
-    assert changes[-1][3] == [PENDING_ROLE]
+    assert changes[-1][3] == [PENDING_ROLE, PAINT_DATA_ROLE]
 
 
 def test_same_population_snapshot_updates_without_model_reset(qapp):

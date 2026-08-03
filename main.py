@@ -1,3 +1,15 @@
+import sys
+
+
+if "--mission-legal-splash-child" in sys.argv:
+    from ui.startup_splash_process import run_splash_child
+
+    child_arg_index = sys.argv.index("--mission-legal-splash-child")
+    if child_arg_index + 1 >= len(sys.argv):
+        raise SystemExit(2)
+    raise SystemExit(run_splash_child(sys.argv[child_arg_index + 1]))
+
+
 from client_bootstrap import run_client_bootstrap
 
 
@@ -5,7 +17,6 @@ from client_bootstrap import run_client_bootstrap
 # logging, database imports, or any other application startup work.
 run_client_bootstrap()
 
-import sys
 import argparse
 
 from utils.pycache_cleanup import cleanup_pycache
@@ -142,9 +153,21 @@ def main():
         print(f"Daily digest email not sent: {result.get('reason')}")
         return
 
-    from PySide6.QtCore import QCoreApplication, QTimer
+    from PySide6.QtCore import (
+        QCoreApplication,
+        QEvent,
+        QEventLoop,
+        QObject,
+        QPropertyAnimation,
+        QTimer,
+    )
     from PySide6.QtGui import QIcon
-    from PySide6.QtWidgets import QApplication, QDialog, QMessageBox
+    from PySide6.QtWidgets import (
+        QApplication,
+        QDialog,
+        QGraphicsBlurEffect,
+        QMessageBox,
+    )
     from app_identity import APP, ORG
     from version import APP_VERSION
 
@@ -167,11 +190,11 @@ def main():
 
     install_pixel_crisp_text_input_style(app)
 
-    from ui.dialogs.startup_splash import StartupSplash
+    from ui.startup_splash_process import StartupSplashProcess
 
-    startup_splash = StartupSplash()
-    startup_splash.show_centered()
-    app.processEvents()
+    startup_splash = StartupSplashProcess(app)
+    splash_started = startup_splash.start()
+    app.aboutToQuit.connect(startup_splash.abort)
 
     from services.api_client import (
         ApiCompatibilityError,
@@ -186,7 +209,7 @@ def main():
 
     try:
         recover_interrupted_pairing()
-        startup_splash.advance_to(10, wait=True)
+        startup_splash.advance_to(10)
     except ClientPairingRecoveryError as exc:
         startup_splash.dismiss()
         QMessageBox.critical(
@@ -249,7 +272,7 @@ def main():
         if get_database_path().exists():
             DatabaseBackupService().create_snapshot(reason="pre-migration")
         init_db()
-        startup_splash.advance_to(65, wait=True)
+        startup_splash.advance_to(65)
     else:
         # Modules imported by the UI expose both local and remote services. Mark
         # this process before importing them so database.db cannot create a
@@ -261,9 +284,10 @@ def main():
                 api_client.validate_compatibility(health)
                 session = api_client.session()
                 api_client.validate_compatibility(session)
-                startup_splash.advance_to(65, wait=True)
+                startup_splash.advance_to(65)
                 break
             except ApiCompatibilityError as exc:
+                startup_splash.dismiss()
                 if exc.client_update_required:
                     from ui.update_coordinator import offer_required_client_update
 
@@ -328,8 +352,7 @@ def main():
     install_window_diagnostics(app)
 
     window = MainWindow()
-    startup_splash.advance_to(100, wait=True)
-    startup_splash.dismiss()
+    startup_splash.advance_to(90)
 
     if api_client is not None:
         from services.api_connection_state import api_connection_state
@@ -349,7 +372,47 @@ def main():
 
         api_connection_state().unavailable.connect(show_server_wait)
 
+    reveal_widget = window.centralWidget()
+    reveal_blur = None
+    if splash_started and reveal_widget is not None:
+        reveal_blur = QGraphicsBlurEffect(reveal_widget)
+        reveal_blur.setBlurRadius(7.0)
+        reveal_blur.setBlurHints(QGraphicsBlurEffect.AnimationHint)
+        reveal_widget.setGraphicsEffect(reveal_blur)
+
+    paint_loop = QEventLoop()
+    paint_timeout = QTimer()
+    paint_timeout.setSingleShot(True)
+
+    class FirstPaintWatcher(QObject):
+        def eventFilter(self, watched, event):
+            if event.type() == QEvent.Paint:
+                QTimer.singleShot(0, paint_loop.quit)
+            return False
+
+    paint_watcher = FirstPaintWatcher(window)
+    paint_target = reveal_widget or window
+    paint_target.installEventFilter(paint_watcher)
+    paint_timeout.timeout.connect(paint_loop.quit)
     window.showMaximized()
+    paint_timeout.start(2000)
+    paint_loop.exec()
+    paint_timeout.stop()
+    paint_target.removeEventFilter(paint_watcher)
+
+    blur_animation = None
+    if reveal_blur is not None:
+        blur_animation = QPropertyAnimation(reveal_blur, b"blurRadius", window)
+        blur_animation.setStartValue(reveal_blur.blurRadius())
+        blur_animation.setEndValue(0.0)
+        blur_animation.setDuration(480)
+        startup_splash.fading.connect(blur_animation.start)
+    startup_splash.finish_and_wait()
+    if blur_animation is not None:
+        blur_animation.stop()
+        reveal_blur.setBlurRadius(0.0)
+    if reveal_widget is not None:
+        reveal_widget.setGraphicsEffect(None)
 
     try:
         from ui.update_coordinator import ClientUpdateCoordinator

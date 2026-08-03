@@ -74,6 +74,14 @@ class _Residency:
         return [{"missionary_id": missionary_id}]
 
 
+class _ActivityFeed:
+    def get_missionary_activity(self, missionary_id):
+        return {
+            "events": [{"missionary_id": missionary_id}],
+            "upcoming": [],
+        }
+
+
 def _install_fakes(monkeypatch):
     monkeypatch.setattr(view_module, "MissionaryService", _Missionaries)
     monkeypatch.setattr(view_module, "MissionaryGroupService", _Groups)
@@ -83,6 +91,7 @@ def _install_fakes(monkeypatch):
     monkeypatch.setattr(view_module, "WorkflowService", _Workflows)
     monkeypatch.setattr(view_module, "DocumentService", _Documents)
     monkeypatch.setattr(view_module, "ResidencyService", _Residency)
+    monkeypatch.setattr(view_module, "ActivityFeedService", _ActivityFeed)
 
 
 def test_missionaries_and_calendar_snapshots_are_aggregated(monkeypatch):
@@ -142,3 +151,17 @@ def test_detail_snapshot_returns_all_sections_or_none(monkeypatch):
     assert snapshot["tasks"] == [{"filters": {"missionary_id": 9}}]
     assert snapshot["residency_timeline"] == [{"missionary_id": 9}]
     assert snapshot["stage_history"] == ["history-9"]
+    assert snapshot["activity_feed"] == {
+        "events": [{"missionary_id": 9}],
+        "upcoming": [],
+    }
+
+
+def test_detail_activity_is_an_explicit_server_rpc(monkeypatch):
+    _install_fakes(monkeypatch)
+
+    assert "get_missionary_activity" in ClientViewService.REMOTE_METHODS
+    assert ClientViewService().get_missionary_activity(12) == {
+        "events": [{"missionary_id": 12}],
+        "upcoming": [],
+    }

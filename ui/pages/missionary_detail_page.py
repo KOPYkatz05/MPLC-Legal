@@ -5,7 +5,7 @@ import sys
 import tempfile
 import time
 
-from datetime import date
+from datetime import date, datetime
 
 from pathlib import Path
 
@@ -89,6 +89,7 @@ from utils.constants import (
 from utils.i18n import field_label
 from utils.language_helper import ui_text as tr
 from utils.logger import logger
+from utils.passport_numbers import normalize_passport_number
 from services.workflow_validator import WorkflowValidator
 from services.workspace_service import WorkspaceService
 from ui.widgets.missionary_block_widgets import (
@@ -274,6 +275,7 @@ WORKFLOW_STATUS_TONES = {
 
 EDITABLE_DATE_FIELDS = [
     "arrival_date",
+    "release_date",
     "visa_expiration",
     "date_of_birth",
     "passport_expiration",
@@ -767,6 +769,11 @@ class MissionaryDetailPage(QWidget):
         reserve_source_space=False,
     ):
         field_widget = QWidget()
+        # A long child value (notably the folder path) must not dictate the
+        # width of its entire grid column. Equal grid stretch can only produce
+        # equal columns when every field is allowed to shrink below its hint.
+        field_widget.setMinimumWidth(0)
+        field_widget.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         field_layout = QVBoxLayout()
         field_layout.setContentsMargins(0, 0, 0, 0)
         field_layout.setSpacing(3)
@@ -774,8 +781,14 @@ class MissionaryDetailPage(QWidget):
 
         label = QLabel(label_text)
         label.setObjectName("MutedText")
+        label.setMinimumWidth(0)
         field_layout.addWidget(label)
 
+        value_widget.setMinimumWidth(0)
+        value_widget.setSizePolicy(
+            QSizePolicy.Expanding,
+            value_widget.sizePolicy().verticalPolicy(),
+        )
         field_layout.addWidget(value_widget)
 
         if source_widget is not None:
@@ -923,6 +936,11 @@ class MissionaryDetailPage(QWidget):
             widget.setText(value)
         widget.setProperty("state", "empty" if value == empty_text else "filled")
         _refresh_widget_style(widget)
+
+    def _normalize_passport_input(self, value):
+        normalized = normalize_passport_number(value)
+        if normalized != value:
+            self.passport_input.setText(normalized)
 
     def _set_source_badge(self, widget, text, kind="document"):
         if widget is None:
@@ -1658,12 +1676,30 @@ class MissionaryDetailPage(QWidget):
             )
         self.summary_chip_grid.setColumnStretch(len(summary_chips), 1)
 
+        self.full_name_input = create_line_edit(field_label("full_name"))
+        self._text_edits["full_name"] = self.full_name_input
         self.nationality_label = self._build_value_label()
-        self.passport_label = self._build_value_label()
+        self.passport_input = create_line_edit(field_label("passport_number"))
+        self.passport_input.textChanged.connect(self._normalize_passport_input)
+        self._text_edits["passport_number"] = self.passport_input
+        # Retain the established attribute for callers that inspect this field.
+        self.passport_label = self.passport_input
         self.dni_number_input = create_line_edit(field_label("dni_number"))
         self._text_edits["dni_number"] = self.dni_number_input
         self.carnet_number_input = create_line_edit(field_label("carnet_number"))
         self._text_edits["carnet_number"] = self.carnet_number_input
+        self.home_address_input = create_line_edit(
+            field_label("home_address")
+        )
+        self._text_edits["home_address"] = self.home_address_input
+        self.father_name_input = create_line_edit(
+            field_label("father_name")
+        )
+        self._text_edits["father_name"] = self.father_name_input
+        self.mother_name_input = create_line_edit(
+            field_label("mother_name")
+        )
+        self._text_edits["mother_name"] = self.mother_name_input
         self.father_first_name_override_input = create_line_edit(
             "Father first name for Interpol"
         )
@@ -1708,6 +1744,10 @@ class MissionaryDetailPage(QWidget):
         identity_grid.setVerticalSpacing(8)
         identity_layout.addLayout(identity_grid)
 
+        full_name_field = self._build_field_block(
+                field_label("full_name"),
+                self.full_name_input,
+            )
         nationality_field = self._build_field_block(
                 field_label("nationality"),
                 self.nationality_label,
@@ -1729,6 +1769,18 @@ class MissionaryDetailPage(QWidget):
                 birthdate_shell,
                 birthdate_source_lbl,
             )
+        home_address_field = self._build_field_block(
+            field_label("home_address"),
+            self.home_address_input,
+        )
+        father_name_field = self._build_field_block(
+            field_label("father_name"),
+            self.father_name_input,
+        )
+        mother_name_field = self._build_field_block(
+            field_label("mother_name"),
+            self.mother_name_input,
+        )
         father_override_field = self._build_field_block(
             "Father first name for Interpol",
             self.father_first_name_override_input,
@@ -1766,11 +1818,15 @@ class MissionaryDetailPage(QWidget):
                 folder_widget,
             )
         self.identity_field_widgets = [
-            nationality_field,
+            full_name_field,
             passport_field,
+            nationality_field,
             dni_field,
             carnet_field,
             birthdate_field,
+            home_address_field,
+            father_name_field,
+            mother_name_field,
             father_override_field,
             mother_override_field,
             folder_field,
@@ -1850,8 +1906,6 @@ class MissionaryDetailPage(QWidget):
             timeline_grid.addWidget(field_widget, idx // 2, idx % 2)
 
         residency_card = self._build_residency_timeline_card()
-
-        content_layout.addWidget(summary_card)
 
         primary_row = QWidget()
         primary_row_layout = QBoxLayout(QBoxLayout.LeftToRight)
@@ -2587,6 +2641,22 @@ class MissionaryDetailPage(QWidget):
         self._set_pivot_text("details", tr("missionary_detail_tab_details"))
         self._set_pivot_text("notes", tr("missionary_detail_tab_notes"))
         self._set_pivot_text("timeline", tr("missionary_detail_tab_timeline"))
+        if hasattr(self, "timeline_hint"):
+            self.timeline_hint.setText(tr("missionary_detail_timeline_hint"))
+        timeline_filter_labels = {
+            "all": "missionary_detail_timeline_all",
+            "workflow": "missionary_detail_timeline_workflow",
+            "documents": "missionary_detail_documents",
+            "appointments": "missionary_detail_timeline_appointments",
+            "tasks": "missionary_detail_timeline_tasks",
+            "residency": "missionary_detail_timeline_residency",
+        }
+        for category, button in getattr(
+            self, "timeline_filter_buttons", {}
+        ).items():
+            button.setText(tr(timeline_filter_labels[category]))
+        if hasattr(self, "timeline_list"):
+            self._render_timeline()
 
         if hasattr(self, "advance_button"):
             self.advance_button.setText(tr("missionary_detail_advance_stage"))
@@ -3309,14 +3379,12 @@ class MissionaryDetailPage(QWidget):
         )
         self._update_summary_strip(missionary)
 
+        self.full_name_input.setText(missionary.full_name or "")
         self._set_value_text(
             self.nationality_label,
             missionary.nationality,
         )
-        self._set_value_text(
-            self.passport_label,
-            missionary.passport_number,
-        )
+        self.passport_input.setText(missionary.passport_number or "")
         if hasattr(self, "carnet_number_input"):
             self.carnet_number_input.setText(
                 getattr(missionary, "carnet_number", None) or ""
@@ -3334,6 +3402,9 @@ class MissionaryDetailPage(QWidget):
                 getattr(missionary, "tramite_contrasena", None) or ""
             )
         for field_key in (
+            "home_address",
+            "father_name",
+            "mother_name",
             "father_first_name_override",
             "mother_first_name_override",
         ):
@@ -3426,6 +3497,7 @@ class MissionaryDetailPage(QWidget):
             tasks = None
             residency_timeline = None
             stage_history = None
+            activity_feed = None
         else:
             workflows = list(
                 _detail_snapshot.get("workflows") or []
@@ -3439,6 +3511,9 @@ class MissionaryDetailPage(QWidget):
             )
             stage_history = list(
                 _detail_snapshot.get("stage_history") or []
+            )
+            activity_feed = dict(
+                _detail_snapshot.get("activity_feed") or {}
             )
 
         self._refresh_residency_timeline(
@@ -3454,7 +3529,7 @@ class MissionaryDetailPage(QWidget):
             documents,
             stage_history,
         )
-        self._load_timeline(stage_history)
+        self._load_timeline(activity_feed)
         self._update_advance_banner(workflows, documents)
         self._detail_loaded = True
         self._set_detail_loading(False)
@@ -4491,6 +4566,41 @@ class MissionaryDetailPage(QWidget):
 
         timeline_tab.setObjectName("PageSurface")
 
+        self.timeline_hint = QLabel(
+            tr("missionary_detail_timeline_hint")
+        )
+        self.timeline_hint.setObjectName("MutedText")
+        self.timeline_hint.setWordWrap(True)
+        timeline_layout.addWidget(self.timeline_hint)
+
+        filter_row = QHBoxLayout()
+        filter_row.setSpacing(8)
+        self.timeline_filter_group = QButtonGroup(self)
+        self.timeline_filter_group.setExclusive(True)
+        self.timeline_filter_buttons = {}
+        for category, label in (
+            ("all", tr("missionary_detail_timeline_all")),
+            ("workflow", tr("missionary_detail_timeline_workflow")),
+            ("documents", tr("missionary_detail_documents")),
+            ("appointments", tr("missionary_detail_timeline_appointments")),
+            ("tasks", tr("missionary_detail_timeline_tasks")),
+            ("residency", tr("missionary_detail_timeline_residency")),
+        ):
+            button = create_detail_pill_button(label, "secondary", 32)
+            button.setCheckable(True)
+            button.setProperty("timelineFilter", True)
+            button.clicked.connect(
+                lambda checked=False, value=category: self._set_timeline_filter(value)
+            )
+            self.timeline_filter_group.addButton(button)
+            self.timeline_filter_buttons[category] = button
+            filter_row.addWidget(button)
+        self.timeline_filter_buttons["all"].setChecked(True)
+        filter_row.addStretch(1)
+        timeline_layout.addLayout(filter_row)
+
+        self._timeline_feed = {"events": [], "upcoming": []}
+        self._timeline_filter = "all"
         self.timeline_list = create_list_widget()
 
         self.timeline_list.setObjectName("TimelineList")
@@ -4504,58 +4614,161 @@ class MissionaryDetailPage(QWidget):
             self.timeline_list
         )
 
-    def _load_timeline(self, history=None):
-        self.timeline_list.clear()
+    def _set_timeline_filter(self, category):
+        self._timeline_filter = category
+        self._render_timeline()
 
+    @staticmethod
+    def _timeline_group_label(value):
+        if not value:
+            return "Earlier"
+        event_date = value.date() if isinstance(value, datetime) else value
+        today = date.today()
+        if event_date == today:
+            return tr("missionary_detail_timeline_today")
+        if (today - event_date).days == 1:
+            return tr("missionary_detail_timeline_yesterday")
+        return event_date.strftime("%B %Y")
+
+    def _build_timeline_event_widget(self, event, *, upcoming=False):
+        card = QFrame()
+        card.setObjectName("TimelineEventCard")
+        category = event.get("category", "workflow")
+        card.setProperty("activityCategory", category)
+        layout = QHBoxLayout(card)
+        layout.setContentsMargins(14, 12, 14, 12)
+        layout.setSpacing(12)
+
+        marker = QLabel("\u2022")
+        marker.setObjectName("TimelineEventMarker")
+        marker.setProperty("activityCategory", category)
+        marker.setAlignment(Qt.AlignTop | Qt.AlignHCenter)
+        marker.setFixedWidth(18)
+        layout.addWidget(marker)
+
+        copy = QVBoxLayout()
+        copy.setContentsMargins(0, 0, 0, 0)
+        copy.setSpacing(3)
+        event_type = event.get("event_type") or ""
+        title_key = f"missionary_detail_event_{event_type}"
+        translated_title = tr(title_key)
+        title = QLabel(
+            translated_title if translated_title != title_key
+            else (event.get("title") or "Activity")
+        )
+        title.setObjectName("TimelineEventTitle")
+        title.setWordWrap(True)
+        copy.addWidget(title)
+        details = event.get("details") or ""
+        if event_type == "stage_changed":
+            from_stage = event.get("from_stage")
+            to_stage = event.get("to_stage")
+            transition = (
+                f"{_stage_display_name(from_stage)} \u2192 "
+                f"{_stage_display_name(to_stage)}"
+                if from_stage else _stage_display_name(to_stage)
+            )
+            details = "\n".join(
+                part for part in (transition, event.get("notes")) if part
+            )
+        elif event_type in {"document_uploaded", "document_invalidated"}:
+            document_type = event.get("document_type")
+            if document_type:
+                details = _document_label(document_type)
+        if details:
+            details_label = QLabel(details.replace("_", " "))
+            details_label.setObjectName("TimelineEventDetails")
+            details_label.setWordWrap(True)
+            copy.addWidget(details_label)
+        layout.addLayout(copy, 1)
+
+        timestamp = (
+            event.get("scheduled_date") if upcoming
+            else event.get("occurred_at")
+        )
+        if timestamp:
+            timestamp_text = (
+                timestamp.strftime("%b %d, %Y  %I:%M %p")
+                if isinstance(timestamp, datetime)
+                else timestamp.strftime("%b %d, %Y")
+            )
+            time_label = QLabel(timestamp_text)
+            time_label.setObjectName("TimelineEventTime")
+            time_label.setAlignment(Qt.AlignTop | Qt.AlignRight)
+            layout.addWidget(time_label)
+        return card
+
+    def _add_timeline_heading(self, text, *, upcoming=False):
+        item = QListWidgetItem()
+        item.setFlags(item.flags() & ~Qt.ItemIsSelectable)
+        label = QLabel(text)
+        label.setObjectName(
+            "TimelineUpcomingHeading" if upcoming else "TimelineDateHeading"
+        )
+        label.setContentsMargins(4, 8, 4, 3)
+        item.setSizeHint(label.sizeHint())
+        self.timeline_list.addItem(item)
+        self.timeline_list.setItemWidget(item, label)
+
+    def _render_timeline(self):
+        self.timeline_list.clear()
+        category = getattr(self, "_timeline_filter", "all")
+        feed = getattr(self, "_timeline_feed", {}) or {}
+        upcoming = [
+            event for event in feed.get("upcoming", [])
+            if category in {"all", event.get("category")}
+        ]
+        events = [
+            event for event in feed.get("events", [])
+            if category in {"all", event.get("category")}
+        ]
+
+        if upcoming:
+            self._add_timeline_heading(
+                tr("missionary_detail_timeline_upcoming"), upcoming=True
+            )
+            for event in upcoming:
+                item = QListWidgetItem()
+                widget = self._build_timeline_event_widget(event, upcoming=True)
+                item.setSizeHint(widget.sizeHint())
+                self.timeline_list.addItem(item)
+                self.timeline_list.setItemWidget(item, widget)
+
+        current_group = None
+        for event in events:
+            group = self._timeline_group_label(event.get("occurred_at"))
+            if group != current_group:
+                self._add_timeline_heading(group)
+                current_group = group
+            item = QListWidgetItem()
+            widget = self._build_timeline_event_widget(event)
+            item.setSizeHint(widget.sizeHint())
+            self.timeline_list.addItem(item)
+            self.timeline_list.setItemWidget(item, widget)
+
+        if not upcoming and not events:
+            empty = QListWidgetItem()
+            widget = self._build_empty_state_card(
+                tr("missionary_detail_timeline_empty"),
+                tr("missionary_detail_timeline_empty_hint"),
+            )
+            empty.setFlags(empty.flags() & ~Qt.ItemIsSelectable)
+            empty.setSizeHint(widget.sizeHint())
+            self.timeline_list.addItem(empty)
+            self.timeline_list.setItemWidget(empty, widget)
+
+    def _load_timeline(self, activity_feed=None):
         if not hasattr(self, "current_missionary"):
             return
-
         try:
-            if history is None:
-                history = WorkflowService().get_stage_history(
+            if activity_feed is None:
+                activity_feed = self.client_view_service.get_missionary_activity(
                     self.current_missionary.id
                 )
-
-            if not history:
-                empty = QListWidgetItem(
-                    tr("missionary_detail_no_stage_transitions")
-                )
-
-                self.timeline_list.addItem(empty)
-
-                return
-
-            for h in history:
-                    date_str = (
-                        h.created_at.strftime(
-                            "%b %d, %Y %H:%M"
-                        )
-                        if h.created_at
-                        else ""
-                    )
-
-                    from_str = (
-                        _stage_display_name(h.from_stage)
-                        if h.from_stage
-                        else tr("missionary_detail_started")
-                    )
-
-                    text = (
-                        f"{date_str}\n"
-                        f"{from_str} \u2192 {_stage_display_name(h.to_stage)}"
-                    )
-
-                    if h.notes:
-                        text = f"{text}\n{h.notes}"
-
-                    item = QListWidgetItem(text)
-
-                    self.timeline_list.addItem(item)
-
+            self._timeline_feed = activity_feed or {"events": [], "upcoming": []}
+            self._render_timeline()
         except Exception:
-            logger.exception(
-                "Failed to load timeline"
-            )
+            logger.exception("Failed to load timeline")
 
     # ==========================================
     # NOTES
@@ -4632,13 +4845,14 @@ class MissionaryDetailPage(QWidget):
         if not hasattr(self, "current_missionary"):
             return
 
+        missionary_id = self.current_missionary.id
         dialog = MissionaryArchiveDialog(self)
         if dialog.exec() != QDialog.Accepted:
             return
 
         try:
             self.missionary_service.archive_missionary(
-                self.current_missionary.id,
+                missionary_id,
                 archive_reason=dialog.archive_reason,
             )
         except Exception:
@@ -4651,14 +4865,17 @@ class MissionaryDetailPage(QWidget):
             )
             return
 
-        missionaries_page = self.main_window.stack.widget(1)
-        missionaries_page.load_data()
-        self.main_window.stack.setCurrentIndex(1)
+        # Keep the confirmation attached to the still-visible detail page.  If
+        # we navigate first, a modal parented to this page can remain hidden
+        # until the user opens another missionary and appear out of context.
         show_message(
             self,
             tr("missionary_detail_archive_missionary"),
             tr("missionary_detail_archive_complete"),
         )
+        missionaries_page = self.main_window.stack.widget(1)
+        missionaries_page.load_data()
+        self.main_window.stack.setCurrentIndex(1)
 
     # ==========================================
     # HELPERS

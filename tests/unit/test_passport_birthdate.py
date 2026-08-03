@@ -164,6 +164,7 @@ def test_missionary_detail_page_handles_birthdate_field(monkeypatch, qapp):
             "folder_path": None,
             "notes": "",
             "arrival_date": None,
+            "release_date": "2027-01-15",
             "visa_expiration": None,
             "residency_expiration": None,
             "prorroga_expiration": None,
@@ -176,6 +177,11 @@ def test_missionary_detail_page_handles_birthdate_field(monkeypatch, qapp):
             "tramite_usuario": None,
             "tramite_contrasena": None,
             "carnet_number": None,
+            "home_address": "123 Home Street",
+            "father_name": "Carlos Example",
+            "mother_name": "Maria Example",
+            "father_first_name_override": None,
+            "mother_first_name_override": None,
         }
     )
 
@@ -185,6 +191,7 @@ def test_missionary_detail_page_handles_birthdate_field(monkeypatch, qapp):
         return edit.getDate() if hasattr(edit, "getDate") else edit.date
 
     assert "date_of_birth" in page._date_edits
+    assert "release_date" in page._date_edits
     assert _picker_date(page._date_edits["date_of_birth"]) == QDate(
         1990,
         2,
@@ -207,6 +214,16 @@ def test_missionary_detail_page_handles_birthdate_field(monkeypatch, qapp):
     if fluent_buttons:
         assert fluent_buttons == ["Not set", "", ""]
     assert "Passport" in page._date_source_labels["date_of_birth"].text()
+    assert _picker_date(page._date_edits["release_date"]) == QDate(
+        2027,
+        1,
+        15,
+    )
+    assert page.home_address_input.text() == "123 Home Street"
+    assert page.full_name_input.text() == "Test Missionary"
+    assert page.passport_input.text() == "P1234567"
+    assert page.father_name_input.text() == "Carlos Example"
+    assert page.mother_name_input.text() == "Maria Example"
     assert page.folder_open_btn.isEnabled() is False
     assert "Name:" in page.summary_name_chip.text()
     assert "Birthdate:" in page.summary_birthdate_chip.text()
@@ -230,6 +247,12 @@ def test_missionary_detail_page_handles_birthdate_field(monkeypatch, qapp):
 
     page._date_edits["date_of_birth"].setDate(QDate(1991, 4, 5))
     page.carnet_number_input.setText("CE123456")
+    page._date_edits["release_date"].setDate(QDate(2027, 2, 20))
+    page.home_address_input.setText("Updated Home Address")
+    page.full_name_input.setText("Updated Missionary")
+    page.passport_input.setText("P12 34 567")
+    page.father_name_input.setText("Carlos Updated")
+    page.mother_name_input.setText("Maria Updated")
     page.tramite_usuario_input.setText("reset-user")
     page.tramite_contrasena_input.setText("reset-pass")
     page._save_dates()
@@ -237,6 +260,12 @@ def test_missionary_detail_page_handles_birthdate_field(monkeypatch, qapp):
     assert captured["missionary_id"] == 1
     assert captured["updates"]["date_of_birth"] == date(1991, 4, 5)
     assert captured["updates"]["carnet_number"] == "CE123456"
+    assert captured["updates"]["release_date"] == date(2027, 2, 20)
+    assert captured["updates"]["home_address"] == "Updated Home Address"
+    assert captured["updates"]["full_name"] == "Updated Missionary"
+    assert captured["updates"]["passport_number"] == "P1234567"
+    assert captured["updates"]["father_name"] == "Carlos Updated"
+    assert captured["updates"]["mother_name"] == "Maria Updated"
     assert captured["updates"]["tramite_usuario"] == "reset-user"
     assert captured["updates"]["tramite_contrasena"] == "reset-pass"
 

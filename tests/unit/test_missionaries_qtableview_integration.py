@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 from PySide6.QtCore import QItemSelectionModel, Qt
-from PySide6.QtWidgets import QTableView
+from PySide6.QtWidgets import QAbstractItemView, QTableView
 
 from ui.delegates.missionary_row_delegate import MissionaryRowDelegate
 from ui.foundation.fluent import TableWidget as FluentTableWidget
@@ -17,6 +17,7 @@ from ui.models.missionary_table_model import (
 )
 from ui.pages.missionaries_page import MissionariesPage
 from ui.widgets.missionary_row_move_animator import MissionaryRowMoveAnimator
+from ui.widgets.smooth_table_view import SmoothTableView
 
 
 def _missionary(
@@ -189,12 +190,23 @@ def test_page_uses_standard_qtableview_and_shared_model_pipeline(
 ):
     page, _service = missionaries_page
 
-    assert type(page.table) is QTableView
+    assert type(page.table) is SmoothTableView
+    assert isinstance(page.table, QTableView)
     assert not isinstance(page.table, FluentTableWidget)
     assert isinstance(page._missionary_model, MissionaryTableModel)
     assert isinstance(page._missionary_proxy, MissionaryFilterProxyModel)
     assert page.table.model() is page._missionary_proxy
     assert page._missionary_proxy.sourceModel() is page._missionary_model
+    assert (
+        page.table.verticalScrollMode()
+        == QAbstractItemView.ScrollPerPixel
+    )
+    assert (
+        page.table.horizontalScrollMode()
+        == QAbstractItemView.ScrollPerPixel
+    )
+    assert page.table.verticalScrollBar().singleStep() == 18
+    assert page.table.horizontalScrollBar().singleStep() == 24
     assert page._missionary_model.rowCount() == 4
     assert set(_proxy_ids(page)) == {10, 20, 30}
 

@@ -23,6 +23,7 @@ from services.expiration_rules import set_entry_based_expiration
 from services.image_processing_service import ImageProcessingService
 from services.residency_service import ResidencyService
 from utils.constants import DOCUMENTS, MISSIONARY_DATE_FIELDS
+from utils.nationalities import normalize_nationality
 from utils.passport_numbers import normalize_passport_number
 from utils.logger import logger
 
@@ -976,6 +977,8 @@ def apply_missionary_updates(
         value = confirmed_data.get(field, "")
         if field == "passport_number":
             value = normalize_passport_number(value)
+        elif field == "nationality":
+            value = normalize_nationality(value)
         elif field == "dni_number":
             value = re.sub(r"\D", "", str(value or ""))[:8]
             if len(value) != 8:

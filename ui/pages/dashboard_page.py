@@ -673,7 +673,7 @@ class DashboardPage(QWidget):
         middle_layout.setSpacing(12)
         middle.setLayout(middle_layout)
         middle_layout.addWidget(self._build_upcoming_card(data), 1)
-        middle_layout.addWidget(self._build_briefing_card(), 1)
+        middle_layout.addWidget(self._build_residency_expiration_card(data), 1)
         self.content_layout.addWidget(middle)
 
         self._build_exception_cards(data)
@@ -801,7 +801,7 @@ class DashboardPage(QWidget):
         text_stack = QVBoxLayout()
         title = QLabel(item.get("who") or item.get("missionary_name") or item.get("title", ""))
         title.setObjectName("StrongText")
-        detail = QLabel(item.get("detail") or item.get("title", ""))
+        detail = QLabel(self._priority_detail_text(item))
         detail.setObjectName("MutedText")
         detail.setWordWrap(True)
         text_stack.addWidget(title)
@@ -829,6 +829,20 @@ class DashboardPage(QWidget):
         )
         layout.addWidget(open_btn)
         return row
+
+    @staticmethod
+    def _priority_detail_text(item):
+        detail = item.get("detail") or ""
+        if item.get("type") != "missing_document":
+            return detail or item.get("title", "")
+
+        document_label = item.get("document_label")
+        missing_title = (
+            f"Missing {document_label}"
+            if document_label
+            else item.get("title", "Missing document")
+        )
+        return f"{missing_title}. {detail}" if detail else missing_title
 
     def _toggle_priorities(self):
         self._show_all_priorities = not self._show_all_priorities
@@ -928,64 +942,70 @@ class DashboardPage(QWidget):
         label.setWordWrap(True)
         return label
 
-    def _build_briefing_card(self):
-        digest = self._last_dashboard_digest or {}
+    def _build_residency_expiration_card(self, data):
         card = SimpleCardWidget()
-        card.setObjectName("DashboardBriefingCard")
+        card.setObjectName("DashboardResidencyCard")
         layout = QVBoxLayout()
         layout.setContentsMargins(16, 14, 16, 14)
         layout.setSpacing(8)
         card.setLayout(layout)
-        title = QLabel(tr("dashboard_daily_briefing"))
+        title = QLabel(tr("dashboard_residency_expiration"))
         title.setObjectName("PanelTitle")
         layout.addWidget(title)
 
-        items = self._flatten_digest_items(digest)
+        items = data.get("residency_expirations", [])
         if items:
-            for item in items[:3]:
+            for item in items:
                 row = QFrame()
-                row.setObjectName("DashboardBriefingRow")
-                row.setProperty("severity", item.get("severity", "info"))
-                row_layout = QVBoxLayout()
+                row.setObjectName("DashboardResidencyRow")
+                row_layout = QBoxLayout(
+                    QBoxLayout.TopToBottom
+                    if self._current_dashboard_class() == "narrow"
+                    else QBoxLayout.LeftToRight
+                )
                 row_layout.setContentsMargins(10, 8, 10, 8)
-                row_layout.setSpacing(2)
+                row_layout.setSpacing(8)
                 row.setLayout(row_layout)
-                headline = QLabel(item.get("action") or tr("dashboard_review_due_work"))
-                headline.setObjectName("StrongText")
-                headline.setWordWrap(True)
-                context = QLabel(item.get("who") or item.get("timing") or "")
-                context.setObjectName("MutedText")
-                context.setWordWrap(True)
-                row_layout.addWidget(headline)
-                row_layout.addWidget(context)
+
+                identity = QVBoxLayout()
+                name = QLabel(item.get("name", ""))
+                name.setObjectName("StrongText")
+                expiration = item.get("expiration_date")
+                date_text = expiration.strftime("%b %d, %Y") if expiration else ""
+                detail = QLabel(
+                    tr(
+                        "dashboard_residency_due",
+                        date=date_text,
+                        count=item.get("days_left", 0),
+                    )
+                )
+                detail.setObjectName("MutedText")
+                identity.addWidget(name)
+                identity.addWidget(detail)
+                row_layout.addLayout(identity, 1)
+
+                for label_key, value in (
+                    ("dashboard_prorroga_pago", item.get("has_pago")),
+                    ("dashboard_prorroga_papers", item.get("papers_started")),
+                ):
+                    indicator = QLabel(f"{'●' if value else '○'}  {tr(label_key)}")
+                    indicator.setObjectName("DashboardProgressIndicator")
+                    indicator.setProperty("complete", bool(value))
+                    row_layout.addWidget(indicator)
+
+                open_btn = create_button(
+                    tr("dashboard_action_open"), "subtle", fixed_height=26
+                )
+                open_btn.clicked.connect(
+                    lambda checked=False, missionary_id=item.get("missionary_id"):
+                    self._open_missionary(missionary_id)
+                )
+                row_layout.addWidget(open_btn)
                 layout.addWidget(row)
         else:
-            layout.addWidget(self._muted_label(tr("dashboard_all_clear_detail")))
-
-        if self._digest_expanded:
-            self._add_digest_details(layout, digest)
-
-        actions = QBoxLayout(
-            QBoxLayout.TopToBottom
-            if self._current_dashboard_class() == "narrow"
-            else QBoxLayout.LeftToRight
-        )
-        copy = create_button(tr("dashboard_copy_summary"), "secondary", fixed_height=30)
-        copy.clicked.connect(
-            lambda checked=False, text=digest.get("text", ""): self._copy_daily_digest(text)
-        )
-        toggle = create_button(
-            tr("dashboard_hide_full_digest") if self._digest_expanded
-            else tr("dashboard_view_full_digest"),
-            "primary",
-            fixed_height=30,
-        )
-        toggle.clicked.connect(self._toggle_digest)
-        if self._current_dashboard_class() != "narrow":
-            actions.addStretch()
-        actions.addWidget(copy)
-        actions.addWidget(toggle)
-        layout.addLayout(actions)
+            layout.addWidget(
+                self._muted_label(tr("dashboard_no_residency_expirations"))
+            )
         return card
 
     def _toggle_digest(self):

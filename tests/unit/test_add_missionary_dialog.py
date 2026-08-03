@@ -193,10 +193,10 @@ def test_typed_exact_country_code_is_resolved(
 
     _set_combo_text(dialog.nationality_input, "per")
 
-    assert dialog._selected_nationality() == "PER"
+    assert dialog._selected_nationality() == "Peru"
 
 
-def test_typed_arbitrary_text_is_not_accepted(
+def test_typed_country_name_is_accepted(
     monkeypatch,
     qapp,
 ):
@@ -204,7 +204,7 @@ def test_typed_arbitrary_text_is_not_accepted(
 
     _set_combo_text(dialog.nationality_input, "peru")
 
-    assert dialog._selected_nationality() is None
+    assert dialog._selected_nationality() == "Peru"
 
 
 @pytest.mark.parametrize(
@@ -252,7 +252,7 @@ def test_nationality_popup_smoke_single_letter(
     assert dialog.nationality_input.text() == "u"
 
 
-def test_save_uses_selected_passport_country_code(
+def test_save_uses_selected_country_name(
     monkeypatch,
     qapp,
 ):
@@ -269,5 +269,5 @@ def test_save_uses_selected_passport_country_code(
     dialog.save_missionary()
 
     assert len(fake_service.calls) == 1
-    assert fake_service.calls[0]["nationality"] == "PER"
+    assert fake_service.calls[0]["nationality"] == "Peru"
     assert fake_service.calls[0]["full_name"] == "Test Missionary"

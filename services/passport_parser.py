@@ -1,5 +1,6 @@
 import re
 
+from utils.nationalities import normalize_nationality
 from utils.passport_numbers import normalize_passport_number
 
 
@@ -72,7 +73,7 @@ class PassportParser:
             data["passport_number"] = normalize_passport_number(
                 line2[0:9].replace("<", "")
             )
-            data["nationality"] = line2[10:13]
+            data["nationality"] = normalize_nationality(line2[10:13])
             data["date_of_birth"] = line2[13:19]
             data["date_of_expiry"] = line2[21:27]
 

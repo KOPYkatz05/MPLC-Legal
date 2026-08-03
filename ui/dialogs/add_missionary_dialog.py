@@ -1,5 +1,3 @@
-import json
-
 from pathlib import Path
 
 from PySide6.QtCore import QPoint, QSize, Qt, QRegularExpression
@@ -30,8 +28,12 @@ from ui.foundation import (
 )
 
 from utils.logger import logger
+from utils.nationalities import (
+    COUNTRY_NAMES_BY_CODE,
+    country_code,
+    normalize_nationality,
+)
 from utils.passport_numbers import normalize_passport_number
-from utils.runtime_paths import resource_path
 
 try:
     from qfluentwidgets import (
@@ -57,38 +59,6 @@ except Exception:
     FLUENT_DIALOG_AVAILABLE = False
 
 
-def _load_country_names_by_code():
-    data_path = resource_path("data", "country_names_by_code.json")
-
-    names = {}
-
-    if data_path.exists():
-        try:
-            with data_path.open("r", encoding="utf-8") as f:
-                names = json.load(f)
-        except Exception:
-            names = {}
-
-    # Keep the labels a little friendlier where the ISO short names are
-    # overly formal.
-    names.update(
-        {
-            "GBR": "United Kingdom",
-            "KOR": "South Korea",
-            "SGS": "South Georgia and the South Sandwich Islands",
-            "SLV": "El Salvador",
-            "USA": "United States",
-        }
-    )
-
-    return {
-        code: name
-        for code, name in names.items()
-        if code in PASSPORT_COUNTRY_CODES
-    }
-
-
-COUNTRY_NAMES_BY_CODE = _load_country_names_by_code()
 COUNTRY_NAME_ROLE = Qt.UserRole + 1
 COUNTRY_CODE_ROLE = Qt.UserRole + 2
 
@@ -665,7 +635,7 @@ class AddMissionaryDialog(MaskDialogBase):
     def _sync_nationality_edit_text(self, index):
         code = self.nationality_input.itemData(index)
         if code in PASSPORT_COUNTRY_CODES:
-            self.nationality_input.setText(code)
+            self.nationality_input.setText(normalize_nationality(code))
 
     def _build_footer(self):
         footer = DialogFooter()
@@ -724,7 +694,7 @@ class AddMissionaryDialog(MaskDialogBase):
     def _selected_nationality(self):
         nationality = self.nationality_input.currentData()
         if nationality in PASSPORT_COUNTRY_CODES:
-            return nationality
+            return normalize_nationality(nationality)
 
         typed = (
             self.nationality_input.currentText()
@@ -732,8 +702,8 @@ class AddMissionaryDialog(MaskDialogBase):
             .upper()
         )
 
-        if typed in PASSPORT_COUNTRY_CODES:
-            return typed
+        if country_code(typed):
+            return normalize_nationality(typed)
 
         return None
 

@@ -64,7 +64,7 @@ DOCUMENTS = {
     },
 
     "PASSPORT": {
-        "label": "Passport",
+        "label": "Passport and Visa",
         "stage": None,
         "required": True,
         "ocr_fields": [
@@ -286,7 +286,7 @@ DOCUMENTS = {
     # ======================================
 
     "OTHER": {
-        "label": "Other",
+        "label": "Custom",
         "stage": None,
         "required": False,
         "ocr_fields": [],
@@ -333,12 +333,16 @@ FBI_REQUIRED_NATIONALITIES = {
 
 
 def requires_fbi_document(missionary):
+    from utils.nationalities import country_code
+
     nationality = (getattr(missionary, "nationality", None) or "").strip()
-    return nationality in FBI_REQUIRED_NATIONALITIES
+    return country_code(nationality) in FBI_REQUIRED_NATIONALITIES
 
 
 def is_usa_missionary(missionary):
-    return (getattr(missionary, "nationality", None) or "").strip() == "USA"
+    from utils.nationalities import country_code
+
+    return country_code(getattr(missionary, "nationality", None)) == "USA"
 
 
 def visible_document_keys_for_missionary(missionary):

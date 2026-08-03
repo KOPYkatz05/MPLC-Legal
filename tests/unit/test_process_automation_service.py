@@ -175,6 +175,32 @@ def test_prorroga_windows_generate_from_residency_expiration(automation_env):
         session.close()
 
 
+def test_transfer_reminders_only_generate_for_next_cycle(automation_env):
+    today = date(2026, 6, 20)
+    service = _service(FakeSettings([
+        date(2026, 7, 29),
+        date(2026, 9, 9),
+        date(2026, 10, 21),
+    ]))
+
+    service.run(today=today)
+
+    session = automation_env()
+    try:
+        transfer_keys = {
+            task.automation_key
+            for task in _tasks(session)
+            if task.automation_key.startswith("transfer:")
+        }
+        assert transfer_keys == {
+            "transfer:fbi:2026-07-29",
+            "transfer:flights:2026-07-29",
+            "transfer:arrivals:2026-07-29",
+        }
+    finally:
+        session.close()
+
+
 def test_prorroga_uses_only_current_strongest_window(automation_env):
     expiration = date(2026, 9, 8)
     session = automation_env()
@@ -466,23 +492,35 @@ def test_obsolete_prorroga_archives_after_approval_document(automation_env):
         session.close()
 
 
-def test_transfer_tasks_are_not_archived_by_reconciliation(automation_env):
+def test_transfer_tasks_are_archived_when_cycle_is_no_longer_next(automation_env):
     first_service = _service(FakeSettings([date(2026, 7, 29)]))
     first_service.run(today=date(2026, 6, 20))
 
-    second_service = _service(FakeSettings([]))
-    result = second_service.run(today=date(2026, 6, 21))
+    second_service = _service(FakeSettings([date(2026, 9, 9)]))
+    result = second_service.run(today=date(2026, 7, 30))
 
     session = automation_env()
     try:
-        transfer_tasks = [
-            task
+        transfer_tasks = {
+            task.automation_key: task
             for task in _tasks(session)
             if task.automation_key.startswith("transfer:")
+        }
+        old_tasks = [
+            task
+            for key, task in transfer_tasks.items()
+            if key.endswith("2026-07-29")
         ]
-        assert transfer_tasks
-        assert {task.status for task in transfer_tasks} == {"OPEN"}
-        assert result["archived_obsolete"] == 0
+        next_tasks = [
+            task
+            for key, task in transfer_tasks.items()
+            if key.endswith("2026-09-09")
+        ]
+        assert len(old_tasks) == 3
+        assert {task.status for task in old_tasks} == {"ARCHIVED"}
+        assert len(next_tasks) == 3
+        assert {task.status for task in next_tasks} == {"OPEN"}
+        assert result["archived_obsolete"] == 3
     finally:
         session.close()
 

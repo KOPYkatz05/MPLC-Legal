@@ -73,6 +73,7 @@ class ProcessAutomationService(RemoteServiceMixin):
                     active_keys=active_keys,
                     source=AUTOMATION_SOURCE,
                     prefixes=(
+                        "transfer:",
                         "prorroga:",
                         "after-interpol:",
                         "after-biometric:",
@@ -105,7 +106,7 @@ class ProcessAutomationService(RemoteServiceMixin):
         payloads = []
         transfers = self.settings_service.get_upcoming_transfer_wednesdays(
             today=today,
-            count=8,
+            count=1,
         )
         for transfer_date in transfers:
             payloads.append({

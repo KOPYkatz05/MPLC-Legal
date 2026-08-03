@@ -105,6 +105,106 @@ APPOINTMENT_UPDATE_FIELDS = {
 }
 
 
+def document_type_menu_sections(missionary):
+    """Return the compact upload-menu hierarchy for a missionary."""
+    visible_keys = set(visible_document_keys_for_missionary(missionary))
+    sections = []
+
+    for stage in WORKFLOW_STAGES:
+        keys = [
+            key
+            for key, config in DOCUMENTS.items()
+            if key in visible_keys
+            and config.get("stage") == stage
+            and config.get("required")
+            and key != "TAM"
+        ]
+        if stage == "INTERPOL" and "FBI" in visible_keys:
+            keys.insert(0, "FBI")
+        sections.append((stage, list(dict.fromkeys(keys))))
+
+    sections.append(("GENERAL", ["TAM", "PASSPORT"]))
+    direct_items = [("DNI", DOCUMENTS["DNI"]["label"])]
+    other_keys = ["PHOTO", "CONSTANCIA_DE_PRORROGA", "OTHER"]
+    sections.append(
+        ("OTHER", [key for key in other_keys if key in visible_keys])
+    )
+    return sections, direct_items
+
+
+class DocumentTypeMenuPicker(QWidget):
+    """Button-backed selector using the same menus as contextual actions."""
+
+    currentIndexChanged = Signal(int)
+
+    def __init__(self, missionary, parent=None):
+        super().__init__(parent)
+        self._items = [("Select document type...", None)]
+        self._current_index = 0
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        self.button = create_button("Select document type...", "secondary")
+        self.button.setObjectName("UploadFieldInput")
+        layout.addWidget(self.button, stretch=1)
+
+        menu = create_menu("", self.button)
+        sections, direct_items = document_type_menu_sections(missionary)
+        stage_and_general_sections = sections[:-1]
+        other_section = sections[-1]
+        for title, keys in stage_and_general_sections:
+            submenu = create_menu(title.title(), menu)
+            for key in keys:
+                self._add_document_action(submenu, key)
+            menu.addMenu(submenu)
+
+        for key, _label in direct_items:
+            self._add_document_action(menu, key)
+
+        title, keys = other_section
+        submenu = create_menu(title.title(), menu)
+        for key in keys:
+            self._add_document_action(submenu, key)
+        menu.addMenu(submenu)
+
+        self.button.setMenu(menu)
+
+    def _add_document_action(self, menu, key):
+        label = DOCUMENTS[key]["label"]
+        index = len(self._items)
+        self._items.append((label, key))
+        action = QAction(label, menu)
+        action.triggered.connect(
+            lambda checked=False, item_index=index: self.setCurrentIndex(
+                item_index
+            )
+        )
+        menu.addAction(action)
+
+    def currentData(self):
+        return self._items[self._current_index][1]
+
+    def findData(self, value):
+        for index, (_, data) in enumerate(self._items):
+            if data == value:
+                return index
+        return -1
+
+    def setCurrentData(self, value):
+        index = self.findData(value)
+        if index >= 0:
+            self.setCurrentIndex(index)
+
+    def setCurrentIndex(self, index):
+        if not 0 <= index < len(self._items):
+            return
+        changed = index != self._current_index
+        self._current_index = index
+        self.button.setText(self._items[index][0])
+        if changed:
+            self.currentIndexChanged.emit(index)
+
+
 def supported_upload_files_from_paths(paths):
     files = []
     for raw_path in paths or []:
@@ -1261,14 +1361,11 @@ class UploadSessionDialog(MaskDialogBase):
         summary_form.setSpacing(10)
         summary_form.setContentsMargins(0, 0, 0, 0)
 
-        self.type_combo = create_combo_box()
+        self.type_combo = DocumentTypeMenuPicker(
+            self.controller.missionary,
+            self.middle_panel,
+        )
         self.type_combo.setObjectName("UploadFieldInput")
-        self.type_combo.addItem("Select document type...", None)
-        for key in visible_document_keys_for_missionary(
-            self.controller.missionary
-        ):
-            config = DOCUMENTS[key]
-            self.type_combo.addItem(config["label"], key)
         self.type_combo.currentIndexChanged.connect(self.type_changed)
         summary_form.addRow("Document Type", self.type_combo)
 

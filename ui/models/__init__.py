@@ -3,6 +3,7 @@
 from ui.models.missionary_table_model import (
     COLUMN_KEY_ROLE,
     MISSIONARY_ID_ROLE,
+    PAINT_DATA_ROLE,
     PENDING_ROLE,
     RECORD_ROLE,
     ROW_ACCENT_ROLE,
@@ -15,6 +16,7 @@ from ui.models.missionary_table_model import (
 __all__ = [
     "COLUMN_KEY_ROLE",
     "MISSIONARY_ID_ROLE",
+    "PAINT_DATA_ROLE",
     "PENDING_ROLE",
     "RECORD_ROLE",
     "ROW_ACCENT_ROLE",

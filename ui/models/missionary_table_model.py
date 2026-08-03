@@ -26,6 +26,7 @@ ROW_ACCENT_ROLE = Qt.UserRole + 103
 PENDING_ROLE = Qt.UserRole + 104
 RECORD_ROLE = Qt.UserRole + 105
 COLUMN_KEY_ROLE = Qt.UserRole + 106
+PAINT_DATA_ROLE = Qt.UserRole + 107
 
 
 _MISSING = object()
@@ -218,6 +219,15 @@ class MissionaryTableModel(QAbstractTableModel):
             return record
         if role == COLUMN_KEY_ROLE:
             return str(getattr(column, "key", ""))
+        if role == PAINT_DATA_ROLE:
+            missionary_id = _record_id(record)
+            return (
+                _column_value(column, record),
+                missionary_id,
+                _record_value(record, "row_color", None),
+                _record_value(record, "row_accent", None),
+                missionary_id in self._pending_ids,
+            )
         return None
 
     def headerData(self, section, orientation, role=Qt.DisplayRole):
@@ -303,6 +313,7 @@ class MissionaryTableModel(QAbstractTableModel):
                     ROW_COLOR_ROLE,
                     ROW_ACCENT_ROLE,
                     RECORD_ROLE,
+                    PAINT_DATA_ROLE,
                 ],
             )
         return True
@@ -361,7 +372,7 @@ class MissionaryTableModel(QAbstractTableModel):
         self.dataChanged.emit(
             self.index(row, 0),
             self.index(row, len(self._columns) - 1),
-            [PENDING_ROLE],
+            [PENDING_ROLE, PAINT_DATA_ROLE],
         )
 
     def record_for_source_row(self, row: int) -> object | None:
@@ -413,6 +424,7 @@ class MissionaryTableModel(QAbstractTableModel):
             ROW_COLOR_ROLE,
             ROW_ACCENT_ROLE,
             RECORD_ROLE,
+            PAINT_DATA_ROLE,
         ]
         range_start = previous = rows[0]
         for row in rows[1:]:
@@ -461,6 +473,9 @@ class MissionaryFilterProxyModel(QSortFilterProxyModel):
         self._set_filter_value("_stage_filter", normalized)
 
     def set_nationality_filter(self, nationality: Any) -> None:
+        from utils.nationalities import normalize_nationality
+
+        nationality = normalize_nationality(nationality)
         normalized = (
             str(nationality).strip().casefold() if nationality else None
         )
@@ -502,7 +517,10 @@ class MissionaryFilterProxyModel(QSortFilterProxyModel):
                 return False
 
         if self._nationality_filter:
+            from utils.nationalities import normalize_nationality
+
             nationality = str(_record_value(record, "nationality", "") or "")
+            nationality = normalize_nationality(nationality) or ""
             if nationality.strip().casefold() != self._nationality_filter:
                 return False
 

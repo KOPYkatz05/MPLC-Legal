@@ -1,5 +1,8 @@
 from types import SimpleNamespace
 
+from PySide6.QtWidgets import QDialog
+
+import ui.pages.missionary_detail_page as detail_module
 from ui.pages.missionary_detail_page import MissionaryDetailPage
 from ui.pages.missionaries_page import MissionariesPage
 
@@ -10,6 +13,51 @@ class LoadCounter:
 
     def load_data(self):
         self.load_count += 1
+
+
+def test_archive_confirmation_precedes_navigation_and_keeps_target(monkeypatch):
+    events = []
+    page = MissionaryDetailPage.__new__(MissionaryDetailPage)
+    page.current_missionary = SimpleNamespace(id=7)
+
+    class ArchiveDialog:
+        archive_reason = "Reassigned"
+
+        def __init__(self, parent):
+            assert parent is page
+
+        def exec(self):
+            page.current_missionary = SimpleNamespace(id=99)
+            return QDialog.Accepted
+
+    page.missionary_service = SimpleNamespace(
+        archive_missionary=lambda missionary_id, archive_reason: events.append(
+            ("archive", missionary_id, archive_reason)
+        )
+    )
+    missionaries_page = SimpleNamespace(
+        load_data=lambda: events.append(("load",))
+    )
+    page.main_window = SimpleNamespace(
+        stack=SimpleNamespace(
+            widget=lambda index: missionaries_page,
+            setCurrentIndex=lambda index: events.append(("navigate", index)),
+        )
+    )
+    monkeypatch.setattr(detail_module, "MissionaryArchiveDialog", ArchiveDialog)
+    monkeypatch.setattr(
+        detail_module,
+        "show_message",
+        lambda parent, title, content, **kwargs: events.append(
+            ("message", parent, title, content)
+        ),
+    )
+
+    page._archive_missionary()
+
+    assert events[0] == ("archive", 7, "Reassigned")
+    assert events[1][0:2] == ("message", page)
+    assert events[2:] == [("load",), ("navigate", 1)]
 
 
 def test_detail_stage_refresh_updates_related_pages(monkeypatch):

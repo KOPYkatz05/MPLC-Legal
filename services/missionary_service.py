@@ -30,6 +30,7 @@ from services.appointment_service import (
     APPOINTMENT_FIELDS,
     AppointmentService,
 )
+from utils.nationalities import normalize_nationality
 
 from utils.logger import logger
 from utils.passport_numbers import normalize_passport_number
@@ -185,6 +186,7 @@ class MissionaryService:
         visa_expiration=None,
     ):
         passport_number = normalize_passport_number(passport_number)
+        nationality = normalize_nationality(nationality)
         if self.api_client is not None:
             payload = self.api_client.post(
                 "/v1/missionaries",
@@ -299,6 +301,10 @@ class MissionaryService:
         if "passport_number" in field_updates:
             field_updates["passport_number"] = normalize_passport_number(
                 field_updates["passport_number"]
+            )
+        if "nationality" in field_updates:
+            field_updates["nationality"] = normalize_nationality(
+                field_updates["nationality"]
             )
         if "dni_number" in field_updates:
             dni_number = re.sub(

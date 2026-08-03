@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import math
+import random
+from dataclasses import dataclass
 
 from PySide6.QtCore import (
     QEasingCurve,
@@ -27,6 +29,15 @@ from PySide6.QtWidgets import QApplication, QFrame, QLabel, QVBoxLayout, QWidget
 
 from utils.runtime_paths import resource_path
 
+@dataclass
+class _LiquidFloaty:
+    x: float
+    y: float
+    velocity_x: float
+    velocity_y: float
+    radius: float
+    opacity: int
+
 
 class LiquidProgressBar(QWidget):
     """Rounded progress track with a gently moving liquid leading edge."""
@@ -37,7 +48,21 @@ class LiquidProgressBar(QWidget):
         self._maximum = 100
         self._value = 0.0
         self._wave_offset = 0.0
-        self.setFixedHeight(20)
+        self._back_wave_offset = 0.0
+        self._fast_wave_offset = 0.0
+        self._floaty_random = random.Random()
+        self._floaties = [
+            _LiquidFloaty(
+                x=self._floaty_random.random(),
+                y=self._floaty_random.uniform(0.16, 0.84),
+                velocity_x=self._floaty_random.uniform(-0.0022, 0.0032),
+                velocity_y=self._floaty_random.uniform(-0.008, 0.008),
+                radius=self._floaty_random.uniform(0.8, 1.7),
+                opacity=self._floaty_random.randint(35, 75),
+            )
+            for _ in range(11)
+        ]
+        self.setFixedHeight(28)
 
         self._wave_timer = QTimer(self)
         self._wave_timer.setInterval(28)
@@ -75,8 +100,38 @@ class LiquidProgressBar(QWidget):
     animatedValue = Property(float, _get_animated_value, _set_animated_value)
 
     def _advance_wave(self):
-        self._wave_offset = (self._wave_offset + 0.28) % (2 * math.pi)
+        self._wave_offset = (self._wave_offset + 0.16) % (2 * math.pi)
+        self._back_wave_offset = (self._back_wave_offset + 0.10) % (2 * math.pi)
+        self._fast_wave_offset = (self._fast_wave_offset + 0.22) % (2 * math.pi)
+        self._advance_floaties()
         self.update()
+
+    def _advance_floaties(self):
+        for floaty in self._floaties:
+            floaty.velocity_x = max(
+                -0.0035,
+                min(
+                    0.0035,
+                    floaty.velocity_x
+                    + self._floaty_random.uniform(-0.00012, 0.00012),
+                ),
+            )
+            floaty.velocity_y = max(
+                -0.012,
+                min(
+                    0.012,
+                    floaty.velocity_y
+                    + self._floaty_random.uniform(-0.0004, 0.0004),
+                ),
+            )
+            floaty.x += floaty.velocity_x
+            floaty.y += floaty.velocity_y
+            if floaty.x <= 0.0 or floaty.x >= 1.0:
+                floaty.x = max(0.0, min(1.0, floaty.x))
+                floaty.velocity_x *= -1
+            if floaty.y <= 0.12 or floaty.y >= 0.88:
+                floaty.y = max(0.12, min(0.88, floaty.y))
+                floaty.velocity_y *= -1
 
     def showEvent(self, event):
         self._wave_timer.start()
@@ -108,29 +163,96 @@ class LiquidProgressBar(QWidget):
         painter.save()
         painter.setClipPath(clip)
 
-        if fraction >= 0.995:
-            painter.fillPath(clip, QColor("#27A7A4"))
-            painter.restore()
-            return
-
         leading_edge = track.left() + (fraction * track.width())
-        amplitude = min(4.5, track.height() * 0.24) * math.sin(math.pi * fraction)
+        amplitude = min(7.5, track.height() * 0.28)
+        wave_edge = max(
+            track.left() + amplitude,
+            min(track.right() - amplitude, leading_edge),
+        )
+
+        base_fill = QPainterPath()
+        base_fill.addRect(
+            QRectF(
+                track.left(),
+                track.top(),
+                max(0.0, leading_edge - track.left()),
+                track.height(),
+            )
+        )
+        painter.fillPath(base_fill, QColor("#27A7A4"))
+
+        wave_band = QPainterPath()
+        wave_band.addRect(
+            QRectF(
+                wave_edge - (amplitude * 1.35),
+                track.top(),
+                amplitude * 2.7,
+                track.height(),
+            )
+        )
 
         back_wave = self._wave_path(
             track,
-            leading_edge,
+            wave_edge,
             amplitude,
-            self._wave_offset + 2.2,
+            self._back_wave_offset + 1.35,
         )
-        painter.fillPath(back_wave, QColor("#55BFBC"))
+        painter.fillPath(
+            back_wave.intersected(wave_band),
+            QColor(85, 191, 188, 95),
+        )
         front_wave = self._wave_path(
             track,
-            leading_edge,
+            wave_edge,
             amplitude,
             self._wave_offset,
         )
-        painter.fillPath(front_wave, QColor("#27A7A4"))
+        painter.fillPath(
+            front_wave.intersected(wave_band),
+            QColor(39, 167, 164, 135),
+        )
+        fast_wave = self._wave_path(
+            track,
+            wave_edge,
+            amplitude,
+            self._fast_wave_offset + 2.55,
+        )
+        painter.fillPath(
+            fast_wave.intersected(wave_band),
+            QColor(22, 145, 149, 90),
+        )
+        self._paint_floaties(painter, track, leading_edge)
         painter.restore()
+
+    def _paint_floaties(
+        self,
+        painter: QPainter,
+        track: QRectF,
+        leading_edge: float,
+    ):
+        if leading_edge <= track.left():
+            return
+        painter.setPen(Qt.NoPen)
+        for floaty in self._floaties:
+            center_x, center_y = self._floaty_center(track, floaty)
+            if center_x + floaty.radius > leading_edge:
+                continue
+            painter.setBrush(QColor(255, 255, 255, floaty.opacity))
+            painter.drawEllipse(
+                QRectF(
+                    center_x - floaty.radius,
+                    center_y - floaty.radius,
+                    floaty.radius * 2,
+                    floaty.radius * 2,
+                )
+            )
+
+    @staticmethod
+    def _floaty_center(track: QRectF, floaty: _LiquidFloaty) -> tuple[float, float]:
+        return (
+            track.left() + (track.width() * floaty.x),
+            track.top() + (track.height() * floaty.y),
+        )
 
     @staticmethod
     def _wave_path(
@@ -146,7 +268,7 @@ class LiquidProgressBar(QWidget):
         for index in range(sample_count + 1):
             ratio = index / sample_count
             y = track.top() + (track.height() * ratio)
-            x = leading_edge + amplitude * math.sin((ratio * math.tau * 1.45) + phase)
+            x = leading_edge + amplitude * math.sin((ratio * math.tau * 0.42) + phase)
             path.lineTo(x, y)
         path.lineTo(track.left(), track.bottom())
         path.closeSubpath()
@@ -162,9 +284,14 @@ class StartupSplash(QWidget):
         self._dismissed = False
         self._cursor_overridden = False
         self._progress_animation = None
+        self._fade_animation = None
         self.setObjectName("StartupSplash")
         self.setFixedSize(640, 300)
-        self.setWindowFlags(Qt.FramelessWindowHint | Qt.SplashScreen)
+        self.setWindowFlags(
+            Qt.FramelessWindowHint
+            | Qt.SplashScreen
+            | Qt.WindowStaysOnTopHint
+        )
         self.setAttribute(Qt.WA_TranslucentBackground, True)
         self.setStyleSheet(
             """
@@ -280,6 +407,30 @@ class StartupSplash(QWidget):
         self.raise_()
         self.activateWindow()
 
+    def fade_out(self, *, duration_ms: int = 480, wait: bool = True):
+        """Fade away without stopping liquid animation until the final frame."""
+        if self._dismissed:
+            return
+        animation = QPropertyAnimation(self, b"windowOpacity", self)
+        animation.setStartValue(self.windowOpacity())
+        animation.setEndValue(0.0)
+        animation.setDuration(max(1, int(duration_ms)))
+        animation.setEasingCurve(QEasingCurve.Type.InOutSine)
+        self._fade_animation = animation
+        animation.start()
+        if wait:
+            loop = QEventLoop()
+            safety_timer = QTimer()
+            safety_timer.setSingleShot(True)
+            animation.finished.connect(loop.quit)
+            safety_timer.timeout.connect(loop.quit)
+            safety_timer.start(animation.duration() + 100)
+            loop.exec()
+            safety_timer.stop()
+            self.dismiss()
+        else:
+            animation.finished.connect(self.dismiss)
+
     def dismiss(self):
         if self._dismissed:
             return
@@ -289,6 +440,9 @@ class StartupSplash(QWidget):
         if self._progress_animation is not None:
             self._progress_animation.stop()
             self._progress_animation = None
+        if self._fade_animation is not None:
+            self._fade_animation.stop()
+            self._fade_animation = None
         if self._cursor_overridden:
             QApplication.restoreOverrideCursor()
             self._cursor_overridden = False

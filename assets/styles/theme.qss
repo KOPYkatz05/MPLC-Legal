@@ -938,6 +938,8 @@ QFrame#DashboardUpcomingCard,
 QWidget#DashboardUpcomingCard,
 QFrame#DashboardBriefingCard,
 QWidget#DashboardBriefingCard,
+QFrame#DashboardResidencyCard,
+QWidget#DashboardResidencyCard,
 QFrame#DashboardExceptionCard,
 QWidget#DashboardExceptionCard {
     background-color: #FFFFFF;
@@ -974,6 +976,22 @@ QFrame#DashboardBriefingRow {
     background-color: #FAFAFA;
     border: 1px solid #F0F1F2;
     border-radius: 7px;
+}
+
+QFrame#DashboardResidencyRow {
+    background-color: #FAFAFA;
+    border: 1px solid #F0F1F2;
+    border-radius: 7px;
+}
+
+QLabel#DashboardProgressIndicator {
+    color: #94A3B8;
+    background: transparent;
+    font-weight: 600;
+}
+
+QLabel#DashboardProgressIndicator[complete="true"] {
+    color: #059669;
 }
 
 QFrame#DashboardPriorityRow:hover,
@@ -1554,11 +1572,57 @@ QListWidget#TimelineList {
 }
 
 QListWidget#TimelineList::item {
+    background-color: transparent;
+    border: none;
+    padding: 0;
+    margin: 0;
+}
+
+QFrame#TimelineEventCard {
     background-color: #FFFFFF;
     border: 1px solid #E4E4E7;
-    border-radius: 7px;
-    padding: 8px;
-    margin-bottom: 6px;
+    border-radius: 9px;
+}
+
+QLabel#TimelineEventTitle {
+    color: #18181B;
+    font-size: 13px;
+    font-weight: 600;
+}
+
+QLabel#TimelineEventDetails,
+QLabel#TimelineEventTime {
+    color: #71717A;
+    font-size: 12px;
+}
+
+QLabel#TimelineEventMarker {
+    color: #0EA5AC;
+    font-size: 28px;
+    font-weight: 700;
+}
+
+QLabel#TimelineEventMarker[activityCategory="documents"] { color: #2563EB; }
+QLabel#TimelineEventMarker[activityCategory="appointments"] { color: #7C3AED; }
+QLabel#TimelineEventMarker[activityCategory="tasks"] { color: #D97706; }
+QLabel#TimelineEventMarker[activityCategory="residency"] { color: #059669; }
+
+QLabel#TimelineDateHeading,
+QLabel#TimelineUpcomingHeading {
+    color: #52525B;
+    font-size: 12px;
+    font-weight: 700;
+    background: transparent;
+}
+
+QLabel#TimelineUpcomingHeading {
+    color: #7C3AED;
+}
+
+QPushButton[timelineFilter="true"]:checked {
+    background-color: #E6F7F8;
+    border-color: #0EA5AC;
+    color: #0F5F64;
 }
 
 QFrame#UrgencyBar {

@@ -7,6 +7,7 @@ that reads SQLite.
 """
 
 from services.appointment_service import AppointmentService
+from services.activity_feed_service import ActivityFeedService
 from services.document_service import DocumentService
 from services.missionary_group_service import MissionaryGroupService
 from services.missionary_service import MissionaryService
@@ -25,6 +26,7 @@ class ClientViewService(RemoteServiceMixin):
             "get_calendar_snapshot",
             "get_office_work_snapshot",
             "get_missionary_detail_snapshot",
+            "get_missionary_activity",
         }
     )
 
@@ -87,4 +89,8 @@ class ClientViewService(RemoteServiceMixin):
                 missionary_id
             ),
             "stage_history": workflow_service.get_stage_history(missionary_id),
+            "activity_feed": self.get_missionary_activity(missionary_id),
         }
+
+    def get_missionary_activity(self, missionary_id):
+        return ActivityFeedService().get_missionary_activity(missionary_id)
