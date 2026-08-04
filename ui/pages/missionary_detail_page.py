@@ -1631,6 +1631,7 @@ class MissionaryDetailPage(QWidget):
         self.summary_chip_grid.setHorizontalSpacing(10)
         self.summary_chip_grid.setVerticalSpacing(8)
         summary_layout.addLayout(self.summary_chip_grid)
+        content_layout.addWidget(summary_card)
 
         self.summary_name_chip = self._build_badge_chip(
             tr("missionary_detail_name_chip", value="—")

@@ -3,6 +3,39 @@ from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QLabel, QPushButton
 
 from ui.dialogs.startup_splash import LiquidProgressBar, StartupSplash
+from ui.startup_splash_process import StartupSplashProcess
+
+
+class _ConnectedSplashSocket:
+    def __init__(self):
+        self.payload = b""
+        self.wait_timeout = None
+
+    def state(self):
+        from PySide6.QtNetwork import QLocalSocket
+
+        return QLocalSocket.ConnectedState
+
+    def write(self, payload):
+        self.payload += payload
+
+    def flush(self):
+        pass
+
+    def waitForBytesWritten(self, timeout_ms):
+        self.wait_timeout = timeout_ms
+        return True
+
+
+def test_startup_splash_process_can_flush_a_progress_checkpoint(qapp):
+    controller = StartupSplashProcess()
+    socket = _ConnectedSplashSocket()
+    controller._socket = socket
+
+    controller.advance_to(25, wait=True, timeout_ms=250)
+
+    assert socket.payload == b'{"command":"progress","value":25}\n'
+    assert socket.wait_timeout == 250
 
 
 def test_startup_splash_is_non_interactive_and_animated(qapp):

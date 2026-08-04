@@ -63,8 +63,17 @@ class StartupSplashProcess(QObject):
             return False
         return self._wait_for_status("SHOWN", timeout_ms=timeout_ms)
 
-    def advance_to(self, value: int):
+    def advance_to(
+        self,
+        value: int,
+        *,
+        wait: bool = False,
+        timeout_ms: int = 1000,
+    ):
+        """Advance the child splash, optionally flushing the IPC write first."""
         self._send({"command": "progress", "value": int(value)})
+        if wait and self._socket is not None:
+            self._socket.waitForBytesWritten(timeout_ms)
 
     def finish_and_wait(self, *, timeout_ms: int = 6000):
         if not self.running:
