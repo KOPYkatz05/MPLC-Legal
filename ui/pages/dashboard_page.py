@@ -659,21 +659,29 @@ class DashboardPage(QWidget):
     def _build_dashboard_workspace(self, data):
         self._build_startup_alert_banner()
         self._build_focus_metrics(data)
-        self._build_priorities(data)
 
         middle = QWidget()
         middle.setObjectName("DashboardMiddleRow")
+        middle_layout = QVBoxLayout()
+        middle_layout.setContentsMargins(0, 0, 0, 0)
+        middle_layout.setSpacing(12)
+        middle.setLayout(middle_layout)
+        middle_layout.addWidget(self._build_upcoming_card(data))
+
+        tracking = QWidget()
+        tracking.setObjectName("DashboardTrackingRow")
         direction = (
             QBoxLayout.LeftToRight
             if self._current_dashboard_class() == "wide"
             else QBoxLayout.TopToBottom
         )
-        middle_layout = QBoxLayout(direction)
-        middle_layout.setContentsMargins(0, 0, 0, 0)
-        middle_layout.setSpacing(12)
-        middle.setLayout(middle_layout)
-        middle_layout.addWidget(self._build_upcoming_card(data), 1)
-        middle_layout.addWidget(self._build_residency_expiration_card(data), 1)
+        tracking_layout = QBoxLayout(direction)
+        tracking_layout.setContentsMargins(0, 0, 0, 0)
+        tracking_layout.setSpacing(12)
+        tracking.setLayout(tracking_layout)
+        tracking_layout.addWidget(self._build_residency_expiration_card(data), 1)
+        tracking_layout.addWidget(self._build_cancelaciones_card(data), 1)
+        middle_layout.addWidget(tracking)
         self.content_layout.addWidget(middle)
 
         self._build_exception_cards(data)
@@ -1006,6 +1014,73 @@ class DashboardPage(QWidget):
             layout.addWidget(
                 self._muted_label(tr("dashboard_no_residency_expirations"))
             )
+        return card
+
+    def _build_cancelaciones_card(self, data):
+        card = SimpleCardWidget()
+        card.setObjectName("DashboardCancelacionesCard")
+        layout = QVBoxLayout()
+        layout.setContentsMargins(16, 14, 16, 14)
+        layout.setSpacing(8)
+        card.setLayout(layout)
+        title = QLabel(tr("dashboard_cancelaciones"))
+        title.setObjectName("PanelTitle")
+        layout.addWidget(title)
+
+        items = data.get("cancelaciones", [])
+        if items:
+            for item in items:
+                row = QFrame()
+                row.setObjectName("DashboardCancelacionesRow")
+                row_layout = QBoxLayout(
+                    QBoxLayout.TopToBottom
+                    if self._current_dashboard_class() == "narrow"
+                    else QBoxLayout.LeftToRight
+                )
+                row_layout.setContentsMargins(10, 8, 10, 8)
+                row_layout.setSpacing(8)
+                row.setLayout(row_layout)
+
+                identity = QVBoxLayout()
+                name = QLabel(item.get("name", ""))
+                name.setObjectName("StrongText")
+                release = item.get("release_date")
+                date_text = release.strftime("%b %d, %Y") if release else ""
+                detail = QLabel(
+                    tr(
+                        "dashboard_cancelacion_due",
+                        date=date_text,
+                        count=item.get("days_left", 0),
+                    )
+                )
+                detail.setObjectName("MutedText")
+                identity.addWidget(name)
+                identity.addWidget(detail)
+                row_layout.addLayout(identity, 1)
+
+                for label_key, value in (
+                    ("dashboard_cancelacion_pago", item.get("has_pago")),
+                    (
+                        "dashboard_cancelacion_papers_submitted",
+                        item.get("papers_submitted"),
+                    ),
+                ):
+                    indicator = QLabel(f"{'●' if value else '○'}  {tr(label_key)}")
+                    indicator.setObjectName("DashboardProgressIndicator")
+                    indicator.setProperty("complete", bool(value))
+                    row_layout.addWidget(indicator)
+
+                open_btn = create_button(
+                    tr("dashboard_action_open"), "subtle", fixed_height=26
+                )
+                open_btn.clicked.connect(
+                    lambda checked=False, missionary_id=item.get("missionary_id"):
+                    self._open_missionary(missionary_id)
+                )
+                row_layout.addWidget(open_btn)
+                layout.addWidget(row)
+        else:
+            layout.addWidget(self._muted_label(tr("dashboard_no_cancelaciones")))
         return card
 
     def _toggle_digest(self):

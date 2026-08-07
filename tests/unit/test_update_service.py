@@ -156,6 +156,21 @@ def test_no_available_update_returns_to_idle():
     assert service.prepared_update is None
 
 
+def test_lightweight_check_does_not_download_available_update():
+    manager = FakeManager()
+    service = ClientUpdateService(
+        _config(),
+        manager_factory=lambda _config: manager,
+    )
+
+    available = service.check_for_update()
+
+    assert available.version == "0.1.1"
+    assert available.notes_markdown == "A dependable update."
+    assert manager.downloaded is False
+    assert service.state == "available"
+
+
 def test_update_download_is_monotonic_and_becomes_ready():
     manager = FakeManager()
     progress = []

@@ -85,6 +85,123 @@ def test_detail_stage_refresh_updates_related_pages(monkeypatch):
     assert reports_page.load_count == 1
 
 
+def test_workflow_status_failure_reloads_and_shows_actionable_error(monkeypatch):
+    events = []
+    page = MissionaryDetailPage.__new__(MissionaryDetailPage)
+    page.current_missionary = SimpleNamespace(id=7)
+    page.workflow_service = SimpleNamespace(
+        update_workflow_status=lambda *_args: (_ for _ in ()).throw(
+            RuntimeError("server failed")
+        )
+    )
+    def reload_missionary(*, on_success=None, on_error=None):
+        events.append("reload")
+        on_success({}, True)
+        return True
+
+    page._reload_missionary = reload_missionary
+    page._refresh_stage_related_pages = lambda: events.append("refresh-related")
+
+    class AcceptedDialog:
+        def __init__(self, parent):
+            assert parent is page
+
+        def exec(self):
+            return QDialog.Accepted
+
+        def selected_status(self):
+            return "COMPLETED"
+
+    monkeypatch.setattr(detail_module, "WorkflowStatusDialog", AcceptedDialog)
+    monkeypatch.setattr(
+        detail_module,
+        "show_message",
+        lambda *args, **kwargs: events.append(("message", args, kwargs)),
+    )
+
+    page.change_workflow_status(11)
+
+    assert events[0] == "reload"
+    assert events[1][0] == "message"
+    assert events[1][2]["kind"] == "warning"
+    assert "latest record has been loaded" in events[1][1][2]
+    assert "refresh-related" not in events
+
+
+def test_workflow_status_failure_reports_unconfirmed_when_reload_fails(monkeypatch):
+    events = []
+    page = MissionaryDetailPage.__new__(MissionaryDetailPage)
+    page.current_missionary = SimpleNamespace(id=7)
+    page.workflow_service = SimpleNamespace(
+        update_workflow_status=lambda *_args: (_ for _ in ()).throw(
+            RuntimeError("server failed")
+        )
+    )
+
+    def reload_missionary(*, on_success=None, on_error=None):
+        events.append("reload")
+        on_error(RuntimeError("reload failed"))
+        return True
+
+    page._reload_missionary = reload_missionary
+    page._refresh_stage_related_pages = lambda: events.append("refresh-related")
+
+    class AcceptedDialog:
+        def __init__(self, parent):
+            assert parent is page
+
+        def exec(self):
+            return QDialog.Accepted
+
+        def selected_status(self):
+            return "COMPLETED"
+
+    monkeypatch.setattr(detail_module, "WorkflowStatusDialog", AcceptedDialog)
+    monkeypatch.setattr(
+        detail_module,
+        "show_message",
+        lambda *args, **kwargs: events.append(("message", args, kwargs)),
+    )
+
+    page.change_workflow_status(11)
+
+    assert events[0] == "reload"
+    assert events[1][0] == "message"
+    assert events[1][2]["kind"] == "critical"
+    assert "Restore the connection" in events[1][1][2]
+    assert "refresh-related" not in events
+
+
+def test_workflow_status_success_refreshes_after_server_confirmation(monkeypatch):
+    events = []
+    page = MissionaryDetailPage.__new__(MissionaryDetailPage)
+    page.current_missionary = SimpleNamespace(id=7)
+    page.workflow_service = SimpleNamespace(
+        update_workflow_status=lambda *_args: {
+            "workflow_status": "COMPLETED",
+            "current_stage": "PRORROGA",
+        }
+    )
+    page._reload_missionary = lambda: events.append("reload")
+    page._refresh_stage_related_pages = lambda: events.append("refresh-related")
+
+    class AcceptedDialog:
+        def __init__(self, parent):
+            assert parent is page
+
+        def exec(self):
+            return QDialog.Accepted
+
+        def selected_status(self):
+            return "COMPLETED"
+
+    monkeypatch.setattr(detail_module, "WorkflowStatusDialog", AcceptedDialog)
+
+    page.change_workflow_status(11)
+
+    assert events == ["reload", "refresh-related"]
+
+
 def test_stage_advance_refresh_reloads_detail_and_related_pages(monkeypatch):
     page = MissionaryDetailPage.__new__(MissionaryDetailPage)
     page.current_missionary = SimpleNamespace(id=7)
@@ -104,6 +221,43 @@ def test_stage_advance_refresh_reloads_detail_and_related_pages(monkeypatch):
 
     assert page.reload_count == 1
     assert page.related_refresh_count == 1
+
+
+def test_document_upload_refreshes_advance_ready_banner():
+    page = MissionaryDetailPage.__new__(MissionaryDetailPage)
+    page.current_missionary = SimpleNamespace(id=7)
+    existing_document = SimpleNamespace(id=10, document_type="PASSPORT")
+    uploaded_document = SimpleNamespace(id=11, document_type="BIRTH_CERTIFICATE")
+    workflows = [SimpleNamespace(stage_name="INTERPOL", status="IN PROGRESS")]
+    page._workflow_records = workflows
+    page._document_records = {existing_document.id: existing_document}
+    page.document_service = SimpleNamespace(
+        get_document_by_id=lambda document_id: (
+            uploaded_document if document_id == uploaded_document.id else None
+        )
+    )
+    refreshed = {}
+    page.load_documents = lambda documents: refreshed.setdefault(
+        "documents", list(documents)
+    )
+    page.load_missing_documents = lambda documents: refreshed.setdefault(
+        "missing", list(documents)
+    )
+    page._update_advance_banner = lambda **kwargs: refreshed.update(
+        banner=list(kwargs["documents"]),
+        banner_workflows=list(kwargs["workflows"]),
+    )
+
+    page._refresh_after_document_upload(7, uploaded_document.id)
+
+    expected = [existing_document, uploaded_document]
+    assert refreshed == {
+        "documents": expected,
+        "missing": expected,
+        "banner": expected,
+        "banner_workflows": workflows,
+    }
+    assert page._upload_detail_reload_seen is True
 
 
 def test_save_dates_refreshes_missionaries_table(monkeypatch):

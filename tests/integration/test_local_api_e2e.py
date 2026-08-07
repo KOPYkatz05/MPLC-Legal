@@ -63,6 +63,22 @@ def test_authenticated_document_round_trip(tmp_path):
         })
         assert created.status_code == 201, created.text
         missionary = created.json()
+        workflows = client.post(
+            '/v1/rpc/workflows/get_workflows',
+            headers=headers,
+            json={'args': [missionary['id']], 'kwargs': {}},
+        )
+        assert workflows.status_code == 200, workflows.text
+        first_workflow = workflows.json()['result'][0]['value']
+        stage_update = client.post(
+            '/v1/rpc/workflows/update_workflow_status',
+            headers=headers,
+            json={'args': [first_workflow['id'], 'COMPLETED'], 'kwargs': {}},
+        )
+        assert stage_update.status_code == 200, stage_update.text
+        stage_result = stage_update.json()['result']
+        assert stage_result['workflow_status'] == 'COMPLETED'
+        assert stage_result['current_stage'] == 'CARNET DE EXTRANJERIA'
         uploaded = client.post(
             '/v1/documents/upload',
             headers=headers,
@@ -81,6 +97,12 @@ def test_authenticated_document_round_trip(tmp_path):
         )
         assert content.status_code == 200, content.text
         assert content.content == b'%PDF-test'
+        Path(document['file_path']).unlink()
+        missing = client.get(
+            f"/v1/documents/{document['id']}/content", headers=headers
+        )
+        assert missing.status_code == 404, missing.text
+        assert missing.json()['detail']['code'] == 'missing'
         updates = client.post(
             f"/v1/documents/{document['id']}/apply-updates",
             headers=headers,

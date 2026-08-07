@@ -76,6 +76,32 @@ def test_download_404_does_not_mark_the_server_unavailable(monkeypatch):
     assert not destination.exists()
 
 
+def test_download_preserves_structured_storage_error(monkeypatch):
+    destination = Path("test-download-cloud-document.pdf")
+    destination.unlink(missing_ok=True)
+    client = MissionLegalApiClient(
+        "https://mission-server.test",
+        credential_path="unused-device.json",
+        transport=httpx.MockTransport(
+            lambda _request: httpx.Response(
+                503, json={"detail": {"code": "cloud_unavailable"}}
+            )
+        ),
+    )
+    monkeypatch.setattr(client, "_headers", lambda: {})
+    unavailable_reports = []
+    monkeypatch.setattr(
+        client, "_report_unavailable", lambda detail: unavailable_reports.append(detail)
+    )
+
+    with pytest.raises(ApiUnavailableError) as raised:
+        client.download("/v1/documents/882/content", destination)
+
+    assert raised.value.status_code == 503
+    assert raised.value.code == "cloud_unavailable"
+    assert unavailable_reports == []
+
+
 def test_close_defers_transport_shutdown_until_concurrent_calls_finish():
     both_started = threading.Event()
     release = threading.Event()

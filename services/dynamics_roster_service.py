@@ -22,6 +22,10 @@ from database.models.missionary import DynamicsRosterImport, Missionary
 from database.models.secretary_work import SecretaryTask
 from services.onedrive_service import OneDriveService
 from services.workflow_service import WorkflowService
+from services.document_storage_service import (
+    commit_with_folder_rollback,
+    move_folder_and_rewrite_paths,
+)
 
 
 CENTRAL_MISSION = "Perú Lima Central Mission (2010429)"
@@ -422,15 +426,20 @@ class DynamicsRosterService:
 
         for missionary_id, folder_path in restored_folders:
             try:
-                destination = OneDriveService().restore_missionary_folder(
-                    folder_path
-                )
                 restore_session = SessionLocal()
+                folder_move = None
                 try:
                     missionary = restore_session.get(Missionary, missionary_id)
                     if missionary is not None:
-                        missionary.folder_path = str(destination)
-                        restore_session.commit()
+                        # Use the recorded source path because the preceding roster
+                        # transaction intentionally does not move files.
+                        missionary.folder_path = folder_path
+                        folder_move = move_folder_and_rewrite_paths(
+                            restore_session,
+                            missionary,
+                            OneDriveService().restore_missionary_folder,
+                        )
+                        commit_with_folder_rollback(restore_session, folder_move)
                 finally:
                     restore_session.close()
             except Exception:

@@ -67,7 +67,10 @@ def connection_configuration_diagnostics():
 
 
 class ApiUnavailableError(RuntimeError):
-    pass
+    def __init__(self, message, *, status_code=None, code=None):
+        super().__init__(message)
+        self.status_code = status_code
+        self.code = code
 
 
 class ApiAuthenticationError(RuntimeError):
@@ -816,7 +819,16 @@ class MissionLegalApiClient:
             # reachable. Let the caller describe that resource-level error
             # without opening the application-wide server recovery dialog.
             temporary.unlink(missing_ok=True)
-            raise ApiUnavailableError(str(exc)) from exc
+            detail = None
+            try:
+                payload = exc.response.json()
+                detail = payload.get("detail") if isinstance(payload, dict) else None
+            except (ValueError, TypeError):
+                pass
+            code = detail.get("code") if isinstance(detail, dict) else None
+            raise ApiUnavailableError(
+                str(exc), status_code=exc.response.status_code, code=code
+            ) from exc
         except (httpx.RequestError, OSError) as exc:
             temporary.unlink(missing_ok=True)
             self._report_unavailable(exc)

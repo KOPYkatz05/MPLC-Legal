@@ -164,31 +164,10 @@ class LiquidProgressBar(QWidget):
         painter.setClipPath(clip)
 
         leading_edge = track.left() + (fraction * track.width())
-        amplitude = min(7.5, track.height() * 0.28)
+        amplitude = min(3.0, track.height() * 0.11)
         wave_edge = max(
             track.left() + amplitude,
             min(track.right() - amplitude, leading_edge),
-        )
-
-        base_fill = QPainterPath()
-        base_fill.addRect(
-            QRectF(
-                track.left(),
-                track.top(),
-                max(0.0, leading_edge - track.left()),
-                track.height(),
-            )
-        )
-        painter.fillPath(base_fill, QColor("#27A7A4"))
-
-        wave_band = QPainterPath()
-        wave_band.addRect(
-            QRectF(
-                wave_edge - (amplitude * 1.35),
-                track.top(),
-                amplitude * 2.7,
-                track.height(),
-            )
         )
 
         back_wave = self._wave_path(
@@ -197,8 +176,14 @@ class LiquidProgressBar(QWidget):
             amplitude,
             self._back_wave_offset + 1.35,
         )
+        if fraction >= 1.0:
+            base_fill = QPainterPath()
+            base_fill.addRect(track)
+            painter.fillPath(base_fill, QColor("#27A7A4"))
+        else:
+            painter.fillPath(back_wave, QColor("#27A7A4"))
         painter.fillPath(
-            back_wave.intersected(wave_band),
+            back_wave,
             QColor(85, 191, 188, 95),
         )
         front_wave = self._wave_path(
@@ -208,7 +193,7 @@ class LiquidProgressBar(QWidget):
             self._wave_offset,
         )
         painter.fillPath(
-            front_wave.intersected(wave_band),
+            front_wave,
             QColor(39, 167, 164, 135),
         )
         fast_wave = self._wave_path(
@@ -218,7 +203,7 @@ class LiquidProgressBar(QWidget):
             self._fast_wave_offset + 2.55,
         )
         painter.fillPath(
-            fast_wave.intersected(wave_band),
+            fast_wave,
             QColor(22, 145, 149, 90),
         )
         self._paint_floaties(painter, track, leading_edge)

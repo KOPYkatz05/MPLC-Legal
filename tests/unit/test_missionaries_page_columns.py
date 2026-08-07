@@ -811,6 +811,89 @@ def test_create_group_uses_selected_table_rows(monkeypatch, qapp):
         page.close()
 
 
+def test_actions_menu_groups_secondary_commands(monkeypatch, qapp):
+    from ui.pages import missionaries_page as page_module
+
+    menus = []
+
+    class FakeMissionaryService:
+        def get_all_missionaries(self):
+            return []
+
+    class FakeGroupService:
+        def list_groups(self):
+            return []
+
+    class FakeSettingsService:
+        def get_missionaries_table_columns(self, default):
+            return list(default)
+
+        def set_missionaries_table_columns(self, keys):
+            _ = keys
+
+        def get_missionaries_table_column_widths(self):
+            return {}
+
+        def set_missionaries_table_column_widths(self, widths):
+            _ = widths
+
+    class FakeMenu:
+        def __init__(self, title=""):
+            self.title = title
+            self.items = []
+
+        def addAction(self, action):
+            self.items.append(action)
+
+        def addMenu(self, menu):
+            self.items.append(menu)
+
+        def addSeparator(self):
+            self.items.append(None)
+
+        def exec(self, pos):
+            _ = pos
+
+    def make_menu(title="", parent=None):
+        _ = parent
+        menu = FakeMenu(title)
+        menus.append(menu)
+        return menu
+
+    monkeypatch.setattr(page_module, "MissionaryService", FakeMissionaryService)
+    monkeypatch.setattr(page_module, "MissionaryGroupService", FakeGroupService)
+    monkeypatch.setattr(page_module, "create_menu", make_menu)
+    window = SimpleNamespace(
+        settings_service=FakeSettingsService(),
+        detail_page=SimpleNamespace(load_missionary=lambda missionary: None),
+        stack=SimpleNamespace(setCurrentWidget=lambda widget: None),
+    )
+    page = MissionariesPage(window)
+
+    try:
+        page._show_actions_menu()
+
+        root_menu = menus[0]
+        labels = [
+            item.title if isinstance(item, FakeMenu) else item.text()
+            for item in root_menu.items
+            if item is not None
+        ]
+        assert labels == [
+            "Edit Columns",
+            "Fit Columns",
+            "Export",
+            "Import Dynamics Roster",
+            "Create Group",
+            "Batch Actions",
+        ]
+        batch_menu = next(menu for menu in menus if menu.title == "Batch Actions")
+        assert batch_menu.items[0].text() == "Select missionaries to continue"
+        assert not batch_menu.items[0].isEnabled()
+    finally:
+        page.close()
+
+
 def test_batch_actions_archive_selected_rows(monkeypatch, qapp):
     from ui.pages import missionaries_page as page_module
 

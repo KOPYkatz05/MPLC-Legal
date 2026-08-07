@@ -24,13 +24,10 @@ def test_document_type_menu_groups_stage_general_dni_and_other_documents():
     ]
     assert grouped["GENERAL"] == ["TAM", "PASSPORT"]
     assert direct_items == [("DNI", "DNI Copy")]
-    assert grouped["OTHER"] == [
-        "PHOTO",
-        "CONSTANCIA_DE_PRORROGA",
-        "OTHER",
-    ]
+    assert "CONSTANCIA_DE_PRORROGA" in grouped["PRORROGA"]
+    assert grouped["OTHER"] == ["PHOTO", "OTHER"]
     assert "TAM" not in grouped["INTERPOL"]
-    assert "CONSTANCIA_DE_PRORROGA" not in grouped["PRORROGA"]
+    assert "CONSTANCIA_DE_PRORROGA" not in grouped["OTHER"]
 
 
 def test_document_type_menu_includes_conditional_fbi_for_usa_missionary():

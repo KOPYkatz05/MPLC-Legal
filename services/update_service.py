@@ -209,6 +209,59 @@ class ClientUpdateService:
             raise UpdateConfigurationError("Client updates are not configured")
         return self._manager_factory(self.config)
 
+    def check_for_update(self):
+        """Return lightweight release metadata without downloading a package."""
+
+        if not self.enabled:
+            return None
+        if not self._operation_lock.acquire(blocking=False):
+            raise UpdateBusyError("An update operation is already running")
+
+        try:
+            self._set_state("checking")
+            manager = self._manager()
+            pending = manager.get_update_pending_restart()
+            pending_prepared = (
+                _asset_candidate(pending) if pending is not None else None
+            )
+            try:
+                update_info = manager.check_for_updates()
+            except Exception:
+                if pending_prepared is None:
+                    raise
+                logger.warning(
+                    "Could not refresh the update feed; using the update already "
+                    "staged for restart",
+                    exc_info=True,
+                )
+                self._set_state("ready", prepared=pending_prepared)
+                return pending_prepared
+
+            if update_info is None:
+                if pending_prepared is not None:
+                    self._set_state("ready", prepared=pending_prepared)
+                    return pending_prepared
+                self._set_state("idle")
+                return None
+
+            target = update_info.TargetFullRelease
+            if (
+                pending is not None
+                and _asset_version(target) <= _asset_version(pending)
+            ):
+                self._set_state("ready", prepared=pending_prepared)
+                return pending_prepared
+
+            available = _asset_candidate(target)
+            self._set_state("available", prepared=available)
+            return available
+        except Exception as exc:
+            self._set_state("failed", error=exc)
+            logger.exception("Client update check failed")
+            raise
+        finally:
+            self._operation_lock.release()
+
     def check_and_download(self, progress_callback=None):
         if not self.enabled:
             return None

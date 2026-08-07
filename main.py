@@ -168,9 +168,10 @@ def main():
         QGraphicsBlurEffect,
         QMessageBox,
     )
-    from app_identity import APP, ORG
+    from app_identity import APP, ORG, configure_windows_app_identity
     from version import APP_VERSION
 
+    configure_windows_app_identity()
     QCoreApplication.setOrganizationName(ORG)
     QCoreApplication.setApplicationName(APP)
     QCoreApplication.setApplicationVersion(APP_VERSION)
@@ -180,7 +181,7 @@ def main():
         QIcon(
             str(
                 resource_path(
-                    "assets", "icons", "mission_legal", "mission_legal_icon.png"
+                    "assets", "icons", "mission_legal", "mission_legal_icon.ico"
                 )
             )
         )
@@ -352,6 +353,7 @@ def main():
     install_window_diagnostics(app)
 
     window = MainWindow()
+    window.setWindowIcon(app.windowIcon())
     startup_splash.advance_to(90)
 
     if api_client is not None:

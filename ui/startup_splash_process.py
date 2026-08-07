@@ -8,6 +8,7 @@ import uuid
 from pathlib import Path
 
 from PySide6.QtCore import QEventLoop, QObject, QProcess, QTimer, Signal
+from PySide6.QtGui import QIcon
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from PySide6.QtWidgets import QApplication
 
@@ -194,9 +195,22 @@ class StartupSplashProcess(QObject):
 
 def run_splash_child(server_name: str) -> int:
     """Run the splash window and consume parent commands over a local socket."""
+    from app_identity import configure_windows_app_identity
     from ui.dialogs.startup_splash import StartupSplash
+    from utils.runtime_paths import resource_path
+
+    configure_windows_app_identity()
 
     app = QApplication(sys.argv)
+    app.setWindowIcon(
+        QIcon(
+            str(
+                resource_path(
+                    "assets", "icons", "mission_legal", "mission_legal_icon.ico"
+                )
+            )
+        )
+    )
     app.setQuitOnLastWindowClosed(True)
     socket = QLocalSocket()
     socket.connectToServer(server_name)

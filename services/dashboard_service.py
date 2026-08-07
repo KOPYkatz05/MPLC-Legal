@@ -71,6 +71,11 @@ class DashboardService(RemoteServiceMixin):
                 missionaries,
                 today,
             )
+            cancelaciones = self._cancelaciones(
+                session,
+                missionaries,
+                today,
+            )
             attention_items = self.notification_feed_service.build_feed(
                 today=today
             )
@@ -187,6 +192,7 @@ class DashboardService(RemoteServiceMixin):
                     )
                 ],
                 "residency_expirations": residency_expirations,
+                "cancelaciones": cancelaciones,
             }
 
         except Exception:
@@ -209,6 +215,7 @@ class DashboardService(RemoteServiceMixin):
                 "today_appointments": [],
                 "today_tasks": [],
                 "residency_expirations": [],
+                "cancelaciones": [],
             }
 
         finally:
@@ -221,6 +228,10 @@ class DashboardService(RemoteServiceMixin):
             for missionary in missionaries
             if self._missionary_is_actionable(missionary)
             and missionary.residency_expiration is not None
+            and (
+                missionary.release_date is None
+                or missionary.release_date > today
+            )
             and today <= missionary.residency_expiration <= window_end
         ]
         if not eligible:
@@ -259,6 +270,63 @@ class DashboardService(RemoteServiceMixin):
         return sorted(
             items,
             key=lambda item: (item["expiration_date"], item["name"].casefold()),
+        )
+
+    def _cancelaciones(self, session, missionaries, today):
+        window_end = today + timedelta(days=30)
+        eligible = [
+            missionary
+            for missionary in missionaries
+            if (
+                getattr(missionary, "status", "ACTIVE") == "ACTIVE"
+                and (
+                    getattr(missionary, "tracking_profile", "LEGAL") or "LEGAL"
+                ) != "PERUVIAN_DNI"
+            )
+            and missionary.release_date is not None
+            and missionary.release_date <= window_end
+        ]
+        if not eligible:
+            return []
+
+        missionary_ids = [missionary.id for missionary in eligible]
+        document_rows = (
+            session.query(Document.missionary_id, Document.document_type)
+            .filter(
+                Document.missionary_id.in_(missionary_ids),
+                Document.document_type.in_({
+                    "PAGO_CANCELACION_DE_RESIDENCIA",
+                    "CONSTANCIA_CANCELACION",
+                }),
+                Document.status == "ACTIVE",
+            )
+            .all()
+        )
+        documents_by_missionary = {}
+        for missionary_id, document_type in document_rows:
+            documents_by_missionary.setdefault(missionary_id, set()).add(
+                document_type
+            )
+
+        items = []
+        for missionary in eligible:
+            document_types = documents_by_missionary.get(missionary.id, set())
+            has_pago = "PAGO_CANCELACION_DE_RESIDENCIA" in document_types
+            papers_submitted = "CONSTANCIA_CANCELACION" in document_types
+            if has_pago and papers_submitted:
+                continue
+            release = missionary.release_date
+            items.append({
+                "missionary_id": missionary.id,
+                "name": missionary.full_name,
+                "release_date": release,
+                "days_left": (release - today).days,
+                "has_pago": has_pago,
+                "papers_submitted": papers_submitted,
+            })
+        return sorted(
+            items,
+            key=lambda item: (item["release_date"], item["name"].casefold()),
         )
 
     def _recommended_tasks(self, session, today):

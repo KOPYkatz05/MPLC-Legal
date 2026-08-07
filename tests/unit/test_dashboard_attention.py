@@ -259,7 +259,93 @@ def test_residency_card_tracks_next_90_days_and_prorroga_progress(
     assert items[0]["papers_started"] is True
 
 
-def test_dashboard_renders_attention_section(monkeypatch, qapp):
+def test_residency_card_excludes_missionary_on_release_date(dashboard_env):
+    today = date.today()
+    session = dashboard_env()
+    try:
+        _missionary(
+            session,
+            full_name="Released Resident",
+            release_date=today,
+            residency_expiration=today + timedelta(days=20),
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    items = DashboardService().get_summary()["residency_expirations"]
+
+    assert items == []
+
+
+def test_cancelaciones_tracks_30_days_before_release_until_both_documents(
+    dashboard_env,
+):
+    today = date.today()
+    session = dashboard_env()
+    try:
+        due = _missionary(
+            session,
+            full_name="Cancellation Due",
+            release_date=today + timedelta(days=30),
+        )
+        overdue = _missionary(
+            session,
+            missionary_code="10002",
+            full_name="Cancellation Overdue",
+            release_date=today - timedelta(days=5),
+            dynamics_status="Released",
+        )
+        complete = _missionary(
+            session,
+            missionary_code="10003",
+            full_name="Cancellation Complete",
+            release_date=today - timedelta(days=10),
+        )
+        _missionary(
+            session,
+            missionary_code="10004",
+            full_name="Cancellation Later",
+            release_date=today + timedelta(days=31),
+        )
+        session.add(Document(
+            missionary_id=due.id,
+            document_type="PAGO_CANCELACION_DE_RESIDENCIA",
+            workflow_stage="CANCELACION",
+            file_name="pago.pdf",
+            file_path="pago.pdf",
+            status="ACTIVE",
+        ))
+        for document_type in (
+            "PAGO_CANCELACION_DE_RESIDENCIA",
+            "CONSTANCIA_CANCELACION",
+        ):
+            session.add(Document(
+                missionary_id=complete.id,
+                document_type=document_type,
+                workflow_stage="CANCELACION",
+                file_name=f"{document_type}.pdf",
+                file_path=f"{document_type}.pdf",
+                status="ACTIVE",
+            ))
+        session.commit()
+    finally:
+        session.close()
+
+    items = DashboardService().get_summary()["cancelaciones"]
+
+    assert [item["name"] for item in items] == [
+        "Cancellation Overdue",
+        "Cancellation Due",
+    ]
+    assert items[0]["days_left"] == -5
+    assert items[0]["has_pago"] is False
+    assert items[0]["papers_submitted"] is False
+    assert items[1]["has_pago"] is True
+    assert items[1]["papers_submitted"] is False
+
+
+def test_dashboard_does_not_render_todays_priorities(monkeypatch, qapp):
     _ = qapp
 
     class FakeDashboardService:
@@ -299,8 +385,8 @@ def test_dashboard_renders_attention_section(monkeypatch, qapp):
         card = page.findChild(dashboard_page.QFrame, "DashboardPrioritiesCard")
         row = page.findChild(dashboard_page.QFrame, "DashboardPriorityRow")
 
-        assert card is not None
-        assert row is not None
+        assert card is None
+        assert row is None
     finally:
         page.close()
 
@@ -652,24 +738,12 @@ def test_simplified_dashboard_limits_and_expands_priorities(monkeypatch, qapp):
 
     page = DashboardPage()
     try:
-        priorities_card = next(
-            page.content_layout.itemAt(index).widget()
-            for index in range(page.content_layout.count())
-            if page.content_layout.itemAt(index).widget() is not None
-            and page.content_layout.itemAt(index).widget().objectName()
-            == "DashboardPrioritiesCard"
-        )
-        assert len(priorities_card.findChildren(dashboard_page.QFrame, "DashboardPriorityRow")) == 6
-        page._toggle_priorities()
-        qapp.processEvents()
-        priorities_card = next(
-            page.content_layout.itemAt(index).widget()
-            for index in range(page.content_layout.count())
-            if page.content_layout.itemAt(index).widget() is not None
-            and page.content_layout.itemAt(index).widget().objectName()
-            == "DashboardPrioritiesCard"
-        )
-        assert len(priorities_card.findChildren(dashboard_page.QFrame, "DashboardPriorityRow")) == 8
+        assert page.findChild(
+            dashboard_page.QFrame, "DashboardPrioritiesCard"
+        ) is None
+        assert page.findChild(
+            dashboard_page.QFrame, "DashboardPriorityRow"
+        ) is None
         assert page.findChild(dashboard_page.QFrame, "DashboardResidencyCard") is not None
         assert page.findChild(dashboard_page.QFrame, "DashboardUpcomingCard") is not None
         exceptions_row = next(

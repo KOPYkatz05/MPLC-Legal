@@ -49,6 +49,26 @@ from version import (
 logger = logging.getLogger(__name__)
 
 
+def _document_storage_http_error(error):
+    from services.document_storage_service import (
+        AMBIGUOUS,
+        CLOUD_UNAVAILABLE,
+        MISSING,
+        UNREADABLE,
+    )
+
+    status_code = {
+        MISSING: 404,
+        AMBIGUOUS: 409,
+        CLOUD_UNAVAILABLE: 503,
+        UNREADABLE: 503,
+    }.get(error.code, 422)
+    return HTTPException(
+        status_code=status_code,
+        detail={"code": error.code, "document_id": error.document_id},
+    )
+
+
 def _compatibility_payload():
     return {
         "api_version": API_VERSION,
@@ -646,25 +666,41 @@ def create_app(
 
     @app.get("/v1/documents/{document_id}/content")
     def document_content(document_id: int, _device=Depends(authenticated_device)):
-        from services.document_service import DocumentService
+        from services.document_storage_service import (
+            DocumentStorageError,
+            resolve_document_path,
+        )
 
-        row = DocumentService().get_document_by_id(document_id)
-        path = Path(row.file_path) if row and row.file_path else None
-        if path is None or not path.is_file():
-            raise HTTPException(status_code=404, detail="Document file not found")
+        try:
+            path = resolve_document_path(document_id)
+        except DocumentStorageError as error:
+            raise _document_storage_http_error(error) from error
         return FileResponse(path, filename=path.name)
 
     @app.get("/v1/documents/{document_id}/thumbnail")
     def document_thumbnail(document_id: int, _device=Depends(authenticated_device)):
         from services.document_thumbnail_service import DocumentThumbnailService
+        from services.document_storage_service import (
+            DocumentStorageError,
+            UNREADABLE,
+            resolve_document_path,
+        )
         from services.document_service import DocumentService
 
-        row = DocumentService().get_document_by_id(document_id)
-        if row is None:
-            raise HTTPException(status_code=404, detail="Document not found")
-        thumbnail = DocumentThumbnailService().get_thumbnail(row)
-        if thumbnail is None:
-            raise HTTPException(status_code=404, detail="Document thumbnail unavailable")
+        try:
+            path = resolve_document_path(document_id)
+            row = DocumentService().get_document_by_id(document_id)
+            row.file_path = str(path)
+            thumbnail = DocumentThumbnailService().get_thumbnail(row)
+            if thumbnail is None:
+                raise DocumentStorageError(UNREADABLE, document_id)
+        except DocumentStorageError as error:
+            raise _document_storage_http_error(error) from error
+        except Exception as error:
+            logger.exception("Document thumbnail rendering failed for %s", document_id)
+            raise _document_storage_http_error(
+                DocumentStorageError(UNREADABLE, document_id)
+            ) from error
         return FileResponse(thumbnail, media_type="image/jpeg")
 
     @app.post("/v1/documents/upload", status_code=status.HTTP_201_CREATED)

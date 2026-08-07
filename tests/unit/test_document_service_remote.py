@@ -1,9 +1,17 @@
 from pathlib import Path
+from uuid import uuid4
 
 import pytest
 
 from services import document_service as module
 from services.api_client import ApiUnavailableError, RemoteRecord
+
+
+@pytest.fixture
+def tmp_path():
+    path = Path("tmp_document_remote_tests") / uuid4().hex
+    path.mkdir(parents=True)
+    return path.resolve()
 
 
 class FakeDocumentClient:
@@ -58,7 +66,7 @@ def test_remote_document_listing_keeps_server_metadata_until_requested(monkeypat
     assert client.download_calls == []
 
 
-def test_remote_document_is_downloaded_once_when_requested(monkeypatch, tmp_path):
+def test_remote_document_is_revalidated_when_requested(monkeypatch, tmp_path):
     client = FakeDocumentClient()
     monkeypatch.setattr(
         module.MissionLegalApiClient,
@@ -73,7 +81,10 @@ def test_remote_document_is_downloaded_once_when_requested(monkeypatch, tmp_path
     assert cached.read_bytes() == b"document"
     assert cached.parent == tmp_path / "DocumentCache" / "9"
     assert service.ensure_local_copy(document) == cached
-    assert client.download_calls == ["/v1/documents/3/content"]
+    assert client.download_calls == [
+        "/v1/documents/3/content",
+        "/v1/documents/3/content",
+    ]
 
 
 def test_remote_thumbnail_is_downloaded_without_full_document(monkeypatch, tmp_path):
@@ -191,3 +202,26 @@ def test_missing_remote_document_is_reported_as_server_unavailable(monkeypatch):
 
     with pytest.raises(module.DocumentFileUnavailableError):
         service.ensure_local_copy(document)
+
+
+def test_structured_remote_storage_error_preserves_reason(monkeypatch):
+    class CloudDocumentClient(FakeDocumentClient):
+        def download(self, path, destination):
+            raise ApiUnavailableError(
+                "Service Unavailable", status_code=503, code="cloud_unavailable"
+            )
+
+    monkeypatch.setattr(
+        module.MissionLegalApiClient,
+        "from_environment",
+        classmethod(lambda cls: CloudDocumentClient()),
+    )
+    monkeypatch.setattr(module, "get_client_data_dir", lambda: Path("cache-root"))
+    document = RemoteRecord(
+        {"id": 3, "missionary_id": 9, "file_path": "C:/server/passport.pdf"}
+    )
+
+    with pytest.raises(module.DocumentFileUnavailableError) as raised:
+        module.DocumentService().ensure_local_copy(document)
+
+    assert raised.value.reason == "cloud_unavailable"

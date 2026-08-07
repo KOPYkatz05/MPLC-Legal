@@ -8,7 +8,11 @@ from PySide6.QtWidgets import QApplication, QMessageBox, QProgressDialog
 from packaging.version import InvalidVersion, Version
 
 from database.runtime import get_client_data_dir
-from services.update_service import ClientUpdateService, installed_binary_dir
+from services.update_service import (
+    ClientUpdateService,
+    PreparedUpdate,
+    installed_binary_dir,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -246,9 +250,10 @@ class _UpdateWorkerProcess(QObject):
     finished = Signal(object)
     failed = Signal(str)
 
-    def __init__(self, service, parent=None):
+    def __init__(self, service, parent=None, *, check_only=False):
         super().__init__(parent)
         self.service = service
+        self.check_only = bool(check_only)
         self._process = None
         self._timer = QTimer(self)
         self._timer.setInterval(200)
@@ -293,6 +298,8 @@ class _UpdateWorkerProcess(QObject):
                 "--state-file",
                 str(self._state_path),
             ]
+        if self.check_only:
+            arguments.append("--check-only")
 
         process.finished.connect(self._process_finished)
         process.errorOccurred.connect(self._process_error)
@@ -348,6 +355,15 @@ class _UpdateWorkerProcess(QObject):
                         "The staged update version did not match the worker result."
                     )
                 self.finished.emit(prepared)
+                return
+            if exit_code == 0 and status == "available":
+                self.finished.emit(
+                    PreparedUpdate(
+                        version=str(payload.get("version") or ""),
+                        notes_markdown=str(payload.get("notes_markdown") or ""),
+                        size=int(payload.get("size") or 0),
+                    )
+                )
                 return
             detail = str(payload.get("error") or "").strip()
             if not detail:
@@ -433,7 +449,7 @@ class ClientUpdateCoordinator(QObject):
 
         self._manual = bool(manual)
         self.status_changed.emit("checking")
-        worker = _UpdateWorkerProcess(self.service, self)
+        worker = _UpdateWorkerProcess(self.service, self, check_only=True)
         worker.progress.connect(self._on_progress)
         worker.finished.connect(self._on_finished)
         worker.failed.connect(self._on_failed)
@@ -463,9 +479,14 @@ class ClientUpdateCoordinator(QObject):
                 )
             return
 
-        self.status_changed.emit("ready")
-        self.update_ready.emit(prepared.version)
-        QTimer.singleShot(0, lambda: self._offer_restart(prepared))
+        if prepared._native is not None:
+            self.status_changed.emit("ready")
+            self.update_ready.emit(prepared.version)
+            QTimer.singleShot(0, lambda: self._offer_restart(prepared))
+            return
+
+        self.status_changed.emit("available")
+        QTimer.singleShot(0, lambda: self._offer_download(prepared))
 
     @Slot(str)
     def _on_failed(self, detail):
@@ -485,6 +506,45 @@ class ClientUpdateCoordinator(QObject):
         self._worker = None
         if worker is not None:
             worker.deleteLater()
+
+    def _offer_download(self, available):
+        if QApplication.activeModalWidget() is not None:
+            QTimer.singleShot(1500, lambda: self._offer_download(available))
+            return
+
+        dialog = QMessageBox(self.main_window)
+        dialog.setIcon(QMessageBox.Information)
+        dialog.setWindowTitle("Mission Legal Update Available")
+        dialog.setText(f"Mission Legal {available.version} is available.")
+        dialog.setInformativeText("Would you like to download this update now?")
+        if available.notes_markdown:
+            dialog.setDetailedText(available.notes_markdown[:12000])
+        download = dialog.addButton("Download update", QMessageBox.AcceptRole)
+        dialog.addButton("Later", QMessageBox.RejectRole)
+        dialog.exec()
+        if dialog.clickedButton() is not download:
+            self.status_changed.emit("available")
+            return
+
+        self.status_changed.emit("downloading")
+        worker = _UpdateWorkerProcess(self.service, self)
+        worker.progress.connect(self._on_progress)
+        worker.finished.connect(self._on_download_finished)
+        worker.failed.connect(self._on_failed)
+        self._worker = worker
+        if not worker.start() and self._worker is worker:
+            self._worker = None
+            worker.deleteLater()
+
+    @Slot(object)
+    def _on_download_finished(self, prepared):
+        self._clear_worker()
+        if prepared is None:
+            self.status_changed.emit("current")
+            return
+        self.status_changed.emit("ready")
+        self.update_ready.emit(prepared.version)
+        QTimer.singleShot(0, lambda: self._offer_restart(prepared))
 
     @Slot()
     def shutdown(self):

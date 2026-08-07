@@ -18,6 +18,18 @@ def run_client_bootstrap():
         return False
 
     import velopack
+    from app_identity import refresh_windows_shell_icon_cache
 
-    velopack.App().set_auto_apply_on_startup(False).run()
+    def refresh_updated_icon(*_args):
+        refresh_windows_shell_icon_cache()
+
+    (
+        velopack.App()
+        .set_auto_apply_on_startup(False)
+        .on_after_install_fast_callback(refresh_updated_icon)
+        .on_after_update_fast_callback(refresh_updated_icon)
+        .on_restarted(refresh_updated_icon)
+        .on_first_run(refresh_updated_icon)
+        .run()
+    )
     return True

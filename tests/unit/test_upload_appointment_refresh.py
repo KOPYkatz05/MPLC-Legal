@@ -527,12 +527,12 @@ def test_render_ocr_fields_preserves_values_during_initial_population(qapp):
         "passport_expiration": "2032-05-06",
     }
     assert dialog.field_edits["passport_number"].text() == "OCR123456"
-    assert dialog.field_edits["full_name"].text() == "OCR PASSPORT NAME"
+    assert "full_name" not in dialog.field_edits
     date_value = dialog._date_picker_value(dialog.date_edits["date_of_birth"])
     assert date_value.toString("yyyy-MM-dd") == "2002-03-04"
 
-    dialog.field_edits["full_name"].setText("MANUALLY CONFIRMED")
-    assert item.confirmed_data["full_name"] == "MANUALLY CONFIRMED"
+    dialog.field_edits["passport_number"].setText("MANUALLYCONFIRMED")
+    assert item.confirmed_data["full_name"] == "OCR PASSPORT NAME"
 
     dialog.close()
     parent.close()

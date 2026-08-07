@@ -42,6 +42,22 @@ def test_frozen_client_bootstrap_runs_velopack_once_before_returning(monkeypatch
             events.append(("auto-apply", enabled))
             return self
 
+        def on_after_install_fast_callback(self, callback):
+            events.append(("after-install", callback))
+            return self
+
+        def on_after_update_fast_callback(self, callback):
+            events.append(("after-update", callback))
+            return self
+
+        def on_restarted(self, callback):
+            events.append(("restarted", callback))
+            return self
+
+        def on_first_run(self, callback):
+            events.append(("first-run", callback))
+            return self
+
         def run(self):
             events.append(("run", None))
 
@@ -54,7 +70,14 @@ def test_frozen_client_bootstrap_runs_velopack_once_before_returning(monkeypatch
     )
 
     assert run_client_bootstrap() is True
-    assert events == [("auto-apply", False), ("run", None)]
+    assert [event[0] for event in events] == [
+        "auto-apply",
+        "after-install",
+        "after-update",
+        "restarted",
+        "first-run",
+        "run",
+    ]
 
 
 def test_source_client_bootstrap_does_not_import_velopack(monkeypatch):

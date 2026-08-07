@@ -41,6 +41,12 @@ from services.document_service import (
     DocumentFileUnavailableError,
     DocumentService,
 )
+from services.document_storage_service import (
+    AMBIGUOUS,
+    CLOUD_UNAVAILABLE,
+    MISSING,
+    UNREADABLE,
+)
 from services.missionary_service import MissionaryService
 from services.settings_service import SettingsService
 from services.secretary_work_service import SecretaryWorkService
@@ -436,6 +442,7 @@ class MissionaryDetailPage(QWidget):
         self._document_loaders = {}
         self._document_thumbnail_loaders = {}
         self._pending_document_actions = set()
+        self._workflow_records = []
         self._document_records = {}
         self._document_widgets = {}
         self._detail_cache = {}
@@ -523,7 +530,7 @@ class MissionaryDetailPage(QWidget):
             on_not_found=on_not_found,
         )
 
-    def request_refresh(self, force=False):
+    def request_refresh(self, force=False, on_success=None, on_error=None):
         missionary_id = self._requested_missionary_id
         if missionary_id is None:
             missionary_id = getattr(
@@ -536,6 +543,8 @@ class MissionaryDetailPage(QWidget):
         return self._request_detail_snapshot(
             missionary_id,
             force=force,
+            on_applied=on_success,
+            on_load_error=on_error,
         )
 
     def _request_detail_snapshot(
@@ -544,6 +553,8 @@ class MissionaryDetailPage(QWidget):
         *,
         force=False,
         on_not_found=None,
+        on_applied=None,
+        on_load_error=None,
     ):
         cached = self._detail_cache.get(missionary_id)
         cache_is_fresh = (
@@ -556,13 +567,22 @@ class MissionaryDetailPage(QWidget):
 
         self._set_detail_loading(True)
         if not self._background_loads_enabled:
-            snapshot = self.client_view_service.get_missionary_detail_snapshot(
-                missionary_id
-            )
+            try:
+                snapshot = self.client_view_service.get_missionary_detail_snapshot(
+                    missionary_id
+                )
+            except Exception as error:
+                self._detail_load_failed(error)
+                if callable(on_load_error):
+                    on_load_error(error)
+                    return True
+                raise
             self._detail_snapshot_finished(
                 missionary_id,
                 snapshot,
                 on_not_found,
+                on_applied,
+                on_load_error,
             )
             return True
         if self._data_loader.busy and not force:
@@ -577,8 +597,13 @@ class MissionaryDetailPage(QWidget):
                 missionary_id,
                 snapshot,
                 on_not_found,
+                on_applied,
+                on_load_error,
             ),
-            on_error=self._detail_load_failed,
+            on_error=lambda error: self._detail_snapshot_load_failed(
+                error,
+                on_load_error,
+            ),
         )
         return True
 
@@ -587,6 +612,8 @@ class MissionaryDetailPage(QWidget):
         missionary_id,
         snapshot,
         on_not_found=None,
+        on_applied=None,
+        on_load_error=None,
     ):
         if missionary_id != self._requested_missionary_id:
             return
@@ -594,6 +621,8 @@ class MissionaryDetailPage(QWidget):
             self._set_detail_loading(False)
             if callable(on_not_found):
                 on_not_found()
+            if callable(on_load_error):
+                on_load_error(RuntimeError("Missionary record was not found"))
             return
         current = getattr(self, "current_missionary", None)
         if (
@@ -611,6 +640,8 @@ class MissionaryDetailPage(QWidget):
                 "the form has unsaved changes",
                 missionary_id,
             )
+            if callable(on_applied):
+                on_applied(snapshot, False)
             return
         try:
             self.load_missionary(
@@ -620,11 +651,20 @@ class MissionaryDetailPage(QWidget):
         except Exception as error:
             self._detail_cache.pop(missionary_id, None)
             self._detail_load_failed(error)
+            if callable(on_load_error):
+                on_load_error(error)
             return
         self._detail_cache[missionary_id] = {
             "snapshot": snapshot,
             "loaded_at": time.monotonic(),
         }
+        if callable(on_applied):
+            on_applied(snapshot, True)
+
+    def _detail_snapshot_load_failed(self, error, callback=None):
+        self._detail_load_failed(error)
+        if callable(callback):
+            callback(error)
 
     def _detail_load_failed(self, error):
         logger.error(
@@ -2350,6 +2390,10 @@ class MissionaryDetailPage(QWidget):
         documents.append(document)
         self.load_documents(documents)
         self.load_missing_documents(documents)
+        self._update_advance_banner(
+            workflows=self._workflow_records,
+            documents=documents,
+        )
         self._upload_detail_reload_seen = True
 
     def _refresh_missionaries_table(self, deferred=False):
@@ -3288,7 +3332,13 @@ class MissionaryDetailPage(QWidget):
             self._set_document_loading(doc_id, False)
             logger.error("Document %s could not be loaded: %s", doc_id, error)
             if isinstance(error, DocumentFileUnavailableError):
-                message = tr("missionary_detail_document_server_unavailable")
+                message_key = {
+                    MISSING: "missionary_detail_document_missing",
+                    CLOUD_UNAVAILABLE: "missionary_detail_document_server_unavailable",
+                    AMBIGUOUS: "missionary_detail_document_ambiguous",
+                    UNREADABLE: "missionary_detail_document_unreadable",
+                }.get(error.reason, "missionary_detail_document_download_failed")
+                message = tr(message_key)
             else:
                 message = tr("missionary_detail_document_download_failed")
             show_message(
@@ -3573,6 +3623,7 @@ class MissionaryDetailPage(QWidget):
             if widget is not None:
                 widget.clear()
         self._document_data = []
+        self._workflow_records = []
         if hasattr(self, "advance_banner"):
             self.advance_banner.setVisible(False)
 
@@ -3720,7 +3771,15 @@ class MissionaryDetailPage(QWidget):
         self.workflow_list.clear()
 
         if not hasattr(self, "current_missionary"):
+            self._workflow_records = []
             return
+        if workflows is None:
+            workflows = self.workflow_service.get_workflows(
+                self.current_missionary.id
+            )
+        workflows = list(workflows)
+        self._workflow_records = workflows
+
         if (
             getattr(self.current_missionary, "tracking_profile", "LEGAL")
             == "PERUVIAN_DNI"
@@ -3736,11 +3795,6 @@ class MissionaryDetailPage(QWidget):
             self.workflow_list.addItem(item)
             self.workflow_list.setItemWidget(item, widget)
             return
-
-        if workflows is None:
-            workflows = self.workflow_service.get_workflows(
-                self.current_missionary.id
-            )
 
         workflow_map = {
             wf.stage_name: wf
@@ -4534,9 +4588,43 @@ class MissionaryDetailPage(QWidget):
 
         selected_status = dialog.selected_status()
 
-        self.workflow_service.update_workflow_status(
-            workflow_id, selected_status
-        )
+        try:
+            result = self.workflow_service.update_workflow_status(
+                workflow_id, selected_status
+            )
+            if not result or result.get("workflow_status") != selected_status:
+                raise RuntimeError("Workflow update was not confirmed by the server")
+        except Exception:
+            logger.exception("Failed to update workflow status")
+
+            def reload_succeeded(_snapshot, applied):
+                message_key = (
+                    "missionary_detail_stage_update_unconfirmed_reloaded"
+                    if applied
+                    else "missionary_detail_stage_update_unconfirmed_deferred"
+                )
+                show_message(
+                    self,
+                    tr("missionary_detail_stage_update_failed_title"),
+                    tr(message_key),
+                    kind="warning",
+                )
+
+            def reload_failed(_error):
+                show_message(
+                    self,
+                    tr("missionary_detail_stage_update_failed_title"),
+                    tr("missionary_detail_stage_update_unconfirmed"),
+                    kind="critical",
+                )
+
+            if hasattr(self, "current_missionary") and self._reload_missionary(
+                on_success=reload_succeeded,
+                on_error=reload_failed,
+            ):
+                return
+            reload_failed(None)
+            return
 
         if hasattr(self, "current_missionary"):
             self._reload_missionary()
@@ -4882,15 +4970,30 @@ class MissionaryDetailPage(QWidget):
     # HELPERS
     # ==========================================
 
-    def _reload_missionary(self):
+    def _reload_missionary(self, on_success=None, on_error=None):
+        if callable(on_success) or callable(on_error):
+            missionary_id = getattr(
+                getattr(self, "current_missionary", None),
+                "id",
+                None,
+            )
+            if missionary_id is None:
+                return False
+            return self._request_detail_snapshot(
+                missionary_id,
+                force=True,
+                on_applied=on_success,
+                on_load_error=on_error,
+            )
         if self._background_loads_enabled:
-            self.request_refresh(force=True)
-            return
+            return self.request_refresh(force=True)
         refreshed = self.missionary_service.get_missionary(
             self.current_missionary.id
         )
         if refreshed:
             self.load_missionary(refreshed)
+            return True
+        return False
 
     def format_date(self, date_value):
         if not date_value:

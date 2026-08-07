@@ -35,6 +35,11 @@ from utils.nationalities import normalize_nationality
 from utils.logger import logger
 from utils.passport_numbers import normalize_passport_number
 from services.api_client import MissionLegalApiClient, RemoteRecord, json_value
+from services.document_storage_service import (
+    commit_with_folder_rollback,
+    move_folder_and_rewrite_paths,
+    rollback_folder_move,
+)
 
 
 class MissionaryCodeError(ValueError):
@@ -80,6 +85,7 @@ class MissionaryService:
                 "/v1/missionaries", params={"status_filter": "ACTIVE"}
             )
             return [RemoteRecord(item) for item in payload["items"]]
+        self.workflow_service.reconcile_missionary_stages()
         session = SessionLocal()
 
         try:
@@ -111,6 +117,7 @@ class MissionaryService:
             return RemoteRecord(payload)
         session = SessionLocal()
         try:
+            self.workflow_service.reconcile_missionary_stages([missionary_id])
             return session.query(Missionary).filter_by(id=missionary_id).first()
         finally:
             session.close()
@@ -429,6 +436,7 @@ class MissionaryService:
                 f"/v1/missionaries/{missionary_id}/trash"
             )["trashed"]
         session = SessionLocal()
+        folder_move = None
 
         try:
             missionary = (
@@ -451,21 +459,16 @@ class MissionaryService:
             # ======================================
 
             if missionary.folder_path:
-                destination_folder = (
-                    self.onedrive_service
-                    .trash_missionary_folder(
-                        missionary.folder_path
-                    )
-                )
-
-                missionary.folder_path = str(
-                    destination_folder
+                folder_move = move_folder_and_rewrite_paths(
+                    session,
+                    missionary,
+                    self.onedrive_service.trash_missionary_folder,
                 )
 
                 logger.info(
                     f"Moved missionary folder "
                     f"to trash: "
-                    f"{destination_folder}"
+                    f"{folder_move.destination}"
                 )
 
             # ======================================
@@ -478,7 +481,7 @@ class MissionaryService:
 
             missionary.deleted_at = datetime.now()
 
-            session.commit()
+            commit_with_folder_rollback(session, folder_move)
 
             logger.info(
                 f"Soft deleted missionary: "
@@ -488,6 +491,7 @@ class MissionaryService:
 
         except Exception:
             session.rollback()
+            rollback_folder_move(folder_move)
 
             logger.exception(
                 f"Failed to delete missionary "
@@ -511,6 +515,7 @@ class MissionaryService:
                 json={"reason": archive_reason},
             )["archived"]
         session = SessionLocal()
+        folder_move = None
 
         try:
             missionary = (
@@ -531,14 +536,13 @@ class MissionaryService:
             archive_reason = (archive_reason or "").strip() or None
 
             if missionary.folder_path:
-                destination_folder = (
-                    self.onedrive_service
-                    .archive_missionary_folder(
-                        missionary.folder_path,
-                        group_name=archive_group_name,
-                    )
+                folder_move = move_folder_and_rewrite_paths(
+                    session,
+                    missionary,
+                    lambda path: self.onedrive_service.archive_missionary_folder(
+                        path, group_name=archive_group_name
+                    ),
                 )
-                missionary.folder_path = str(destination_folder)
 
             missionary.status = "ARCHIVED"
 
@@ -552,7 +556,7 @@ class MissionaryService:
                     )
                 )
 
-            session.commit()
+            commit_with_folder_rollback(session, folder_move)
 
             logger.info(
                 f"Archived missionary: "
@@ -562,6 +566,7 @@ class MissionaryService:
 
         except Exception:
             session.rollback()
+            rollback_folder_move(folder_move)
 
             logger.exception(
                 f"Failed to archive missionary "
@@ -708,6 +713,7 @@ class MissionaryService:
                 f"/v1/missionaries/{missionary_id}/restore"
             )["restored"]
         session = SessionLocal()
+        folder_move = None
 
         try:
             missionary = (
@@ -725,16 +731,13 @@ class MissionaryService:
 
             # Move folder back
             if missionary.folder_path:
-                dest = (
-                    self.onedrive_service
-                    .restore_missionary_folder(
-                        missionary.folder_path
-                    )
+                folder_move = move_folder_and_rewrite_paths(
+                    session,
+                    missionary,
+                    self.onedrive_service.restore_missionary_folder,
                 )
 
-                missionary.folder_path = str(dest)
-
-            session.commit()
+            commit_with_folder_rollback(session, folder_move)
 
             logger.info(
                 f"Restored missionary: "
@@ -744,6 +747,7 @@ class MissionaryService:
 
         except Exception:
             session.rollback()
+            rollback_folder_move(folder_move)
 
             logger.exception(
                 "Failed to restore missionary"

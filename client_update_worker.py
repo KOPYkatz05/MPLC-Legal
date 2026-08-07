@@ -28,6 +28,11 @@ def main(argv=None):
         description="Download and stage a Mission Legal client update"
     )
     parser.add_argument("--state-file", required=True)
+    parser.add_argument(
+        "--check-only",
+        action="store_true",
+        help="Check release metadata without downloading the update package",
+    )
     args = parser.parse_args(argv)
     state_path = Path(args.state_file)
 
@@ -46,15 +51,22 @@ def main(argv=None):
                 {"status": "downloading", "progress": int(value)},
             )
 
-        prepared = service.check_and_download(progress)
+        prepared = (
+            service.check_for_update()
+            if args.check_only
+            else service.check_and_download(progress)
+        )
         if prepared is None:
             _write_state(state_path, {"status": "current", "progress": 100})
             return 0
 
+        result_status = "ready"
+        if args.check_only and service.state != "ready":
+            result_status = "available"
         _write_state(
             state_path,
             {
-                "status": "ready",
+                "status": result_status,
                 "progress": 100,
                 "version": prepared.version,
                 "notes_markdown": prepared.notes_markdown,

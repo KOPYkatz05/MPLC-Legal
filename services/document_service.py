@@ -1,7 +1,9 @@
 import json
 import hashlib
+import os
 import shutil
 import time
+from uuid import uuid4
 
 from pathlib import Path
 from database.runtime import get_client_data_dir
@@ -9,6 +11,16 @@ from database.runtime import get_client_data_dir
 from database.db import SessionLocal
 from services.api_client import ApiUnavailableError, MissionLegalApiClient
 from services.remote_service import RemoteServiceMixin
+from services.document_storage_service import (
+    AMBIGUOUS,
+    CLOUD_UNAVAILABLE,
+    MISSING,
+    UNREADABLE,
+    DocumentStorageError,
+    pin_onedrive_file,
+    resolve_document_path,
+    verify_readable,
+)
 
 from database.models.document import (
     Document,
@@ -24,9 +36,10 @@ from services.workflow_validator import (
 class DocumentFileUnavailableError(FileNotFoundError):
     """The document record exists but its file is unavailable on the server."""
 
-    def __init__(self, document_id):
+    def __init__(self, document_id, reason=MISSING):
         super().__init__(f"Document file {document_id} is unavailable on the server.")
         self.document_id = document_id
+        self.reason = reason
 
 
 class DocumentService(RemoteServiceMixin):
@@ -107,10 +120,19 @@ class DocumentService(RemoteServiceMixin):
                 f"{missionary.full_name}"
             )
 
-            shutil.copy2(
-                source_path,
-                destination_path,
+            temporary_path = destination_path.with_name(
+                f".{destination_path.name}.{uuid4().hex}.uploading"
             )
+            try:
+                shutil.copy2(source_path, temporary_path)
+                if temporary_path.stat().st_size <= 0 or verify_readable(temporary_path):
+                    raise OSError("Uploaded document copy is empty or unreadable")
+                os.replace(temporary_path, destination_path)
+                pin_onedrive_file(destination_path)
+            except Exception:
+                temporary_path.unlink(missing_ok=True)
+                destination_path.unlink(missing_ok=True)
+                raise
 
             raw_json = self._serialize_json_field(ocr_raw_data)
             confirmed_json = self._serialize_json_field(ocr_confirmed_data)
@@ -148,6 +170,12 @@ class DocumentService(RemoteServiceMixin):
 
         except Exception:
             session.rollback()
+
+            try:
+                if "destination_path" in locals():
+                    destination_path.unlink(missing_ok=True)
+            except OSError:
+                logger.warning("Could not remove failed document upload destination")
 
             logger.exception(
                 f"Failed to upload "
@@ -246,18 +274,14 @@ class DocumentService(RemoteServiceMixin):
         """Download one remote document only when its local file is needed."""
         source_path = Path(getattr(document, "file_path", "") or "")
         if self.api_client is None:
-            if not source_path.is_file():
-                raise DocumentFileUnavailableError(document.id)
-            return source_path
+            try:
+                return resolve_document_path(document.id)
+            except DocumentStorageError as error:
+                raise DocumentFileUnavailableError(document.id, error.code) from error
 
         cache_root = get_client_data_dir() / "DocumentCache" / str(document.missionary_id)
         suffix = source_path.suffix or ".bin"
         destination = cache_root / f"{document.id}{suffix}"
-        if destination.is_file() and destination.stat().st_size > 0:
-            logger.info("Document cache hit for document %s", document.id)
-            document.file_path = str(destination)
-            return destination
-
         started_at = time.monotonic()
         try:
             self.api_client.download(
@@ -265,8 +289,11 @@ class DocumentService(RemoteServiceMixin):
                 destination,
             )
         except ApiUnavailableError as error:
-            if "404" in str(error):
-                raise DocumentFileUnavailableError(document.id) from error
+            reason = getattr(error, "code", None)
+            if reason in {MISSING, CLOUD_UNAVAILABLE, UNREADABLE, AMBIGUOUS}:
+                raise DocumentFileUnavailableError(document.id, reason) from error
+            if getattr(error, "status_code", None) == 404 or "404" in str(error):
+                raise DocumentFileUnavailableError(document.id, MISSING) from error
             raise
         logger.info(
             "Downloaded document %s to client cache in %.2fs",
@@ -283,14 +310,20 @@ class DocumentService(RemoteServiceMixin):
         version_key = hashlib.sha256(version.encode("utf-8")).hexdigest()[:16]
         cache_root = get_client_data_dir() / "DocumentCache" / str(document.missionary_id) / "thumbnails"
         destination = cache_root / f"{document.id}-{version_key}.jpg"
-        if destination.is_file() and destination.stat().st_size > 0:
-            return destination
         if self.api_client is None:
             raise DocumentFileUnavailableError(document.id)
-        self.api_client.download(
-            f"/v1/documents/{document.id}/thumbnail",
-            destination,
-        )
+        try:
+            self.api_client.download(
+                f"/v1/documents/{document.id}/thumbnail",
+                destination,
+            )
+        except ApiUnavailableError as error:
+            reason = getattr(error, "code", None)
+            if reason in {MISSING, CLOUD_UNAVAILABLE, UNREADABLE, AMBIGUOUS}:
+                raise DocumentFileUnavailableError(document.id, reason) from error
+            if getattr(error, "status_code", None) == 404 or "404" in str(error):
+                raise DocumentFileUnavailableError(document.id, MISSING) from error
+            raise
         return destination
 
     def _materialize(self, document):

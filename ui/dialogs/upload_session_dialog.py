@@ -103,6 +103,9 @@ APPOINTMENT_UPDATE_FIELDS = {
     "biometric_appointment_date",
     "pickup_appointment_date",
 }
+OCR_HIDDEN_REVIEW_FIELDS = {
+    "PASSPORT": {"full_name"},
+}
 
 
 def document_type_menu_sections(missionary):
@@ -116,7 +119,10 @@ def document_type_menu_sections(missionary):
             for key, config in DOCUMENTS.items()
             if key in visible_keys
             and config.get("stage") == stage
-            and config.get("required")
+            and (
+                config.get("required")
+                or key == "CONSTANCIA_DE_PRORROGA"
+            )
             and key != "TAM"
         ]
         if stage == "INTERPOL" and "FBI" in visible_keys:
@@ -125,7 +131,7 @@ def document_type_menu_sections(missionary):
 
     sections.append(("GENERAL", ["TAM", "PASSPORT"]))
     direct_items = [("DNI", DOCUMENTS["DNI"]["label"])]
-    other_keys = ["PHOTO", "CONSTANCIA_DE_PRORROGA", "OTHER"]
+    other_keys = ["PHOTO", "OTHER"]
     sections.append(
         ("OTHER", [key for key in other_keys if key in visible_keys])
     )
@@ -2612,6 +2618,8 @@ class UploadSessionDialog(MaskDialogBase):
         self.apply_ocr_banner(state, status)
 
         for field in fields:
+            if field in OCR_HIDDEN_REVIEW_FIELDS.get(item.document_type, set()):
+                continue
             value = item.confirmed_data.get(field, "")
             label = field_label(field)
             if field in MISSIONARY_DATE_FIELDS or field == "date_of_birth":
@@ -2694,7 +2702,12 @@ class UploadSessionDialog(MaskDialogBase):
     def collect_ocr_data(self, item):
         if self._is_closing:
             return
-        data = {}
+        hidden_fields = OCR_HIDDEN_REVIEW_FIELDS.get(item.document_type, set())
+        data = {
+            field: item.confirmed_data[field]
+            for field in hidden_fields
+            if field in item.confirmed_data
+        }
         for field, edit in self.field_edits.items():
             value = edit.text().strip()
             data[field] = (

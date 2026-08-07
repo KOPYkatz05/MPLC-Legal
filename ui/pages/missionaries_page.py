@@ -1436,10 +1436,6 @@ class MissionariesPage(QWidget):
             self._group_filter_changed
         )
 
-        self.create_group_button.clicked.connect(
-            self._create_group
-        )
-
         if not self._background_loads_enabled:
             self._load_data_synchronously()
 
@@ -1457,36 +1453,12 @@ class MissionariesPage(QWidget):
             "primary",
         )
 
-        self.export_button = create_missionaries_pill_button(
-            tr("export_menu"),
+        self.actions_button = create_missionaries_pill_button(
+            "Actions",
             "secondary",
         )
-
-        self.export_button.clicked.connect(
-            self._show_export_menu
-        )
-
-        self.import_roster_button = create_missionaries_pill_button(
-            "Import Dynamics Roster", "secondary"
-        )
-        self.import_roster_button.clicked.connect(self._import_dynamics_roster)
-
-        self.edit_columns_button = create_missionaries_pill_button(
-            "Edit Columns",
-            "secondary",
-        )
-
-        self.edit_columns_button.clicked.connect(
-            self._edit_columns
-        )
-
-        self.auto_widths_button = create_missionaries_pill_button(
-            "Fit Columns",
-            "secondary",
-        )
-
-        self.auto_widths_button.clicked.connect(
-            self._auto_fit_column_widths
+        self.actions_button.clicked.connect(
+            self._show_actions_menu
         )
 
         outer.addWidget(self._build_top_bar())
@@ -1537,20 +1509,6 @@ class MissionariesPage(QWidget):
             _fallback_edit_icon(),
         )
 
-        self.create_group_button = create_missionaries_pill_button(
-            "Create Group",
-            "secondary",
-        )
-
-        self.batch_button = create_missionaries_pill_button(
-            "Batch Actions",
-            "secondary",
-        )
-
-        self.batch_button.clicked.connect(
-            self._batch_actions
-        )
-
         self.result_label = QLabel("")
 
         self.result_label.setObjectName(
@@ -1562,8 +1520,6 @@ class MissionariesPage(QWidget):
             self.stage_filter,
             self.nationality_filter,
             self.group_filter,
-            self.create_group_button,
-            self.batch_button,
         ]
 
         workspace_layout.addWidget(self.filter_bar)
@@ -1729,10 +1685,7 @@ class MissionariesPage(QWidget):
         self._command_layout = command_row
         self._command_title = title_widget
         self._command_buttons = [
-            self.edit_columns_button,
-            self.auto_widths_button,
-            self.export_button,
-            self.import_roster_button,
+            self.actions_button,
             self.add_button,
         ]
 
@@ -2348,9 +2301,7 @@ class MissionariesPage(QWidget):
         if self._selected_tab == "groups":
             self.view_stack.setCurrentWidget(self.groups_surface)
             self.filter_bar.hide()
-            self.edit_columns_button.hide()
-            self.auto_widths_button.hide()
-            self.export_button.hide()
+            self.actions_button.hide()
             self.add_button.hide()
             if hasattr(self, "copy_button"):
                 self.copy_button.hide()
@@ -2359,14 +2310,10 @@ class MissionariesPage(QWidget):
 
         self.view_stack.setCurrentWidget(self.table_surface)
         self.filter_bar.show()
-        self.edit_columns_button.show()
-        self.auto_widths_button.show()
-        self.export_button.show()
+        self.actions_button.show()
 
         is_archive = self._selected_tab == "archive"
         self.add_button.setVisible(not is_archive)
-        self.create_group_button.setVisible(not is_archive)
-        self.batch_button.setVisible(not is_archive)
         self.group_filter.setVisible(not is_archive)
         self.table_title.setText(
             "Archived Missionary Records"
@@ -2975,8 +2922,8 @@ class MissionariesPage(QWidget):
                 kind="critical",
             )
 
-    def _show_export_menu(self):
-        menu = create_menu("", self)
+    def _build_export_menu(self, parent):
+        menu = create_menu(tr("export_menu"), parent)
         export_columns_action = QAction(
             tr("export_columns"),
             self,
@@ -2990,11 +2937,46 @@ class MissionariesPage(QWidget):
 
         menu.addAction(export_columns_action)
         menu.addAction(full_export_action)
+        return menu
+
+    def _show_actions_menu(self):
+        menu = create_menu("", self)
+
+        edit_columns_action = QAction("Edit Columns", self)
+        edit_columns_action.triggered.connect(self._edit_columns)
+        menu.addAction(edit_columns_action)
+
+        fit_columns_action = QAction("Fit Columns", self)
+        fit_columns_action.triggered.connect(self._auto_fit_column_widths)
+        menu.addAction(fit_columns_action)
+
+        menu.addMenu(self._build_export_menu(menu))
+
+        import_roster_action = QAction("Import Dynamics Roster", self)
+        import_roster_action.triggered.connect(self._import_dynamics_roster)
+        menu.addAction(import_roster_action)
+
+        if self._selected_tab != "archive":
+            menu.addSeparator()
+            create_group_action = QAction("Create Group", self)
+            create_group_action.triggered.connect(self._create_group)
+            menu.addAction(create_group_action)
+            menu.addMenu(self._build_batch_menu(menu))
+
+        self._actions_menu = menu
+        menu.exec(
+            self.actions_button.mapToGlobal(
+                self.actions_button.rect().bottomLeft()
+            )
+        )
+
+    def _show_export_menu(self):
+        menu = self._build_export_menu(self)
         self._export_menu = menu
 
         menu.exec(
-            self.export_button.mapToGlobal(
-                self.export_button.rect().bottomLeft()
+            self.actions_button.mapToGlobal(
+                self.actions_button.rect().bottomLeft()
             )
         )
 
@@ -3387,20 +3369,16 @@ class MissionariesPage(QWidget):
                 "Failed to open missionary detail page"
             )
 
-    def _batch_actions(self):
+    def _build_batch_menu(self, parent):
         ids = self._selected_missionary_ids()
+        menu = create_menu("Batch Actions", parent)
 
         if not ids:
-            show_message(
-                self,
-                "No Selection",
-                "Select at least one missionary "
-                "from the table.",
-            )
+            empty_action = QAction("Select missionaries to continue", self)
+            empty_action.setEnabled(False)
+            menu.addAction(empty_action)
+            return menu
 
-            return
-
-        menu = create_menu("", self)
         archive_action = QAction(
             "Archive",
             self,
@@ -3422,11 +3400,26 @@ class MissionariesPage(QWidget):
             )
             menu.addAction(advance_action)
         menu.addAction(archive_action)
+        return menu
+
+    def _batch_actions(self):
+        ids = self._selected_missionary_ids()
+
+        if not ids:
+            show_message(
+                self,
+                "No Selection",
+                "Select at least one missionary "
+                "from the table.",
+            )
+            return
+
+        menu = self._build_batch_menu(self)
         self._batch_menu = menu
 
         menu.exec(
-            self.batch_button.mapToGlobal(
-                self.batch_button.rect().bottomLeft()
+            self.actions_button.mapToGlobal(
+                self.actions_button.rect().bottomLeft()
             )
         )
 
@@ -3571,4 +3564,4 @@ class MissionariesPage(QWidget):
                     self.group_filter.setCurrentIndex(index)
 
     def retranslate_ui(self):
-        self.export_button.setText(tr("export_menu"))
+        self.actions_button.setText("Actions")

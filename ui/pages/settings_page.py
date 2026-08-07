@@ -1768,6 +1768,7 @@ class SettingsPage(QWidget):
                 "idle": "settings_updates_status_idle",
                 "checking": "settings_updates_status_checking",
                 "current": "settings_updates_status_current",
+                "available": "settings_updates_status_available",
                 "ready": "settings_updates_status_ready",
                 "applying": "settings_updates_status_applying",
                 "failed": "settings_updates_status_failed",

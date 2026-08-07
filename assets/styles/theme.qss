@@ -940,6 +940,8 @@ QFrame#DashboardBriefingCard,
 QWidget#DashboardBriefingCard,
 QFrame#DashboardResidencyCard,
 QWidget#DashboardResidencyCard,
+QFrame#DashboardCancelacionesCard,
+QWidget#DashboardCancelacionesCard,
 QFrame#DashboardExceptionCard,
 QWidget#DashboardExceptionCard {
     background-color: #FFFFFF;
@@ -978,7 +980,8 @@ QFrame#DashboardBriefingRow {
     border-radius: 7px;
 }
 
-QFrame#DashboardResidencyRow {
+QFrame#DashboardResidencyRow,
+QFrame#DashboardCancelacionesRow {
     background-color: #FAFAFA;
     border: 1px solid #F0F1F2;
     border-radius: 7px;
