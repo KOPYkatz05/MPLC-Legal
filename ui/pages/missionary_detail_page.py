@@ -2,7 +2,6 @@ import os
 import json
 import subprocess
 import sys
-import tempfile
 import time
 
 from datetime import date, datetime
@@ -106,11 +105,22 @@ from ui.widgets.missionary_block_widgets import (
     build_workflow_stage_card,
 )
 from ui.foundation.background_loader import LatestRequestLoader
+from ui.pages.missionary_detail.state import MissionaryDetailState
+from ui.pages.missionary_detail.coordinator import MissionaryDetailCoordinator
+from ui.pages.missionary_detail.packet_actions import InterpolPacketActions
+from ui.pages.missionary_detail.identity_section import IdentityDetailsSection
+from ui.pages.missionary_detail.notes_section import NotesSection
+from ui.pages.missionary_detail.sections import (
+    DocumentsSection,
+    MissingDocumentsSection,
+    OpenTasksSection,
+    TimelineSection,
+    WorkflowSection,
+)
 
 DATE_PLACEHOLDER = QDate(1900, 1, 1)
 DATE_EDIT_MAX_WIDTH = 300
 OVERVIEW_CONTENT_SPACING = 16
-
 
 def create_detail_pill_button(
     text,
@@ -427,9 +437,73 @@ def _refresh_widget_style(widget):
 
 
 class MissionaryDetailPage(QWidget):
+    def _detail_state(self):
+        state = self.__dict__.get("_state")
+        if state is None:
+            state = MissionaryDetailState()
+            self.__dict__["_state"] = state
+        return state
+
+    def _detail_coordinator(self):
+        coordinator = self.__dict__.get("_coordinator")
+        if coordinator is None or coordinator.state is not self._detail_state():
+            coordinator = MissionaryDetailCoordinator(self._detail_state())
+            self.__dict__["_coordinator"] = coordinator
+        return coordinator
+
+    @property
+    def _workflow_records(self):
+        return self._detail_state().workflow_records
+
+    @_workflow_records.setter
+    def _workflow_records(self, value):
+        self._detail_state().workflow_records = value
+
+    @property
+    def _document_records(self):
+        return self._detail_state().document_records
+
+    @_document_records.setter
+    def _document_records(self, value):
+        self._detail_state().document_records = value
+
+    @property
+    def _detail_cache(self):
+        return self._detail_state().snapshot_cache
+
+    @_detail_cache.setter
+    def _detail_cache(self, value):
+        self._detail_state().snapshot_cache = value
+
+    @property
+    def _detail_cache_ttl_seconds(self):
+        return self._detail_state().cache_ttl_seconds
+
+    @_detail_cache_ttl_seconds.setter
+    def _detail_cache_ttl_seconds(self, value):
+        self._detail_state().cache_ttl_seconds = value
+
+    @property
+    def _requested_missionary_id(self):
+        return self._detail_state().requested_missionary_id
+
+    @_requested_missionary_id.setter
+    def _requested_missionary_id(self, value):
+        self._detail_state().requested_missionary_id = value
+
+    @property
+    def _detail_loaded(self):
+        return self._detail_state().detail_loaded
+
+    @_detail_loaded.setter
+    def _detail_loaded(self, value):
+        self._detail_state().detail_loaded = bool(value)
+
     def __init__(self, main_window):
         super().__init__()
 
+        self._state = MissionaryDetailState()
+        self._coordinator = MissionaryDetailCoordinator(self._state)
         self.setObjectName("MissionaryDetailPage")
 
         self.main_window = main_window
@@ -494,8 +568,9 @@ class MissionaryDetailPage(QWidget):
 
     def load_missionary_by_id(self, missionary_id, on_not_found=None):
         """Open Detail immediately and resolve the full snapshot off-thread."""
-        self._requested_missionary_id = missionary_id
-        cached = self._detail_cache.get(missionary_id)
+        coordinator = self._detail_coordinator()
+        coordinator.begin(missionary_id)
+        cached = coordinator.cached(missionary_id)
         if cached is not None:
             try:
                 self.load_missionary(
@@ -503,17 +578,14 @@ class MissionaryDetailPage(QWidget):
                     _detail_snapshot=cached["snapshot"],
                 )
             except Exception as error:
-                self._detail_cache.pop(missionary_id, None)
+                coordinator.invalidate(missionary_id)
                 self._detail_load_failed(error)
                 return self._request_detail_snapshot(
                     missionary_id,
                     force=True,
                     on_not_found=on_not_found,
                 )
-            if (
-                time.monotonic() - cached["loaded_at"]
-                < self._detail_cache_ttl_seconds
-            ):
+            if coordinator.cache_is_fresh(missionary_id):
                 return True
             return self._request_detail_snapshot(
                 missionary_id,
@@ -556,11 +628,8 @@ class MissionaryDetailPage(QWidget):
         on_applied=None,
         on_load_error=None,
     ):
-        cached = self._detail_cache.get(missionary_id)
-        cache_is_fresh = (
-            cached is not None
-            and time.monotonic() - cached["loaded_at"]
-            < self._detail_cache_ttl_seconds
+        cache_is_fresh = self._detail_coordinator().cache_is_fresh(
+            missionary_id
         )
         if cache_is_fresh and not force:
             return False
@@ -615,7 +684,8 @@ class MissionaryDetailPage(QWidget):
         on_applied=None,
         on_load_error=None,
     ):
-        if missionary_id != self._requested_missionary_id:
+        coordinator = self._detail_coordinator()
+        if not coordinator.accepts(missionary_id):
             return
         if snapshot is None:
             self._set_detail_loading(False)
@@ -630,10 +700,7 @@ class MissionaryDetailPage(QWidget):
             and self._detail_loaded
             and self.has_unsaved_changes()
         ):
-            self._detail_cache[missionary_id] = {
-                "snapshot": snapshot,
-                "loaded_at": time.monotonic(),
-            }
+            coordinator.store(missionary_id, snapshot)
             self._set_detail_loading(False)
             logger.info(
                 "Deferred detail snapshot for missionary %s because "
@@ -649,15 +716,12 @@ class MissionaryDetailPage(QWidget):
                 _detail_snapshot=snapshot,
             )
         except Exception as error:
-            self._detail_cache.pop(missionary_id, None)
+            coordinator.invalidate(missionary_id)
             self._detail_load_failed(error)
             if callable(on_load_error):
                 on_load_error(error)
             return
-        self._detail_cache[missionary_id] = {
-            "snapshot": snapshot,
-            "loaded_at": time.monotonic(),
-        }
+        coordinator.store(missionary_id, snapshot)
         if callable(on_applied):
             on_applied(snapshot, True)
 
@@ -2571,133 +2635,8 @@ class MissionaryDetailPage(QWidget):
                 self._set_source_badge(source_lbl, "")
 
     def _save_dates(self):
-        if not hasattr(self, "current_missionary"):
-            return
+        IdentityDetailsSection(self).save()
 
-        updates = {}
-        sources = _parse_field_sources(
-            getattr(self.current_missionary, "field_sources", None)
-        )
-        current_arrival = getattr(
-            self.current_missionary,
-            "arrival_date",
-            None,
-        )
-        current_visa = getattr(
-            self.current_missionary,
-            "visa_expiration",
-            None,
-        )
-        current_visa_source = sources.get("visa_expiration", {})
-        current_visa_is_auto = (
-            current_visa_source.get("label")
-            == AUTO_DERIVED_VISA_SOURCE_LABEL
-            or current_visa_source.get("document_type") == "TAM"
-        )
-
-        for field_key, date_edit in self._date_edits.items():
-            qd = (
-                date_edit.getDate()
-                if hasattr(date_edit, "getDate")
-                else date_edit.date()
-            )
-            if (
-                field_key in self._date_empty_on_load
-                and qd == DATE_PLACEHOLDER
-            ):
-                continue
-            if qd == DATE_PLACEHOLDER:
-                continue
-            updates[field_key] = date(
-                qd.year(), qd.month(), qd.day()
-            )
-
-        for field_key, text_edit in self._text_edits.items():
-            value = text_edit.text().strip()
-            current_value = (
-                getattr(self.current_missionary, field_key, None) or ""
-            ).strip()
-            if value != current_value:
-                updates[field_key] = value
-
-        arrival_date = updates.get("arrival_date", current_arrival)
-        visa_date = updates.get("visa_expiration", current_visa)
-
-        if arrival_date:
-            derived_visa = add_years(arrival_date, 1)
-            if derived_visa:
-                old_derived_visa = (
-                    add_years(current_arrival, 1)
-                    if current_arrival
-                    else None
-                )
-                current_visa_was_auto = (
-                    current_visa_is_auto
-                    or (
-                        current_visa is not None
-                        and old_derived_visa is not None
-                        and current_visa == old_derived_visa
-                    )
-                    or current_visa is None
-                )
-
-                if arrival_date != current_arrival:
-                    if current_visa_was_auto:
-                        if visa_date in {None, current_visa, old_derived_visa}:
-                            updates["visa_expiration"] = derived_visa
-                            sources["visa_expiration"] = {
-                                "label": AUTO_DERIVED_VISA_SOURCE_LABEL,
-                            }
-                        else:
-                            updates["visa_expiration"] = visa_date
-                            if visa_date == derived_visa:
-                                sources["visa_expiration"] = {
-                                    "label": AUTO_DERIVED_VISA_SOURCE_LABEL,
-                                }
-                            else:
-                                sources.pop("visa_expiration", None)
-                    else:
-                        updates["visa_expiration"] = visa_date
-                        if visa_date == derived_visa:
-                            sources["visa_expiration"] = {
-                                "label": AUTO_DERIVED_VISA_SOURCE_LABEL,
-                            }
-                        else:
-                            sources.pop("visa_expiration", None)
-                else:
-                    if visa_date == derived_visa:
-                        sources["visa_expiration"] = {
-                            "label": AUTO_DERIVED_VISA_SOURCE_LABEL,
-                        }
-                    elif visa_date != current_visa:
-                        sources.pop("visa_expiration", None)
-
-        if sources:
-            updates["field_sources"] = json.dumps(sources)
-
-        if not updates:
-            return
-
-        try:
-            self.missionary_service.update_fields(
-                self.current_missionary.id,
-                updates,
-            )
-            show_message(
-                self,
-                tr("save_details"),
-                tr("details_saved"),
-            )
-            self._reload_missionary()
-            self._refresh_missionaries_table()
-        except Exception:
-            logger.exception("Failed to save dates")
-            show_message(
-                self,
-                tr("save_details"),
-                tr("details_save_failed"),
-                kind="critical",
-            )
 
     def retranslate_ui(self):
         self._set_pivot_text("overview", tr("missionary_detail_tab_overview"))
@@ -3028,225 +2967,28 @@ class MissionaryDetailPage(QWidget):
             )
 
     def _collect_interpol_packet_docs(self):
-        documents = self.document_service.get_documents(
-            self.current_missionary.id
-        )
-        packet_document_types = self._interpol_packet_document_types()
-        docs_by_type = {}
+        return self._interpol_packet_actions().collect_documents()
 
-        for doc in documents:
-            if getattr(doc, "status", "ACTIVE") != "ACTIVE":
-                continue
-
-            doc_type = getattr(doc, "document_type", None)
-            if doc_type not in packet_document_types:
-                continue
-
-            existing = docs_by_type.get(doc_type)
-            if existing is None or self._doc_is_newer(doc, existing):
-                docs_by_type[doc_type] = doc
-
-        packet_docs = []
-        missing_labels = []
-
-        for doc_type in packet_document_types:
-            label = _document_label(doc_type)
-            doc = docs_by_type.get(doc_type)
-            file_path = Path(getattr(doc, "file_path", "")) if doc else None
-
-            if doc is None or not file_path or not file_path.exists():
-                missing_labels.append(label)
-                continue
-
-            packet_docs.append(
-                {
-                    "document_type": doc_type,
-                    "label": label,
-                    "file_path": str(file_path),
-                }
-            )
-
-        return packet_docs, missing_labels
-
-    def _interpol_packet_document_types(self):
-        if requires_fbi_document(self.current_missionary):
-            return FBI_INTERPOL_PACKET_DOCUMENT_TYPES
-
-        return INTERPOL_PACKET_DOCUMENT_TYPES
-
-    def _doc_is_newer(self, candidate, existing):
-        candidate_uploaded = getattr(candidate, "uploaded_at", None)
-        existing_uploaded = getattr(existing, "uploaded_at", None)
-
-        if candidate_uploaded and existing_uploaded:
-            if candidate_uploaded != existing_uploaded:
-                return candidate_uploaded > existing_uploaded
-        elif candidate_uploaded and not existing_uploaded:
-            return True
-        elif existing_uploaded and not candidate_uploaded:
-            return False
-
-        return getattr(candidate, "id", 0) > getattr(existing, "id", 0)
-
-    def _create_interpol_packet_temp_path(self):
-        packet_dir = (
-            Path(tempfile.gettempdir())
-            / "MissionLegalApp"
-            / "print_packets"
-        )
-        packet_dir.mkdir(parents=True, exist_ok=True)
-        self._cleanup_old_packet_files(packet_dir)
-
-        missionary_name = getattr(
+    def _interpol_packet_actions(self):
+        return InterpolPacketActions(
             self.current_missionary,
-            "full_name",
-            "missionary",
+            self.document_service,
+            document_label=_document_label,
         )
-        safe_name = "".join(
-            char if char.isalnum() else "_"
-            for char in missionary_name
-        ).strip("_")
-        safe_name = safe_name or "missionary"
-
-        timestamp = time.strftime("%Y%m%d_%H%M%S")
-        return str(
-            packet_dir
-            / f"interpol_packet_{safe_name}_{timestamp}.pdf"
-        )
-
+    def _interpol_packet_document_types(self):
+        return self._interpol_packet_actions().document_types()
+    def _doc_is_newer(self, candidate, existing):
+        return InterpolPacketActions.document_is_newer(candidate, existing)
+    def _create_interpol_packet_temp_path(self):
+        return self._interpol_packet_actions().create_temp_path()
     def _cleanup_old_packet_files(self, packet_dir):
-        cutoff = time.time() - (24 * 60 * 60)
-
-        try:
-            for file_path in packet_dir.glob("interpol_packet_*.pdf"):
-                try:
-                    if file_path.stat().st_mtime < cutoff:
-                        file_path.unlink()
-                except Exception:
-                    logger.warning(
-                        "Could not clean up old packet file: %s",
-                        file_path,
-                    )
-        except Exception:
-            logger.warning("Could not scan packet temp directory")
-
+        self._interpol_packet_actions().cleanup_old_files(packet_dir)
     def _build_interpol_packet_pdf(self, packet_docs, output_path):
-        packet = fitz.open()
-
-        try:
-            for doc in packet_docs:
-                first_page = packet.page_count
-                source_path = doc["file_path"]
-                source = fitz.open(source_path)
-
-                try:
-                    if source.is_pdf:
-                        packet.insert_pdf(source)
-                    else:
-                        image_pdf = fitz.open(
-                            "pdf",
-                            source.convert_to_pdf(),
-                        )
-                        try:
-                            packet.insert_pdf(image_pdf)
-                        finally:
-                            image_pdf.close()
-                finally:
-                    source.close()
-                if doc.get("document_type") == "PASSPORT" and packet.page_count > first_page:
-                    self._annotate_interpol_passport(packet[first_page])
-
-            if packet.page_count == 0:
-                raise ValueError("Interpol packet has no printable pages")
-
-            packet.save(output_path)
-
-        finally:
-            packet.close()
-
+        self._interpol_packet_actions().build_pdf(packet_docs, output_path)
     def _annotate_interpol_passport(self, page):
-        lines = self._validated_interpol_annotation_lines()
-        rect = page.rect
-        point = fitz.Point(rect.width * 0.14, rect.height * 0.72)
-        page.insert_textbox(
-            fitz.Rect(point.x, point.y, rect.width * 0.9, rect.height * 0.95),
-            "\n".join(lines),
-            fontsize=10,
-            fontname="helv",
-            color=(0, 0, 0),
-            lineheight=1.45,
-        )
-
+        self._interpol_packet_actions().annotate_passport(page)
     def _validated_interpol_annotation_lines(self):
-        document_service = getattr(self, "document_service", None)
-        api_client = getattr(document_service, "api_client", None)
-        if api_client is not None:
-            details = api_client.get("/v1/server/configuration")
-        else:
-            from server.configuration import load_server_configuration
-            details = load_server_configuration()
-        missionary = self.current_missionary
-
-        def first_name(value, override):
-            override = str(override or "").strip()
-            if override:
-                return override
-            tokens = str(value or "").strip().split()
-            return tokens[0] if tokens else ""
-
-        values = {
-            "Area Office address": str(
-                details.get("interpol_area_office_address") or ""
-            ).strip(),
-            "home address": str(
-                getattr(missionary, "home_address", "") or ""
-            ).strip(),
-            "father name": first_name(
-                getattr(missionary, "father_name", ""),
-                getattr(missionary, "father_first_name_override", ""),
-            ),
-            "mother name": first_name(
-                getattr(missionary, "mother_name", ""),
-                getattr(missionary, "mother_first_name_override", ""),
-            ),
-            "secretary phone": str(
-                details.get("interpol_secretary_phone") or ""
-            ).strip(),
-        }
-        missing = [label for label, value in values.items() if not value]
-        if missing:
-            raise ValueError(
-                "Add the following before generating the official copy: "
-                + ", ".join(missing)
-                + "."
-            )
-        return [
-            f"Dirección Actual: {values['Area Office address']}",
-            f"Dirección en País de Origen: {values['home address']}",
-            f"Nombre de Padre: {values['father name']}",
-            f"Nombre de Madre: {values['mother name']}",
-            f"Teléfono: {values['secretary phone']}",
-        ]
-
-    def _add_print_open_action(self, packet):
-        js = (
-            "this.print({"
-            "bUI: true, "
-            "bSilent: false, "
-            "bShrinkToFit: true"
-            "});"
-        )
-        js_hex = js.encode("utf-16-be").hex()
-        js_xref = packet.get_new_xref()
-        packet.update_object(
-            js_xref,
-            f"<< /S /JavaScript /JS <FEFF{js_hex}> >>",
-        )
-        packet.xref_set_key(
-            packet.pdf_catalog(),
-            "OpenAction",
-            f"{js_xref} 0 R",
-        )
+        return self._interpol_packet_actions().validated_annotation_lines()
 
     def _open_packet_in_default_pdf_viewer(self, packet_path):
         logger.info(
@@ -3641,7 +3383,7 @@ class MissionaryDetailPage(QWidget):
             if widget is not None:
                 widget.clear()
         self._document_data = []
-        self._workflow_records = []
+        self._detail_state().clear_rendered_records()
         if hasattr(self, "advance_banner"):
             self.advance_banner.setVisible(False)
 
@@ -3785,182 +3527,38 @@ class MissionaryDetailPage(QWidget):
             widgets["status"].setText(status_text)
             widgets["target"].setText(target_text)
 
+    def _workflow_section(self):
+        section = self.__dict__.get("_workflow_section_renderer")
+        if section is None:
+            section = WorkflowSection(self)
+            self.__dict__["_workflow_section_renderer"] = section
+        return section
+
     def load_workflow_stages(self, workflows=None):
-        self.workflow_list.clear()
+        self._workflow_section().render(workflows)
 
-        if not hasattr(self, "current_missionary"):
-            self._workflow_records = []
-            return
-        if workflows is None:
-            workflows = self.workflow_service.get_workflows(
-                self.current_missionary.id
-            )
-        workflows = list(workflows)
-        self._workflow_records = workflows
 
-        if (
-            getattr(self.current_missionary, "tracking_profile", "LEGAL")
-            == "PERUVIAN_DNI"
-        ):
-            item = QListWidgetItem()
-            widget = self._build_empty_state_card(
-                "Peruvian DNI tracking",
-                "This missionary only requires an active copy of the DNI.",
-                tone="muted",
-            )
-            item.setSizeHint(widget.sizeHint())
-            item.setFlags(item.flags() & ~Qt.ItemIsSelectable)
-            self.workflow_list.addItem(item)
-            self.workflow_list.setItemWidget(item, widget)
-            return
-
-        workflow_map = {
-            wf.stage_name: wf
-            for wf in workflows
-        }
-        current_stage = getattr(
-            self.current_missionary,
-            "current_stage",
-            None,
-        )
-
-        for stage_name in WORKFLOW_STAGES:
-            wf = workflow_map.get(stage_name)
-            if wf is None:
-                continue
-
-            item = QListWidgetItem()
-            widget = self._build_workflow_stage_widget(
-                wf,
-                is_current=(stage_name == current_stage),
-            )
-            item.setData(Qt.UserRole, wf.id)
-            item.setSizeHint(widget.sizeHint())
-            self.workflow_list.addItem(item)
-            self.workflow_list.setItemWidget(item, widget)
-
-        if self.workflow_list.count() == 0:
-            empty = QListWidgetItem(
-                tr("missionary_detail_no_workflow_stages")
-            )
-            empty.setFlags(
-                empty.flags() & ~Qt.ItemIsSelectable
-            )
-            self.workflow_list.addItem(empty)
+    def _documents_section(self):
+        section = self.__dict__.get("_documents_section_renderer")
+        if section is None:
+            section = DocumentsSection(self)
+            self.__dict__["_documents_section_renderer"] = section
+        return section
 
     def load_documents(self, documents=None):
-        self.documents_list.clear()
-        self._document_data = []
-        self._document_records = {}
-        self._document_widgets = {}
+        self._documents_section().render(documents)
 
-        if not hasattr(self, "current_missionary"):
-            return
 
-        if documents is None:
-            documents = self.document_service.get_documents(
-                self.current_missionary.id
-            )
-
-        def _doc_sort_key(doc):
-            uploaded_at = getattr(doc, "uploaded_at", None)
-            if uploaded_at:
-                try:
-                    uploaded_value = uploaded_at.timestamp()
-                except Exception:
-                    uploaded_value = 0
-            else:
-                uploaded_value = -1
-            return (
-                uploaded_value,
-                (doc.document_type or "").lower(),
-                (doc.file_name or "").lower(),
-            )
-
-        documents = sorted(
-            documents,
-            key=_doc_sort_key,
-            reverse=True,
-        )
-
-        if not documents:
-            empty = QListWidgetItem()
-            widget = self._build_empty_state_card(
-                tr("missionary_detail_no_documents"),
-                tr("missionary_detail_no_documents_hint"),
-            )
-            empty.setSizeHint(widget.sizeHint())
-            empty.setFlags(empty.flags() & ~Qt.ItemIsSelectable)
-            self.documents_list.addItem(empty)
-            self.documents_list.setItemWidget(empty, widget)
-            return
-
-        for doc in documents:
-            label = _document_label(doc.document_type)
-
-            item = QListWidgetItem()
-            item.setData(Qt.UserRole, doc.id)
-
-            widget = self._build_document_item_widget(
-                doc,
-                label,
-            )
-            item.setSizeHint(widget.sizeHint())
-            self.documents_list.addItem(item)
-            self.documents_list.setItemWidget(item, widget)
-            self._document_records[doc.id] = doc
-            self._document_widgets[doc.id] = widget
-
-            self._document_data.append({
-                "id": doc.id,
-                "document_type": doc.document_type,
-                "label": label,
-                "file_path": None,
-                "file_name": doc.file_name,
-                "notes": doc.notes or "",
-                "ocr_raw_data": doc.ocr_raw_data,
-                "ocr_confirmed_data": doc.ocr_confirmed_data,
-            })
+    def _open_tasks_section(self):
+        section = self.__dict__.get("_open_tasks_section_renderer")
+        if section is None:
+            section = OpenTasksSection(self)
+            self.__dict__["_open_tasks_section_renderer"] = section
+        return section
 
     def load_open_tasks(self, tasks=None):
-        if not hasattr(self, "open_tasks_list"):
-            return
+        self._open_tasks_section().render(tasks)
 
-        self.open_tasks_list.clear()
-        self._detail_task_widgets = {}
-
-        if not hasattr(self, "current_missionary"):
-            return
-
-        if tasks is None:
-            tasks = self.secretary_work_service.list_tasks(
-                missionary_id=self.current_missionary.id,
-            )
-
-        if not tasks:
-            empty = QListWidgetItem()
-            widget = self._build_empty_state_card(
-                tr("missionary_detail_no_open_tasks"),
-                tr("missionary_detail_no_open_tasks_hint"),
-            )
-            empty.setSizeHint(widget.sizeHint())
-            empty.setFlags(empty.flags() & ~Qt.ItemIsSelectable)
-            self.open_tasks_list.addItem(empty)
-            self.open_tasks_list.setItemWidget(empty, widget)
-            return
-
-        for task in tasks:
-            item = QListWidgetItem()
-            item.setData(Qt.UserRole, task["id"])
-            widget = self._build_open_task_widget(task)
-            task_id = task["id"]
-            widget.setEnabled(
-                task_id not in self._pending_task_actions
-            )
-            self._detail_task_widgets[task_id] = widget
-            item.setSizeHint(widget.sizeHint())
-            self.open_tasks_list.addItem(item)
-            self.open_tasks_list.setItemWidget(item, widget)
 
     def _build_open_task_widget(self, task):
         return build_task_card(
@@ -4067,114 +3665,16 @@ class MissionaryDetailPage(QWidget):
         if hasattr(self.main_window, "stack"):
             self.main_window.stack.setCurrentIndex(3)
 
+    def _missing_documents_section(self):
+        section = self.__dict__.get("_missing_documents_section_renderer")
+        if section is None:
+            section = MissingDocumentsSection(self)
+            self.__dict__["_missing_documents_section_renderer"] = section
+        return section
+
     def load_missing_documents(self, documents=None):
-        self.missing_documents_list.clear()
+        self._missing_documents_section().render(documents)
 
-        if not hasattr(self, "current_missionary"):
-            return
-
-        if documents is None:
-            documents = self.document_service.get_documents(
-                self.current_missionary.id
-            )
-
-        uploaded_types = {
-            doc.document_type
-            for doc in documents
-            if getattr(doc, "status", "ACTIVE") == "ACTIVE"
-        }
-        current_stage = getattr(
-            self.current_missionary,
-            "current_stage",
-            None,
-        )
-
-        missing_groups = []
-        if (
-            getattr(self.current_missionary, "tracking_profile", "LEGAL")
-            == "PERUVIAN_DNI"
-        ):
-            if "DNI" not in uploaded_types:
-                missing_groups.append(("DNI", ["DNI"], True))
-            else:
-                empty = QListWidgetItem()
-                widget = self._build_empty_state_card(
-                    "DNI copy uploaded",
-                    "No other legal documents are required.",
-                    tone="success",
-                )
-                empty.setSizeHint(widget.sizeHint())
-                empty.setFlags(empty.flags() & ~Qt.ItemIsSelectable)
-                self.missing_documents_list.addItem(empty)
-                self.missing_documents_list.setItemWidget(empty, widget)
-                return
-
-        general_missing = [] if missing_groups else [
-            doc_key
-            for doc_key, config in DOCUMENTS.items()
-            if config.get("required")
-            and config.get("stage") is None
-            and doc_key not in uploaded_types
-            and doc_key != "OTHER"
-        ]
-        if general_missing:
-            missing_groups.append((
-                "Always required",
-                general_missing,
-                True,
-            ))
-
-        stage_order = []
-        if current_stage in WORKFLOW_STAGES:
-            stage_order.append(current_stage)
-        stage_order.extend(
-            stage
-            for stage in WORKFLOW_STAGES
-            if stage != current_stage
-        )
-
-        seen = set()
-        for stage_name in stage_order:
-            missing = [
-                doc_key
-                for doc_key in required_documents_for_missionary(
-                    stage_name,
-                    self.current_missionary,
-                )
-                if doc_key not in uploaded_types
-            ]
-            if missing:
-                missing_groups.append((
-                    stage_name,
-                    missing,
-                    stage_name == current_stage,
-                ))
-                seen.add(stage_name)
-
-        if not missing_groups:
-            empty = QListWidgetItem()
-            widget = self._build_empty_state_card(
-                tr("missionary_detail_all_required_uploaded"),
-                tr("missionary_detail_all_required_uploaded_hint"),
-                tone="success",
-            )
-            empty.setSizeHint(widget.sizeHint())
-            empty.setFlags(empty.flags() & ~Qt.ItemIsSelectable)
-            self.missing_documents_list.addItem(empty)
-            self.missing_documents_list.setItemWidget(empty, widget)
-            return
-
-        for stage_name, missing_docs, is_current in missing_groups:
-            item = QListWidgetItem()
-            widget = self._build_missing_stage_widget(
-                stage_name,
-                missing_docs,
-                is_current=is_current,
-            )
-            item.setSizeHint(widget.sizeHint())
-            item.setFlags(item.flags() & ~Qt.ItemIsSelectable)
-            self.missing_documents_list.addItem(item)
-            self.missing_documents_list.setItemWidget(item, widget)
 
     def _refresh_overview_summary(
         self,
@@ -4818,103 +4318,17 @@ class MissionaryDetailPage(QWidget):
         self.timeline_list.setItemWidget(item, label)
 
     def _render_timeline(self):
-        self.timeline_list.clear()
-        category = getattr(self, "_timeline_filter", "all")
-        feed = getattr(self, "_timeline_feed", {}) or {}
-        upcoming = [
-            event for event in feed.get("upcoming", [])
-            if category in {"all", event.get("category")}
-        ]
-        events = [
-            event for event in feed.get("events", [])
-            if category in {"all", event.get("category")}
-        ]
-
-        if upcoming:
-            self._add_timeline_heading(
-                tr("missionary_detail_timeline_upcoming"), upcoming=True
-            )
-            for event in upcoming:
-                item = QListWidgetItem()
-                widget = self._build_timeline_event_widget(event, upcoming=True)
-                item.setSizeHint(widget.sizeHint())
-                self.timeline_list.addItem(item)
-                self.timeline_list.setItemWidget(item, widget)
-
-        current_group = None
-        for event in events:
-            group = self._timeline_group_label(event.get("occurred_at"))
-            if group != current_group:
-                self._add_timeline_heading(group)
-                current_group = group
-            item = QListWidgetItem()
-            widget = self._build_timeline_event_widget(event)
-            item.setSizeHint(widget.sizeHint())
-            self.timeline_list.addItem(item)
-            self.timeline_list.setItemWidget(item, widget)
-
-        if not upcoming and not events:
-            empty = QListWidgetItem()
-            widget = self._build_empty_state_card(
-                tr("missionary_detail_timeline_empty"),
-                tr("missionary_detail_timeline_empty_hint"),
-            )
-            empty.setFlags(empty.flags() & ~Qt.ItemIsSelectable)
-            empty.setSizeHint(widget.sizeHint())
-            self.timeline_list.addItem(empty)
-            self.timeline_list.setItemWidget(empty, widget)
+        TimelineSection(self).render()
 
     def _load_timeline(self, activity_feed=None):
-        if not hasattr(self, "current_missionary"):
-            return
-        try:
-            if activity_feed is None:
-                activity_feed = self.client_view_service.get_missionary_activity(
-                    self.current_missionary.id
-                )
-            self._timeline_feed = activity_feed or {"events": [], "upcoming": []}
-            self._render_timeline()
-        except Exception:
-            logger.exception("Failed to load timeline")
+        TimelineSection(self).load(activity_feed)
 
     # ==========================================
     # NOTES
     # ==========================================
 
     def _save_notes(self):
-        if not hasattr(self, "current_missionary"):
-            return
-
-        notes = self.notes_text.toPlainText()
-
-        try:
-            self.missionary_service.update_fields(
-                self.current_missionary.id,
-                {"notes": notes},
-            )
-
-            logger.info(
-                f"Saved notes for "
-                f"{self.current_missionary.full_name}"
-            )
-
-            show_message(
-                self,
-                tr("missionary_detail_saved_title"),
-                tr("missionary_detail_notes_saved"),
-            )
-
-        except Exception:
-            logger.exception(
-                "Failed to save notes"
-            )
-
-            show_message(
-                self,
-                tr("missionary_detail_error_title"),
-                tr("missionary_detail_notes_save_failed"),
-                kind="critical",
-            )
+        NotesSection(self).save()
 
     # ==========================================
     # DELETE MISSIONARY

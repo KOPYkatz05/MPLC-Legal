@@ -33,10 +33,8 @@ from services.workspace_layout import (
 )
 from services.workflow_service import WorkflowService
 from services.workflow_validator import WorkflowValidator
-from ui.dialogs.document_preview import (
-    DocumentPreviewWidget,
-)
 from ui.dialogs.document_viewer_dialog import (
+    DocumentPreviewWidget,
     DocumentViewerDialog,
 )
 from ui.dialogs.office_work_dialogs import TaskDialog

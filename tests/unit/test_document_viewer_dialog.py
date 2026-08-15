@@ -11,6 +11,26 @@ from ui.dialogs.document_viewer_dialog import (
 )
 
 
+def test_legacy_document_preview_module_reexports_canonical_api():
+    from ui.dialogs import document_preview
+    from ui.dialogs import document_viewer_dialog
+
+    assert (
+        document_preview.DocumentPreviewGraphicsView
+        is document_viewer_dialog.DocumentPreviewGraphicsView
+    )
+    assert (
+        document_preview.DocumentPreviewWidget
+        is document_viewer_dialog.DocumentPreviewWidget
+    )
+    assert (
+        document_preview.DocumentViewerDialog
+        is document_viewer_dialog.DocumentViewerDialog
+    )
+    assert document_preview.PREVIEW_MIN_SCALE == PREVIEW_MIN_SCALE
+    assert document_preview.PREVIEW_MAX_SCALE == PREVIEW_MAX_SCALE
+
+
 def _make_image(path):
     image = QImage(80, 120, QImage.Format_RGB32)
     image.fill(QColor("#ffffff"))
