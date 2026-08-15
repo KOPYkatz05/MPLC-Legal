@@ -2,7 +2,20 @@ from dataclasses import dataclass
 import ctypes
 import sys
 
-from PySide6.QtCore import QEvent, QMimeData, QPoint, QPointF, QRect, QRectF, QSize, Qt, Signal
+from PySide6.QtCore import (
+    QEasingCurve,
+    QEvent,
+    QMimeData,
+    QParallelAnimationGroup,
+    QPoint,
+    QPointF,
+    QPropertyAnimation,
+    QRect,
+    QRectF,
+    QSize,
+    Qt,
+    Signal,
+)
 from PySide6.QtGui import (
     QColor,
     QDrag,
@@ -684,12 +697,19 @@ def create_pill_action_button(
 class AppShell(QWidget):
     navigation_changed = Signal(str, int)
 
+    COLLAPSED_SIDEBAR_WIDTH = 71
+    EXPANDED_SIDEBAR_WIDTH = 224
+    COLLAPSED_BUTTON_WIDTH = 55
+    EXPANDED_BUTTON_WIDTH = 208
+    SIDEBAR_ANIMATION_DURATION_MS = 220
+
     def __init__(self, app_title, parent=None):
         super().__init__(parent)
         self.setObjectName("CentralWidget")
         self._items = []
         self._buttons = {}
-        self._system_section_started = False
+        self._sidebar_expanded = False
+        self._sidebar_animation = None
         self._icon_names = {
             "dashboard": ("VIEW_DASHBOARD", "HOME"),
             "missionaries": ("PEOPLE", "CONTACT"),
@@ -719,7 +739,7 @@ class AppShell(QWidget):
 
         self.sidebar = QFrame()
         self.sidebar.setObjectName("FluentSidebar")
-        self.sidebar.setFixedWidth(71)
+        self.sidebar.setFixedWidth(self.COLLAPSED_SIDEBAR_WIDTH)
         self.sidebar_layout = QVBoxLayout()
         self.sidebar_layout.setContentsMargins(8, 8, 8, 8)
         self.sidebar_layout.setSpacing(0)
@@ -728,14 +748,15 @@ class AppShell(QWidget):
         self.menu_button = QToolButton(self.sidebar)
         self.menu_button.setObjectName("SidebarMenuButton")
         self.menu_button.setFixedSize(55, 55)
-        self.menu_button.setToolTip(app_title)
-        self.menu_button.setAccessibleName(app_title)
+        self.menu_button.setToolTip("Expand navigation")
+        self.menu_button.setAccessibleName("Expand navigation")
         self.menu_button.setToolButtonStyle(Qt.ToolButtonIconOnly)
         self.menu_button.setIcon(
             app_icon("sidebar.menu", size=24, fallback=self._line_icon("menu"))
         )
         self.menu_button.setIconSize(QSize(20, 20))
         self.menu_button.setAutoRaise(True)
+        self.menu_button.clicked.connect(self.toggle_sidebar)
         self.sidebar_layout.addWidget(self.menu_button)
         self.sidebar_layout.addWidget(self._nav_separator())
 
@@ -757,15 +778,6 @@ class AppShell(QWidget):
         self.sidebar_layout.addStretch()
 
     def add_nav_item(self, key, title, stack_index, group=""):
-        if group and self._items and self._items[-1].group != group:
-            insert_at = max(1, self.sidebar_layout.count() - 1)
-            self.sidebar_layout.insertWidget(insert_at, self._nav_separator())
-
-        if group == "System" and not self._system_section_started:
-            insert_at = max(1, self.sidebar_layout.count() - 1)
-            self.sidebar_layout.insertStretch(insert_at, 1)
-            self._system_section_started = True
-
         button = QToolButton(self.sidebar)
         button.setCheckable(True)
         button.setObjectName("SidebarNavButton")
@@ -790,6 +802,93 @@ class AppShell(QWidget):
         self._buttons[key] = button
         self._items.append(NavItem(key, title, stack_index, group))
 
+    def toggle_sidebar(self):
+        self.set_sidebar_expanded(not self._sidebar_expanded)
+
+    def set_sidebar_expanded(self, expanded, animate=True):
+        expanded = bool(expanded)
+        if expanded == self._sidebar_expanded and self._sidebar_animation is None:
+            return
+        self._sidebar_expanded = expanded
+        target_width = (
+            self.EXPANDED_SIDEBAR_WIDTH
+            if self._sidebar_expanded
+            else self.COLLAPSED_SIDEBAR_WIDTH
+        )
+        button_width = (
+            self.EXPANDED_BUTTON_WIDTH
+            if self._sidebar_expanded
+            else self.COLLAPSED_BUTTON_WIDTH
+        )
+        # Keep the labels present while collapsing so the sidebar feels like it
+        # slides over its contents instead of making them disappear abruptly.
+        if self._sidebar_expanded:
+            self._set_sidebar_button_content(True, button_width)
+
+        self.menu_button.setProperty("sidebarExpanded", self._sidebar_expanded)
+        self.menu_button.setToolTip(
+            "Collapse navigation" if self._sidebar_expanded else "Expand navigation"
+        )
+        self.menu_button.setAccessibleName(self.menu_button.toolTip())
+        self.menu_button.style().unpolish(self.menu_button)
+        self.menu_button.style().polish(self.menu_button)
+
+        for button in self._buttons.values():
+            button.setProperty("sidebarExpanded", self._sidebar_expanded)
+            button.style().unpolish(button)
+            button.style().polish(button)
+
+        if self._sidebar_animation is not None:
+            self._sidebar_animation.stop()
+            self._sidebar_animation = None
+
+        start_width = self.sidebar.width()
+        if not animate or start_width == target_width:
+            self.sidebar.setFixedWidth(target_width)
+            self._finish_sidebar_animation()
+            return
+
+        self.sidebar.setMinimumWidth(start_width)
+        self.sidebar.setMaximumWidth(start_width)
+        animation = QParallelAnimationGroup(self)
+        for property_name in (b"minimumWidth", b"maximumWidth"):
+            width_animation = QPropertyAnimation(self.sidebar, property_name, animation)
+            width_animation.setDuration(self.SIDEBAR_ANIMATION_DURATION_MS)
+            width_animation.setStartValue(start_width)
+            width_animation.setEndValue(target_width)
+            width_animation.setEasingCurve(QEasingCurve.InOutCubic)
+            animation.addAnimation(width_animation)
+        animation.finished.connect(self._finish_sidebar_animation)
+        self._sidebar_animation = animation
+        animation.start()
+
+    def _set_sidebar_button_content(self, expanded, button_width):
+        button_style = (
+            Qt.ToolButtonTextBesideIcon if expanded else Qt.ToolButtonIconOnly
+        )
+        self.menu_button.setFixedWidth(button_width)
+        self.menu_button.setToolButtonStyle(button_style)
+        # The non-checkable menu control has a smaller native icon/text gap than
+        # the checkable navigation controls. An em-space keeps all labels on the
+        # same vertical guide while retaining the native QToolButton behavior.
+        self.menu_button.setText("\u2003Menu" if expanded else "")
+        titles = {item.key: item.title for item in self._items}
+        for key, button in self._buttons.items():
+            button.setFixedWidth(button_width)
+            button.setToolButtonStyle(button_style)
+            button.setText(titles.get(key, "") if expanded else "")
+
+    def _finish_sidebar_animation(self):
+        target_width = (
+            self.EXPANDED_SIDEBAR_WIDTH
+            if self._sidebar_expanded
+            else self.COLLAPSED_SIDEBAR_WIDTH
+        )
+        self.sidebar.setFixedWidth(target_width)
+        if not self._sidebar_expanded:
+            self._set_sidebar_button_content(False, self.COLLAPSED_BUTTON_WIDTH)
+        self._sidebar_animation = None
+
     def set_current_key(self, key):
         item = next((nav for nav in self._items if nav.key == key), None)
         if not item:
@@ -801,6 +900,15 @@ class AppShell(QWidget):
     def set_nav_title(self, key, title):
         if key in self._buttons:
             self._buttons[key].setToolTip(title)
+            self._buttons[key].setAccessibleName(title)
+            if self._sidebar_expanded:
+                self._buttons[key].setText(title)
+        self._items = [
+            NavItem(item.key, title, item.stack_index, item.group)
+            if item.key == key
+            else item
+            for item in self._items
+        ]
 
     def _nav_icon(self, key):
         icon = app_icon(
@@ -824,7 +932,7 @@ class AppShell(QWidget):
 
     @staticmethod
     def _line_icon(key):
-        icon_key = "list" if key == "office_work" else key
+        icon_key = "check" if key == "office_work" else key
         pixmap = QPixmap(24, 24)
         pixmap.fill(Qt.transparent)
 
@@ -839,6 +947,9 @@ class AppShell(QWidget):
         if icon_key == "menu":
             for y in (7, 12, 17):
                 painter.drawLine(QPointF(7, y), QPointF(17, y))
+        elif icon_key == "check":
+            painter.drawLine(QPointF(6.5, 12.5), QPointF(10.5, 16.5))
+            painter.drawLine(QPointF(10.5, 16.5), QPointF(18, 7.5))
         elif icon_key == "dashboard":
             for rect in (
                 QRectF(6, 6, 4.8, 4.8),

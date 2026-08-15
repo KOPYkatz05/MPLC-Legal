@@ -446,8 +446,21 @@ def test_dashboard_renders_daily_digest_section(monkeypatch, qapp):
     page = DashboardPage()
 
     try:
-        card = page.findChild(dashboard_page.QFrame, "DashboardResidencyCard")
-        assert card is not None
+        residency_card = page.findChild(
+            dashboard_page.QFrame, "DashboardResidencyCard"
+        )
+        cancelaciones_card = page.findChild(
+            dashboard_page.QFrame, "DashboardCancelacionesCard"
+        )
+
+        assert residency_card is not None
+        assert cancelaciones_card is not None
+        assert residency_card.layout().itemAt(
+            residency_card.layout().count() - 1
+        ).spacerItem() is not None
+        assert cancelaciones_card.layout().itemAt(
+            cancelaciones_card.layout().count() - 1
+        ).spacerItem() is not None
     finally:
         page.close()
 

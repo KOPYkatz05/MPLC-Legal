@@ -7,13 +7,22 @@ from ui.update_coordinator import required_update_version_problem
 from version import (
     API_VERSION,
     APP_VERSION,
+    MAX_SUPPORTED_SERVER_API_VERSION,
     MIN_SUPPORTED_CLIENT_VERSION,
+    MIN_SUPPORTED_SERVER_API_VERSION,
     SCHEMA_VERSION,
 )
 
 
 def test_server_requires_the_same_application_release():
     assert MIN_SUPPORTED_CLIENT_VERSION == APP_VERSION
+
+
+def test_durable_upload_protocol_requires_coordinated_034_release():
+    assert APP_VERSION == "0.3.4"
+    assert API_VERSION == "3"
+    assert MIN_SUPPORTED_SERVER_API_VERSION == "3"
+    assert MAX_SUPPORTED_SERVER_API_VERSION == "3"
 
 
 def test_compatible_server_versions_are_accepted():

@@ -1,10 +1,24 @@
 from pathlib import Path
 from uuid import uuid4
 
+import fitz
 import pytest
 
 from services import document_service as module
-from services.api_client import ApiUnavailableError, RemoteRecord
+from services.api_client import (
+    ApiUnavailableError,
+    ApiUploadLookupResult,
+    RemoteRecord,
+)
+
+
+def _write_pdf(path, text="document"):
+    pdf = fitz.open()
+    page = pdf.new_page()
+    page.insert_text((72, 72), text)
+    pdf.save(path)
+    pdf.close()
+    return path
 
 
 @pytest.fixture
@@ -139,7 +153,7 @@ def test_remote_upload_sends_file_without_downloading_response(monkeypatch, tmp_
     )
     monkeypatch.setattr(module, "get_client_data_dir", lambda: tmp_path)
     source = tmp_path / "source.pdf"
-    source.write_bytes(b"upload")
+    _write_pdf(source)
     missionary = type("Missionary", (), {"id": 9})()
 
     document = module.DocumentService().upload_document(
@@ -148,16 +162,19 @@ def test_remote_upload_sends_file_without_downloading_response(monkeypatch, tmp_
 
     assert document.id == 5
     assert document.file_path == "C:/server/new.pdf"
+    assert client.upload_data["upload_id"]
+    assert len(client.upload_data["content_sha256"]) == 64
+    assert int(client.upload_data["file_size"]) == source.stat().st_size
 
 
-def test_remote_ocr_upload_serializes_multipart_json_fields(monkeypatch):
+def test_remote_ocr_upload_serializes_multipart_json_fields(monkeypatch, tmp_path):
     client = FakeDocumentClient()
     monkeypatch.setattr(
         module.MissionLegalApiClient,
         "from_environment",
         classmethod(lambda cls: client),
     )
-    source = Path(__file__)
+    source = _write_pdf(tmp_path / "ocr.pdf")
     missionary = type("Missionary", (), {"id": 9})()
     service = module.DocumentService()
     monkeypatch.setattr(service, "_materialize", lambda record: record)
@@ -177,6 +194,90 @@ def test_remote_ocr_upload_serializes_multipart_json_fields(monkeypatch):
     assert client.upload_data["ocr_confirmed_data"] == (
         '{"passport_number": "redacted"}'
     )
+
+
+def test_remote_reconciliation_does_not_require_the_original_source(monkeypatch):
+    upload_id = str(uuid4())
+    digest = "a" * 64
+
+    class LookupClient(FakeDocumentClient):
+        def lookup_upload(self, candidate, *, expected):
+            assert candidate == upload_id
+            assert expected == {
+                "upload_id": upload_id,
+                "missionary_id": 9,
+                "document_type": "CARNE_DE_EXTRANJERIA",
+                "workflow_stage": "CARNET DE EXTRANJERIA",
+                "content_sha256": digest,
+                "file_size": 321,
+                "supersedes_document_id": 87,
+            }
+            return ApiUploadLookupResult(
+                status="committed",
+                payload={"id": 55, **expected},
+            )
+
+    monkeypatch.setattr(
+        module.MissionLegalApiClient,
+        "from_environment",
+        classmethod(lambda cls: LookupClient()),
+    )
+
+    document = module.DocumentService().reconcile_upload(
+        upload_id,
+        missionary_id=9,
+        document_type="CARNE_DE_EXTRANJERIA",
+        workflow_stage="CARNET DE EXTRANJERIA",
+        content_sha256=digest,
+        file_size=321,
+        supersedes_document_id=87,
+    )
+
+    assert document.id == 55
+    assert document.content_sha256 == digest
+
+
+@pytest.mark.parametrize(
+    ("lookup_result", "expected_exception"),
+    [
+        (ApiUploadLookupResult(status="not_found"), None),
+        (
+            ApiUploadLookupResult(
+                status="unavailable",
+                detail="server offline",
+            ),
+            module.DocumentUploadOutcomeUnknownError,
+        ),
+    ],
+)
+def test_remote_reconciliation_distinguishes_absent_from_unavailable(
+    monkeypatch,
+    lookup_result,
+    expected_exception,
+):
+    class LookupClient(FakeDocumentClient):
+        def lookup_upload(self, *_args, **_kwargs):
+            return lookup_result
+
+    monkeypatch.setattr(
+        module.MissionLegalApiClient,
+        "from_environment",
+        classmethod(lambda cls: LookupClient()),
+    )
+    service = module.DocumentService()
+    kwargs = {
+        "missionary_id": 9,
+        "document_type": "PASSPORT",
+        "workflow_stage": "INTERPOL",
+        "content_sha256": "b" * 64,
+        "file_size": 123,
+    }
+
+    if expected_exception is None:
+        assert service.reconcile_upload(str(uuid4()), **kwargs) is None
+    else:
+        with pytest.raises(expected_exception, match="server offline"):
+            service.reconcile_upload(str(uuid4()), **kwargs)
 
 
 def test_missing_remote_document_is_reported_as_server_unavailable(monkeypatch):

@@ -128,6 +128,27 @@ def _run_migrations():
         """,
         "ALTER TABLE documents ADD COLUMN ocr_raw_data TEXT",
         "ALTER TABLE documents ADD COLUMN ocr_confirmed_data TEXT",
+        "ALTER TABLE documents ADD COLUMN upload_id VARCHAR",
+        "ALTER TABLE documents ADD COLUMN content_sha256 VARCHAR",
+        "ALTER TABLE documents ADD COLUMN file_size INTEGER",
+        "ALTER TABLE documents ADD COLUMN supersedes_document_id INTEGER REFERENCES documents(id) ON DELETE SET NULL",
+        "ALTER TABLE documents ADD COLUMN post_processing_status VARCHAR NOT NULL DEFAULT 'NOT_REQUIRED'",
+        "ALTER TABLE documents ADD COLUMN post_processing_error TEXT",
+        "ALTER TABLE documents ADD COLUMN post_processing_updated_fields TEXT",
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_documents_upload_id ON documents(upload_id)",
+        """
+        UPDATE residency_events
+        SET status = 'SUPERSEDED', sequence_number = -id
+        WHERE id NOT IN (
+            SELECT MAX(id)
+            FROM residency_events
+            GROUP BY missionary_id, event_type, sequence_number
+        )
+        """,
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS uq_residency_event_identity
+        ON residency_events(missionary_id, event_type, sequence_number)
+        """,
         "ALTER TABLE appointments ADD COLUMN appointment_uid VARCHAR",
         "ALTER TABLE appointments ADD COLUMN closed_at DATETIME",
         "ALTER TABLE appointments ADD COLUMN status_reason VARCHAR",

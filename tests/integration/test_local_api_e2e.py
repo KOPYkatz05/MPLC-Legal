@@ -33,10 +33,14 @@ def test_authenticated_document_round_trip(tmp_path):
     script = textwrap.dedent(
         """
         from pathlib import Path
+        import hashlib
+        import fitz
+        import uuid
         from fastapi.testclient import TestClient
         from database.db import init_db
         from server.app import create_app
         from server.security import DeviceCredentialStore, PairingCodeStore
+        from version import APP_VERSION
 
         init_db()
         root = Path(__import__('os').environ['MISSION_LEGAL_DATA_DIR'])
@@ -54,6 +58,7 @@ def test_authenticated_document_round_trip(tmp_path):
         headers = {
             'X-Device-ID': credentials['device_id'],
             'X-Device-Credential': credentials['credential'],
+            'X-Client-Version': APP_VERSION,
         }
         confirmed = client.post('/pair/confirm', headers=headers)
         assert confirmed.status_code == 200, confirmed.text
@@ -79,6 +84,12 @@ def test_authenticated_document_round_trip(tmp_path):
         stage_result = stage_update.json()['result']
         assert stage_result['workflow_status'] == 'COMPLETED'
         assert stage_result['current_stage'] == 'CARNET DE EXTRANJERIA'
+        pdf = fitz.open()
+        pdf.new_page()
+        upload_bytes = pdf.tobytes()
+        pdf.close()
+        upload_id = str(uuid.uuid4())
+        upload_sha256 = hashlib.sha256(upload_bytes).hexdigest()
         uploaded = client.post(
             '/v1/documents/upload',
             headers=headers,
@@ -87,16 +98,43 @@ def test_authenticated_document_round_trip(tmp_path):
                 'document_type': 'PASSPORT',
                 'workflow_stage': 'INTERPOL',
                 'ocr_confirmed_data': '{}',
+                'upload_id': upload_id,
+                'content_sha256': upload_sha256,
+                'file_size': str(len(upload_bytes)),
             },
-            files={'file': ('passport.pdf', b'%PDF-test', 'application/pdf')},
+            files={'file': ('passport.pdf', upload_bytes, 'application/pdf')},
         )
         assert uploaded.status_code == 201, uploaded.text
         document = uploaded.json()
+        assert document['upload_id']
+        assert document['content_sha256'] == hashlib.sha256(upload_bytes).hexdigest()
+        assert document['file_size'] == len(upload_bytes)
+        retried = client.post(
+            '/v1/documents/upload',
+            headers=headers,
+            data={
+                'missionary_id': str(missionary['id']),
+                'document_type': 'PASSPORT',
+                'workflow_stage': 'INTERPOL',
+                'ocr_confirmed_data': '{}',
+                'upload_id': document['upload_id'],
+                'content_sha256': document['content_sha256'],
+                'file_size': str(document['file_size']),
+            },
+            files={'file': ('passport.pdf', upload_bytes, 'application/pdf')},
+        )
+        assert retried.status_code == 201, retried.text
+        assert retried.json()['id'] == document['id']
+        reconciled = client.get(
+            f"/v1/document-uploads/{document['upload_id']}", headers=headers
+        )
+        assert reconciled.status_code == 200, reconciled.text
+        assert reconciled.json()['id'] == document['id']
         content = client.get(
             f"/v1/documents/{document['id']}/content", headers=headers
         )
         assert content.status_code == 200, content.text
-        assert content.content == b'%PDF-test'
+        assert content.content == upload_bytes
         Path(document['file_path']).unlink()
         missing = client.get(
             f"/v1/documents/{document['id']}/content", headers=headers

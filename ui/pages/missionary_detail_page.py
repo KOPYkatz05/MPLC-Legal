@@ -2302,9 +2302,7 @@ class MissionaryDetailPage(QWidget):
         dialog.appointment_dates_updated.connect(
             self._refresh_calendar_after_appointment_upload
         )
-        document_uploaded = getattr(dialog, "document_uploaded", None)
-        if document_uploaded is not None:
-            document_uploaded.connect(self._refresh_after_document_upload)
+        self._connect_upload_document_refresh(dialog)
         dialog.exec()
 
         if dialog.saved_any():
@@ -2330,9 +2328,7 @@ class MissionaryDetailPage(QWidget):
         dialog.appointment_dates_updated.connect(
             self._refresh_calendar_after_appointment_upload
         )
-        document_uploaded = getattr(dialog, "document_uploaded", None)
-        if document_uploaded is not None:
-            document_uploaded.connect(self._refresh_after_document_upload)
+        self._connect_upload_document_refresh(dialog)
         dialog.exec()
 
         if dialog.saved_any():
@@ -2371,18 +2367,26 @@ class MissionaryDetailPage(QWidget):
             else:
                 load_data()
 
-    def _refresh_after_document_upload(self, missionary_id, document_id):
-        """Add one uploaded document without reloading the detail snapshot."""
+    def _connect_upload_document_refresh(self, dialog):
+        """Prefer the returned record so paired clients do not fetch on the UI thread."""
+        document_saved = getattr(dialog, "document_saved", None)
+        if document_saved is not None:
+            document_saved.connect(self._merge_uploaded_document)
+            return
+
+        document_uploaded = getattr(dialog, "document_uploaded", None)
+        if document_uploaded is not None:
+            document_uploaded.connect(self._refresh_after_document_upload)
+
+    def _merge_uploaded_document(self, missionary_id, document):
+        """Merge the record already returned by upload into the detail snapshot."""
         current_id = getattr(
             getattr(self, "current_missionary", None),
             "id",
             None,
         )
+        document_id = getattr(document, "id", None)
         if current_id != missionary_id or document_id is None:
-            return
-
-        document = self.document_service.get_document_by_id(document_id)
-        if document is None:
             return
 
         documents = list(getattr(self, "_document_records", {}).values())
@@ -2395,6 +2399,20 @@ class MissionaryDetailPage(QWidget):
             documents=documents,
         )
         self._upload_detail_reload_seen = True
+
+    def _refresh_after_document_upload(self, missionary_id, document_id):
+        """Compatibility path for dialogs that only emit a document ID."""
+        current_id = getattr(
+            getattr(self, "current_missionary", None),
+            "id",
+            None,
+        )
+        if current_id != missionary_id or document_id is None:
+            return
+
+        document = self.document_service.get_document_by_id(document_id)
+        if document is not None:
+            self._merge_uploaded_document(missionary_id, document)
 
     def _refresh_missionaries_table(self, deferred=False):
         if deferred:

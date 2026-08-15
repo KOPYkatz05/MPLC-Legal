@@ -26,7 +26,9 @@ class WorkflowValidator(RemoteServiceMixin):
     REMOTE_METHODS = frozenset({"validate_workflows", "get_missing_documents"})
     def validate_workflows(
         self,
-        missionary_id
+        missionary_id,
+        *,
+        raise_on_error=False,
     ):
         session = SessionLocal()
 
@@ -122,13 +124,18 @@ class WorkflowValidator(RemoteServiceMixin):
                 "Workflow validation failed"
             )
 
+            if raise_on_error:
+                raise
+
         finally:
             session.close()
 
     def get_missing_documents(
         self,
         missionary_id,
-        workflow_stage
+        workflow_stage,
+        *,
+        raise_on_error=False,
     ):
         session = SessionLocal()
 
@@ -172,6 +179,9 @@ class WorkflowValidator(RemoteServiceMixin):
                 "Failed to calculate "
                 "missing documents"
             )
+
+            if raise_on_error:
+                raise
 
             return []
 

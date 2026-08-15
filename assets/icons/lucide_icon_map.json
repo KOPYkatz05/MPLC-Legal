@@ -2,7 +2,7 @@
   "sidebar.menu": ["menu"],
   "sidebar.dashboard": ["layout-dashboard", "house"],
   "sidebar.missionaries": ["users", "contact"],
-  "sidebar.office_work": ["briefcase-business", "list-checks"],
+  "sidebar.office_work": ["check"],
   "sidebar.appointments": ["calendar-days", "calendar"],
   "sidebar.reports": ["chart-column", "file-chart-column"],
   "sidebar.trash": ["trash-2", "trash"],

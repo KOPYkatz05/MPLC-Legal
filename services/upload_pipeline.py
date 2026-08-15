@@ -14,6 +14,7 @@ from PySide6.QtWidgets import QProgressDialog, QApplication
 from PySide6.QtCore import Qt
 
 from database.db import SessionLocal
+from database.models.document import Document
 from database.models.missionary import Missionary
 from services.document_parser import DocumentParser
 from services.document_image_export_service import DocumentImageExportService
@@ -93,9 +94,19 @@ class OcrSaveResult:
     document: object = None
     updated_fields: list = field(default_factory=list)
     missing_documents: list = field(default_factory=list)
+    status: str = "saved"
+    warnings: list = field(default_factory=list)
+
+    @property
+    def saved_with_warnings(self):
+        return self.status == "saved_with_warnings"
 
 
 DATE_AUTO_UPDATE_FIELDS = set(MISSIONARY_DATE_FIELDS)
+
+
+class PostProcessingClaimUnavailableError(RuntimeError):
+    """The document was completed, superseded, or claimed by another retry."""
 
 
 def get_ocr_service(parent=None):
@@ -813,6 +824,8 @@ def finalize_ocr_ingestion(
     confirmed_data=None,
     notes=None,
     document_service=None,
+    upload_id=None,
+    supersedes_document_id=None,
 ):
     confirmed_data = confirmed_data or {}
     pipeline_result = pipeline_result or UploadPipelineResult(
@@ -832,37 +845,164 @@ def finalize_ocr_ingestion(
         ocr_confirmed_data=confirmed_data or None,
         notes=notes,
         document_service=document_service,
+        upload_id=upload_id,
+        supersedes_document_id=supersedes_document_id,
+    )
+    if doc is None:
+        raise RuntimeError(
+            "Document upload completed without a saved document record."
+        )
+
+    return finalize_saved_ocr_follow_up(
+        missionary=missionary,
+        document=doc,
+        document_type=document_type,
+        workflow_stage=workflow_stage,
+        confirmed_data=confirmed_data,
+        allow_legacy_updates=True,
     )
 
+
+def finalize_saved_ocr_follow_up(
+    missionary,
+    document,
+    document_type,
+    workflow_stage,
+    confirmed_data=None,
+    *,
+    allow_legacy_updates=False,
+):
+    """Refresh durable OCR follow-up without reopening the source scan."""
+
+    if document is None:
+        raise RuntimeError("A saved document record is required for follow-up.")
+    confirmed_data = confirmed_data or {}
+    doc = document
+
     updated_fields = []
+    missing_documents = []
+    warnings = []
     residency_document = document_type in {
         "CARNE_DE_EXTRANJERIA",
         "APROBACION_DE_PRORROGA",
     }
-    if doc and (confirmed_data or residency_document):
-        updated_fields = apply_missionary_updates(
-            missionary.id,
-            document_type,
-            doc.id,
-            confirmed_data,
+    durable_post_processing_status = getattr(
+        doc,
+        "post_processing_status",
+        None,
+    )
+    if durable_post_processing_status in {"PENDING", "RETRY_REQUIRED"}:
+        warnings.append(
+            "The document was saved, but its missionary updates still need "
+            "to be retried. The saved file remains available."
         )
+    elif durable_post_processing_status == "COMPLETE":
+        durable_updated_fields = getattr(
+            doc,
+            "post_processing_updated_fields",
+            None,
+        )
+        if durable_updated_fields:
+            try:
+                parsed_updated_fields = (
+                    json.loads(durable_updated_fields)
+                    if isinstance(durable_updated_fields, str)
+                    else durable_updated_fields
+                )
+                if isinstance(parsed_updated_fields, list):
+                    updated_fields = [
+                        str(field) for field in parsed_updated_fields
+                    ]
+            except (TypeError, ValueError):
+                logger.warning(
+                    "Document %s has invalid post-processing field metadata",
+                    getattr(doc, "id", None),
+                )
+    elif (
+        allow_legacy_updates
+        and durable_post_processing_status is None
+        and doc
+        and (confirmed_data or residency_document)
+    ):
+        # Compatibility path for older servers and test doubles. Current
+        # servers own this follow-up and expose its durable status on the
+        # committed document record.
+        try:
+            updated_fields = apply_missionary_updates(
+                missionary.id,
+                document_type,
+                doc.id,
+                confirmed_data,
+            )
+        except Exception:
+            logger.exception(
+                "Document %s was saved, but missionary updates failed",
+                getattr(doc, "id", None),
+            )
+            warnings.append(
+                "The document was saved, but its missionary fields could "
+                "not be updated. The saved file remains available."
+            )
 
     if doc:
-        from services.workflow_validator import WorkflowValidator
-        WorkflowValidator().validate_workflows(missionary.id)
+        try:
+            from services.workflow_validator import WorkflowValidator
+            WorkflowValidator().validate_workflows(
+                missionary.id,
+                raise_on_error=True,
+            )
+        except Exception:
+            logger.exception(
+                "Document %s was saved, but workflow validation failed",
+                getattr(doc, "id", None),
+            )
+            warnings.append(
+                "The document was saved, but workflow status could not be "
+                "refreshed. The saved file remains available."
+            )
 
-    current_stage = _get_current_stage(
-        missionary.id,
-        getattr(missionary, "current_stage", workflow_stage),
-    )
+    fallback_stage = getattr(
+        missionary,
+        "current_stage",
+        None,
+    ) or workflow_stage
+    current_stage = fallback_stage
+    try:
+        current_stage = _get_current_stage(
+            missionary.id,
+            fallback_stage,
+        )
+    except Exception:
+        logger.exception(
+            "Document %s was saved, but the missionary stage reload failed",
+            getattr(doc, "id", None),
+        )
+        warnings.append(
+            "The document was saved, but the current workflow stage could "
+            "not be reloaded. The saved file remains available."
+        )
+
+    try:
+        missing_documents = get_missing_for_missionary(
+            missionary.id,
+            current_stage,
+        )
+    except Exception:
+        logger.exception(
+            "Document %s was saved, but missing-document refresh failed",
+            getattr(doc, "id", None),
+        )
+        warnings.append(
+            "The document was saved, but the missing-document list could "
+            "not be refreshed. The saved file remains available."
+        )
 
     return OcrSaveResult(
         document=doc,
         updated_fields=updated_fields,
-        missing_documents=get_missing_for_missionary(
-            missionary.id,
-            current_stage,
-        ),
+        missing_documents=missing_documents,
+        status="saved_with_warnings" if warnings else "saved",
+        warnings=warnings,
     )
 
 
@@ -885,7 +1025,7 @@ def _get_current_stage(missionary_id, fallback):
         return fallback
     except Exception:
         logger.exception("Failed to reload missionary stage")
-        return fallback
+        raise
     finally:
         session.close()
 
@@ -937,79 +1077,175 @@ def parse_date_value(value_str):
     return None
 
 
+def _safe_auto_update_fields(document_type, requested_fields=None):
+    document_config = DOCUMENTS.get(document_type)
+    if document_config is None:
+        raise ValueError(f"Unsupported document type: {document_type}")
+
+    allowed_fields = list(dict.fromkeys(
+        document_config.get("auto_updates", [])
+    ))
+    if requested_fields is None:
+        return allowed_fields
+    if isinstance(requested_fields, str):
+        requested_fields = [requested_fields]
+
+    requested = set(requested_fields)
+    rejected = requested.difference(allowed_fields)
+    if rejected:
+        logger.warning(
+            "Ignored unsafe auto-update fields for %s: %s",
+            document_type,
+            sorted(rejected),
+        )
+    return [field for field in allowed_fields if field in requested]
+
+
 def apply_missionary_updates(
     missionary_id,
     document_type,
     document_id,
     confirmed_data,
     auto_update_fields=None,
+    session_factory=None,
+    track_post_processing=False,
 ):
+    confirmed_data = dict(confirmed_data or {})
     remote = MissionLegalApiClient.from_environment()
     if remote is not None:
+        safe_fields = _safe_auto_update_fields(
+            document_type,
+            auto_update_fields,
+        )
         payload = remote.post(
             f"/v1/documents/{document_id}/apply-updates",
             json={
                 "document_type": document_type,
-                "confirmed_data": confirmed_data or {},
-                "auto_update_fields": auto_update_fields,
+                "confirmed_data": confirmed_data,
+                "auto_update_fields": safe_fields,
             },
         )
         return payload["updated_fields"]
-    auto_update_fields = auto_update_fields or DOCUMENTS.get(
-        document_type, {}
-    ).get("auto_updates", [])
 
-    updates = {}
-    doc_label = DOCUMENTS.get(document_type, {}).get(
-        "label", document_type
-    )
-    ignored_derived_fields = set()
-    if document_type == "TAM":
-        ignored_derived_fields.add("visa_expiration")
-    elif document_type == "CARNE_DE_EXTRANJERIA":
-        ignored_derived_fields.add("residency_expiration")
-    elif document_type == "APROBACION_DE_PRORROGA":
-        ignored_derived_fields.add("prorroga_expiration")
-
-    for field in auto_update_fields:
-        if field in ignored_derived_fields:
-            continue
-        value = confirmed_data.get(field, "")
-        if field == "passport_number":
-            value = normalize_passport_number(value)
-        elif field == "nationality":
-            value = normalize_nationality(value)
-        elif field == "dni_number":
-            value = re.sub(r"\D", "", str(value or ""))[:8]
-            if len(value) != 8:
-                continue
-        if not value:
-            continue
-        if field in DATE_AUTO_UPDATE_FIELDS:
-            parsed_date = parse_date_value(value)
-            if parsed_date:
-                updates[field] = parsed_date
-        else:
-            updates[field] = str(value).strip()
-
-    uses_entry_based_expiration = document_type in {
-        "TAM",
-        "CARNE_DE_EXTRANJERIA",
-        "APROBACION_DE_PRORROGA",
-    }
-
-    if not updates and not uses_entry_based_expiration:
-        return []
-
-    session = SessionLocal()
+    session = (session_factory or SessionLocal)()
     try:
+        if track_post_processing:
+            claimed = (
+                session.query(Document)
+                .filter(
+                    Document.id == document_id,
+                    Document.missionary_id == missionary_id,
+                    Document.status == "ACTIVE",
+                    Document.post_processing_status.in_({
+                        "PENDING",
+                        "RETRY_REQUIRED",
+                    }),
+                )
+                .update(
+                    {
+                        Document.post_processing_status: "PROCESSING",
+                        Document.post_processing_error: None,
+                    },
+                    synchronize_session=False,
+                )
+            )
+            if claimed != 1:
+                raise PostProcessingClaimUnavailableError(
+                    "The document is no longer an active retry candidate."
+                )
+            # This write is deliberately held in the same transaction as the
+            # missionary/residency changes. A replacement must wait and then
+            # either follow this completed update or cancel a rolled-back one.
+            session.flush()
+
+        stored_document = (
+            session.query(Document)
+            .filter_by(id=document_id)
+            .first()
+        )
+        if stored_document is not None:
+            if stored_document.missionary_id != missionary_id:
+                raise ValueError(
+                    "Document does not belong to the selected missionary."
+                )
+            if stored_document.document_type != document_type:
+                logger.warning(
+                    "Using stored document type %s instead of requested %s "
+                    "for document %s",
+                    stored_document.document_type,
+                    document_type,
+                    document_id,
+                )
+            document_type = stored_document.document_type
+        else:
+            # Older callers and data-repair tools may not have a document row.
+            # Production ingestion always supplies the just-committed document.
+            logger.warning(
+                "Could not derive document type for missing document %s; "
+                "using the requested type %s",
+                document_id,
+                document_type,
+            )
+
+        safe_fields = _safe_auto_update_fields(
+            document_type,
+            auto_update_fields,
+        )
+        updates = {}
+        doc_label = DOCUMENTS[document_type].get(
+            "label", document_type
+        )
+        ignored_derived_fields = set()
+        if document_type == "TAM":
+            ignored_derived_fields.add("visa_expiration")
+        elif document_type == "CARNE_DE_EXTRANJERIA":
+            ignored_derived_fields.add("residency_expiration")
+        elif document_type == "APROBACION_DE_PRORROGA":
+            ignored_derived_fields.add("prorroga_expiration")
+
+        for field in safe_fields:
+            if field in ignored_derived_fields:
+                continue
+            value = confirmed_data.get(field, "")
+            if field == "passport_number":
+                value = normalize_passport_number(value)
+            elif field == "nationality":
+                value = normalize_nationality(value)
+            elif field == "dni_number":
+                value = re.sub(r"\D", "", str(value or ""))[:8]
+                if len(value) != 8:
+                    continue
+            if not value:
+                continue
+            if field in DATE_AUTO_UPDATE_FIELDS:
+                parsed_date = parse_date_value(value)
+                if parsed_date:
+                    updates[field] = parsed_date
+            else:
+                updates[field] = str(value).strip()
+
+        uses_entry_based_expiration = document_type in {
+            "TAM",
+            "CARNE_DE_EXTRANJERIA",
+            "APROBACION_DE_PRORROGA",
+        }
+        if not updates and not uses_entry_based_expiration:
+            if track_post_processing:
+                stored_document.post_processing_status = "COMPLETE"
+                stored_document.post_processing_error = None
+                stored_document.post_processing_updated_fields = "[]"
+                session.commit()
+            return []
+
         missionary = (
             session.query(Missionary)
             .filter_by(id=missionary_id)
             .first()
         )
         if not missionary:
-            return []
+            raise LookupError(
+                f"Missionary {missionary_id} was not found."
+            )
 
         sources = {}
         if missionary.field_sources:
@@ -1024,8 +1260,6 @@ def apply_missionary_updates(
                 "document_type": document_type,
                 "label": doc_label,
             }
-
-        missionary.field_sources = json.dumps(sources)
 
         for field, value in updates.items():
             setattr(missionary, field, value)
@@ -1074,17 +1308,26 @@ def apply_missionary_updates(
                 }
 
         missionary.field_sources = json.dumps(sources)
-
+        if track_post_processing:
+            stored_document.post_processing_status = "COMPLETE"
+            stored_document.post_processing_error = None
+            stored_document.post_processing_updated_fields = json.dumps(
+                list(updates.keys())
+            )
         session.commit()
         logger.info(
-            f"Auto-updated missionary {missionary_id}: "
-            f"{list(updates.keys())}"
+            "Auto-updated missionary %s: %s",
+            missionary_id,
+            list(updates.keys()),
         )
         return list(updates.keys())
+    except PostProcessingClaimUnavailableError:
+        session.rollback()
+        raise
     except Exception:
         session.rollback()
         logger.exception("Failed to apply missionary updates")
-        return []
+        raise
     finally:
         session.close()
 
@@ -1098,6 +1341,8 @@ def save_document_with_ocr(
     ocr_confirmed_data=None,
     notes=None,
     document_service=None,
+    upload_id=None,
+    supersedes_document_id=None,
 ):
     document_service = document_service or DocumentService()
     doc = document_service.upload_document(
@@ -1108,6 +1353,8 @@ def save_document_with_ocr(
         ocr_raw_data=ocr_raw_data,
         ocr_confirmed_data=ocr_confirmed_data,
         notes=notes,
+        upload_id=upload_id,
+        supersedes_document_id=supersedes_document_id,
     )
     return doc
 
@@ -1116,5 +1363,7 @@ def get_missing_for_missionary(missionary_id, current_stage):
     from services.workflow_validator import WorkflowValidator
     validator = WorkflowValidator()
     return validator.get_missing_documents(
-        missionary_id, current_stage
+        missionary_id,
+        current_stage,
+        raise_on_error=True,
     )

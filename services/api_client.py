@@ -6,8 +6,10 @@ import ssl
 import logging
 import sys
 import threading
+import time
 import uuid
 from contextlib import contextmanager
+from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
 from urllib.parse import urlparse
@@ -71,6 +73,39 @@ class ApiUnavailableError(RuntimeError):
         super().__init__(message)
         self.status_code = status_code
         self.code = code
+
+
+class ApiUploadOutcomeUnknownError(ApiUnavailableError):
+    """The server may have committed an upload whose response was lost."""
+
+    def __init__(self, message, *, upload_id):
+        super().__init__(message, code="upload_outcome_unknown")
+        self.upload_id = str(upload_id)
+
+
+class ApiUploadConflictError(ValueError):
+    """An upload ID is committed with different immutable metadata."""
+
+
+@dataclass(frozen=True)
+class ApiUploadLookupResult:
+    """Authoritative state returned by the upload reconciliation endpoint."""
+
+    status: str
+    payload: dict | None = None
+    detail: str | None = None
+
+    @property
+    def committed(self):
+        return self.status == "committed"
+
+    @property
+    def not_found(self):
+        return self.status == "not_found"
+
+    @property
+    def unavailable(self):
+        return self.status == "unavailable"
 
 
 class ApiAuthenticationError(RuntimeError):
@@ -174,6 +209,9 @@ def _installed_local_server_url(
 
 
 class MissionLegalApiClient:
+    DEFAULT_UPLOAD_TIMEOUT = 120.0
+    UPLOAD_RECONCILIATION_DELAYS = (0.0, 0.2, 0.8)
+
     _environment_lock = threading.RLock()
     _environment_client = None
     _environment_key = None
@@ -186,6 +224,7 @@ class MissionLegalApiClient:
         credential_path=None,
         transport=None,
         timeout=10.0,
+        upload_timeout=DEFAULT_UPLOAD_TIMEOUT,
     ):
         self.base_url = base_url.rstrip("/")
         self.certificate = certificate if certificate is not None else True
@@ -195,6 +234,7 @@ class MissionLegalApiClient:
         )
         self._transport = transport
         self.timeout = timeout
+        self.upload_timeout = upload_timeout
         self._pairing_previous_device_bytes = None
         self._pairing_in_progress = False
         self._client_condition = threading.Condition(threading.RLock())
@@ -403,6 +443,7 @@ class MissionLegalApiClient:
         return {
             "X-Device-ID": device["device_id"],
             "X-Device-Credential": credential,
+            "X-Client-Version": APP_VERSION,
         }
 
     def _request(self, method, path, *, authenticated=True, **kwargs):
@@ -543,6 +584,7 @@ class MissionLegalApiClient:
         return {
             "X-Device-ID": str(device_id),
             "X-Device-Credential": str(credential),
+            "X-Client-Version": APP_VERSION,
         }
 
     def _cancel_remote_pairing(self, device_id, credential):
@@ -785,24 +827,295 @@ class MissionLegalApiClient:
     def delete(self, path, **kwargs):
         return self._request("DELETE", path, **kwargs)
 
-    def upload(self, path, *, file_path, data):
-        headers = self._headers()
+    @staticmethod
+    def _canonical_upload_id(value):
         try:
-            with self._use_client() as client, Path(file_path).open("rb") as handle:
+            return str(uuid.UUID(str(value).strip()))
+        except (AttributeError, TypeError, ValueError) as exc:
+            raise ValueError("upload_id must be a valid UUID") from exc
+
+    @staticmethod
+    def _file_sha256(path):
+        digest = hashlib.sha256()
+        with Path(path).open("rb") as handle:
+            while chunk := handle.read(1024 * 1024):
+                digest.update(chunk)
+        return digest.hexdigest()
+
+    @staticmethod
+    def _upload_record_mismatch(payload, expected):
+        if not isinstance(payload, dict):
+            return "the server returned invalid document metadata"
+        has_upload_id = bool(payload.get("upload_id"))
+        if not has_upload_id:
+            return "the committed record did not include its upload ID"
+
+        comparisons = [
+            ("missionary_id", int),
+            ("document_type", str),
+            ("workflow_stage", str),
+        ]
+        comparisons.extend(
+            (
+                ("upload_id", str),
+                ("content_sha256", lambda value: str(value).lower()),
+                ("file_size", int),
+            )
+        )
+        for field, converter in comparisons:
+            try:
+                actual = converter(payload.get(field))
+                wanted = converter(expected[field])
+            except (TypeError, ValueError):
+                return f"the committed record has an invalid {field}"
+            if actual != wanted:
+                return f"the committed record has a different {field}"
+
+        expected_supersedes = expected.get("supersedes_document_id")
+        actual_supersedes = payload.get("supersedes_document_id")
+        if (
+            expected_supersedes is not None or actual_supersedes is not None
+        ):
+            try:
+                if int(actual_supersedes) != int(expected_supersedes):
+                    return "the committed record has a different replacement target"
+            except (TypeError, ValueError):
+                return "the committed record has an invalid replacement target"
+        return None
+
+    def lookup_upload(self, upload_id, *, expected=None, headers=None):
+        """Look up an upload without needing to reopen its original source.
+
+        A structured ``upload_not_found`` response is deliberately different
+        from an unreachable or legacy server. Callers may only retry bytes
+        after the former; the latter must remain outcome-unknown.
+        """
+
+        upload_id = self._canonical_upload_id(upload_id)
+        lookup_path = f"/v1/document-uploads/{upload_id}"
+        headers = self._headers() if headers is None else headers
+        last_status = "unavailable"
+        last_detail = "the upload lookup endpoint was unavailable"
+        for delay in self.UPLOAD_RECONCILIATION_DELAYS:
+            if delay:
+                time.sleep(delay)
+            try:
+                with self._use_client() as client:
+                    response = client.get(
+                        lookup_path,
+                        headers=headers,
+                        timeout=self.timeout,
+                    )
+            except (httpx.RequestError, RuntimeError) as error:
+                last_status = "unavailable"
+                last_detail = str(error) or last_detail
+                continue
+            if response.status_code == 200:
+                self._report_restored()
+                try:
+                    payload = response.json()
+                except ValueError:
+                    last_status = "unavailable"
+                    last_detail = "the server returned unreadable upload metadata"
+                    continue
+                if expected is not None:
+                    expected = dict(expected)
+                    expected.setdefault("upload_id", upload_id)
+                    mismatch = self._upload_record_mismatch(payload, expected)
+                    if mismatch:
+                        raise ApiUploadConflictError(
+                            f"Upload {upload_id} is committed, but {mismatch}."
+                        )
+                return ApiUploadLookupResult(
+                    status="committed",
+                    payload=payload,
+                )
+            if response.status_code == 401:
+                try:
+                    detail = response.json().get("detail", "Unauthorized")
+                except (AttributeError, TypeError, ValueError):
+                    detail = "Unauthorized"
+                raise ApiAuthenticationError(detail)
+            if response.status_code == 404:
+                self._report_restored()
+                # A legacy server has no lookup route. A current server returns
+                # a structured code when this particular upload is not visible.
+                try:
+                    detail = response.json().get("detail")
+                except (AttributeError, TypeError, ValueError):
+                    detail = None
+                if not (
+                    isinstance(detail, dict)
+                    and detail.get("code") == "upload_not_found"
+                ):
+                    last_status = "unavailable"
+                    last_detail = (
+                        "the server does not expose authoritative upload lookup"
+                    )
+                    continue
+                last_status = "not_found"
+                last_detail = "the server confirmed that the upload is absent"
+                continue
+            last_status = "unavailable"
+            last_detail = (
+                f"the upload lookup returned HTTP {response.status_code}"
+            )
+        return ApiUploadLookupResult(
+            status=last_status,
+            detail=last_detail,
+        )
+
+    def _lookup_upload_for_reconciliation(self, upload_id, headers):
+        """Compatibility wrapper returning a confirmed upload record only."""
+
+        result = self.lookup_upload(upload_id, headers=headers)
+        return result.payload if result.committed else None
+
+    def upload(
+        self,
+        path,
+        *,
+        file_path,
+        data,
+        upload_id=None,
+        content_sha256=None,
+        file_size=None,
+        supersedes_document_id=None,
+    ):
+        source_path = Path(file_path)
+        actual_size = source_path.stat().st_size
+        actual_sha256 = self._file_sha256(source_path)
+        if file_size is None:
+            file_size = data.get("file_size")
+        if file_size not in (None, "") and int(file_size) != actual_size:
+            raise ValueError("file_size does not match the selected file")
+        if content_sha256 is None:
+            content_sha256 = data.get("content_sha256")
+        if (
+            content_sha256 not in (None, "")
+            and str(content_sha256).lower() != actual_sha256
+        ):
+            raise ValueError("content_sha256 does not match the selected file")
+
+        raw_upload_id = upload_id or data.get("upload_id") or uuid.uuid4()
+        upload_id = self._canonical_upload_id(raw_upload_id)
+        if supersedes_document_id is None:
+            supersedes_document_id = data.get("supersedes_document_id")
+        if supersedes_document_id in (None, ""):
+            supersedes_document_id = None
+        else:
+            supersedes_document_id = int(supersedes_document_id)
+
+        request_data = dict(data)
+        request_data.update(
+            {
+                "upload_id": upload_id,
+                "content_sha256": actual_sha256,
+                "file_size": str(actual_size),
+            }
+        )
+        if supersedes_document_id is not None:
+            request_data["supersedes_document_id"] = str(
+                supersedes_document_id
+            )
+        else:
+            request_data.pop("supersedes_document_id", None)
+
+        expected = {
+            "upload_id": upload_id,
+            "missionary_id": int(request_data["missionary_id"]),
+            "document_type": str(request_data["document_type"]),
+            "workflow_stage": str(request_data["workflow_stage"]),
+            "content_sha256": actual_sha256,
+            "file_size": actual_size,
+            "supersedes_document_id": supersedes_document_id,
+        }
+        upload_timeout = self.upload_timeout
+        if isinstance(upload_timeout, (int, float)) and isinstance(
+            self.timeout, (int, float)
+        ):
+            upload_timeout = httpx.Timeout(
+                float(upload_timeout),
+                connect=float(self.timeout),
+            )
+        headers = self._headers()
+        ambiguous_error = None
+        try:
+            with self._use_client() as client, source_path.open("rb") as handle:
                 response = client.post(
                     path,
                     headers=headers,
-                    data=data,
-                    files={"file": (Path(file_path).name, handle, "application/octet-stream")},
+                    data=request_data,
+                    files={
+                        "file": (
+                            source_path.name,
+                            handle,
+                            "application/octet-stream",
+                        )
+                    },
+                    timeout=upload_timeout,
                 )
-        except (httpx.HTTPError, OSError) as exc:
+        except httpx.RequestError as exc:
             self._report_unavailable(exc)
-            raise ApiUnavailableError(str(exc)) from exc
-        if response.status_code == 401:
-            raise ApiAuthenticationError(response.json().get("detail", "Unauthorized"))
-        response.raise_for_status()
-        self._report_restored()
-        return response.json()
+            ambiguous_error = exc
+        except OSError as exc:
+            ambiguous_error = exc
+        else:
+            if response.status_code == 401:
+                raise ApiAuthenticationError(
+                    response.json().get("detail", "Unauthorized")
+                )
+            if response.status_code >= 500:
+                ambiguous_error = httpx.HTTPStatusError(
+                    f"Server returned {response.status_code} during upload",
+                    request=response.request,
+                    response=response,
+                )
+            else:
+                response.raise_for_status()
+                try:
+                    payload = response.json()
+                except ValueError as error:
+                    ambiguous_error = error
+                else:
+                    mismatch = self._upload_record_mismatch(
+                        payload,
+                        expected,
+                    )
+                    if mismatch:
+                        ambiguous_error = ApiUploadOutcomeUnknownError(
+                            f"Upload {upload_id} could not be verified because "
+                            f"{mismatch}.",
+                            upload_id=upload_id,
+                        )
+                    else:
+                        self._report_restored()
+                        return payload
+
+        try:
+            reconciliation = self.lookup_upload(
+                upload_id,
+                expected=expected,
+                headers=headers,
+            )
+        except ApiUploadConflictError as error:
+            detail = str(error)
+        else:
+            if reconciliation.committed:
+                self._report_restored()
+                return reconciliation.payload
+            if reconciliation.not_found:
+                detail = "the server confirmed that it has not committed the file"
+            else:
+                detail = reconciliation.detail or (
+                    "the server could not confirm whether it committed the file"
+                )
+        raise ApiUploadOutcomeUnknownError(
+            f"Upload {upload_id} has an unknown outcome: {detail}. "
+            "Do not replace or delete the source file; refresh the missionary "
+            "before retrying.",
+            upload_id=upload_id,
+        ) from ambiguous_error
 
     def download(self, path, destination):
         destination = Path(destination)

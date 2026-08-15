@@ -1,6 +1,8 @@
+import json
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from pathlib import Path
+from uuid import uuid4
 
 import fitz
 from shiboken6 import isValid as shiboken_is_valid
@@ -40,12 +42,16 @@ from PySide6.QtWidgets import (
 )
 
 from services.document_image_export_service import DocumentImageExportService
-from services.document_service import DocumentService
+from services.document_service import (
+    DocumentService,
+    DocumentUploadOutcomeUnknownError,
+)
 from services.settings_service import SettingsService
 from services.upload_pipeline import (
     OCR_MODE_SUBPROCESS,
     UploadPipelineResult,
     finalize_ocr_ingestion,
+    finalize_saved_ocr_follow_up,
     get_ocr_service,
     ocr_runtime_mode,
     prepare_ocr_ingestion,
@@ -71,7 +77,6 @@ from ui.foundation import (
     create_scroll_area,
     FluentLoadingDialog,
     MaskDialogBase,
-    show_message,
     tune_fluent_scrollable,
 )
 from utils.constants import (
@@ -81,20 +86,18 @@ from utils.constants import (
     requires_fbi_document,
     visible_document_keys_for_missionary,
 )
+from utils.document_files import (
+    SUPPORTED_DOCUMENT_EXTENSIONS,
+    document_file_dialog_filter,
+    sha256_file,
+    validate_document_file,
+)
 from utils.i18n import field_label, tr
 from utils.logger import logger
 from utils.passport_numbers import normalize_passport_number
 
 
-SUPPORTED_EXTENSIONS = {
-    ".pdf",
-    ".png",
-    ".jpg",
-    ".jpeg",
-    ".bmp",
-    ".tiff",
-    ".tif",
-}
+SUPPORTED_EXTENSIONS = SUPPORTED_DOCUMENT_EXTENSIONS
 DATE_PLACEHOLDER = QDate(1900, 1, 1)
 PREVIEW_MIN_SCALE = 0.05
 PREVIEW_MAX_SCALE = 8.0
@@ -211,25 +214,61 @@ class DocumentTypeMenuPicker(QWidget):
             self.currentIndexChanged.emit(index)
 
 
-def supported_upload_files_from_paths(paths):
+def classify_upload_paths(paths):
+    """Expand selected paths into accepted files and explicit rejections."""
+
     files = []
+    rejected = []
     for raw_path in paths or []:
         path = Path(raw_path)
         if path.is_dir():
-            files.extend(
-                str(child)
-                for child in sorted(
-                    path.rglob("*"),
-                    key=lambda child_path: (
-                        len(child_path.relative_to(path).parts),
-                        str(child_path).lower(),
-                    ),
+            try:
+                children = [
+                    child
+                    for child in sorted(
+                        path.rglob("*"),
+                        key=lambda child_path: (
+                            len(child_path.relative_to(path).parts),
+                            str(child_path).lower(),
+                        ),
+                    )
+                    if child.is_file()
+                ]
+            except OSError:
+                rejected.append((str(path), "The folder could not be read."))
+                continue
+            if not children:
+                rejected.append((str(path), "The folder contains no files."))
+                continue
+            for child in children:
+                if child.suffix.lower() in SUPPORTED_EXTENSIONS:
+                    files.append(str(child))
+                else:
+                    rejected.append(
+                        (
+                            str(child),
+                            f"Unsupported file type: {child.suffix or 'no extension'}",
+                        )
+                    )
+        elif path.is_file():
+            if path.suffix.lower() in SUPPORTED_EXTENSIONS:
+                files.append(str(path))
+            else:
+                rejected.append(
+                    (
+                        str(path),
+                        f"Unsupported file type: {path.suffix or 'no extension'}",
+                    )
                 )
-                if child.is_file()
-                and child.suffix.lower() in SUPPORTED_EXTENSIONS
+        else:
+            rejected.append(
+                (str(path), "The file is missing or is not a regular file.")
             )
-        elif path.is_file() and path.suffix.lower() in SUPPORTED_EXTENSIONS:
-            files.append(str(path))
+    return files, rejected
+
+
+def supported_upload_files_from_paths(paths):
+    files, _rejected = classify_upload_paths(paths)
     return files
 
 
@@ -258,13 +297,19 @@ class UploadQueueItem:
     ocr_result: object = None
     confirmed_data: dict = field(default_factory=dict)
     ocr_reviewed: bool = False
-    duplicate_action: str = "replace"
+    duplicate_action: str = "keep"
     status: str = "pending"
     error_text: str = ""
     notes: str = ""
     updated_fields: list = field(default_factory=list)
     saved_document_id: int | None = None
     prefilled_data: dict = field(default_factory=dict)
+    upload_id: str = field(default_factory=lambda: str(uuid4()))
+    warnings: list = field(default_factory=list)
+    supersedes_document_id: int | None = None
+    replacement_target_resolved: bool = False
+    content_sha256: str | None = None
+    file_size: int | None = None
 
     @property
     def file_name(self):
@@ -281,7 +326,9 @@ class UploadQueueItem:
         try:
             size = Path(self.file_path).stat().st_size
         except OSError:
-            return "Unknown size"
+            size = self.file_size
+            if size is None:
+                return "Unknown size"
 
         if size >= 1024 * 1024:
             return f"{size / (1024 * 1024):.1f} MB"
@@ -296,10 +343,28 @@ class UploadSaveResult:
     status: str = "failed"
     document: object = None
     error_text: str = ""
+    warnings: list = field(default_factory=list)
 
     @property
     def succeeded(self):
         return self.status in {"saved", "skipped"}
+
+
+class _UploadIdentityDocumentService:
+    """Bind cached byte identity through the OCR pipeline's service call."""
+
+    def __init__(self, delegate, *, content_sha256, file_size):
+        self._delegate = delegate
+        self._content_sha256 = content_sha256
+        self._file_size = file_size
+
+    def upload_document(self, *args, **kwargs):
+        kwargs.setdefault("content_sha256", self._content_sha256)
+        kwargs.setdefault("file_size", self._file_size)
+        return self._delegate.upload_document(*args, **kwargs)
+
+    def __getattr__(self, name):
+        return getattr(self._delegate, name)
 
 
 class UploadOcrWorker(QObject):
@@ -344,6 +409,42 @@ class UploadOcrWarmupWorker(QObject):
         except Exception as exc:
             logger.exception("Upload OCR warm-up failed")
             self.finished.emit(False, str(exc))
+
+
+class UploadSaveWorker(QObject):
+    finished = Signal(int, object)
+
+    def __init__(self, controller, index):
+        super().__init__()
+        self.controller = controller
+        self.index = index
+
+    def run(self):
+        try:
+            if self.index < 0 or self.index >= len(self.controller.items):
+                raise IndexError("Upload item is no longer available.")
+            item = self.controller.items[self.index]
+            result = self.controller.save_item(
+                item,
+                parent=None,
+                run_ocr=False,
+            )
+        except Exception as exc:
+            logger.exception("Background document save failed")
+            item = (
+                self.controller.items[self.index]
+                if 0 <= self.index < len(self.controller.items)
+                else None
+            )
+            if item is not None:
+                item.status = "failed"
+                item.error_text = str(exc)
+            result = UploadSaveResult(
+                item=item,
+                status="failed",
+                error_text=str(exc),
+            )
+        self.finished.emit(self.index, result)
 
 
 class UploadSaveProgressDialog(MaskDialogBase):
@@ -407,16 +508,30 @@ class UploadSaveProgressDialog(MaskDialogBase):
             QTimer.singleShot(0, self._set_progress_fill_width)
         return super().eventFilter(watched, event)
 
-    def set_progress(self, completed, total, file_name=None):
+    def set_progress(
+        self,
+        completed,
+        total,
+        file_name=None,
+        saved=0,
+        failed=0,
+        skipped=0,
+        warnings=0,
+    ):
         total = max(int(total or 0), 1)
         completed = min(max(int(completed or 0), 0), total)
         self._progress_fraction = completed / total
         QTimer.singleShot(0, self._animate_progress_fill)
 
         if file_name and completed < total:
-            message = f"Saving documents ({completed} of {total})"
+            message = f"Processing {completed + 1} of {total}: {file_name}"
         else:
-            message = f"Saved {completed} of {total}."
+            message = (
+                f"Processed {completed} of {total} | "
+                f"{saved} saved | {failed} failed | {skipped} skipped"
+            )
+            if warnings:
+                message += f" | {warnings} warning(s)"
         self.message_label.setText(message)
 
     def resizeEvent(self, event):
@@ -589,6 +704,37 @@ class UploadSessionController:
 
         return added
 
+    def add_rejected_files(self, rejected_paths):
+        """Keep rejected selections visible so they cannot disappear silently."""
+
+        added = []
+        known = {str(Path(item.file_path)) for item in self.items}
+        for file_path, reason in rejected_paths:
+            normalized = str(Path(file_path))
+            if normalized in known:
+                continue
+            item = UploadQueueItem(
+                file_path=normalized,
+                status="rejected",
+                error_text=reason,
+            )
+            self.items.append(item)
+            known.add(normalized)
+            added.append(item)
+
+        if self.selected_index < 0 and self.items:
+            self.selected_index = 0
+        if added:
+            logger.warning(
+                "UPLOAD_FILES_REJECTED count=%s files=%s",
+                len(added),
+                [
+                    {"file": item.file_name, "reason": item.error_text}
+                    for item in added
+                ],
+            )
+        return added
+
     def remove_item(self, index):
         if index < 0 or index >= len(self.items):
             return
@@ -642,6 +788,8 @@ class UploadSessionController:
         item.confirmed_data = dict(item.prefilled_data)
         item.ocr_reviewed = False
         item.error_text = ""
+        item.supersedes_document_id = None
+        item.replacement_target_resolved = False
         if item.status not in {"saved", "skipped"}:
             item.status = "pending"
         logger.info(
@@ -672,6 +820,138 @@ class UploadSessionController:
         return self.document_service.document_type_exists(
             self.missionary.id,
             item.document_type,
+        )
+
+    def _recount_results(self):
+        self.saved_count = sum(
+            item.status == "saved" for item in self.items
+        )
+        self.failed_count = sum(
+            item.status in {"failed", "unknown", "rejected"}
+            for item in self.items
+        )
+        self.skipped_count = sum(
+            item.status == "skipped" for item in self.items
+        )
+
+    def _resolve_replacement_document_id(self, item):
+        if item.duplicate_action != "replace":
+            item.supersedes_document_id = None
+            item.replacement_target_resolved = False
+            return None
+        if item.replacement_target_resolved:
+            return item.supersedes_document_id
+
+        resolver = getattr(
+            self.document_service,
+            "get_active_document_by_type",
+            None,
+        )
+        if not callable(resolver):
+            raise RuntimeError(
+                "This client cannot safely replace an existing document. "
+                "Choose Keep both or update the client and server."
+            )
+
+        existing = resolver(self.missionary.id, item.document_type)
+        if existing is None:
+            item.supersedes_document_id = None
+            item.replacement_target_resolved = True
+            return None
+
+        document_id = getattr(existing, "id", None)
+        if document_id is None:
+            raise RuntimeError(
+                "The existing document could not be identified safely. "
+                "Choose Keep both and try again."
+            )
+        item.supersedes_document_id = int(document_id)
+        item.replacement_target_resolved = True
+        return item.supersedes_document_id
+
+    @staticmethod
+    def _capture_content_identity(item):
+        """Cache immutable bytes metadata before the first network attempt."""
+
+        path = Path(item.file_path)
+        actual_size = path.stat().st_size
+        actual_sha256 = sha256_file(path)
+        if item.file_size is not None and int(item.file_size) != actual_size:
+            raise ValueError(
+                "The selected file changed after its first upload attempt. "
+                "Remove it and add the intended scan again."
+            )
+        if (
+            item.content_sha256 is not None
+            and str(item.content_sha256).lower() != actual_sha256
+        ):
+            raise ValueError(
+                "The selected file changed after its first upload attempt. "
+                "Remove it and add the intended scan again."
+            )
+        item.file_size = actual_size
+        item.content_sha256 = actual_sha256
+
+    @staticmethod
+    def _durable_follow_up_metadata(document):
+        status = getattr(document, "post_processing_status", None)
+        warnings = []
+        updated_fields = []
+        if status in {"PENDING", "PROCESSING", "RETRY_REQUIRED"}:
+            warnings.append(
+                "The document was saved, but its missionary updates still "
+                "need to be retried. The saved file remains available."
+            )
+        elif status == "COMPLETE":
+            encoded_fields = getattr(
+                document,
+                "post_processing_updated_fields",
+                None,
+            )
+            try:
+                decoded_fields = (
+                    json.loads(encoded_fields)
+                    if isinstance(encoded_fields, str)
+                    else encoded_fields
+                )
+            except (TypeError, ValueError):
+                decoded_fields = None
+            if isinstance(decoded_fields, list):
+                updated_fields = [str(field) for field in decoded_fields]
+        return updated_fields, warnings
+
+    def _record_saved_item(
+        self,
+        item,
+        document,
+        *,
+        updated_fields=None,
+        warnings=None,
+    ):
+        item.updated_fields = list(updated_fields or [])
+        item.warnings = list(warnings or [])
+        item.saved_document_id = getattr(document, "id", None)
+        item.status = "saved"
+        item.error_text = (
+            "Saved with a follow-up warning: " + " ".join(item.warnings)
+            if item.warnings
+            else ""
+        )
+        self.updated_fields.extend(item.updated_fields)
+        self._recount_results()
+        logger.info(
+            "Saved upload item missionary=%s file=%s type=%s stage=%s document_id=%s",
+            self.missionary.id,
+            item.file_name,
+            item.document_type,
+            item.workflow_stage,
+            getattr(document, "id", None),
+        )
+        return UploadSaveResult(
+            item=item,
+            status="saved",
+            document=document,
+            warnings=list(item.warnings),
         )
 
     def missionary_defaults_for_document(self, document_type):
@@ -743,7 +1023,11 @@ class UploadSessionController:
         )
 
     def _ocr_should_replace_prefill(self, item, field, confirmed_value):
-        if item.document_type not in {"PASSPORT", "DNI"}:
+        if item.document_type not in {
+            "PASSPORT",
+            "DNI",
+            "CARNE_DE_EXTRANJERIA",
+        }:
             return False
 
         prefilled_value = (item.prefilled_data or {}).get(field)
@@ -751,6 +1035,24 @@ class UploadSessionController:
             return False
 
         return str(confirmed_value).strip() == str(prefilled_value).strip()
+
+    @classmethod
+    def _confirmed_updates_for_save(cls, item):
+        """Exclude unchanged display prefills from authoritative updates."""
+
+        updates = {}
+        prefills = item.prefilled_data or {}
+        for field, value in (item.confirmed_data or {}).items():
+            if cls._blank_confirmed_value(value):
+                continue
+            prefilled_value = prefills.get(field)
+            if (
+                not cls._blank_confirmed_value(prefilled_value)
+                and str(value).strip() == str(prefilled_value).strip()
+            ):
+                continue
+            updates[field] = value
+        return updates
 
     def run_ocr(self, item, parent=None):
         ocr_fields = DOCUMENTS.get(item.document_type, {}).get(
@@ -845,16 +1147,18 @@ class UploadSessionController:
 
     def save_item(self, item, parent=None, run_ocr=False):
         try:
+            was_unknown = item.status == "unknown"
+            was_saved_warning = item.status == "saved" and bool(item.warnings)
             if item.duplicate_action == "skip":
                 item.status = "skipped"
                 item.error_text = ""
-                self.skipped_count += 1
                 logger.info(
                     "Skipping upload for missionary=%s file=%s type=%s",
                     self.missionary.id,
                     item.file_name,
                     item.document_type,
                 )
+                self._recount_results()
                 return UploadSaveResult(item=item, status="skipped")
 
             document_type = item.document_type
@@ -870,6 +1174,54 @@ class UploadSessionController:
             )
             if not workflow_stage:
                 workflow_stage = "GENERAL"
+            item.workflow_stage = workflow_stage
+
+            if was_saved_warning:
+                return self._retry_saved_item_follow_up(
+                    item,
+                    document_type=document_type,
+                    workflow_stage=workflow_stage,
+                )
+
+            supersedes_document_id = self._resolve_replacement_document_id(
+                item
+            )
+
+            if (
+                was_unknown
+                and item.content_sha256
+                and item.file_size is not None
+            ):
+                reconciler = getattr(
+                    self.document_service,
+                    "reconcile_upload",
+                    None,
+                )
+                if callable(reconciler):
+                    document = reconciler(
+                        item.upload_id,
+                        missionary_id=self.missionary.id,
+                        document_type=document_type,
+                        workflow_stage=workflow_stage,
+                        content_sha256=item.content_sha256,
+                        file_size=item.file_size,
+                        supersedes_document_id=supersedes_document_id,
+                    )
+                    if document is not None:
+                        updated_fields, warnings = (
+                            self._durable_follow_up_metadata(document)
+                        )
+                        return self._record_saved_item(
+                            item,
+                            document,
+                            updated_fields=updated_fields,
+                            warnings=warnings,
+                        )
+
+            validation_error = validate_document_file(item.file_path)
+            if validation_error:
+                raise ValueError(validation_error)
+            self._capture_content_identity(item)
 
             logger.info(
                 "Saving upload item missionary=%s file=%s type=%s stage=%s ocr=%s",
@@ -879,15 +1231,6 @@ class UploadSessionController:
                 workflow_stage,
                 item.has_ocr_fields,
             )
-
-            if (
-                item.duplicate_action == "replace"
-                and self.has_duplicate(item)
-            ):
-                self.document_service.delete_document_by_type(
-                    self.missionary.id,
-                    document_type,
-                )
 
             document = None
             if item.has_ocr_fields:
@@ -901,18 +1244,28 @@ class UploadSessionController:
                         ocr_fields=list(ocr_fields),
                         export_settings=item.export_settings,
                     )
+                confirmed_updates = self._confirmed_updates_for_save(item)
                 save_result = finalize_ocr_ingestion(
                     missionary=self.missionary,
                     source_file=item.file_path,
                     document_type=document_type,
                     workflow_stage=workflow_stage,
                     pipeline_result=item.ocr_result,
-                    confirmed_data=item.confirmed_data,
+                    confirmed_data=confirmed_updates,
                     notes=item.notes,
-                    document_service=self.document_service,
+                    document_service=_UploadIdentityDocumentService(
+                        self.document_service,
+                        content_sha256=item.content_sha256,
+                        file_size=item.file_size,
+                    ),
+                    upload_id=item.upload_id,
+                    supersedes_document_id=supersedes_document_id,
                 )
                 item.updated_fields = list(
                     save_result.updated_fields or []
+                )
+                item.warnings = list(
+                    getattr(save_result, "warnings", None) or []
                 )
                 document = save_result.document
             else:
@@ -922,46 +1275,123 @@ class UploadSessionController:
                     document_type=document_type,
                     workflow_stage=workflow_stage,
                     notes=item.notes,
+                    upload_id=item.upload_id,
+                    content_sha256=item.content_sha256,
+                    file_size=item.file_size,
+                    supersedes_document_id=supersedes_document_id,
                 )
                 item.updated_fields = []
+                item.warnings = []
 
-            item.saved_document_id = getattr(document, "id", None)
-            item.status = "saved"
-            item.error_text = ""
-            self.saved_count += 1
-            self.updated_fields.extend(item.updated_fields)
-            logger.info(
-                "Saved upload item missionary=%s file=%s type=%s stage=%s document_id=%s",
-                self.missionary.id,
-                item.file_name,
-                document_type,
-                workflow_stage,
-                getattr(document, "id", None),
+            return self._record_saved_item(
+                item,
+                document,
+                updated_fields=item.updated_fields,
+                warnings=item.warnings,
             )
+        except DocumentUploadOutcomeUnknownError as exc:
+            logger.exception("Upload session outcome is not yet confirmed")
+            item.status = "unknown"
+            item.error_text = (
+                f"{exc} Retry this file to reconcile upload {item.upload_id}; "
+                "the same upload will not be duplicated."
+            )
+            self._recount_results()
             return UploadSaveResult(
                 item=item,
-                status="saved",
-                document=document,
+                status="unknown",
+                error_text=item.error_text,
             )
         except Exception as exc:
             logger.exception("Upload session save failed")
             item.status = "failed"
             item.error_text = str(exc)
-            self.failed_count += 1
+            self._recount_results()
             return UploadSaveResult(
                 item=item,
                 status="failed",
                 error_text=str(exc),
             )
 
+    def _retry_saved_item_follow_up(
+        self,
+        item,
+        *,
+        document_type,
+        workflow_stage,
+    ):
+        """Retry ancillary work by document ID without reopening saved bytes."""
+
+        document_id = item.saved_document_id
+        retry = getattr(
+            self.document_service,
+            "retry_document_post_processing",
+            None,
+        )
+        if document_id is None or not callable(retry):
+            item.status = "saved"
+            item.warnings = [
+                "The document is saved, but this follow-up cannot be retried "
+                "until the client and server are updated."
+            ]
+            item.error_text = "Saved with a follow-up warning: " + " ".join(
+                item.warnings
+            )
+            self._recount_results()
+            return UploadSaveResult(
+                item=item,
+                status="saved",
+                warnings=list(item.warnings),
+            )
+
+        try:
+            document = retry(document_id)
+            result = finalize_saved_ocr_follow_up(
+                missionary=self.missionary,
+                document=document,
+                document_type=document_type,
+                workflow_stage=workflow_stage,
+                confirmed_data=item.confirmed_data,
+            )
+        except Exception:
+            logger.exception(
+                "Saved document %s follow-up retry could not be verified",
+                document_id,
+            )
+            item.status = "saved"
+            item.warnings = [
+                "The document is saved, but its follow-up could not be "
+                "verified. Check the server connection and retry."
+            ]
+            item.error_text = "Saved with a follow-up warning: " + " ".join(
+                item.warnings
+            )
+            self._recount_results()
+            return UploadSaveResult(
+                item=item,
+                status="saved",
+                warnings=list(item.warnings),
+            )
+
+        return self._record_saved_item(
+            item,
+            document,
+            updated_fields=result.updated_fields,
+            warnings=result.warnings,
+        )
+
     def has_saved_items(self):
-        return any(item.status == "saved" for item in self.items)
+        return any(
+            item.status in {"saved", "unknown"}
+            for item in self.items
+        )
 
 
 class UploadSessionDialog(MaskDialogBase):
     ocr_finished_on_ui = Signal(int, bool, str, object, str)
     appointment_dates_updated = Signal(int, list)
     document_uploaded = Signal(int, int)
+    document_saved = Signal(int, object)
 
     def __init__(self, missionary, initial_files=None, parent=None):
         super().__init__(parent)
@@ -992,6 +1422,9 @@ class UploadSessionDialog(MaskDialogBase):
         self._save_all_index = 0
         self._save_all_total = 0
         self._save_all_completed = 0
+        self._save_all_results = []
+        self._save_thread = None
+        self._save_worker = None
         self._save_progress_dialog = None
         self._active_screen = None
         self._screen_changed_connected = False
@@ -1015,7 +1448,7 @@ class UploadSessionDialog(MaskDialogBase):
 
         self.setup_ui()
         if initial_files:
-            self.add_files(supported_upload_files_from_paths(initial_files))
+            self.add_files(initial_files)
 
     def _configure_shell(self):
         self.surface = setup_dialog_shell(
@@ -1389,8 +1822,8 @@ class UploadSessionDialog(MaskDialogBase):
 
         self.duplicate_combo = create_combo_box()
         self.duplicate_combo.setObjectName("UploadFieldInput")
-        self.duplicate_combo.addItem("Replace existing", "replace")
         self.duplicate_combo.addItem("Keep both", "keep")
+        self.duplicate_combo.addItem("Replace existing", "replace")
         self.duplicate_combo.addItem("Skip this file", "skip")
         self.duplicate_combo.currentIndexChanged.connect(
             self.duplicate_changed
@@ -1691,22 +2124,40 @@ class UploadSessionDialog(MaskDialogBase):
         item = self.controller.selected_item()
         if item is None or item.status in {"saved", "skipped", "ocr"}:
             return False
-        return item.duplicate_action == "skip" or bool(item.document_type)
+        return True
 
     def _item_can_autodetect(self, item):
         return bool(
             item
             and item.document_type
             and item.has_ocr_fields
-            and item.status not in {"saved", "skipped", "ocr"}
+            and item.status not in {"saved", "skipped", "ocr", "unknown"}
         )
 
     def _has_unsaved_valid_items(self):
         return any(
             item.status not in {"saved", "skipped", "ocr"}
-            and (item.duplicate_action == "skip" or bool(item.document_type))
+            or (item.status == "saved" and bool(item.warnings))
             for item in self.controller.items
         )
+
+    def _has_unknown_outcomes(self):
+        return any(
+            item.status == "unknown"
+            for item in self.controller.items
+        )
+
+    def _block_close_for_unknown_outcomes(self, event=None):
+        if not self._has_unknown_outcomes():
+            return False
+        if _widget_alive(getattr(self, "status_label", None)):
+            self.status_label.setText(
+                "One or more uploads are still being verified. Click Save All "
+                "to reconcile them before closing this window."
+            )
+        if event is not None:
+            event.ignore()
+        return True
 
     def _update_action_states(self):
         if self._is_closing:
@@ -1716,15 +2167,29 @@ class UploadSessionDialog(MaskDialogBase):
         has_items = bool(self.controller.items)
         has_selection = item is not None
         can_edit = has_selection and not self._busy
-        can_autodetect = can_edit and self._item_can_autodetect(item)
+        can_modify = can_edit and item.status not in {
+            "saved",
+            "skipped",
+            "unknown",
+        }
+        can_autodetect = can_modify and self._item_can_autodetect(item)
         for name in (
             "type_combo",
             "stage_combo",
             "duplicate_combo",
+            "notes_editor",
         ):
-            self._set_widget_enabled(name, can_edit)
+            self._set_widget_enabled(name, can_modify)
+        for field_edit in (
+            list(self.field_edits.values()) + list(self.date_edits.values())
+        ):
+            if _widget_alive(field_edit):
+                field_edit.setEnabled(can_modify)
 
-        self._set_widget_enabled("remove_btn", can_edit)
+        self._set_widget_enabled(
+            "remove_btn",
+            can_edit and item.status != "unknown",
+        )
         self._set_widget_enabled("next_btn", has_items and not self._busy)
         self._set_widget_enabled("autodetect_btn", can_autodetect)
         self._set_widget_enabled(
@@ -1751,7 +2216,7 @@ class UploadSessionDialog(MaskDialogBase):
         for name in ("page_combo", "page_prev_btn", "page_next_btn"):
             self._set_widget_enabled(
                 name,
-                self._preview_item is not None and not self._busy,
+                self._preview_item is not None and can_modify,
             )
 
     def _make_progress_step(self, number, title, subtitle):
@@ -1791,7 +2256,7 @@ class UploadSessionDialog(MaskDialogBase):
             self,
             "Select Documents",
             "",
-            "Documents (*.pdf *.png *.jpg *.jpeg *.bmp *.tiff *.tif)",
+            document_file_dialog_filter(),
         )
         self.add_files(files)
 
@@ -1804,19 +2269,12 @@ class UploadSessionDialog(MaskDialogBase):
         if not folder:
             return
 
-        files = supported_upload_files_from_paths([folder])
-        if not files:
-            show_message(
-                self,
-                "No supported files",
-                "No PDF or image files were found in that folder.",
-            )
-            return
-
-        self.add_files(files)
+        self.add_files([folder])
 
     def add_files(self, files):
-        added = self.controller.add_files(files)
+        accepted, rejected = classify_upload_paths(files)
+        added = self.controller.add_files(accepted)
+        rejected_items = self.controller.add_rejected_files(rejected)
         self.refresh_queue()
         if self.controller.selected_index >= 0:
             self._set_queue_row(self.controller.selected_index)
@@ -1827,7 +2285,17 @@ class UploadSessionDialog(MaskDialogBase):
         elif self.controller.items:
             self._set_queue_row(0)
         if _widget_alive(self.status_label):
-            if added:
+            if rejected_items:
+                names = ", ".join(
+                    item.file_name for item in rejected_items[:3]
+                )
+                remainder = len(rejected_items) - 3
+                more = f" and {remainder} more" if remainder > 0 else ""
+                self.status_label.setText(
+                    f"Rejected {len(rejected_items)} file(s): {names}{more}. "
+                    "Select each failed item for details or remove it."
+                )
+            elif added:
                 noun = "file" if len(added) == 1 else "files"
                 self.status_label.setText(f"Added {len(added)} {noun}.")
             elif files:
@@ -1861,11 +2329,15 @@ class UploadSessionDialog(MaskDialogBase):
             list_item = QListWidgetItem()
             prefix = "PDF" if item.file_name.lower().endswith(".pdf") else "IMG"
             document_type = self.document_type_text(item)
+            status = self.status_text(item)
             list_item.setText(
-                f"{prefix}  {item.file_name}  |  {document_type}  |  {item.file_size_text}"
+                f"{prefix}  {item.file_name}  |  {document_type}  |  "
+                f"{item.file_size_text}  |  {status}"
             )
             list_item.setToolTip(
                 f"{item.file_name}\n{document_type}\n{item.file_size_text}"
+                f"\n{status}"
+                + (f"\n{item.error_text}" if item.error_text else "")
             )
             self.queue_list.addItem(list_item)
         if 0 <= current < self.queue_list.count():
@@ -1936,7 +2408,7 @@ class UploadSessionDialog(MaskDialogBase):
         self._set_queue_row(index)
         try:
             self.load_detail()
-        except RuntimeError:
+        except Exception:
             logger.exception("Failed to load upload session detail")
         finally:
             self.refresh_queue()
@@ -1952,6 +2424,8 @@ class UploadSessionDialog(MaskDialogBase):
 
     @staticmethod
     def status_text(item):
+        if item.status == "saved" and item.warnings:
+            return "Saved with warning"
         return {
             "pending": "Queued",
             "ocr": "Reading",
@@ -1959,6 +2433,8 @@ class UploadSessionDialog(MaskDialogBase):
             "review": "Needs review",
             "saved": "Saved",
             "failed": "Failed",
+            "unknown": "Needs verification",
+            "rejected": "Rejected",
             "skipped": "Skipped",
         }.get(item.status, item.status.title())
 
@@ -2289,7 +2765,11 @@ class UploadSessionDialog(MaskDialogBase):
     def duplicate_changed(self, checked=False):
         item = self.controller.selected_item()
         if item is not None:
-            item.duplicate_action = self.duplicate_combo.currentData()
+            duplicate_action = self.duplicate_combo.currentData()
+            if item.duplicate_action != duplicate_action:
+                item.supersedes_document_id = None
+                item.replacement_target_resolved = False
+            item.duplicate_action = duplicate_action
         self._update_action_states()
 
     def _sync_current_ocr_data(self):
@@ -2765,8 +3245,24 @@ class UploadSessionDialog(MaskDialogBase):
         if current is not None:
             self.persist_current_item_state()
 
+        invalid_indexes = self._preflight_save_all()
+        if invalid_indexes:
+            first_index = invalid_indexes[0]
+            self.controller.select(first_index)
+            self._set_queue_row(first_index)
+            self.refresh_queue()
+            self.update_progress()
+            if _widget_alive(self.status_label):
+                self.status_label.setText(
+                    f"Cannot save: {len(invalid_indexes)} file(s) need attention. "
+                    "Select each failed item for details."
+                )
+            self._update_action_states()
+            return
+
         self._save_all_total = self._count_save_all_items()
         self._save_all_completed = 0
+        self._save_all_results = []
         if self._save_all_total <= 0:
             self.update_progress()
             self._update_action_states()
@@ -2776,18 +3272,96 @@ class UploadSessionDialog(MaskDialogBase):
         self._save_all_index = 0
         self._set_busy(True, "Saving documents...")
         self._show_save_progress_dialog()
-        self.hide()
         QTimer.singleShot(0, self._save_all_next)
 
+    def _preflight_save_all(self):
+        invalid = {}
+        queued_by_type = {}
+
+        for index, item in enumerate(self.controller.items):
+            if item.status == "skipped" or (
+                item.status == "saved" and not item.warnings
+            ):
+                continue
+            if item.duplicate_action == "skip":
+                item.error_text = ""
+                continue
+
+            is_saved_follow_up = bool(
+                item.status == "saved"
+                and item.warnings
+                and item.saved_document_id is not None
+            )
+            is_source_independent_reconciliation = bool(
+                item.status == "unknown"
+                and item.content_sha256
+                and item.file_size is not None
+            )
+            reason = (
+                None
+                if is_source_independent_reconciliation or is_saved_follow_up
+                else validate_document_file(item.file_path)
+            )
+            if reason is None and item.document_type not in DOCUMENTS:
+                reason = "Select a document type before saving this file."
+            if (
+                reason is None
+                and item.document_type == "FBI"
+                and not requires_fbi_document(self.controller.missionary)
+            ):
+                reason = (
+                    "FBI documents are only available for USA or Canada "
+                    "missionaries."
+                )
+
+            if reason:
+                item.status = "failed"
+                item.error_text = reason
+                invalid[index] = reason
+                continue
+
+            if not is_saved_follow_up:
+                queued_by_type.setdefault(item.document_type, []).append(index)
+
+            if item.status != "unknown":
+                item.error_text = ""
+            if item.status in {"failed", "rejected"}:
+                if item.ocr_result is not None:
+                    self.controller._apply_post_ocr_state(item)
+                else:
+                    item.status = "pending"
+
+        for document_type, indexes in queued_by_type.items():
+            replace_indexes = [
+                index
+                for index in indexes
+                if self.controller.items[index].duplicate_action == "replace"
+            ]
+            if not replace_indexes or len(indexes) <= 1:
+                continue
+            label = DOCUMENTS.get(document_type, {}).get(
+                "label", document_type
+            )
+            reason = (
+                f"Replace cannot be mixed with another queued {label} file. "
+                "Choose Keep both for all of them, or save the replacement "
+                "separately."
+            )
+            for index in indexes:
+                item = self.controller.items[index]
+                item.status = "failed"
+                item.error_text = reason
+                invalid[index] = reason
+
+        self.controller._recount_results()
+        return sorted(invalid)
+
     def _count_save_all_items(self):
-        total = 0
-        for item in self.controller.items:
-            if item.status in {"saved", "skipped"}:
-                continue
-            if item.duplicate_action != "skip" and not item.document_type:
-                continue
-            total += 1
-        return total
+        return sum(
+            item.status not in {"saved", "skipped"}
+            or (item.status == "saved" and bool(item.warnings))
+            for item in self.controller.items
+        )
 
     def _show_save_progress_dialog(self):
         dialog = self._save_progress_dialog
@@ -2799,6 +3373,10 @@ class UploadSessionDialog(MaskDialogBase):
         dialog.set_progress(
             self._save_all_completed,
             self._save_all_total,
+            saved=0,
+            failed=0,
+            skipped=0,
+            warnings=0,
         )
         dialog.show()
         dialog.raise_()
@@ -2809,10 +3387,23 @@ class UploadSessionDialog(MaskDialogBase):
         if not _widget_alive(dialog):
             return
 
+        saved = sum(result.status == "saved" for result in self._save_all_results)
+        failed = sum(
+            result.status not in {"saved", "skipped"}
+            for result in self._save_all_results
+        )
+        skipped = sum(
+            result.status == "skipped" for result in self._save_all_results
+        )
+        warnings = sum(bool(result.warnings) for result in self._save_all_results)
         dialog.set_progress(
             self._save_all_completed,
             self._save_all_total,
             file_name=file_name,
+            saved=saved,
+            failed=failed,
+            skipped=skipped,
+            warnings=warnings,
         )
 
     def _hide_save_progress_dialog(self):
@@ -2823,6 +3414,8 @@ class UploadSessionDialog(MaskDialogBase):
     def _save_all_next(self):
         if self._is_closing or not self._saving_all:
             return
+        if self._save_thread is not None:
+            return
 
         total = len(self.controller.items)
         while self._save_all_index < total:
@@ -2830,14 +3423,13 @@ class UploadSessionDialog(MaskDialogBase):
             item = self.controller.items[index]
             self._save_all_index += 1
 
-            if item.status in {"saved", "skipped"}:
-                continue
-            if item.duplicate_action != "skip" and not item.document_type:
+            if item.status == "skipped" or (
+                item.status == "saved" and not item.warnings
+            ):
                 continue
 
             self.controller.select(index)
             self._set_queue_row(index)
-            self.load_detail()
 
             if not item.has_ocr_fields:
                 item.confirmed_data = {}
@@ -2847,27 +3439,107 @@ class UploadSessionDialog(MaskDialogBase):
                 True,
                 f"Saving {index + 1} of {total}: {item.file_name}...",
             )
-            result = self.controller.save_item(
-                item,
-                parent=self,
-                run_ocr=False,
-            )
+            self._start_save_worker(index)
+            return
+
+        self._finish_save_all()
+
+    def _start_save_worker(self, index):
+        thread = QThread(self)
+        worker = UploadSaveWorker(self.controller, index)
+        worker.moveToThread(thread)
+        self._save_thread = thread
+        self._save_worker = worker
+        thread.started.connect(worker.run)
+        worker.finished.connect(
+            self._handle_save_worker_finished,
+            Qt.ConnectionType.QueuedConnection,
+        )
+        worker.finished.connect(worker.deleteLater)
+        thread.finished.connect(thread.deleteLater)
+        thread.finished.connect(
+            lambda thread=thread: self._save_worker_thread_finished(thread)
+        )
+        thread.start()
+
+    def _handle_save_worker_finished(self, index, result):
+        try:
+            self._save_all_results.append(result)
             document_id = getattr(result.document, "id", None)
             missionary_id = getattr(self.controller.missionary, "id", None)
-            if result.succeeded and document_id is not None and missionary_id is not None:
+            if (
+                result.succeeded
+                and document_id is not None
+                and missionary_id is not None
+            ):
+                self.document_saved.emit(missionary_id, result.document)
                 self.document_uploaded.emit(missionary_id, document_id)
             self._save_all_completed += 1
             self._update_save_progress_dialog()
             self.refresh_queue()
             self.update_progress()
-            QTimer.singleShot(0, self._save_all_next)
-            return
+        finally:
+            thread = self._save_thread
+            if thread is not None:
+                thread.quit()
 
+    def _save_worker_thread_finished(self, thread):
+        if self._save_thread is thread:
+            self._save_thread = None
+            self._save_worker = None
+        if self._saving_all and not self._is_closing:
+            QTimer.singleShot(0, self._save_all_next)
+
+    def _finish_save_all(self):
         self._saving_all = False
         self._save_all_index = 0
-        self._set_busy(False)
-        self.after_save(close_after=True, refresh_ui=False)
+        self.controller._recount_results()
+        saved = sum(result.status == "saved" for result in self._save_all_results)
+        failed = sum(
+            result.status not in {"saved", "skipped"}
+            for result in self._save_all_results
+        )
+        skipped = sum(
+            result.status == "skipped" for result in self._save_all_results
+        )
+        warnings = sum(bool(result.warnings) for result in self._save_all_results)
+        summary = (
+            f"Processed {self._save_all_completed} file(s): "
+            f"{saved} saved, {failed} failed, {skipped} skipped."
+        )
+        if warnings:
+            summary += f" {warnings} saved file(s) need follow-up."
+        self._set_busy(False, summary)
         self._hide_save_progress_dialog()
+        self.refresh_queue()
+        self.update_progress()
+        self.after_save(
+            close_after=failed == 0 and warnings == 0,
+            refresh_ui=False,
+        )
+        if failed or warnings:
+            attention_index = next(
+                (
+                    index
+                    for index, item in enumerate(self.controller.items)
+                    if (
+                        item.status not in {"saved", "skipped"}
+                        or bool(item.warnings)
+                    )
+                ),
+                -1,
+            )
+            if attention_index >= 0:
+                self.controller.select(attention_index)
+                self._set_queue_row(attention_index)
+            if _widget_alive(self.status_label):
+                follow_up = (
+                    " Failed files remain in the queue and can be retried."
+                    if failed
+                    else " The documents are saved; review the follow-up warning."
+                )
+                self.status_label.setText(summary + follow_up)
+            self._update_action_states()
 
     def after_save(self, close_after=False, refresh_ui=True):
         if self._is_closing:
@@ -3014,7 +3686,7 @@ class UploadSessionDialog(MaskDialogBase):
             for url in event.mimeData().urls()
             if url.isLocalFile()
         ]
-        self.add_files(supported_upload_files_from_paths(files))
+        self.add_files(files)
         event.acceptProposedAction()
 
     def closeEvent(self, event):
@@ -3022,6 +3694,8 @@ class UploadSessionDialog(MaskDialogBase):
             if _widget_alive(getattr(self, "status_label", None)):
                 self.status_label.setText("Please wait for the current upload action to finish.")
             event.ignore()
+            return
+        if self._block_close_for_unknown_outcomes(event):
             return
         self._is_closing = True
         self._hide_content_loading_overlay()
@@ -3065,6 +3739,8 @@ class UploadSessionDialog(MaskDialogBase):
             if _widget_alive(getattr(self, "status_label", None)):
                 self.status_label.setText("Please wait for the current upload action to finish.")
             return
+        if self._block_close_for_unknown_outcomes():
+            return
         self._is_closing = True
         self._hide_content_loading_overlay()
         self.close_document()
@@ -3078,6 +3754,8 @@ class UploadSessionDialog(MaskDialogBase):
         if self._busy:
             if _widget_alive(getattr(self, "status_label", None)):
                 self.status_label.setText("Please wait for the current upload action to finish.")
+            return
+        if self._block_close_for_unknown_outcomes():
             return
         self._is_closing = True
         self._hide_content_loading_overlay()

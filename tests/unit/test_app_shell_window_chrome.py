@@ -90,6 +90,39 @@ def test_app_shell_hidden_pages_do_not_force_a_large_window_minimum(qapp):
     assert shell.minimumSizeHint().width() < 400
 
 
+def test_app_shell_menu_button_toggles_labeled_navigation(qapp, qtbot):
+    _ = qapp
+    shell = AppShell("Mission Legal Tracker")
+    shell.add_nav_item("dashboard", "Dashboard", 0, "Work")
+    shell.add_nav_item("office_work", "Tasks", 1, "Work")
+
+    assert shell.sidebar.width() == shell.COLLAPSED_SIDEBAR_WIDTH
+    assert shell._buttons["dashboard"].text() == ""
+
+    shell.menu_button.click()
+    assert shell._sidebar_animation is not None
+    qtbot.waitUntil(
+        lambda: shell.COLLAPSED_SIDEBAR_WIDTH
+        < shell.sidebar.width()
+        < shell.EXPANDED_SIDEBAR_WIDTH
+    )
+    qtbot.waitUntil(lambda: shell._sidebar_animation is None)
+
+    assert shell.sidebar.width() == shell.EXPANDED_SIDEBAR_WIDTH
+    assert shell.menu_button.text().strip() == "Menu"
+    assert shell._buttons["dashboard"].text() == "Dashboard"
+    assert shell._buttons["office_work"].text() == "Tasks"
+    assert shell._buttons["dashboard"].toolButtonStyle() == Qt.ToolButtonTextBesideIcon
+
+    shell.menu_button.click()
+    qtbot.waitUntil(lambda: shell._sidebar_animation is None)
+
+    assert shell.sidebar.width() == shell.COLLAPSED_SIDEBAR_WIDTH
+    assert shell.menu_button.text() == ""
+    assert shell._buttons["dashboard"].text() == ""
+    assert shell._buttons["dashboard"].toolButtonStyle() == Qt.ToolButtonIconOnly
+
+
 def test_app_title_bar_window_buttons_call_parent_window(qapp):
     _ = qapp
     window = RecordingWindow()

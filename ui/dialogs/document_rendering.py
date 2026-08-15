@@ -4,18 +4,12 @@ import fitz
 
 from PySide6.QtGui import QImage, QPainter, QPixmap
 
+from utils.document_files import SUPPORTED_DOCUMENT_EXTENSIONS
+
 
 DEFAULT_RENDER_SCALE = 3.0
 
-SUPPORTED_IMAGE_EXTENSIONS = {
-    ".png",
-    ".jpg",
-    ".jpeg",
-    ".bmp",
-    ".tiff",
-    ".tif",
-    ".webp",
-}
+SUPPORTED_IMAGE_EXTENSIONS = SUPPORTED_DOCUMENT_EXTENSIONS - {".pdf"}
 
 
 def get_document_viewer_render_hints():

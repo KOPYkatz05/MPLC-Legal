@@ -1,5 +1,7 @@
 from datetime import datetime
 
+from sqlalchemy.exc import IntegrityError
+
 from database.db import SessionLocal
 from services.remote_service import RemoteServiceMixin
 from database.models.missionary import Missionary
@@ -202,32 +204,18 @@ class ResidencyService(RemoteServiceMixin):
         missionary,
         document_id=None,
     ):
-        event = (
-            session.query(ResidencyEvent)
-            .filter_by(
-                missionary_id=missionary.id,
-                event_type=INITIAL_RESIDENCY,
-                sequence_number=0,
-            )
-            .first()
+        event = self._get_or_create_identity_event(
+            session,
+            missionary_id=missionary.id,
+            event_type=INITIAL_RESIDENCY,
+            sequence_number=0,
+            document_id=document_id,
         )
-
-        if event is None:
-            event = ResidencyEvent(
-                missionary_id=missionary.id,
-                event_type=INITIAL_RESIDENCY,
-                sequence_number=0,
-                status=APPROVED,
-                document_id=document_id,
-                approved_at=datetime.now(),
-            )
-            session.add(event)
-        else:
-            event.status = APPROVED
-            if document_id is not None:
-                event.document_id = document_id
-            if event.approved_at is None:
-                event.approved_at = datetime.now()
+        event.status = APPROVED
+        if document_id is not None:
+            event.document_id = document_id
+        if event.approved_at is None:
+            event.approved_at = datetime.now()
 
         session.flush()
         self._sync_missionary_expiration(session, missionary)
@@ -253,49 +241,111 @@ class ResidencyService(RemoteServiceMixin):
                 self._sync_missionary_expiration(session, missionary)
                 return existing_for_document
 
-        approved_events = (
-            session.query(ResidencyEvent)
-            .filter_by(
+        for sequence in range(1, MAX_PRORROGAS + 1):
+            event = self._identity_event(
+                session,
                 missionary_id=missionary.id,
                 event_type=PRORROGA,
-                status=APPROVED,
+                sequence_number=sequence,
             )
-            .order_by(ResidencyEvent.sequence_number.asc())
-            .all()
+            if event is None:
+                event = self._get_or_create_identity_event(
+                    session,
+                    missionary_id=missionary.id,
+                    event_type=PRORROGA,
+                    sequence_number=sequence,
+                    document_id=document_id,
+                )
+
+            # A concurrent request may have claimed this sequence between the
+            # read and insert. The same document is an idempotent replay; a
+            # different document retries at the next allowed sequence.
+            if document_id is None or event.document_id == document_id:
+                event.status = APPROVED
+                if event.approved_at is None:
+                    event.approved_at = datetime.now()
+                session.flush()
+                self._sync_missionary_expiration(session, missionary)
+                return event
+
+        logger.warning(
+            "Missionary %s already has %s residency prorroga slots; "
+            "not creating another residency event.",
+            missionary.id,
+            MAX_PRORROGAS,
         )
-        used_sequences = {
-            event.sequence_number
-            for event in approved_events
-        }
+        self._sync_missionary_expiration(session, missionary)
+        return None
 
-        next_sequence = None
-        for sequence in range(1, MAX_PRORROGAS + 1):
-            if sequence not in used_sequences:
-                next_sequence = sequence
-                break
-
-        if next_sequence is None:
-            logger.warning(
-                "Missionary %s already has %s approved prorrogas; "
-                "not creating another residency event.",
-                missionary.id,
-                MAX_PRORROGAS,
+    @staticmethod
+    def _identity_event(
+        session,
+        missionary_id,
+        event_type,
+        sequence_number,
+    ):
+        return (
+            session.query(ResidencyEvent)
+            .filter_by(
+                missionary_id=missionary_id,
+                event_type=event_type,
+                sequence_number=sequence_number,
             )
-            self._sync_missionary_expiration(session, missionary)
-            return None
+            .first()
+        )
+
+    def _get_or_create_identity_event(
+        self,
+        session,
+        missionary_id,
+        event_type,
+        sequence_number,
+        document_id=None,
+    ):
+        existing = self._identity_event(
+            session,
+            missionary_id,
+            event_type,
+            sequence_number,
+        )
+        if existing is not None:
+            return existing
 
         event = ResidencyEvent(
-            missionary_id=missionary.id,
-            event_type=PRORROGA,
-            sequence_number=next_sequence,
+            missionary_id=missionary_id,
+            event_type=event_type,
+            sequence_number=sequence_number,
             status=APPROVED,
             document_id=document_id,
             approved_at=datetime.now(),
         )
-        session.add(event)
-        session.flush()
-        self._sync_missionary_expiration(session, missionary)
-        return event
+        try:
+            # Keep a concurrent unique-key collision inside a savepoint so the
+            # caller's missionary-field transaction remains usable.
+            with session.begin_nested():
+                session.add(event)
+                session.flush()
+            return event
+        except IntegrityError:
+            logger.info(
+                "Residency event identity was concurrently claimed: "
+                "missionary=%s type=%s sequence=%s",
+                missionary_id,
+                event_type,
+                sequence_number,
+            )
+            winner = self._identity_event(
+                session,
+                missionary_id,
+                event_type,
+                sequence_number,
+            )
+            if winner is None:
+                # Do not pretend the event exists if the competing transaction
+                # is not visible. The durable document remains saved and the
+                # post-processing caller can retry safely.
+                raise
+            return winner
 
     def _sync_missionary_expiration(
         self,

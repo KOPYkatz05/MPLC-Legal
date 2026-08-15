@@ -114,6 +114,7 @@ def test_pairing_and_authenticated_session(tmp_path):
         headers={
             "X-Device-ID": credentials["device_id"],
             "X-Device-Credential": credentials["credential"],
+            "X-Client-Version": APP_VERSION,
         },
     )
     assert session.status_code == 200
@@ -207,6 +208,7 @@ def test_legacy_pairing_request_remains_immediately_active(tmp_path):
         headers={
             "X-Device-ID": credentials["device_id"],
             "X-Device-Credential": credentials["credential"],
+            "X-Client-Version": APP_VERSION,
         },
     )
 
@@ -222,6 +224,37 @@ def test_legacy_pairing_request_remains_immediately_active(tmp_path):
     assert devices.authenticate(
         credentials["device_id"], credentials["credential"]
     ) is not None
+
+
+def test_authenticated_routes_reject_an_outdated_or_unidentified_client(
+    tmp_path,
+):
+    devices = DeviceCredentialStore(tmp_path / "devices.json")
+    credentials = devices.register("Old client")
+    client = TestClient(
+        create_app(
+            devices,
+            PairingCodeStore(tmp_path / "pairing.json"),
+            manage_lifecycle=False,
+        )
+    )
+    device_headers = {
+        "X-Device-ID": credentials["device_id"],
+        "X-Device-Credential": credentials["credential"],
+    }
+
+    missing = client.get("/v1/session", headers=device_headers)
+    outdated = client.get(
+        "/v1/session",
+        headers={**device_headers, "X-Client-Version": "0.3.3"},
+    )
+
+    assert missing.status_code == 426
+    assert outdated.status_code == 426
+    assert missing.json()["detail"] == {
+        "code": "client_update_required",
+        "minimum_client_version": MIN_SUPPORTED_CLIENT_VERSION,
+    }
 
 
 def test_session_rejects_unpaired_device(tmp_path):

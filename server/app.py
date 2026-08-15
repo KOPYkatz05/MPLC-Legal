@@ -1,9 +1,11 @@
 import asyncio
+import hashlib
 import ipaddress
+import json
 import logging
 import os
 import secrets
-import json
+import uuid
 from contextlib import asynccontextmanager
 from datetime import date
 from pathlib import Path
@@ -25,7 +27,9 @@ from fastapi import (
     status,
 )
 from fastapi.responses import FileResponse
+from packaging.version import InvalidVersion, Version
 from starlette.background import BackgroundTask
+from starlette.concurrency import run_in_threadpool
 from pydantic import BaseModel, Field
 from sqlalchemy import text
 
@@ -47,6 +51,119 @@ from version import (
 
 
 logger = logging.getLogger(__name__)
+
+
+DEFAULT_MAX_UPLOAD_BYTES = 100 * 1024 * 1024
+
+
+def _canonical_upload_id(value):
+    try:
+        return str(uuid.UUID(str(value).strip()))
+    except (AttributeError, TypeError, ValueError) as exc:
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "invalid_upload_id"},
+        ) from exc
+
+
+def _maximum_upload_bytes():
+    try:
+        configured = int(
+            os.environ.get(
+                "MISSION_LEGAL_MAX_UPLOAD_BYTES",
+                str(DEFAULT_MAX_UPLOAD_BYTES),
+            )
+        )
+    except (TypeError, ValueError):
+        configured = DEFAULT_MAX_UPLOAD_BYTES
+    return configured if configured > 0 else DEFAULT_MAX_UPLOAD_BYTES
+
+
+def _validate_upload_request(
+    *,
+    document_type,
+    workflow_stage,
+    filename,
+    upload_id,
+    content_sha256,
+    file_size,
+    supersedes_document_id,
+):
+    from utils.constants import DOCUMENTS, WORKFLOW_STAGES
+    from utils.document_files import SUPPORTED_DOCUMENT_EXTENSIONS
+
+    if document_type not in DOCUMENTS:
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "invalid_document_type"},
+        )
+    allowed_stages = {"GENERAL", "DNI", *WORKFLOW_STAGES}
+    if workflow_stage not in allowed_stages:
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "invalid_workflow_stage"},
+        )
+    extension = Path(filename or "").suffix.lower()
+    if extension not in SUPPORTED_DOCUMENT_EXTENSIONS:
+        raise HTTPException(
+            status_code=415,
+            detail={"code": "unsupported_document_extension"},
+        )
+    if upload_id in (None, ""):
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "missing_upload_id"},
+        )
+    normalized_upload_id = _canonical_upload_id(upload_id)
+    if content_sha256 in (None, ""):
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "missing_content_sha256"},
+        )
+    normalized_sha256 = str(content_sha256).strip().lower()
+    if len(normalized_sha256) != 64 or any(
+        character not in "0123456789abcdef"
+        for character in normalized_sha256
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "invalid_content_sha256"},
+        )
+    if file_size is None:
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "missing_file_size"},
+        )
+    if file_size < 0:
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "invalid_file_size"},
+        )
+    if supersedes_document_id is not None and supersedes_document_id <= 0:
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "invalid_replacement_target"},
+        )
+    return normalized_upload_id, normalized_sha256
+
+
+def _stream_upload_to_path(source, destination_path, maximum_size):
+    size = 0
+    digest = hashlib.sha256()
+    source.seek(0)
+    with Path(destination_path).open("xb") as destination:
+        while chunk := source.read(1024 * 1024):
+            size += len(chunk)
+            if size > maximum_size:
+                raise HTTPException(
+                    status_code=413,
+                    detail={"code": "upload_too_large"},
+                )
+            digest.update(chunk)
+            destination.write(chunk)
+        destination.flush()
+        os.fsync(destination.fileno())
+    return size, digest.hexdigest()
 
 
 def _document_storage_http_error(error):
@@ -284,12 +401,32 @@ def create_app(
     def authenticated_device(
         x_device_id: str = Header(default=""),
         x_device_credential: str = Header(default=""),
+        x_client_version: str = Header(default=""),
     ):
         device = devices.authenticate(x_device_id, x_device_credential)
         if not device:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid or revoked device credentials",
+            )
+        try:
+            client_version = Version(str(x_client_version).strip())
+            minimum_version = Version(MIN_SUPPORTED_CLIENT_VERSION)
+        except InvalidVersion as exc:
+            raise HTTPException(
+                status_code=status.HTTP_426_UPGRADE_REQUIRED,
+                detail={
+                    "code": "client_update_required",
+                    "minimum_client_version": MIN_SUPPORTED_CLIENT_VERSION,
+                },
+            ) from exc
+        if client_version < minimum_version:
+            raise HTTPException(
+                status_code=status.HTTP_426_UPGRADE_REQUIRED,
+                detail={
+                    "code": "client_update_required",
+                    "minimum_client_version": MIN_SUPPORTED_CLIENT_VERSION,
+                },
             )
         return device
 
@@ -655,6 +792,63 @@ def create_app(
         rows = DocumentService().get_documents(missionary_id)
         return {"items": [model_snapshot(row) for row in rows]}
 
+    @app.get("/v1/document-uploads/{upload_id}")
+    async def document_by_upload_id(
+        upload_id: str,
+        _device=Depends(authenticated_device),
+    ):
+        from services.document_service import DocumentService
+        from services.document_storage_service import (
+            DocumentStorageError,
+            UNREADABLE,
+            resolve_document_path,
+        )
+        from utils.document_files import sha256_file
+
+        normalized_upload_id = _canonical_upload_id(upload_id)
+        service = DocumentService()
+        row = await run_in_threadpool(
+            service.get_document_by_upload_id,
+            normalized_upload_id,
+        )
+        if row is None:
+            raise HTTPException(
+                status_code=404,
+                detail={
+                    "code": "upload_not_found",
+                    "upload_id": normalized_upload_id,
+                },
+            )
+        try:
+            resolved_path = await run_in_threadpool(resolve_document_path, row.id)
+            actual_size = await run_in_threadpool(
+                lambda: Path(resolved_path).stat().st_size
+            )
+            if row.file_size is not None and actual_size != int(row.file_size):
+                raise DocumentStorageError(UNREADABLE, row.id)
+            if row.content_sha256:
+                actual_sha256 = await run_in_threadpool(
+                    sha256_file,
+                    resolved_path,
+                )
+                if actual_sha256 != str(row.content_sha256).lower():
+                    raise DocumentStorageError(UNREADABLE, row.id)
+        except DocumentStorageError as error:
+            raise _document_storage_http_error(error) from error
+        if getattr(row, "post_processing_status", None) in {
+            "PENDING",
+            "RETRY_REQUIRED",
+        }:
+            # Reconciliation can repair the narrow crash window after a commit,
+            # but only after the exact committed bytes have been verified.
+            row = await run_in_threadpool(
+                service._run_post_processing_best_effort,
+                row,
+            )
+        payload = model_snapshot(row)
+        payload["file_path"] = str(resolved_path)
+        return payload
+
     @app.get("/v1/documents/{document_id}")
     def document(document_id: int, _device=Depends(authenticated_device)):
         from services.document_service import DocumentService
@@ -711,45 +905,119 @@ def create_app(
         ocr_raw_data: str = Form(default=""),
         ocr_confirmed_data: str = Form(default=""),
         notes: str = Form(default=""),
+        upload_id: str | None = Form(default=None),
+        content_sha256: str | None = Form(default=None),
+        file_size: int | None = Form(default=None),
+        supersedes_document_id: int | None = Form(default=None),
         file: UploadFile = File(),
         _device=Depends(authenticated_device),
     ):
-        from services.document_service import DocumentService
+        from services.document_service import (
+            DocumentService,
+            DocumentReplacementError,
+            DocumentUploadConflictError,
+        )
         from services.missionary_service import MissionaryService
 
-        missionary = MissionaryService().get_missionary(missionary_id)
+        upload_id, content_sha256 = _validate_upload_request(
+            document_type=document_type,
+            workflow_stage=workflow_stage,
+            filename=file.filename,
+            upload_id=upload_id,
+            content_sha256=content_sha256,
+            file_size=file_size,
+            supersedes_document_id=supersedes_document_id,
+        )
+        missionary = await run_in_threadpool(
+            MissionaryService().get_missionary,
+            missionary_id,
+        )
         if missionary is None:
             raise HTTPException(status_code=404, detail="Missionary not found")
         incoming = get_app_data_dir() / "Incoming"
         incoming.mkdir(parents=True, exist_ok=True)
-        safe_name = Path(file.filename or "upload.bin").name
-        temporary = incoming / f"{secrets.token_hex(12)}_{safe_name}"
+        file_extension = Path(file.filename or "").suffix.lower()
+        temporary = incoming / f"{secrets.token_hex(12)}{file_extension}"
         try:
-            size = 0
-            maximum_size = int(
-                os.environ.get("MISSION_LEGAL_MAX_UPLOAD_BYTES", str(100 * 1024 * 1024))
-            )
-            with temporary.open("wb") as destination:
-                while chunk := await file.read(1024 * 1024):
-                    size += len(chunk)
-                    if size > maximum_size:
-                        raise HTTPException(
-                            status_code=413,
-                            detail="Document exceeds the configured upload limit",
-                        )
-                    destination.write(chunk)
-            row = DocumentService().upload_document(
-                missionary,
+            size, actual_sha256 = await run_in_threadpool(
+                _stream_upload_to_path,
+                file.file,
                 temporary,
-                document_type,
-                workflow_stage,
-                ocr_raw_data=ocr_raw_data or None,
-                ocr_confirmed_data=ocr_confirmed_data or None,
-                notes=notes or None,
+                _maximum_upload_bytes(),
             )
+            if size <= 0:
+                raise HTTPException(
+                    status_code=422,
+                    detail={"code": "empty_upload"},
+                )
+            if file_size is not None and file_size != size:
+                raise HTTPException(
+                    status_code=422,
+                    detail={
+                        "code": "file_size_mismatch",
+                        "expected": file_size,
+                        "actual": size,
+                    },
+                )
+            if content_sha256 is not None and content_sha256 != actual_sha256:
+                raise HTTPException(
+                    status_code=422,
+                    detail={"code": "content_sha256_mismatch"},
+                )
+            try:
+                row = await run_in_threadpool(
+                    DocumentService().upload_document,
+                    missionary,
+                    temporary,
+                    document_type,
+                    workflow_stage,
+                    ocr_raw_data=ocr_raw_data or None,
+                    ocr_confirmed_data=ocr_confirmed_data or None,
+                    notes=notes or None,
+                    upload_id=upload_id,
+                    content_sha256=actual_sha256,
+                    file_size=size,
+                    supersedes_document_id=supersedes_document_id,
+                )
+            except DocumentUploadConflictError as error:
+                raise HTTPException(
+                    status_code=409,
+                    detail={"code": "upload_conflict", "message": str(error)},
+                ) from error
+            except DocumentReplacementError as error:
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "code": "replacement_conflict",
+                        "message": str(error),
+                    },
+                ) from error
+            except ValueError as error:
+                raise HTTPException(
+                    status_code=422,
+                    detail={
+                        "code": "invalid_document_file",
+                        "message": str(error),
+                    },
+                ) from error
             return model_snapshot(row)
         finally:
-            temporary.unlink(missing_ok=True)
+            try:
+                temporary.unlink(missing_ok=True)
+            except OSError:
+                logger.warning(
+                    "Could not remove temporary incoming upload %s",
+                    temporary,
+                    exc_info=True,
+                )
+            try:
+                await file.close()
+            except Exception:
+                logger.warning(
+                    "Could not close incoming upload %s",
+                    temporary,
+                    exc_info=True,
+                )
 
     @app.post("/v1/documents/{document_id}/apply-updates")
     def apply_document_updates(
@@ -763,14 +1031,50 @@ def create_app(
         document = DocumentService().get_document_by_id(document_id)
         if document is None:
             raise HTTPException(status_code=404, detail="Document not found")
+        if request.document_type != document.document_type:
+            raise HTTPException(
+                status_code=409,
+                detail={"code": "document_type_mismatch"},
+            )
         fields = apply_missionary_updates(
             document.missionary_id,
-            request.document_type,
+            document.document_type,
             document_id,
             request.confirmed_data,
             auto_update_fields=request.auto_update_fields,
         )
         return {"updated_fields": fields}
+
+    @app.post("/v1/documents/{document_id}/retry-post-processing")
+    async def retry_document_post_processing(
+        document_id: int,
+        _device=Depends(authenticated_device),
+    ):
+        from services.document_service import DocumentService
+        from services.document_storage_service import DocumentStorageError
+
+        service = DocumentService()
+        document = await run_in_threadpool(
+            service.get_document_by_id,
+            document_id,
+        )
+        if document is None:
+            raise HTTPException(status_code=404, detail="Document not found")
+        try:
+            await run_in_threadpool(
+                service._verify_committed_upload_file,
+                document,
+            )
+        except DocumentStorageError as error:
+            raise _document_storage_http_error(error) from error
+        # The service deliberately returns the committed record with
+        # RETRY_REQUIRED/PENDING when follow-up fails. Upload durability is not
+        # converted into an HTTP failure by ancillary database work.
+        document = await run_in_threadpool(
+            service._run_post_processing_best_effort,
+            document,
+        )
+        return model_snapshot(document)
 
     @app.post("/v1/rpc/{service_name}/{method_name}")
     def service_rpc(

@@ -4,6 +4,7 @@ from sqlalchemy import String
 from sqlalchemy import Boolean
 from sqlalchemy import DateTime
 from sqlalchemy import ForeignKey
+from sqlalchemy import Index
 
 from sqlalchemy.sql import func
 
@@ -12,6 +13,9 @@ from database.base import Base
 
 class Document(Base):
     __tablename__ = "documents"
+    __table_args__ = (
+        Index("uq_documents_upload_id", "upload_id", unique=True),
+    )
 
     # ======================================
     # Primary Identity
@@ -65,6 +69,27 @@ class Document(Base):
         nullable=False,
     )
 
+    upload_id = Column(
+        String,
+        nullable=True,
+    )
+
+    content_sha256 = Column(
+        String,
+        nullable=True,
+    )
+
+    file_size = Column(
+        Integer,
+        nullable=True,
+    )
+
+    supersedes_document_id = Column(
+        Integer,
+        ForeignKey("documents.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+
     # ======================================
     # Notes
     # ======================================
@@ -96,6 +121,22 @@ class Document(Base):
     )
 
     ocr_confirmed_data = Column(
+        String,
+        nullable=True,
+    )
+
+    post_processing_status = Column(
+        String,
+        default="NOT_REQUIRED",
+        nullable=False,
+    )
+
+    post_processing_error = Column(
+        String,
+        nullable=True,
+    )
+
+    post_processing_updated_fields = Column(
         String,
         nullable=True,
     )

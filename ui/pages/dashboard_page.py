@@ -1014,6 +1014,10 @@ class DashboardPage(QWidget):
             layout.addWidget(
                 self._muted_label(tr("dashboard_no_residency_expirations"))
             )
+        # Keep person rows at their natural, consistent height when the card beside
+        # this one contains more entries.  The remaining column height belongs
+        # below the rows instead of being distributed between them.
+        layout.addStretch()
         return card
 
     def _build_cancelaciones_card(self, data):
@@ -1081,6 +1085,7 @@ class DashboardPage(QWidget):
                 layout.addWidget(row)
         else:
             layout.addWidget(self._muted_label(tr("dashboard_no_cancelaciones")))
+        layout.addStretch()
         return card
 
     def _toggle_digest(self):

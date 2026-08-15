@@ -1,6 +1,7 @@
 from sqlalchemy import Column
 from sqlalchemy import DateTime
 from sqlalchemy import ForeignKey
+from sqlalchemy import Index
 from sqlalchemy import Integer
 from sqlalchemy import String
 
@@ -11,6 +12,15 @@ from database.base import Base
 
 class ResidencyEvent(Base):
     __tablename__ = "residency_events"
+    __table_args__ = (
+        Index(
+            "uq_residency_event_identity",
+            "missionary_id",
+            "event_type",
+            "sequence_number",
+            unique=True,
+        ),
+    )
 
     id = Column(
         Integer,

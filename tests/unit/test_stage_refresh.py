@@ -260,6 +260,61 @@ def test_document_upload_refreshes_advance_ready_banner():
     assert page._upload_detail_reload_seen is True
 
 
+def test_returned_upload_record_refreshes_without_document_service_call():
+    page = MissionaryDetailPage.__new__(MissionaryDetailPage)
+    page.current_missionary = SimpleNamespace(id=7)
+    existing_document = SimpleNamespace(id=10, document_type="PASSPORT")
+    uploaded_document = SimpleNamespace(id=11, document_type="BIRTH_CERTIFICATE")
+    page._workflow_records = []
+    page._document_records = {existing_document.id: existing_document}
+    page.document_service = SimpleNamespace(
+        get_document_by_id=lambda _document_id: (_ for _ in ()).throw(
+            AssertionError("upload refresh must not perform a network fetch")
+        )
+    )
+    refreshed = {}
+    page.load_documents = lambda documents: refreshed.setdefault(
+        "documents", list(documents)
+    )
+    page.load_missing_documents = lambda documents: refreshed.setdefault(
+        "missing", list(documents)
+    )
+    page._update_advance_banner = lambda **kwargs: refreshed.update(
+        banner=list(kwargs["documents"])
+    )
+
+    page._merge_uploaded_document(7, uploaded_document)
+
+    expected = [existing_document, uploaded_document]
+    assert refreshed == {
+        "documents": expected,
+        "missing": expected,
+        "banner": expected,
+    }
+    assert page._upload_detail_reload_seen is True
+
+
+def test_upload_dialog_prefers_returned_record_signal_over_id_signal():
+    connected = []
+
+    class FakeSignal:
+        def __init__(self, name):
+            self.name = name
+
+        def connect(self, slot):
+            connected.append((self.name, slot))
+
+    page = MissionaryDetailPage.__new__(MissionaryDetailPage)
+    dialog = SimpleNamespace(
+        document_saved=FakeSignal("record"),
+        document_uploaded=FakeSignal("id"),
+    )
+
+    page._connect_upload_document_refresh(dialog)
+
+    assert connected == [("record", page._merge_uploaded_document)]
+
+
 def test_save_dates_refreshes_missionaries_table(monkeypatch):
     page = MissionaryDetailPage.__new__(MissionaryDetailPage)
     missionaries_page = LoadCounter()

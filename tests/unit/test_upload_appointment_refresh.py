@@ -1,4 +1,5 @@
 import shutil
+import fitz
 from datetime import date
 from types import SimpleNamespace
 from pathlib import Path
@@ -643,13 +644,19 @@ def test_upload_ocr_does_not_overwrite_manual_confirmed_value(
 
 
 def test_upload_save_never_runs_ocr(monkeypatch):
+    root = Path("test_upload_tmp") / str(uuid4())
+    root.mkdir(parents=True)
+    source = root / "passport.pdf"
+    with fitz.open() as pdf:
+        pdf.new_page()
+        pdf.save(source)
     missionary = SimpleNamespace(
         id=42,
         full_name="Test Missionary",
         folder_path="unused",
     )
     controller = UploadSessionController(missionary)
-    controller.add_files(["passport.pdf"])
+    controller.add_files([source])
     controller.set_document_type(0, "PASSPORT")
     item = controller.items[0]
     item.ocr_result = None
@@ -673,21 +680,34 @@ def test_upload_save_never_runs_ocr(monkeypatch):
     monkeypatch.setattr(controller, "run_ocr", fail_if_ocr_runs)
     monkeypatch.setattr(
         upload_session_dialog,
+        "validate_document_file",
+        lambda _path: None,
+    )
+    monkeypatch.setattr(
+        upload_session_dialog,
         "finalize_ocr_ingestion",
         fake_finalize_ocr_ingestion,
     )
 
-    result = controller.save_item(item, run_ocr=True)
+    try:
+        result = controller.save_item(item, run_ocr=True)
 
-    assert result.succeeded
-    assert captured["confirmed_data"] == {
-        "passport_number": "MANUAL123",
-    }
-    assert captured["notes"] == "Reviewed OCR fields."
-    assert captured["pipeline_result"].ocr_status == "skipped"
+        assert result.succeeded
+        assert captured["confirmed_data"] == {
+            "passport_number": "MANUAL123",
+        }
+        assert captured["notes"] == "Reviewed OCR fields."
+        assert captured["pipeline_result"].ocr_status == "skipped"
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
 
 
 def test_document_upload_persists_notes(monkeypatch):
+    monkeypatch.setattr(
+        document_service_module.MissionLegalApiClient,
+        "from_environment",
+        classmethod(lambda cls: None),
+    )
     engine = create_engine("sqlite:///:memory:")
     testing_session = sessionmaker(
         bind=engine,
@@ -712,7 +732,9 @@ def test_document_upload_persists_notes(monkeypatch):
     try:
         root.mkdir(parents=True)
         source = root / "source.pdf"
-        source.write_text("pdf")
+        with fitz.open() as pdf:
+            pdf.new_page()
+            pdf.save(source)
         missionary = SimpleNamespace(
             id=42,
             full_name="Test Missionary",
