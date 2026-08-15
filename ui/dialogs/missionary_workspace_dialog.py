@@ -69,6 +69,7 @@ from ui.widgets.missionary_block_widgets import (
     stage_display_name,
     workflow_status_label as status_label,
 )
+from ui.workspace_document_access import WorkspaceDocumentAccess
 
 
 FIELD_KEYS = [
@@ -1047,7 +1048,7 @@ class WorkspaceBlockFactory:
         return card
 
 
-class MissionaryWorkspaceDialog(MaskDialogBase):
+class MissionaryWorkspaceDialog(WorkspaceDocumentAccess, MaskDialogBase):
     def __init__(
         self,
         missionary,
@@ -1061,6 +1062,7 @@ class MissionaryWorkspaceDialog(MaskDialogBase):
         self.workspace = normalize_workspace_layout(workspace or {})
         self.on_refresh = on_refresh
         self.document_service = DocumentService()
+        self._init_workspace_document_access()
         self.workflow_service = WorkflowService()
         self.secretary_work_service = SecretaryWorkService()
         self.workflow_validator = WorkflowValidator()
@@ -1282,16 +1284,10 @@ class MissionaryWorkspaceDialog(MaskDialogBase):
         self.change_workflow_status(workflow)
 
     def open_document_viewer(self, doc):
-        file_path = getattr(doc, "file_path", None)
-        if not file_path or not Path(file_path).exists():
-            show_message(
-                self,
-                tr("missionary_detail_file_not_found_title"),
-                tr("missionary_detail_cannot_open_document"),
-                kind="warning",
-            )
-            return
-        DocumentViewerDialog(file_path, parent=self).exec()
+        self._ensure_workspace_document(
+            doc,
+            lambda file_path: DocumentViewerDialog(file_path, parent=self).exec(),
+        )
 
     def open_document_notes(self, doc):
         from ui.pages.missionary_detail_page import DocumentNotesDialog
@@ -1307,16 +1303,7 @@ class MissionaryWorkspaceDialog(MaskDialogBase):
     def open_document_file(self, doc):
         from ui.pages.missionary_detail_page import open_document_with_default_app
 
-        file_path = getattr(doc, "file_path", None)
-        if not file_path or not Path(file_path).exists():
-            show_message(
-                self,
-                tr("missionary_detail_file_not_found_title"),
-                tr("missionary_detail_cannot_open_file", file_path=file_path or ""),
-                kind="warning",
-            )
-            return
-        open_document_with_default_app(file_path)
+        self._ensure_workspace_document(doc, open_document_with_default_app)
 
     def change_workflow_status(self, workflow):
         from ui.pages.missionary_detail_page import WorkflowStatusDialog

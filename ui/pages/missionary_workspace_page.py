@@ -38,11 +38,12 @@ from ui.foundation import (
     tune_fluent_scrollable,
 )
 from ui.foundation.background_loader import LatestRequestLoader
+from ui.workspace_document_access import WorkspaceDocumentAccess
 from utils.i18n import tr
 from utils.logger import logger
 
 
-class MissionaryWorkspacePage(QWidget):
+class MissionaryWorkspacePage(WorkspaceDocumentAccess, QWidget):
     CONTEXT_CACHE_TTL_SECONDS = 30.0
 
     def __init__(self, main_window=None):
@@ -60,6 +61,7 @@ class MissionaryWorkspacePage(QWidget):
         self._context_cache_key = None
         self._context_refreshed_at = 0.0
         self._context_loader = LatestRequestLoader(parent=self)
+        self._init_workspace_document_access()
         self._context_loader.busy_changed.connect(
             lambda busy: self.refresh_btn.setEnabled(not busy)
             if hasattr(self, "refresh_btn")
@@ -454,16 +456,10 @@ class MissionaryWorkspacePage(QWidget):
         self.change_workflow_status(workflow)
 
     def open_document_viewer(self, doc):
-        file_path = getattr(doc, "file_path", None)
-        if not file_path or not Path(file_path).exists():
-            show_message(
-                self,
-                tr("missionary_detail_file_not_found_title"),
-                tr("missionary_detail_cannot_open_document"),
-                kind="warning",
-            )
-            return
-        DocumentViewerDialog(file_path, parent=self).exec()
+        self._ensure_workspace_document(
+            doc,
+            lambda file_path: DocumentViewerDialog(file_path, parent=self).exec(),
+        )
 
     def open_document_notes(self, doc):
         from ui.pages.missionary_detail_page import DocumentNotesDialog
@@ -479,16 +475,7 @@ class MissionaryWorkspacePage(QWidget):
     def open_document_file(self, doc):
         from ui.pages.missionary_detail_page import open_document_with_default_app
 
-        file_path = getattr(doc, "file_path", None)
-        if not file_path or not Path(file_path).exists():
-            show_message(
-                self,
-                tr("missionary_detail_file_not_found_title"),
-                tr("missionary_detail_cannot_open_file", file_path=file_path or ""),
-                kind="warning",
-            )
-            return
-        open_document_with_default_app(file_path)
+        self._ensure_workspace_document(doc, open_document_with_default_app)
 
     def change_workflow_status(self, workflow):
         from ui.pages.missionary_detail_page import WorkflowStatusDialog
