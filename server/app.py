@@ -368,10 +368,19 @@ def create_app(
         if not manage_lifecycle:
             yield
             return
-        try:
-            await asyncio.to_thread(_backup, "pre-migration")
-        except Exception:
-            logger.exception("Pre-migration database backup failed")
+        from database.migrations.runner import migration_required
+
+        database_needs_migration = False
+        if get_database_path().exists():
+            database_needs_migration = await asyncio.to_thread(
+                migration_required,
+                engine,
+            )
+        if database_needs_migration:
+            # A verified local backup is mandatory before either applying a
+            # migration or adopting an existing database into the ledger. The
+            # daily OneDrive mirror remains an independent best-effort task.
+            await asyncio.to_thread(_backup, "pre-migration", False)
         init_db()
         try:
             await asyncio.to_thread(_daily_backup_if_due)

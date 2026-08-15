@@ -72,13 +72,26 @@ def init_db():
     )
     from database.models.residency_event import ResidencyEvent
 
+    from sqlalchemy import inspect
+
+    from database.migrations.runner import (
+        initialize_fresh_database,
+        run_migrations,
+    )
+
+    existing_tables = set(inspect(engine).get_table_names())
+    if not existing_tables:
+        return initialize_fresh_database(
+            engine,
+            lambda: Base.metadata.create_all(bind=engine),
+        )
+
+    result = run_migrations(engine)
+    # create_all is intentionally last for an existing database. Migrations
+    # must validate the recorded old schema before model metadata can conceal a
+    # missing table.
     Base.metadata.create_all(bind=engine)
-
-    _run_migrations()
-
-    from database.schema import record_schema_version
-
-    record_schema_version(engine)
+    return result
 
 
 def _run_migrations():

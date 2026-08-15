@@ -33,7 +33,7 @@ def test_snapshot_is_verified_and_mirrored(tmp_path):
     assert result["mirrored_path"].exists()
     assert result["metadata"]["reason"] == "test"
     assert result["metadata"]["app_version"]
-    assert result["metadata"]["schema_version"] == 1
+    assert result["metadata"]["schema_version"] == 0
     assert result["metadata"]["sha256"]
     assert json.loads(result["metadata_path"].read_text(encoding="utf-8"))[
         "size"

@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from database.runtime import get_app_data_dir, get_database_path
-from version import APP_VERSION, SCHEMA_VERSION
+from version import APP_VERSION
 
 
 BACKUP_ROOT_ENV = "MISSION_LEGAL_BACKUP_DIR"
@@ -76,6 +76,20 @@ class DatabaseBackupService:
             detail = result[0] if result else "no integrity result"
             raise DatabaseBackupError(f"Database integrity check failed: {detail}")
         return True
+
+    @staticmethod
+    def schema_version(path):
+        try:
+            with closing(sqlite3.connect(str(path))) as connection:
+                row = connection.execute(
+                    "SELECT value FROM app_metadata WHERE key = 'schema_version'"
+                ).fetchone()
+        except sqlite3.Error:
+            return 0
+        try:
+            return int(row[0]) if row else 0
+        except (TypeError, ValueError):
+            return 0
 
     @classmethod
     def transfer_database(cls, source_path, destination_path, overwrite=False):
@@ -169,7 +183,9 @@ class DatabaseBackupService:
             "database": self.database_path.name,
             "hostname": socket.gethostname(),
             "reason": reason,
-            "schema_version": SCHEMA_VERSION,
+            # Record the schema actually contained in this snapshot. This is
+            # especially important for the mandatory pre-migration backup.
+            "schema_version": self.schema_version(final_path),
             "sha256": self._sha256(final_path),
             "size": final_path.stat().st_size,
         }

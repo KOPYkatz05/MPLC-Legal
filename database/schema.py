@@ -1,9 +1,6 @@
 from sqlalchemy import text
 
-from version import SCHEMA_VERSION
-
-
-def record_schema_version(engine):
+def record_schema_version(engine, version):
     with engine.begin() as connection:
         connection.execute(
             text(
@@ -17,7 +14,7 @@ def record_schema_version(engine):
                 "('schema_version', :version) "
                 "ON CONFLICT(key) DO UPDATE SET value = excluded.value"
             ),
-            {"version": str(SCHEMA_VERSION)},
+            {"version": str(version)},
         )
 
 
