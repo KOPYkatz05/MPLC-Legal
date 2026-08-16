@@ -124,6 +124,8 @@ def _run_migrations():
         "ALTER TABLE missionaries ADD COLUMN mother_name VARCHAR",
         "ALTER TABLE missionaries ADD COLUMN father_first_name_override VARCHAR",
         "ALTER TABLE missionaries ADD COLUMN mother_first_name_override VARCHAR",
+        "ALTER TABLE missionaries ADD COLUMN last_entry_date DATE",
+        "ALTER TABLE missionaries ADD COLUMN folder_relative_path TEXT",
         """
         CREATE TABLE dynamics_roster_imports (
             id INTEGER PRIMARY KEY,
@@ -148,6 +150,7 @@ def _run_migrations():
         "ALTER TABLE documents ADD COLUMN post_processing_status VARCHAR NOT NULL DEFAULT 'NOT_REQUIRED'",
         "ALTER TABLE documents ADD COLUMN post_processing_error TEXT",
         "ALTER TABLE documents ADD COLUMN post_processing_updated_fields TEXT",
+        "ALTER TABLE documents ADD COLUMN storage_relative_path TEXT",
         "CREATE UNIQUE INDEX IF NOT EXISTS uq_documents_upload_id ON documents(upload_id)",
         """
         UPDATE residency_events

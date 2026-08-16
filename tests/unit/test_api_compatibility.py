@@ -18,11 +18,11 @@ def test_server_requires_the_same_application_release():
     assert MIN_SUPPORTED_CLIENT_VERSION == APP_VERSION
 
 
-def test_durable_upload_protocol_requires_coordinated_034_release():
+def test_last_entry_date_protocol_requires_coordinated_server_and_client():
     assert APP_VERSION == "0.3.4"
-    assert API_VERSION == "3"
-    assert MIN_SUPPORTED_SERVER_API_VERSION == "3"
-    assert MAX_SUPPORTED_SERVER_API_VERSION == "3"
+    assert API_VERSION == "4"
+    assert MIN_SUPPORTED_SERVER_API_VERSION == "4"
+    assert MAX_SUPPORTED_SERVER_API_VERSION == "4"
 
 
 def test_compatible_server_versions_are_accepted():

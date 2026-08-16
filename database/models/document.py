@@ -69,6 +69,12 @@ class Document(Base):
         nullable=False,
     )
 
+    # Portable path beneath the server-authoritative mission storage root.
+    storage_relative_path = Column(
+        String,
+        nullable=True,
+    )
+
     upload_id = Column(
         String,
         nullable=True,

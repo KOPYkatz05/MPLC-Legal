@@ -589,7 +589,7 @@ class AddMissionaryDialog(MaskDialogBase):
 
         layout.addWidget(
             self._build_field(
-                "Arrival Date",
+                "Original Entry Date",
                 self.arrival_date_input,
                 (
                     "Use the arrival date only. "

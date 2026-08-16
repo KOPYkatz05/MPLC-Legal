@@ -58,4 +58,14 @@ def test_remote_create_and_update_serialize_dates(monkeypatch):
     assert created.id == 8
     assert updated is True
     assert client.calls[0][2]["json"]["arrival_date"] == "2026-07-12"
+    assert client.calls[0][2]["json"]["last_entry_date"] == "2026-07-12"
     assert client.calls[1][2]["json"]["fields"]["visa_expiration"] == "2027-07-12"
+
+
+def test_remote_last_entry_date_can_be_updated_independently(monkeypatch):
+    service, client = _remote_service(monkeypatch)
+
+    service.update_fields(8, {"last_entry_date": date(2026, 8, 8)})
+
+    fields = client.calls[0][2]["json"]["fields"]
+    assert fields == {"last_entry_date": "2026-08-08"}

@@ -39,6 +39,7 @@ def _released_schema_engine(schema_version=3, include_residency=True):
             "id INTEGER PRIMARY KEY",
             "full_name VARCHAR",
             "current_stage VARCHAR",
+            "arrival_date DATE",
         ]
         if schema_version >= 2:
             missionary_columns.extend(
@@ -111,7 +112,7 @@ def _released_schema_engine(schema_version=3, include_residency=True):
     return engine
 
 
-def test_schema_three_upgrades_to_four_and_records_ledger():
+def test_schema_three_upgrades_to_current_and_records_ledger():
     engine = _released_schema_engine()
 
     assert migration_required(engine) is True
@@ -119,23 +120,46 @@ def test_schema_three_upgrades_to_four_and_records_ledger():
 
     assert result.starting_version == 3
     assert result.ending_version == SCHEMA_VERSION
-    assert result.applied == (4,)
+    assert result.applied == (4, 5)
     assert migration_required(engine) is False
     with engine.connect() as connection:
         assert connection.execute(
             text("SELECT value FROM app_metadata WHERE key = 'schema_version'")
-        ).scalar_one() == "4"
+        ).scalar_one() == str(SCHEMA_VERSION)
         ledger = connection.execute(
             text("SELECT version FROM schema_migrations ORDER BY version")
         ).scalars().all()
         rows = connection.execute(
             text("SELECT id, sequence_number, status FROM residency_events ORDER BY id")
         ).all()
-    assert ledger == [1, 2, 3, 4]
+    assert ledger == [1, 2, 3, 4, 5]
     assert rows == [(1, -1, "SUPERSEDED"), (2, 0, "APPROVED")]
     assert "upload_id" in {
         column["name"] for column in inspect(engine).get_columns("documents")
     }
+
+
+def test_schema_four_backfills_last_entry_date_from_original_arrival():
+    engine = _released_schema_engine(schema_version=4)
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO missionaries "
+                "(id, full_name, current_stage, arrival_date) "
+                "VALUES (1, 'Existing Missionary', 'INTERPOL', '2025-01-15')"
+            )
+        )
+
+    result = run_migrations(engine)
+
+    assert result.applied == (5,)
+    with engine.connect() as connection:
+        dates = connection.execute(
+            text(
+                "SELECT arrival_date, last_entry_date FROM missionaries WHERE id = 1"
+            )
+        ).one()
+    assert dates == ("2025-01-15", "2025-01-15")
 
 
 def test_failed_migration_does_not_advance_schema_version():
@@ -176,6 +200,27 @@ def test_applied_migration_checksum_drift_is_rejected():
         raise AssertionError("changed migration checksum must be rejected")
 
 
+def test_unreleased_schema_four_additive_contract_is_self_amended():
+    engine = _released_schema_engine()
+    run_migrations(engine, target_version=4)
+    with engine.begin() as connection:
+        connection.execute(text("ALTER TABLE documents DROP COLUMN storage_relative_path"))
+        connection.execute(text("ALTER TABLE missionaries DROP COLUMN folder_relative_path"))
+
+    assert migration_required(engine, target_version=4) is True
+    result = run_migrations(engine, target_version=4)
+
+    assert result.starting_version == 4
+    assert result.applied == ()
+    assert migration_required(engine, target_version=4) is False
+    assert "storage_relative_path" in {
+        column["name"] for column in inspect(engine).get_columns("documents")
+    }
+    assert "folder_relative_path" in {
+        column["name"] for column in inspect(engine).get_columns("missionaries")
+    }
+
+
 def test_fresh_database_is_created_and_stamped_without_replaying_upgrades():
     _load_models()
     engine = create_engine("sqlite:///:memory:")
@@ -187,7 +232,7 @@ def test_fresh_database_is_created_and_stamped_without_replaying_upgrades():
 
     assert result.starting_version == 0
     assert result.ending_version == SCHEMA_VERSION
-    assert result.applied == (1, 2, 3, 4)
+    assert result.applied == tuple(range(1, SCHEMA_VERSION + 1))
     assert migration_required(engine) is False
 
 

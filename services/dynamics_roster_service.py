@@ -25,6 +25,7 @@ from services.workflow_service import WorkflowService
 from services.document_storage_service import (
     commit_with_folder_rollback,
     move_folder_and_rewrite_paths,
+    portable_relative_path,
 )
 
 
@@ -340,12 +341,16 @@ class DynamicsRosterService:
                 row = row_by_number[row_number]
                 profile = _profile(row["nationality"])
                 if action == "create":
+                    folder_path = OneDriveService().create_missionary_folders(
+                        row["full_name"]
+                    )
                     missionary = Missionary(
                         missionary_code=row["missionary_code"],
                         full_name=row["full_name"],
                         status="ACTIVE", tracking_profile=profile,
                         current_stage="DNI" if profile == "PERUVIAN_DNI" else "INTERPOL",
-                        folder_path=str(OneDriveService().create_missionary_folders(row["full_name"])),
+                        folder_path=str(folder_path),
+                        folder_relative_path=str(portable_relative_path(folder_path)),
                     )
                     session.add(missionary)
                     for field in UPDATE_FIELDS:

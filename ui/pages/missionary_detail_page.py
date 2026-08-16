@@ -291,6 +291,7 @@ WORKFLOW_STATUS_TONES = {
 
 EDITABLE_DATE_FIELDS = [
     "arrival_date",
+    "last_entry_date",
     "release_date",
     "visa_expiration",
     "date_of_birth",

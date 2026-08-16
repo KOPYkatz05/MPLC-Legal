@@ -48,6 +48,7 @@ def test_upload_migration_adds_idempotency_columns_and_preserves_duplicate_event
         "post_processing_status",
         "post_processing_error",
         "post_processing_updated_fields",
+        "storage_relative_path",
     }.issubset(document_columns)
     assert any(
         index["name"] == "uq_documents_upload_id" and index["unique"]

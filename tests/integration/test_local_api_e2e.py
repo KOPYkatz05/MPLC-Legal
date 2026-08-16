@@ -65,9 +65,12 @@ def test_authenticated_document_round_trip(tmp_path):
         created = client.post('/v1/missionaries', headers=headers, json={
             'full_name': 'Integration Example',
             'missionary_code': '990004',
+            'arrival_date': '2025-01-15',
         })
         assert created.status_code == 201, created.text
         missionary = created.json()
+        assert missionary['arrival_date'] == '2025-01-15'
+        assert missionary['last_entry_date'] == '2025-01-15'
         workflows = client.post(
             '/v1/rpc/workflows/get_workflows',
             headers=headers,

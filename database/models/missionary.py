@@ -109,6 +109,10 @@ class Missionary(Base):
         Date
     )
 
+    last_entry_date = Column(
+        Date
+    )
+
     visa_expiration = Column(
         Date
     )
@@ -154,6 +158,12 @@ class Missionary(Base):
     # ======================================
 
     folder_path = Column(
+        String
+    )
+
+    # Portable path beneath the server-authoritative mission storage root.
+    # ``folder_path`` remains during the schema-4 transition for compatibility.
+    folder_relative_path = Column(
         String
     )
 

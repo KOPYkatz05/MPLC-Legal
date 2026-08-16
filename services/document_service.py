@@ -23,6 +23,8 @@ from services.document_storage_service import (
     MISSING,
     UNREADABLE,
     DocumentStorageError,
+    portable_relative_path,
+    resolve_missionary_write_folder,
     pin_onedrive_file,
     resolve_document_path,
     verify_readable,
@@ -230,7 +232,7 @@ class DocumentService(RemoteServiceMixin):
                 return self._run_post_processing_best_effort(existing)
 
             destination_folder = (
-                Path(missionary.folder_path)
+                resolve_missionary_write_folder(missionary)
                 / workflow_stage
             )
 
@@ -281,6 +283,11 @@ class DocumentService(RemoteServiceMixin):
                 status="ACTIVE",
                 file_name=new_file_name,
                 file_path=str(destination_path),
+                storage_relative_path=(
+                    str(relative_destination) if (
+                        relative_destination := portable_relative_path(destination_path)
+                    ) is not None else None
+                ),
                 notes=notes or None,
                 ocr_raw_data=raw_json,
                 ocr_confirmed_data=confirmed_json,

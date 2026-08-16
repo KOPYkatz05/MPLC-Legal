@@ -17,10 +17,17 @@ DOCUMENT_COLUMNS = {
     "post_processing_status": "VARCHAR NOT NULL DEFAULT 'NOT_REQUIRED'",
     "post_processing_error": "TEXT",
     "post_processing_updated_fields": "TEXT",
+    "storage_relative_path": "TEXT",
+}
+
+MISSIONARY_COLUMNS = {
+    "folder_relative_path": "TEXT",
 }
 
 
 def upgrade(connection):
+    for column, definition in MISSIONARY_COLUMNS.items():
+        add_column(connection, "missionaries", column, definition)
     for column, definition in DOCUMENT_COLUMNS.items():
         add_column(connection, "documents", column, definition)
     connection.execute(
@@ -47,6 +54,7 @@ def upgrade(connection):
 
 
 def validate(connection):
+    require_columns(connection, "missionaries", MISSIONARY_COLUMNS)
     require_columns(connection, "documents", DOCUMENT_COLUMNS)
     require_indexes(connection, "documents", {"uq_documents_upload_id"})
     require_indexes(connection, "residency_events", {"uq_residency_event_identity"})
@@ -69,4 +77,3 @@ MIGRATION = Migration(
     upgrade=upgrade,
     validate=validate,
 )
-

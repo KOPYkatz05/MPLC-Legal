@@ -84,7 +84,18 @@ def migration_required(engine, target_version=SCHEMA_VERSION):
         )
     # Creating the ledger for a released pre-ledger database is itself a
     # controlled database change and therefore receives the same backup gate.
-    return current < target_version or not has_ledger
+    if current < target_version or not has_ledger:
+        return True
+    # The current schema may be amended before its first release. Additive,
+    # idempotent contract changes still enter the backup-gated migration flow.
+    registry = _registry(target_version)
+    try:
+        with engine.connect() as connection:
+            for migration in registry[:current]:
+                migration.validate(connection)
+    except MigrationValidationError:
+        return True
+    return False
 
 
 def _ensure_tracking_tables(connection):
@@ -209,7 +220,13 @@ def run_migrations(engine, target_version=SCHEMA_VERSION):
             ledger = _ledger(connection)
             _validate_ledger(ledger, registry, current)
             for migration in registry[:current]:
-                migration.validate(connection)
+                try:
+                    migration.validate(connection)
+                except MigrationValidationError:
+                    if migration.version != current:
+                        raise
+                    migration.upgrade(connection)
+                    migration.validate(connection)
                 if migration.version not in ledger:
                     _record(connection, migration)
             connection.commit()

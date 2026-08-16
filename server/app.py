@@ -208,6 +208,7 @@ class MissionaryCreateRequest(BaseModel):
     nationality: str | None = None
     passport_number: str | None = None
     arrival_date: date | None = None
+    last_entry_date: date | None = None
     visa_expiration: date | None = None
 
 
@@ -280,6 +281,7 @@ def _rpc_services():
 
 MISSIONARY_DATE_FIELDS = {
     "arrival_date",
+    "last_entry_date",
     "visa_expiration",
     "residency_expiration",
     "prorroga_expiration",

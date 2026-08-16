@@ -1,4 +1,5 @@
 from pathlib import Path
+import hashlib
 import shutil
 from uuid import uuid4
 
@@ -98,6 +99,38 @@ def test_match_outside_missionary_folder_is_ignored(storage_env):
     assert raised.value.code == storage.MISSING
 
 
+def test_checksum_match_in_canonical_root_repairs_legacy_onedrive_path(
+    storage_env, monkeypatch
+):
+    sessions, root = storage_env
+    canonical_root = root / "canonical"
+    recovered = canonical_root / "ACTIVE" / "Storage Example" / "GENERAL" / "passport.pdf"
+    recovered.parent.mkdir(parents=True)
+    recovered.write_bytes(b"verified document")
+    monkeypatch.setattr(storage, "get_storage_root", lambda: canonical_root)
+    _, document_id = _record(
+        sessions,
+        root / "legacy" / "ACTIVE" / "Storage Example",
+        saved_path=root / "legacy" / "ACTIVE" / "Storage Example" / "GENERAL" / "passport.pdf",
+    )
+    session = sessions()
+    document = session.get(Document, document_id)
+    document.content_sha256 = hashlib.sha256(recovered.read_bytes()).hexdigest()
+    document.file_size = recovered.stat().st_size
+    session.commit()
+    session.close()
+
+    assert storage.resolve_document_path(document_id, session_factory=sessions) == recovered
+
+    session = sessions()
+    repaired = session.get(Document, document_id)
+    assert repaired.file_path == str(recovered)
+    assert repaired.storage_relative_path == str(
+        Path("ACTIVE") / "Storage Example" / "GENERAL" / "passport.pdf"
+    )
+    session.close()
+
+
 def test_folder_move_rewrites_only_paths_beneath_source(storage_env):
     sessions, root = storage_env
     source = root / "Active" / "Missionary"
@@ -156,3 +189,18 @@ def test_commit_failure_moves_folder_back(storage_env, monkeypatch):
     assert (source / "GENERAL" / "passport.pdf").is_file()
     assert not destination.exists()
     session.close()
+
+
+def test_write_folder_refuses_to_create_second_split_root(storage_env, monkeypatch):
+    sessions, root = storage_env
+    canonical_root = root / "canonical"
+    legacy_folder = root / "legacy" / "ACTIVE" / "Storage Example"
+    legacy_folder.mkdir(parents=True)
+    monkeypatch.setattr(storage, "get_storage_root", lambda: canonical_root)
+    missionary = Missionary(id=7, folder_path=str(legacy_folder))
+
+    with pytest.raises(storage.DocumentStorageError) as raised:
+        storage.resolve_missionary_write_folder(missionary)
+
+    assert raised.value.code == storage.ROOT_MISMATCH
+    assert not (canonical_root / "ACTIVE" / "Storage Example").exists()

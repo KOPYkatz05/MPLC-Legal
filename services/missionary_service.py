@@ -38,6 +38,7 @@ from services.api_client import MissionLegalApiClient, RemoteRecord, json_value
 from services.document_storage_service import (
     commit_with_folder_rollback,
     move_folder_and_rewrite_paths,
+    portable_relative_path,
     rollback_folder_move,
 )
 
@@ -190,10 +191,13 @@ class MissionaryService:
         nationality=None,
         passport_number=None,
         arrival_date=None,
+        last_entry_date=None,
         visa_expiration=None,
     ):
         passport_number = normalize_passport_number(passport_number)
         nationality = normalize_nationality(nationality)
+        if last_entry_date is None:
+            last_entry_date = arrival_date
         if self.api_client is not None:
             payload = self.api_client.post(
                 "/v1/missionaries",
@@ -204,6 +208,7 @@ class MissionaryService:
                     "nationality": nationality,
                     "passport_number": passport_number,
                     "arrival_date": json_value(arrival_date),
+                    "last_entry_date": json_value(last_entry_date),
                     "visa_expiration": json_value(visa_expiration),
                 },
             )
@@ -257,10 +262,13 @@ class MissionaryService:
                 passport_number=passport_number,
 
                 folder_path=str(folder_path),
+                folder_relative_path=str(portable_relative_path(folder_path)),
 
                 status="ACTIVE",
 
                 arrival_date=arrival_date,
+
+                last_entry_date=last_entry_date,
 
                 visa_expiration=visa_expiration,
             )
