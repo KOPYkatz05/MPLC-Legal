@@ -76,6 +76,51 @@ class NavItem:
     group: str = ""
 
 
+class SidebarToolButton(QToolButton):
+    """Sidebar row whose icon never moves when its label is revealed."""
+
+    ICON_COLUMN_WIDTH = 55
+
+    def __init__(self, label="", parent=None):
+        super().__init__(parent)
+        self._navigation_text = label
+        self.setToolButtonStyle(Qt.ToolButtonIconOnly)
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        self.icon_label = QLabel(self)
+        self.icon_label.setObjectName("SidebarButtonIcon")
+        self.icon_label.setFixedWidth(self.ICON_COLUMN_WIDTH)
+        self.icon_label.setAlignment(Qt.AlignCenter)
+        self.icon_label.setAttribute(Qt.WA_TransparentForMouseEvents)
+        layout.addWidget(self.icon_label)
+
+        self.text_label = QLabel(label, self)
+        self.text_label.setObjectName("SidebarButtonLabel")
+        self.text_label.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
+        self.text_label.setAttribute(Qt.WA_TransparentForMouseEvents)
+        self.text_label.hide()
+        layout.addWidget(self.text_label, stretch=1)
+
+    def set_sidebar_icon(self, icon, size=QSize(20, 20)):
+        if icon is None or icon.isNull():
+            self.icon_label.clear()
+            return
+        self.icon_label.setPixmap(icon.pixmap(size))
+
+    def set_navigation_text(self, text):
+        self._navigation_text = str(text or "")
+        self.text_label.setText(self._navigation_text)
+
+    def navigation_text(self):
+        return self._navigation_text
+
+    def set_label_visible(self, visible):
+        self.text_label.setVisible(bool(visible))
+
+
 def divider(object_name="HeaderDivider"):
     line = QFrame()
     line.setObjectName(object_name)
@@ -745,16 +790,14 @@ class AppShell(QWidget):
         self.sidebar_layout.setSpacing(0)
         self.sidebar.setLayout(self.sidebar_layout)
 
-        self.menu_button = QToolButton(self.sidebar)
+        self.menu_button = SidebarToolButton("Menu", self.sidebar)
         self.menu_button.setObjectName("SidebarMenuButton")
         self.menu_button.setFixedSize(55, 55)
         self.menu_button.setToolTip("Expand navigation")
         self.menu_button.setAccessibleName("Expand navigation")
-        self.menu_button.setToolButtonStyle(Qt.ToolButtonIconOnly)
-        self.menu_button.setIcon(
+        self.menu_button.set_sidebar_icon(
             app_icon("sidebar.menu", size=24, fallback=self._line_icon("menu"))
         )
-        self.menu_button.setIconSize(QSize(20, 20))
         self.menu_button.setAutoRaise(True)
         self.menu_button.clicked.connect(self.toggle_sidebar)
         self.sidebar_layout.addWidget(self.menu_button)
@@ -778,20 +821,16 @@ class AppShell(QWidget):
         self.sidebar_layout.addStretch()
 
     def add_nav_item(self, key, title, stack_index, group=""):
-        button = QToolButton(self.sidebar)
+        button = SidebarToolButton(title, self.sidebar)
         button.setCheckable(True)
         button.setObjectName("SidebarNavButton")
         button.setFixedSize(55, 55)
         button.setToolTip(title)
         button.setAccessibleName(title)
-        button.setToolButtonStyle(Qt.ToolButtonIconOnly)
         button.setAutoRaise(True)
-        button.setText(self._fallback_icon_text(key, title))
         icon = self._nav_icon(key)
         if icon is not None:
-            button.setIcon(icon)
-            button.setIconSize(QSize(20, 20))
-            button.setText("")
+            button.set_sidebar_icon(icon)
         button.clicked.connect(
             lambda checked=False, item_key=key: self.set_current_key(item_key)
         )
@@ -825,18 +864,10 @@ class AppShell(QWidget):
         if self._sidebar_expanded:
             self._set_sidebar_button_content(True, button_width)
 
-        self.menu_button.setProperty("sidebarExpanded", self._sidebar_expanded)
         self.menu_button.setToolTip(
             "Collapse navigation" if self._sidebar_expanded else "Expand navigation"
         )
         self.menu_button.setAccessibleName(self.menu_button.toolTip())
-        self.menu_button.style().unpolish(self.menu_button)
-        self.menu_button.style().polish(self.menu_button)
-
-        for button in self._buttons.values():
-            button.setProperty("sidebarExpanded", self._sidebar_expanded)
-            button.style().unpolish(button)
-            button.style().polish(button)
 
         if self._sidebar_animation is not None:
             self._sidebar_animation.stop()
@@ -863,20 +894,11 @@ class AppShell(QWidget):
         animation.start()
 
     def _set_sidebar_button_content(self, expanded, button_width):
-        button_style = (
-            Qt.ToolButtonTextBesideIcon if expanded else Qt.ToolButtonIconOnly
-        )
         self.menu_button.setFixedWidth(button_width)
-        self.menu_button.setToolButtonStyle(button_style)
-        # The non-checkable menu control has a smaller native icon/text gap than
-        # the checkable navigation controls. An em-space keeps all labels on the
-        # same vertical guide while retaining the native QToolButton behavior.
-        self.menu_button.setText("\u2003Menu" if expanded else "")
-        titles = {item.key: item.title for item in self._items}
-        for key, button in self._buttons.items():
+        self.menu_button.set_label_visible(expanded)
+        for button in self._buttons.values():
             button.setFixedWidth(button_width)
-            button.setToolButtonStyle(button_style)
-            button.setText(titles.get(key, "") if expanded else "")
+            button.set_label_visible(expanded)
 
     def _finish_sidebar_animation(self):
         target_width = (
@@ -901,8 +923,7 @@ class AppShell(QWidget):
         if key in self._buttons:
             self._buttons[key].setToolTip(title)
             self._buttons[key].setAccessibleName(title)
-            if self._sidebar_expanded:
-                self._buttons[key].setText(title)
+            self._buttons[key].set_navigation_text(title)
         self._items = [
             NavItem(item.key, title, item.stack_index, item.group)
             if item.key == key

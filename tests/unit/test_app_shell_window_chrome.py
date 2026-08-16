@@ -97,7 +97,9 @@ def test_app_shell_menu_button_toggles_labeled_navigation(qapp, qtbot):
     shell.add_nav_item("office_work", "Tasks", 1, "Work")
 
     assert shell.sidebar.width() == shell.COLLAPSED_SIDEBAR_WIDTH
-    assert shell._buttons["dashboard"].text() == ""
+    icon_x = shell._buttons["dashboard"].icon_label.geometry().x()
+    assert shell.menu_button.text_label.isHidden()
+    assert shell._buttons["dashboard"].text_label.isHidden()
 
     shell.menu_button.click()
     assert shell._sidebar_animation is not None
@@ -106,21 +108,25 @@ def test_app_shell_menu_button_toggles_labeled_navigation(qapp, qtbot):
         < shell.sidebar.width()
         < shell.EXPANDED_SIDEBAR_WIDTH
     )
+    assert shell._buttons["dashboard"].icon_label.geometry().x() == icon_x
     qtbot.waitUntil(lambda: shell._sidebar_animation is None)
 
     assert shell.sidebar.width() == shell.EXPANDED_SIDEBAR_WIDTH
-    assert shell.menu_button.text().strip() == "Menu"
-    assert shell._buttons["dashboard"].text() == "Dashboard"
-    assert shell._buttons["office_work"].text() == "Tasks"
-    assert shell._buttons["dashboard"].toolButtonStyle() == Qt.ToolButtonTextBesideIcon
+    assert shell.menu_button.navigation_text() == "Menu"
+    assert shell._buttons["dashboard"].navigation_text() == "Dashboard"
+    assert shell._buttons["office_work"].navigation_text() == "Tasks"
+    assert shell._buttons["dashboard"].icon_label.geometry().x() == icon_x
+    assert not shell.menu_button.text_label.isHidden()
+    assert not shell._buttons["dashboard"].text_label.isHidden()
 
     shell.menu_button.click()
     qtbot.waitUntil(lambda: shell._sidebar_animation is None)
 
     assert shell.sidebar.width() == shell.COLLAPSED_SIDEBAR_WIDTH
-    assert shell.menu_button.text() == ""
-    assert shell._buttons["dashboard"].text() == ""
+    assert shell._buttons["dashboard"].icon_label.geometry().x() == icon_x
     assert shell._buttons["dashboard"].toolButtonStyle() == Qt.ToolButtonIconOnly
+    assert shell.menu_button.text_label.isHidden()
+    assert shell._buttons["dashboard"].text_label.isHidden()
 
 
 def test_app_title_bar_window_buttons_call_parent_window(qapp):

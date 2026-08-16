@@ -603,12 +603,19 @@ QToolButton#SidebarNavButton {
     margin: 0px;
     font-size: 12px;
     font-weight: 600;
-    text-align: left;
 }
 
-QToolButton#SidebarMenuButton[sidebarExpanded="true"],
-QToolButton#SidebarNavButton[sidebarExpanded="true"] {
-    padding-left: 17px;
+QLabel#SidebarButtonIcon,
+QLabel#SidebarButtonLabel {
+    background-color: transparent;
+    border: none;
+}
+
+QLabel#SidebarButtonLabel {
+    color: #242424;
+    font-size: 12px;
+    font-weight: 600;
+    padding-left: 4px;
 }
 
 QToolButton#SidebarMenuButton:hover,
