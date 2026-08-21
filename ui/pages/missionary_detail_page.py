@@ -8,7 +8,15 @@ from datetime import date, datetime
 
 from pathlib import Path
 
-from PySide6.QtGui import QAction, QCursor, QPixmap
+from PySide6.QtGui import (
+    QAction,
+    QColor,
+    QCursor,
+    QIcon,
+    QPainter,
+    QPainterPath,
+    QPixmap,
+)
 from PySide6.QtWidgets import (
     QButtonGroup,
     QDialog,
@@ -19,6 +27,7 @@ from PySide6.QtWidgets import (
     QBoxLayout,
     QLabel,
     QFrame,
+    QGraphicsOpacityEffect,
     QListWidgetItem,
     QPushButton,
     QStackedWidget,
@@ -31,6 +40,9 @@ from PySide6.QtCore import (
     QSize,
     QDate,
     QTimer,
+    QEasingCurve,
+    QPropertyAnimation,
+    Signal,
 )
 
 from services.workflow_service import WorkflowService
@@ -57,6 +69,7 @@ from services.thumbnail_service import ThumbnailService
 from ui.dialogs.ocr_data_view_dialog import OcrDataViewDialog
 from ui.dialogs.stage_advance_dialog import StageAdvanceDialog
 from ui.dialogs.upload_session_dialog import UploadSessionDialog
+from ui.dialogs.passport_photo_review_dialog import PassportPhotoReviewDialog
 from ui.dialogs.office_work_dialogs import TaskDialog
 from ui.foundation import (
     BodyLabel,
@@ -118,7 +131,86 @@ from ui.pages.missionary_detail.sections import (
 
 DATE_PLACEHOLDER = QDate(1900, 1, 1)
 DATE_EDIT_MAX_WIDTH = 300
+DETAIL_DATE_EDIT_HEIGHT = 42
 OVERVIEW_CONTENT_SPACING = 16
+
+
+class MissionaryPortraitLabel(QLabel):
+    clicked = Signal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._photo = QPixmap()
+        self._initials = "?"
+        self.setObjectName("MissionaryHeaderPortrait")
+        self.setCursor(Qt.PointingHandCursor)
+        self.setToolTip("Open missionary photo")
+        self.setAccessibleName("Missionary photo")
+        self.set_portrait_size(compact=False)
+
+    def set_portrait_size(self, *, compact):
+        self.setFixedSize(80, 100) if compact else self.setFixedSize(96, 120)
+        self.update()
+
+    def set_photo(self, pixmap):
+        self._photo = QPixmap(pixmap) if pixmap is not None else QPixmap()
+        self.update()
+
+    def set_initials(self, full_name):
+        parts = [part for part in str(full_name or "").split() if part]
+        self._initials = "".join(part[0] for part in parts[:2]).upper() or "?"
+        self._photo = QPixmap()
+        self.update()
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.clicked.emit()
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
+
+    def paintEvent(self, event):
+        _ = event
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        target = self.rect().adjusted(1, 1, -1, -1)
+        radius = 10.0 if self.width() >= 50 else 8.0
+        clip = QPainterPath()
+        clip.addRoundedRect(target, radius, radius)
+        painter.fillPath(clip, QColor("#EEF2F5"))
+
+        if not self._photo.isNull():
+            painter.save()
+            painter.setClipPath(clip)
+            scaled = self._photo.scaled(
+                target.size(),
+                Qt.KeepAspectRatioByExpanding,
+                Qt.SmoothTransformation,
+            )
+            source_x = max(0, (scaled.width() - target.width()) // 2)
+            source_y = max(0, (scaled.height() - target.height()) // 2)
+            painter.drawPixmap(
+                target,
+                scaled,
+                scaled.rect().adjusted(
+                    source_x,
+                    source_y,
+                    -(scaled.width() - target.width() - source_x),
+                    -(scaled.height() - target.height() - source_y),
+                ),
+            )
+            painter.restore()
+        else:
+            painter.setPen(QColor("#64748B"))
+            font = painter.font()
+            font.setBold(True)
+            font.setPointSize(12 if self.width() >= 50 else 10)
+            painter.setFont(font)
+            painter.drawText(target, Qt.AlignCenter, self._initials)
+
+        painter.setPen(QColor("#D8E0E8"))
+        painter.setBrush(Qt.NoBrush)
+        painter.drawRoundedRect(target, radius, radius)
 
 def create_detail_pill_button(
     text,
@@ -427,11 +519,73 @@ class IntentionalEditField(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.edit_button = None
+        self._edit_overlay_shell = None
+        self._edit_overlay_editor = None
+        self._edit_action_rail = None
         self._unlocked = False
+        self._hover_guard = QTimer(self)
+        self._hover_guard.setInterval(80)
+        self._hover_guard.timeout.connect(
+            self._sync_edit_button_visibility
+        )
 
-    def set_edit_button(self, button):
+    def set_edit_button(self, button, *, shell=None, editor=None, action_rail=None):
         self.edit_button = button
+        self._edit_overlay_shell = shell
+        self._edit_overlay_editor = editor
+        self._edit_action_rail = action_rail
         button.setVisible(False)
+
+    def _trailing_control_inset(self):
+        """Return space occupied by controls painted at an editor's right edge."""
+        editor = self._edit_overlay_editor
+        if editor is None:
+            return 4
+
+        trailing_left = editor.width()
+        for child in editor.findChildren(QWidget):
+            if child is self.edit_button or not child.isVisible():
+                continue
+            top_left = child.mapTo(editor, child.rect().topLeft())
+            child_right = top_left.x() + child.width()
+            if top_left.x() >= editor.width() // 2 and child_right >= editor.width() - 4:
+                trailing_left = min(trailing_left, top_left.x())
+
+        if trailing_left < editor.width():
+            return editor.width() - trailing_left + 4
+
+        # Fluent CalendarPicker paints its calendar affordance itself instead
+        # of exposing a child button. Its square trailing control is therefore
+        # inferred from the editor height.
+        if not hasattr(editor, "setTextMargins"):
+            return max(editor.height(), DETAIL_DATE_EDIT_HEIGHT) + 4
+        return 4
+
+    def _position_edit_button(self):
+        button = self.edit_button
+        shell = self._edit_overlay_shell
+        editor = self._edit_overlay_editor
+        if button is None or shell is None:
+            return
+        action_rail = self._edit_action_rail
+        if editor is not None:
+            editor_top_left = editor.mapTo(shell, editor.rect().topLeft())
+            editor_right = editor_top_left.x() + editor.width()
+            editor_center_y = editor_top_left.y() + editor.height() // 2
+        else:
+            editor_right = shell.width()
+            editor_center_y = shell.height() // 2
+        if action_rail is not None:
+            x = max(0, editor_right - action_rail.width() - 5)
+            y = max(0, editor_center_y - action_rail.height() // 2)
+            action_rail.move(x, y)
+            action_rail.raise_()
+        else:
+            inset = self._trailing_control_inset()
+            x = max(0, editor_right - inset - button.width())
+            y = max(0, editor_center_y - button.height() // 2)
+            button.move(x, y)
+            button.raise_()
 
     def enable_hover_tracking(self):
         watched_widgets = (self, *self.findChildren(QWidget))
@@ -441,20 +595,38 @@ class IntentionalEditField(QWidget):
             child.installEventFilter(self)
 
     def _sync_edit_button_visibility(self):
-        if self.edit_button is None or self._unlocked:
+        if self.edit_button is None:
+            return
+        if self._unlocked:
+            self.edit_button.setVisible(True)
+            self._hover_guard.stop()
             return
         local_pos = self.mapFromGlobal(QCursor.pos())
-        self.edit_button.setVisible(self.rect().contains(local_pos))
+        is_inside = self.rect().contains(local_pos)
+        self._position_edit_button()
+        self.edit_button.setVisible(is_inside)
+        if not is_inside:
+            self._hover_guard.stop()
+
+    def _show_edit_button(self):
+        if self.edit_button is None or self._unlocked:
+            return
+        self._position_edit_button()
+        self.edit_button.setVisible(True)
+        if not self._hover_guard.isActive():
+            self._hover_guard.start()
 
     def eventFilter(self, watched, event):
         if self.edit_button is not None:
+            if event.type() in {QEvent.Resize, QEvent.Show, QEvent.LayoutRequest}:
+                self._position_edit_button()
             if event.type() in {
                 QEvent.Enter,
                 QEvent.HoverEnter,
                 QEvent.HoverMove,
                 QEvent.MouseMove,
             }:
-                self.edit_button.setVisible(True)
+                self._show_edit_button()
             elif event.type() in {QEvent.Leave, QEvent.HoverLeave}:
                 QTimer.singleShot(0, self._sync_edit_button_visibility)
         return super().eventFilter(watched, event)
@@ -463,17 +635,128 @@ class IntentionalEditField(QWidget):
         self._unlocked = bool(unlocked)
         self.setProperty("editUnlocked", self._unlocked)
         if self.edit_button is not None:
-            self.edit_button.setVisible(self._unlocked or self.underMouse())
+            self.edit_button.setVisible(self._unlocked)
+        if self._unlocked:
+            self._hover_guard.stop()
+        else:
+            QTimer.singleShot(0, self._sync_edit_button_visibility)
 
     def enterEvent(self, event):
-        if self.edit_button is not None:
-            self.edit_button.setVisible(True)
+        self._show_edit_button()
         super().enterEvent(event)
 
     def leaveEvent(self, event):
-        if self.edit_button is not None and not self._unlocked:
-            self.edit_button.setVisible(False)
+        QTimer.singleShot(0, self._sync_edit_button_visibility)
         super().leaveEvent(event)
+
+
+class FieldEditButton(QPushButton):
+    """Pencil/check action with an inline save-state animation."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("FieldEditButton")
+        self.setFlat(True)
+        self.setFixedSize(28, 24)
+        self._spin_angle = 0
+        self._loading = False
+        self._spinner_pixmap = QPixmap()
+        self._spin_timer = QTimer(self)
+        self._spin_timer.setInterval(45)
+        self._spin_timer.timeout.connect(self._advance_spinner)
+        self._fade_animation = None
+        self._opacity_effect = QGraphicsOpacityEffect(self)
+        self._opacity_effect.setOpacity(1.0)
+        self.setGraphicsEffect(self._opacity_effect)
+        self.show_pencil()
+
+    def _set_lucide(self, name, color="#52525B"):
+        icon = lucide_icon(name, size=16, color=color)
+        if icon is not None and not icon.isNull():
+            self.setIcon(icon)
+            self.setIconSize(QSize(16, 16))
+            self.setText("")
+        return icon
+
+    def show_pencil(self):
+        self._spin_timer.stop()
+        self._loading = False
+        self.setEnabled(True)
+        self._opacity_effect.setOpacity(1.0)
+        self._set_lucide("pencil")
+
+    def show_check(self):
+        self._spin_timer.stop()
+        self._loading = False
+        self.setEnabled(True)
+        self._opacity_effect.setOpacity(1.0)
+        self._set_lucide("check", color="#0F5F64")
+
+    def start_loading(self):
+        # Keep the button enabled until the mouse release is delivered. If a
+        # pressed overlay button disables itself synchronously, Windows can
+        # redirect that release to the editor underneath and select its text.
+        self._loading = True
+        icon = self._set_lucide("loader-circle", color="#0EA5AC")
+        self._spinner_pixmap = (
+            icon.pixmap(QSize(16, 16))
+            if icon is not None and not icon.isNull()
+            else QPixmap()
+        )
+        self._spin_angle = 0
+        self._spin_timer.start()
+
+    def is_loading(self):
+        return self._loading
+
+    def _advance_spinner(self):
+        if self._spinner_pixmap.isNull():
+            return
+        self._spin_angle = (self._spin_angle + 30) % 360
+        canvas = QPixmap(20, 20)
+        canvas.fill(Qt.transparent)
+        painter = QPainter(canvas)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        painter.translate(10, 10)
+        painter.rotate(self._spin_angle)
+        painter.drawPixmap(-8, -8, self._spinner_pixmap)
+        painter.end()
+        self.setIcon(QIcon(canvas))
+        self.setIconSize(QSize(20, 20))
+
+    def show_success(self, on_finished=None):
+        self._spin_timer.stop()
+        fade_out = QPropertyAnimation(
+            self._opacity_effect,
+            b"opacity",
+            self,
+        )
+        fade_out.setDuration(100)
+        fade_out.setStartValue(1.0)
+        fade_out.setEndValue(0.0)
+        fade_out.setEasingCurve(QEasingCurve.OutCubic)
+
+        def fade_in_success():
+            self._set_lucide("circle-check", color="#0EA5AC")
+            fade_in = QPropertyAnimation(
+                self._opacity_effect,
+                b"opacity",
+                self,
+            )
+            fade_in.setDuration(140)
+            fade_in.setStartValue(0.0)
+            fade_in.setEndValue(1.0)
+            fade_in.setEasingCurve(QEasingCurve.OutCubic)
+            self._fade_animation = fade_in
+            if on_finished is not None:
+                fade_in.finished.connect(
+                    lambda: QTimer.singleShot(450, on_finished)
+                )
+            fade_in.start()
+
+        fade_out.finished.connect(fade_in_success)
+        self._fade_animation = fade_out
+        fade_out.start()
 
 
 class MissionaryDetailPage(QWidget):
@@ -555,6 +838,8 @@ class MissionaryDetailPage(QWidget):
         self._detail_task_widgets = {}
         self._document_loaders = {}
         self._document_thumbnail_loaders = {}
+        self._header_photo_loader = LatestRequestLoader(parent=self)
+        self._header_photo_document_id = None
         self._pending_document_actions = set()
         self._workflow_records = []
         self._document_records = {}
@@ -592,6 +877,8 @@ class MissionaryDetailPage(QWidget):
         self._detail_edit_fields = {}
         self._detail_edit_buttons = {}
         self._active_detail_editor = None
+        self._detail_field_save_loader = LatestRequestLoader(parent=self)
+        self._neutralize_detail_focus_on_next_load = False
         self._date_empty_overlays = {}
         self._date_source_labels = {}
         self._credential_source_labels = {}
@@ -840,6 +1127,8 @@ class MissionaryDetailPage(QWidget):
         narrow = width < 700
 
         if hasattr(self, "header_layout"):
+            if hasattr(self, "header_portrait"):
+                self.header_portrait.set_portrait_size(compact=header_compact)
             for widget in self._header_widgets:
                 self.header_layout.removeWidget(widget)
             if header_compact:
@@ -865,8 +1154,9 @@ class MissionaryDetailPage(QWidget):
             if layout is not None:
                 layout.setDirection(direction)
 
+        summary_columns = 1 if narrow else (2 if width < 900 else 3)
         grid_specs = (
-            ("summary_metrics_grid", "summary_metric_cards", 1 if narrow else 2),
+            ("summary_metrics_grid", "summary_metric_cards", summary_columns),
             ("identity_grid", "identity_field_widgets", 1 if narrow else 2),
             ("credentials_grid", "credential_field_widgets", 1 if narrow else 2),
             ("timeline_grid", "timeline_field_widgets", 1 if narrow else 2),
@@ -938,29 +1228,24 @@ class MissionaryDetailPage(QWidget):
         label.setObjectName("MutedText")
         label.setMinimumWidth(0)
         label_row.addWidget(label)
+        if source_widget is not None:
+            label_row.addWidget(source_widget)
         label_row.addStretch()
 
+        edit_button = None
         if editable_widget is not None:
-            edit_icon = lucide_icon("pencil", size=15, color="#52525B")
-            edit_button = create_button(
-                "" if edit_icon is not None and not edit_icon.isNull() else "✎",
-                "subtle",
-                fixed_height=24,
-                icon=edit_icon,
-            )
-            edit_button.setFixedWidth(28)
+            edit_button = FieldEditButton(field_widget)
             edit_button.setToolTip(f"Edit {label_text}")
             edit_button.setAccessibleName(f"Edit {label_text}")
             edit_button.clicked.connect(
                 lambda _checked=False, editor=editable_widget: (
-                    self._unlock_detail_editor(editor)
+                    self._handle_detail_edit_action(editor)
                 )
             )
             field_widget.set_edit_button(edit_button)
             self._detail_edit_fields[editable_widget] = field_widget
             self._detail_edit_buttons[editable_widget] = edit_button
             self._set_detail_editor_locked(editable_widget, True)
-            label_row.addWidget(edit_button, alignment=Qt.AlignRight)
 
         field_layout.addLayout(label_row)
 
@@ -969,14 +1254,34 @@ class MissionaryDetailPage(QWidget):
             QSizePolicy.Expanding,
             value_widget.sizePolicy().verticalPolicy(),
         )
-        field_layout.addWidget(value_widget)
-
-        if source_widget is not None:
-            field_layout.addWidget(source_widget)
-        elif reserve_source_space:
-            spacer = QWidget()
-            spacer.setFixedHeight(16)
-            field_layout.addWidget(spacer)
+        if edit_button is not None:
+            value_shell = QWidget()
+            value_shell.setMinimumWidth(0)
+            value_shell.setSizePolicy(
+                QSizePolicy.Expanding,
+                value_widget.sizePolicy().verticalPolicy(),
+            )
+            if value_widget.maximumWidth() < 16777215:
+                value_shell.setMaximumWidth(value_widget.maximumWidth())
+            value_layout = QGridLayout(value_shell)
+            value_layout.setContentsMargins(0, 0, 0, 0)
+            value_layout.setSpacing(0)
+            value_layout.addWidget(value_widget, 0, 0)
+            if hasattr(editable_widget, "set_edit_action"):
+                editable_widget.set_edit_action(edit_button)
+                field_widget.set_edit_button(edit_button)
+            else:
+                edit_button.setParent(value_shell)
+                field_widget.set_edit_button(
+                    edit_button,
+                    shell=value_shell,
+                    editor=editable_widget,
+                )
+            if hasattr(editable_widget, "setTextMargins"):
+                editable_widget.setTextMargins(0, 0, 30, 0)
+            field_layout.addWidget(value_shell)
+        else:
+            field_layout.addWidget(value_widget)
 
         if isinstance(field_widget, IntentionalEditField):
             field_widget.enable_hover_tracking()
@@ -997,23 +1302,138 @@ class MissionaryDetailPage(QWidget):
         if editor is self._active_detail_editor:
             return
 
-        self._lock_active_detail_editor()
+        # A field must be explicitly committed with its checkmark before a
+        # different field can enter edit mode. Never silently relock an
+        # unsaved value just because another pencil was clicked.
+        if self._active_detail_editor is not None:
+            self._active_detail_editor.setFocus(Qt.MouseFocusReason)
+            return
+
         self._active_detail_editor = editor
         self._set_detail_editor_locked(editor, False)
         field = self._detail_edit_fields.get(editor)
         if field is not None:
             field.set_unlocked(True)
+        button = getattr(self, "_detail_edit_buttons", {}).get(editor)
+        if button is not None:
+            button.show_check()
+            button.setToolTip("Save this field")
+            button.setAccessibleName("Save this field")
         editor.setFocus(Qt.MouseFocusReason)
 
+    def _handle_detail_edit_action(self, editor):
+        button = getattr(self, "_detail_edit_buttons", {}).get(editor)
+        if button is not None and button.is_loading():
+            return
+        if editor is self._active_detail_editor:
+            self._save_detail_editor(editor)
+        else:
+            self._unlock_detail_editor(editor)
+
+    def _detail_field_key(self, editor):
+        for field_key, candidate in self._text_edits.items():
+            if candidate is editor:
+                return field_key
+        for field_key, candidate in self._date_edits.items():
+            if candidate is editor:
+                return field_key
+        return None
+
+    def _save_detail_editor(self, editor):
+        field_key = self._detail_field_key(editor)
+        button = getattr(self, "_detail_edit_buttons", {}).get(editor)
+        if field_key is None or button is None:
+            return
+
+        section = IdentityDetailsSection(self)
+        updates = section.updates_for_field(field_key)
+        button.start_loading()
+        # Defer changing the editor's input state until Qt has completely
+        # dispatched the checkmark's mouse-release event.
+        def lock_after_click():
+            if button.is_loading():
+                self._set_detail_editor_locked(editor, True)
+
+        QTimer.singleShot(0, lock_after_click)
+
+        def finish_success(saved_updates):
+            section.apply_saved_updates(saved_updates)
+            if field_key == "full_name" and hasattr(self, "name_label"):
+                self.name_label.setText(
+                    getattr(self.current_missionary, "full_name", "") or ""
+                )
+
+            def settle():
+                if editor is self._active_detail_editor:
+                    self._lock_active_detail_editor()
+                self._neutralize_detail_focus_on_next_load = True
+                self._clear_detail_form_focus()
+                self._reload_missionary()
+                self._refresh_missionaries_table()
+
+            button.show_success(settle)
+
+        def finish_failure(error):
+            logger.exception(
+                "Failed to save missionary detail field %s",
+                field_key,
+                exc_info=(type(error), error, error.__traceback__),
+            )
+            self._set_detail_editor_locked(editor, False)
+            button.show_check()
+            show_message(
+                self,
+                tr("save_details"),
+                tr("details_save_failed"),
+                kind="critical",
+            )
+
+        if not updates:
+            QTimer.singleShot(120, lambda: finish_success({}))
+            return
+
+        missionary_id = self.current_missionary.id
+        self._detail_field_save_loader.request(
+            lambda: (
+                self.missionary_service.update_fields(
+                    missionary_id,
+                    updates,
+                ),
+                updates,
+            )[1],
+            on_success=finish_success,
+            on_error=finish_failure,
+        )
+
     def _lock_active_detail_editor(self):
-        editor = self._active_detail_editor
+        editor = getattr(self, "_active_detail_editor", None)
         if editor is None:
             return
         self._set_detail_editor_locked(editor, True)
         field = self._detail_edit_fields.get(editor)
         if field is not None:
             field.set_unlocked(False)
+        button = getattr(self, "_detail_edit_buttons", {}).get(editor)
+        if button is not None:
+            button.show_pencil()
         self._active_detail_editor = None
+
+    def _clear_detail_form_focus(self):
+        """Keep refreshes from selecting the next editor in the focus chain."""
+        for editor in (
+            *getattr(self, "_text_edits", {}).values(),
+            *getattr(self, "_date_edits", {}).values(),
+        ):
+            if hasattr(editor, "deselect"):
+                editor.deselect()
+            line_edit = editor.lineEdit() if hasattr(editor, "lineEdit") else None
+            if line_edit is not None and hasattr(line_edit, "deselect"):
+                line_edit.deselect()
+            editor.clearFocus()
+        for button in getattr(self, "_detail_edit_buttons", {}).values():
+            button.clearFocus()
+        self.setFocusPolicy(Qt.StrongFocus)
+        self.setFocus(Qt.OtherFocusReason)
 
     def _build_value_label(self, text=None, *, elided=False):
         text = tr("missionary_detail_not_set") if text is None else text
@@ -1053,7 +1473,7 @@ class MissionaryDetailPage(QWidget):
         shell_layout.setHorizontalSpacing(0)
         shell_layout.setVerticalSpacing(0)
         shell.setLayout(shell_layout)
-        shell.setFixedHeight(34)
+        shell.setFixedHeight(DETAIL_DATE_EDIT_HEIGHT)
         shell.setMaximumWidth(DATE_EDIT_MAX_WIDTH)
         shell.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 
@@ -1072,6 +1492,7 @@ class MissionaryDetailPage(QWidget):
 
     def _configure_detail_date_picker(self, picker):
         picker.setObjectName("MissionaryDetailDatePicker")
+        picker.setFixedHeight(DETAIL_DATE_EDIT_HEIGHT)
         picker.setDate(DATE_PLACEHOLDER)
         picker.setMaximumWidth(DATE_EDIT_MAX_WIDTH)
         if hasattr(picker, "setMinimumDate"):
@@ -1608,6 +2029,20 @@ class MissionaryDetailPage(QWidget):
         metrics_grid.setHorizontalSpacing(10)
         metrics_grid.setVerticalSpacing(8)
 
+        self.summary_portrait_card = create_card()
+        self.summary_portrait_card.setObjectName("MissionaryPortraitCard")
+        self.summary_portrait_card.setFixedWidth(124)
+        self.summary_portrait_card.setFixedHeight(138)
+        portrait_layout = QVBoxLayout(self.summary_portrait_card)
+        portrait_layout.setContentsMargins(12, 9, 12, 9)
+        portrait_layout.setSpacing(0)
+        self.header_portrait = MissionaryPortraitLabel()
+        self.header_portrait.clicked.connect(self._open_header_photo)
+        portrait_layout.addWidget(
+            self.header_portrait,
+            alignment=Qt.AlignCenter,
+        )
+
         self.summary_current_stage_card = StatCard(
             "—",
             tr("missionary_detail_current_stage"),
@@ -1621,11 +2056,15 @@ class MissionaryDetailPage(QWidget):
             color="#059669",
         )
         self.summary_metric_cards = [
+            self.summary_portrait_card,
             self.summary_current_stage_card,
             self.summary_complete_card,
         ]
-        for metric_card in self.summary_metric_cards:
-            metric_card.setFixedHeight(82)
+        for metric_card in (
+            self.summary_current_stage_card,
+            self.summary_complete_card,
+        ):
+            metric_card.setFixedHeight(138)
             metric_card.layout().setContentsMargins(14, 8, 14, 8)
             metric_card.layout().setSpacing(1)
             metric_card.value_label.setStyleSheet("font-size: 28px;")
@@ -1633,8 +2072,9 @@ class MissionaryDetailPage(QWidget):
             if metric_card.subtitle_label is not None:
                 metric_card.subtitle_label.setStyleSheet("font-size: 10px;")
 
-        metrics_grid.addWidget(self.summary_current_stage_card, 0, 0)
-        metrics_grid.addWidget(self.summary_complete_card, 0, 1)
+        metrics_grid.addWidget(self.summary_portrait_card, 0, 0)
+        metrics_grid.addWidget(self.summary_current_stage_card, 0, 1)
+        metrics_grid.addWidget(self.summary_complete_card, 0, 2)
 
         layout.addLayout(metrics_grid)
 
@@ -1757,8 +2197,6 @@ class MissionaryDetailPage(QWidget):
             field_label("tramite_contrasena"), locked=True
         )
         self._text_edits["tramite_contrasena"] = self.tramite_contrasena_input
-        self.folder_label = self._build_value_label(elided=True)
-
         self.birthdate_picker = create_date_picker()
         self._configure_detail_date_picker(self.birthdate_picker)
         self._date_edits["date_of_birth"] = self.birthdate_picker
@@ -1842,7 +2280,8 @@ class MissionaryDetailPage(QWidget):
         folder_layout.setContentsMargins(0, 0, 0, 0)
         folder_layout.setSpacing(6)
         folder_widget.setLayout(folder_layout)
-        folder_layout.addWidget(self.folder_label)
+        folder_widget.setMinimumWidth(0)
+        folder_widget.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
 
         folder_action_row = QWidget()
         folder_action_layout = QHBoxLayout()
@@ -1860,10 +2299,6 @@ class MissionaryDetailPage(QWidget):
         folder_action_layout.addStretch()
         folder_layout.addWidget(folder_action_row)
 
-        folder_field = self._build_field_block(
-                tr("missionary_detail_folder_path"),
-                folder_widget,
-            )
         self.identity_field_widgets = [
             full_name_field,
             passport_field,
@@ -1876,7 +2311,7 @@ class MissionaryDetailPage(QWidget):
             mother_name_field,
             father_override_field,
             mother_override_field,
-            folder_field,
+            folder_widget,
         ]
         self._reflow_grid(identity_grid, self.identity_field_widgets, 2)
 
@@ -1975,18 +2410,6 @@ class MissionaryDetailPage(QWidget):
         secondary_row_layout.addWidget(credentials_card, 1, Qt.AlignTop)
         secondary_row_layout.addWidget(residency_card, 1, Qt.AlignTop)
         content_layout.addWidget(secondary_row)
-
-        self.save_dates_btn = create_detail_pill_button(
-            tr("save_details"),
-            "primary",
-        )
-        self.save_dates_btn.setFixedWidth(160)
-        self.save_dates_btn.clicked.connect(self._save_dates)
-
-        btn_row = QHBoxLayout()
-        btn_row.addStretch()
-        btn_row.addWidget(self.save_dates_btn)
-        content_layout.addLayout(btn_row)
 
         content_layout.addStretch()
 
@@ -2680,10 +3103,17 @@ class MissionaryDetailPage(QWidget):
             self.load_missionary(self.current_missionary)
 
     def _set_pivot_text(self, route_key, text):
-        if self.tabs is None:
+        tab_bar = getattr(self, "tab_bar", None)
+        button = getattr(tab_bar, "buttons", {}).get(route_key) if tab_bar else None
+        if button is not None:
+            button.setText(text)
+            return
+
+        tabs = getattr(self, "tabs", None)
+        if tabs is None:
             return
         for method_name in ("setItemText", "setText"):
-            method = getattr(self.tabs, method_name, None)
+            method = getattr(tabs, method_name, None)
             if callable(method):
                 try:
                     method(route_key, text)
@@ -2951,6 +3381,7 @@ class MissionaryDetailPage(QWidget):
         self._requested_missionary_id = missionary.id
         self.current_missionary = missionary
         self._update_tracking_profile_controls(missionary)
+        self._set_header_photo_placeholder(missionary.full_name)
 
         logger.info(
             f"Loading missionary details for "
@@ -2995,11 +3426,6 @@ class MissionaryDetailPage(QWidget):
             widget = self._text_edits.get(field_key)
             if widget is not None:
                 widget.setText(getattr(missionary, field_key, None) or "")
-        self._set_value_text(
-            self.folder_label,
-            missionary.folder_path,
-        )
-
         self._date_empty_on_load = set()
         sources = _parse_field_sources(
             getattr(missionary, "field_sources", None)
@@ -3046,7 +3472,6 @@ class MissionaryDetailPage(QWidget):
         self._update_field_sources(missionary)
 
         folder_path = missionary.folder_path or ""
-        self.folder_label.setToolTip(folder_path)
         if hasattr(self, "folder_open_btn"):
             self.folder_open_btn.setEnabled(bool(folder_path))
 
@@ -3117,6 +3542,9 @@ class MissionaryDetailPage(QWidget):
         self._update_advance_banner(workflows, documents)
         self._detail_loaded = True
         self._set_detail_loading(False)
+        if getattr(self, "_neutralize_detail_focus_on_next_load", False):
+            self._neutralize_detail_focus_on_next_load = False
+            QTimer.singleShot(0, self._clear_detail_form_focus)
 
     @staticmethod
     def _uses_peruvian_dni_tracking(missionary):
@@ -3652,6 +4080,114 @@ class MissionaryDetailPage(QWidget):
                 "Document thumbnail unavailable for %s: %s", doc_id, error
             ),
         )
+
+    def _set_header_photo_placeholder(self, full_name=None):
+        self._header_photo_loader.cancel()
+        self._header_photo_document_id = None
+        if hasattr(self, "header_portrait"):
+            self.header_portrait.set_initials(full_name or "")
+
+    @staticmethod
+    def _latest_active_photo(documents):
+        photos = [
+            document
+            for document in (documents or [])
+            if getattr(document, "document_type", None) == "PHOTO"
+            and getattr(document, "status", "ACTIVE") == "ACTIVE"
+        ]
+        if not photos:
+            return None
+
+        def photo_key(document):
+            return (
+                int(getattr(document, "id", 0) or 0),
+                str(getattr(document, "uploaded_at", None) or ""),
+            )
+
+        return max(photos, key=photo_key)
+
+    def _update_header_photo(self, documents):
+        missionary = getattr(self, "current_missionary", None)
+        if missionary is None:
+            return
+        document = self._latest_active_photo(documents)
+        if document is None:
+            self._set_header_photo_placeholder(missionary.full_name)
+            return
+
+        document_id = getattr(document, "id", None)
+        missionary_id = getattr(missionary, "id", None)
+        self._header_photo_document_id = document_id
+
+        def apply_photo(path):
+            current = getattr(self, "current_missionary", None)
+            if (
+                current is None
+                or getattr(current, "id", None) != missionary_id
+                or self._header_photo_document_id != document_id
+            ):
+                return
+            pixmap = QPixmap(str(path))
+            if not pixmap.isNull():
+                self.header_portrait.set_photo(pixmap)
+
+        if self.document_service.api_client is None:
+            source = getattr(document, "file_path", None)
+            pixmap = self.thumb_service.get_pixmap(source) if source else None
+            if pixmap is not None and not pixmap.isNull():
+                self.header_portrait.set_photo(pixmap)
+            return
+
+        self._header_photo_loader.request(
+            lambda document=document: (
+                self.document_service.ensure_local_thumbnail(document)
+            ),
+            on_success=apply_photo,
+            on_error=lambda error, document_id=document_id: logger.info(
+                "Missionary header photo unavailable for %s: %s",
+                document_id,
+                error,
+            ),
+        )
+
+    def _open_header_photo(self):
+        document_id = self._header_photo_document_id
+        if document_id is not None:
+            self._open_document_viewer(document_id)
+            return
+        self._add_header_photo()
+
+    def _add_header_photo(self):
+        missionary = getattr(self, "current_missionary", None)
+        if missionary is None:
+            return
+
+        crop_dialog = PassportPhotoReviewDialog(parent=self)
+        if crop_dialog.exec() != QDialog.Accepted or crop_dialog.photo_path is None:
+            return
+
+        edited_path = Path(crop_dialog.photo_path)
+        self._upload_detail_reload_seen = False
+        upload_dialog = UploadSessionDialog(
+            missionary,
+            initial_files=[str(edited_path)],
+            parent=self,
+        )
+        upload_dialog.controller.set_document_type(0, "PHOTO")
+        upload_dialog.refresh_queue()
+        upload_dialog._switch_to_item(0, persist_current=False)
+        self._connect_upload_document_refresh(upload_dialog)
+        try:
+            upload_dialog.exec()
+            if upload_dialog.saved_any():
+                if not self._upload_detail_reload_seen:
+                    self._reload_missionary()
+                self._refresh_missionaries_table(deferred=True)
+        finally:
+            try:
+                edited_path.unlink(missing_ok=True)
+            except OSError:
+                logger.info("Temporary missionary photo could not be removed: %s", edited_path)
 
     def _build_missing_stage_widget(self, stage_name, missing_docs, is_current=False):
         return build_missing_stage_card(

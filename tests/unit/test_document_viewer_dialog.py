@@ -3,7 +3,7 @@ import pytest
 import shutil
 from pathlib import Path
 from uuid import uuid4
-from PySide6.QtCore import QSize
+from PySide6.QtCore import QPoint, QSize
 from PySide6.QtGui import QColor, QImage
 from PySide6.QtWidgets import QWidget
 
@@ -223,6 +223,36 @@ def test_resize_preserves_fit_zoom_mode(tmp_path, qapp):
         dialog.close()
 
 
+def test_surface_clips_viewer_children_at_rounded_corners(tmp_path, qapp):
+    image_path = _make_image(tmp_path / "document.png")
+    parent = QWidget()
+    parent.resize(1200, 800)
+    parent.show()
+    dialog = DocumentViewerDialog(str(image_path), parent=parent)
+    try:
+        dialog.show()
+        qapp.processEvents()
+
+        rendered = dialog.surface.grab().toImage()
+        corner = rendered.pixelColor(QPoint(0, 0))
+        interior_point = dialog.header.mapTo(dialog.surface, QPoint(30, 30))
+        interior = rendered.pixelColor(interior_point)
+
+        assert corner != interior
+        assert interior.lightness() > corner.lightness()
+        corner_alphas = {
+            rendered.pixelColor(x, y).alpha()
+            for x in range(21)
+            for y in range(21)
+        }
+        assert 0 in corner_alphas
+        assert 255 in corner_alphas
+        assert any(0 < alpha < 255 for alpha in corner_alphas)
+    finally:
+        dialog.close()
+        parent.close()
+
+
 def test_viewer_content_is_flat_and_toolbar_is_compact(tmp_path, qapp):
     image_path = _make_image(tmp_path / "document.png")
     dialog = DocumentViewerDialog(str(image_path))
@@ -233,6 +263,9 @@ def test_viewer_content_is_flat_and_toolbar_is_compact(tmp_path, qapp):
         assert dialog.preview_toolbar.objectName() == "DocumentViewerToolbar"
         assert dialog.preview_toolbar.height() == 40
         assert dialog.preview_toolbar.layout().contentsMargins().top() == 5
+        assert dialog.preview_toolbar.layout().itemAt(
+            dialog.preview_toolbar.layout().count() - 1
+        ).spacerItem() is not None
         assert dialog.graphics_view.objectName() == "DocumentViewerCanvas"
     finally:
         dialog.close()

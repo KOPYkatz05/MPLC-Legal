@@ -1,3 +1,5 @@
+import inspect
+
 from utils.i18n import get_i18n
 import ui.foundation.fluent as fluent
 
@@ -80,3 +82,11 @@ def test_yes_no_message_buttons_follow_active_language(monkeypatch):
     box = _FakeMessageBox.last_instance
     assert box.yesButton.text == "Sí"
     assert box.cancelButton.text == "No"
+
+
+def test_dialog_surfaces_do_not_use_hard_widget_masks():
+    source = inspect.getsource(fluent)
+
+    assert ".setMask(" not in source
+    assert "QRegion" not in source
+    assert "_RoundedSurfaceEffect" in source

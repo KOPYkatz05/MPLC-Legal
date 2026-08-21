@@ -18,6 +18,7 @@ from services.notification_feed_service import (
     NotificationFeedService,
     notification_sort_key,
 )
+from services.expiration_rules import add_years
 
 from utils.logger import logger
 
@@ -232,6 +233,13 @@ class DashboardService(RemoteServiceMixin):
                 missionary.release_date is None
                 or missionary.release_date > today
             )
+            # A prorroga is only needed when the current residency period ends
+            # before the missionary's release.  This also prevents a completed
+            # one- or two-year stay from returning after its final prorroga.
+            and (
+                missionary.release_date is None
+                or missionary.release_date > missionary.residency_expiration
+            )
             and today <= missionary.residency_expiration <= window_end
         ]
         if not eligible:
@@ -257,13 +265,20 @@ class DashboardService(RemoteServiceMixin):
         for missionary in eligible:
             document_types = documents_by_missionary.get(missionary.id, set())
             expiration = missionary.residency_expiration
+            # Carta MINJUS and Declaracion Jurada are collected for the final
+            # year.  Earlier prorroga cycles can still be shown, but prior
+            # paperwork must not make the final-paper indicator look complete.
+            papers_are_due = (
+                missionary.release_date is None
+                or missionary.release_date <= add_years(expiration, 1)
+            )
             items.append({
                 "missionary_id": missionary.id,
                 "name": missionary.full_name,
                 "expiration_date": expiration,
                 "days_left": (expiration - today).days,
                 "has_pago": "PAGO_PRORROGA" in document_types,
-                "papers_started": bool(
+                "papers_started": papers_are_due and bool(
                     document_types & {"CARTA_MINJUS", "DECLARACION_JURADA"}
                 ),
             })

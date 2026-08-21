@@ -6,6 +6,7 @@ from datetime import date, datetime
 from pathlib import Path
 
 from services.document_image_export_service import DocumentImageExportService
+from services.passport_photo_service import PassportPhotoService
 from services.document_service import (
     DocumentService,
     DocumentUploadOutcomeUnknownError,
@@ -59,11 +60,15 @@ class UploadSessionController:
         missionary,
         document_service=None,
         image_export_service=None,
+        passport_photo_service=None,
     ):
         self.missionary = missionary
         self.document_service = document_service or DocumentService()
         self.image_export_service = (
             image_export_service or DocumentImageExportService()
+        )
+        self.passport_photo_service = (
+            passport_photo_service or PassportPhotoService()
         )
         self.items = []
         self.selected_index = -1
@@ -134,6 +139,46 @@ class UploadSessionController:
                 ],
             )
         return added
+
+    def add_passport_photo_candidate(self, passport_item, candidate):
+        """Add one derived PHOTO item per passport upload for user review."""
+
+        if candidate is None:
+            return None
+        for queued in self.items:
+            if (
+                queued.derived_kind == "passport_photo"
+                and queued.derived_from_upload_id == passport_item.upload_id
+            ):
+                if Path(candidate.path) != Path(queued.file_path):
+                    try:
+                        Path(candidate.path).unlink(missing_ok=True)
+                    except OSError:
+                        logger.warning(
+                            "Could not remove duplicate passport photo candidate: %s",
+                            candidate.path,
+                        )
+                return None
+
+        item = UploadQueueItem(
+            file_path=str(candidate.path),
+            document_type="PHOTO",
+            workflow_stage="GENERAL",
+            notes=(
+                "Selected from passport upload "
+                f"{passport_item.file_name} (page {candidate.page_index + 1})."
+            ),
+            status="review",
+            derived_from_upload_id=passport_item.upload_id,
+            derived_kind="passport_photo",
+        )
+        self.items.append(item)
+        logger.info(
+            "PASSPORT_PHOTO_QUEUED source=%s photo=%s",
+            passport_item.file_name,
+            item.file_name,
+        )
+        return item
 
     def remove_item(self, index):
         if index < 0 or index >= len(self.items):
@@ -499,6 +544,17 @@ class UploadSessionController:
             ocr_fields=ocr_fields,
             image_export_service=self.image_export_service,
         )
+        if item.document_type == "PASSPORT":
+            try:
+                item.ocr_result.passport_photo_candidate = (
+                    self.passport_photo_service.extract(item.file_path)
+                )
+            except Exception:
+                logger.exception(
+                    "Passport photo extraction failed for %s",
+                    item.file_name,
+                )
+                item.ocr_result.passport_photo_candidate = None
         logger.info(
             "UPLOAD_OCR_PIPELINE_DONE file=%s type=%s ocr_status=%s errors=%s parsed_fields=%s images=%s",
             item.file_name,
@@ -560,6 +616,14 @@ class UploadSessionController:
                 )
                 self._recount_results()
                 return UploadSaveResult(item=item, status="skipped")
+
+            if (
+                item.derived_kind == "passport_photo"
+                and not item.derived_photo_approved
+            ):
+                raise ValueError(
+                    "Approve or reject the passport photo crop before saving."
+                )
 
             document_type = item.document_type
             if document_type not in DOCUMENTS:
@@ -785,4 +849,3 @@ class UploadSessionController:
             item.status in {"saved", "unknown"}
             for item in self.items
         )
-

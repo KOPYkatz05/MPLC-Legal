@@ -6,6 +6,7 @@ from datetime import date
 from PySide6.QtCore import QEvent, QRectF, QSize, Qt, QTimer
 from PySide6.QtGui import QColor, QCursor, QImage, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
+    QApplication,
     QFrame,
     QGraphicsBlurEffect,
     QGraphicsPixmapItem,
@@ -291,6 +292,14 @@ class MainWindow(QMainWindow):
         super().showEvent(event)
         if sys.platform.startswith("win"):
             enable_native_snap_for_window(self)
+
+    def closeEvent(self, event):
+        """End the client event loop when the primary window is closed."""
+        super().closeEvent(event)
+        if event.isAccepted():
+            app = QApplication.instance()
+            if app is not None:
+                QTimer.singleShot(0, app.quit)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)

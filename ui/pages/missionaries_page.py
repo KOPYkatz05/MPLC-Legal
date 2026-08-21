@@ -87,6 +87,7 @@ from ui.models.missionary_table_model import (
     MissionaryFilterProxyModel,
     MissionaryTableModel,
 )
+from ui.file_dialogs import downloads_file_path, downloads_folder
 from utils.nationalities import normalize_nationality
 from ui.delegates.missionary_row_delegate import MissionaryRowDelegate
 from ui.widgets.animated_tab_strip import AnimatedTabStrip
@@ -2817,7 +2818,10 @@ class MissionariesPage(QWidget):
 
     def _import_dynamics_roster(self):
         file_path, _ = QFileDialog.getOpenFileName(
-            self, "Import Dynamics Roster", "", "Excel Files (*.xlsx)"
+            self,
+            "Import Dynamics Roster",
+            downloads_folder(),
+            "Excel Files (*.xlsx)",
         )
         if not file_path:
             return
@@ -2891,7 +2895,7 @@ class MissionariesPage(QWidget):
         file_path, _ = QFileDialog.getSaveFileName(
             self,
             "Export Missionaries to Excel",
-            "missionaries_export.xlsx",
+            downloads_file_path("missionaries_export.xlsx"),
             "Excel Files (*.xlsx)",
         )
 
@@ -3008,7 +3012,7 @@ class MissionariesPage(QWidget):
         file_path, _ = QFileDialog.getSaveFileName(
             self,
             tr("export_full_dialog_title"),
-            default_name,
+            downloads_file_path(default_name),
             "Zip Files (*.zip)",
         )
 

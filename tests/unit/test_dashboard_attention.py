@@ -250,7 +250,12 @@ def test_residency_card_tracks_next_90_days_and_prorroga_progress(
     finally:
         session.close()
 
-    items = DashboardService().get_summary()["residency_expirations"]
+    session = dashboard_env()
+    try:
+        missionaries = session.query(Missionary).all()
+        items = DashboardService()._residency_expirations(session, missionaries, today)
+    finally:
+        session.close()
 
     assert len(items) == 1
     assert items[0]["name"] == "Due Resident"
@@ -273,9 +278,77 @@ def test_residency_card_excludes_missionary_on_release_date(dashboard_env):
     finally:
         session.close()
 
-    items = DashboardService().get_summary()["residency_expirations"]
+    session = dashboard_env()
+    try:
+        missionaries = session.query(Missionary).all()
+        items = DashboardService()._residency_expirations(session, missionaries, today)
+    finally:
+        session.close()
 
     assert items == []
+
+
+def test_residency_card_excludes_prorroga_not_needed_before_release(
+    dashboard_env,
+):
+    today = date.today()
+    session = dashboard_env()
+    try:
+        _missionary(
+            session,
+            full_name="Short Stay Resident",
+            release_date=today + timedelta(days=30),
+            residency_expiration=today + timedelta(days=60),
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    session = dashboard_env()
+    try:
+        missionaries = session.query(Missionary).all()
+        items = DashboardService()._residency_expirations(session, missionaries, today)
+    finally:
+        session.close()
+
+    assert items == []
+
+
+def test_residency_card_hides_paper_progress_until_final_year(dashboard_env):
+    today = date.today()
+    session = dashboard_env()
+    try:
+        missionary = _missionary(
+            session,
+            full_name="Long Stay Resident",
+            # The next prorroga ends two years before release, so this is not
+            # yet the final-year paperwork cycle.
+            release_date=today + timedelta(days=365 * 2),
+            residency_expiration=today + timedelta(days=30),
+        )
+        for document_type in ("PAGO_PRORROGA", "CARTA_MINJUS"):
+            session.add(Document(
+                missionary_id=missionary.id,
+                document_type=document_type,
+                workflow_stage="PRORROGA",
+                file_name=f"{document_type}.pdf",
+                file_path=f"{document_type}.pdf",
+                status="ACTIVE",
+            ))
+        session.commit()
+    finally:
+        session.close()
+
+    session = dashboard_env()
+    try:
+        missionaries = session.query(Missionary).all()
+        items = DashboardService()._residency_expirations(session, missionaries, today)
+    finally:
+        session.close()
+
+    assert len(items) == 1
+    assert items[0]["has_pago"] is True
+    assert items[0]["papers_started"] is False
 
 
 def test_cancelaciones_tracks_30_days_before_release_until_both_documents(

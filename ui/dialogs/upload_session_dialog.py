@@ -68,6 +68,8 @@ from utils.constants import (
     requires_fbi_document,
     visible_document_keys_for_missionary,
 )
+from ui.file_dialogs import downloads_folder
+from ui.dialogs.passport_photo_review_dialog import PassportPhotoReviewDialog
 from ui.dialogs.upload_session.models import UploadQueueItem, UploadSaveResult
 from ui.dialogs.upload_session.controller import UploadSessionController
 from ui.dialogs.upload_session.orchestration import (
@@ -415,6 +417,7 @@ class UploadSessionDialog(MaskDialogBase):
         self._screen_changed_connected = False
         self._tracked_parent_window = None
         self._emitted_appointment_update_fields = set()
+        self._derived_temp_paths = set()
         self._responsive_geometry_timer = QTimer(self)
         self._responsive_geometry_timer.setSingleShot(True)
         self._responsive_geometry_timer.setInterval(80)
@@ -1183,7 +1186,7 @@ class UploadSessionDialog(MaskDialogBase):
         files, _ = QFileDialog.getOpenFileNames(
             self,
             "Select Documents",
-            "",
+            downloads_folder(),
             document_file_dialog_filter(),
         )
         self.add_files(files)
@@ -1192,7 +1195,7 @@ class UploadSessionDialog(MaskDialogBase):
         folder = QFileDialog.getExistingDirectory(
             self,
             "Select Folder",
-            "",
+            downloads_folder(),
         )
         if not folder:
             return
@@ -1632,6 +1635,7 @@ class UploadSessionDialog(MaskDialogBase):
             return
 
         if item is not None:
+            photo_reviewed = None
             logger.info(
                 "ASYNC_UPLOAD_OCR_DONE reason=%s index=%s file=%s ok=%s status=%s error=%s",
                 reason,
@@ -1645,11 +1649,30 @@ class UploadSessionDialog(MaskDialogBase):
                 self.render_ocr_fields(item)
                 self.update_duplicate_warning(item)
                 self._refresh_selected_item_labels(item)
+            photo_item = self.controller.add_passport_photo_candidate(
+                item,
+                getattr(result, "passport_photo_candidate", None),
+            )
+            if photo_item is not None:
+                self._derived_temp_paths.add(photo_item.file_path)
+                photo_reviewed = self._review_passport_photo(photo_item)
             self.refresh_queue()
             self.update_progress()
             if _widget_alive(self.status_label):
                 if ok:
-                    self.status_label.setText(item.error_text or "Reading complete.")
+                    if photo_reviewed is True:
+                        self.status_label.setText(
+                            "Reading complete. The approved passport photo was "
+                            "added to the upload queue."
+                        )
+                    elif photo_reviewed is False:
+                        self.status_label.setText(
+                            "Reading complete. The passport photo crop was rejected."
+                        )
+                    else:
+                        self.status_label.setText(
+                            item.error_text or "Reading complete."
+                        )
                 else:
                     self.status_label.setText(error or "Reading failed.")
 
@@ -1741,6 +1764,51 @@ class UploadSessionDialog(MaskDialogBase):
         if self.document:
             self.document.close()
         self.document = None
+
+    def _cleanup_derived_temp_files(self):
+        for value in list(getattr(self, "_derived_temp_paths", set())):
+            try:
+                Path(value).unlink(missing_ok=True)
+            except OSError:
+                logger.warning(
+                    "Could not remove derived passport photo temp file: %s",
+                    value,
+                )
+        self._derived_temp_paths.clear()
+
+    def _review_passport_photo(self, photo_item):
+        dialog = PassportPhotoReviewDialog(photo_item.file_path, self)
+        if dialog.exec() == QDialog.Accepted:
+            photo_item.derived_photo_approved = True
+            photo_item.status = "pending"
+            photo_item.error_text = ""
+            logger.info(
+                "PASSPORT_PHOTO_APPROVED source_upload=%s photo=%s",
+                photo_item.derived_from_upload_id,
+                photo_item.file_name,
+            )
+            return True
+
+        photo_path = photo_item.file_path
+        try:
+            index = self.controller.items.index(photo_item)
+        except ValueError:
+            index = -1
+        if index >= 0:
+            self.controller.remove_item(index)
+        self._derived_temp_paths.discard(photo_path)
+        try:
+            Path(photo_path).unlink(missing_ok=True)
+        except OSError:
+            logger.warning(
+                "Could not remove rejected passport photo crop: %s",
+                photo_path,
+            )
+        logger.info(
+            "PASSPORT_PHOTO_REJECTED source_upload=%s",
+            photo_item.derived_from_upload_id,
+        )
+        return False
 
     def change_page(self, index):
         if self._is_closing:
@@ -2210,6 +2278,14 @@ class UploadSessionDialog(MaskDialogBase):
                 reason = "Select a document type before saving this file."
             if (
                 reason is None
+                and item.derived_kind == "passport_photo"
+                and not item.derived_photo_approved
+            ):
+                reason = (
+                    "Approve or reject the passport photo crop before saving."
+                )
+            if (
+                reason is None
                 and item.document_type == "FBI"
                 and not requires_fbi_document(self.controller.missionary)
             ):
@@ -2510,6 +2586,7 @@ class UploadSessionDialog(MaskDialogBase):
             parent_window.removeEventFilter(self)
         self._tracked_parent_window = None
         self.close_document()
+        self._cleanup_derived_temp_files()
         super().closeEvent(event)
 
     def showEvent(self, event):
@@ -2550,6 +2627,7 @@ class UploadSessionDialog(MaskDialogBase):
         self._is_closing = True
         self._hide_content_loading_overlay()
         self.close_document()
+        self._cleanup_derived_temp_files()
         accept = getattr(super(), "accept", None)
         if callable(accept):
             accept()
@@ -2566,6 +2644,7 @@ class UploadSessionDialog(MaskDialogBase):
         self._is_closing = True
         self._hide_content_loading_overlay()
         self.close_document()
+        self._cleanup_derived_temp_files()
         reject = getattr(super(), "reject", None)
         if callable(reject):
             reject()

@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QVBoxLayout,
 )
+from ui.file_dialogs import downloads_folder
 
 from services.api_client import ApiCompatibilityError
 from services.client_pairing_service import (
@@ -273,7 +274,7 @@ class ClientPairingDialog(QDialog):
         path, _selected_filter = QFileDialog.getOpenFileName(
             self,
             "Choose the Mission Legal CA Certificate",
-            "",
+            downloads_folder(),
             "Certificate files (*.pem *.crt *.cer);;All files (*)",
         )
         if path:

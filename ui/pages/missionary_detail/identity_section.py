@@ -34,6 +34,83 @@ class IdentityDetailsSection:
     def __init__(self, host):
         self.host = host
 
+    def updates_for_field(self, field_key):
+        """Build the minimal authoritative update for one visible editor."""
+        host = self.host
+        missionary = getattr(host, "current_missionary", None)
+        if missionary is None:
+            return {}
+
+        if field_key in host._text_edits:
+            value = host._text_edits[field_key].text().strip()
+            current = (getattr(missionary, field_key, None) or "").strip()
+            return {field_key: value} if value != current else {}
+
+        date_edit = host._date_edits.get(field_key)
+        if date_edit is None:
+            return {}
+        qd = (
+            date_edit.getDate()
+            if hasattr(date_edit, "getDate")
+            else date_edit.date()
+        )
+        if not qd.isValid() or qd == DATE_PLACEHOLDER:
+            return {}
+        value = date(qd.year(), qd.month(), qd.day())
+        current = (
+            host._displayed_date_for_field(field_key)
+            if hasattr(host, "_displayed_date_for_field")
+            else getattr(missionary, field_key, None)
+        )
+        if value == current:
+            return {}
+
+        updates = {field_key: value}
+        sources = _parse_field_sources(
+            getattr(missionary, "field_sources", None)
+        )
+        original_sources = dict(sources)
+
+        if field_key == "arrival_date":
+            current_arrival = getattr(missionary, "arrival_date", None)
+            current_visa = getattr(missionary, "visa_expiration", None)
+            visa_source = sources.get("visa_expiration", {})
+            old_derived = add_years(current_arrival, 1) if current_arrival else None
+            visa_is_auto = (
+                visa_source.get("label") == AUTO_DERIVED_VISA_SOURCE_LABEL
+                or visa_source.get("document_type") == "TAM"
+                or current_visa is None
+                or (old_derived is not None and current_visa == old_derived)
+            )
+            if visa_is_auto:
+                derived_visa = add_years(value, 1)
+                if derived_visa is not None:
+                    updates["visa_expiration"] = derived_visa
+                    sources["visa_expiration"] = {
+                        "label": AUTO_DERIVED_VISA_SOURCE_LABEL,
+                    }
+        elif field_key == "visa_expiration":
+            arrival = getattr(missionary, "arrival_date", None)
+            derived_visa = add_years(arrival, 1) if arrival else None
+            if derived_visa is not None and value == derived_visa:
+                sources["visa_expiration"] = {
+                    "label": AUTO_DERIVED_VISA_SOURCE_LABEL,
+                }
+            else:
+                sources.pop("visa_expiration", None)
+
+        if sources != original_sources:
+            updates["field_sources"] = json.dumps(sources)
+        return updates
+
+    def apply_saved_updates(self, updates):
+        missionary = getattr(self.host, "current_missionary", None)
+        if missionary is None:
+            return
+        for field_key, value in updates.items():
+            if hasattr(missionary, field_key):
+                setattr(missionary, field_key, value)
+
     def save(self):
         host = self.host
         if not hasattr(host, "current_missionary"):
@@ -142,6 +219,13 @@ class IdentityDetailsSection:
                 host.current_missionary.id,
                 updates,
             )
+            # The remote detail refresh is asynchronous.  Advance the local
+            # comparison baseline as soon as the write succeeds so that the
+            # refresh is not mistaken for an attempt to overwrite unsaved
+            # edits (and Back does not warn about values that were just saved).
+            for field_key, value in updates.items():
+                if hasattr(host.current_missionary, field_key):
+                    setattr(host.current_missionary, field_key, value)
             self._show_message(host, tr("save_details"), tr("details_saved"))
             host._reload_missionary()
             host._refresh_missionaries_table()

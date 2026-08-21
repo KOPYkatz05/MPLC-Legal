@@ -120,6 +120,20 @@ def test_new_peruvian_import_is_complete_before_flush_and_has_no_workflow(roster
     session.close()
 
 
+def test_roster_import_collapses_repeated_name_whitespace(roster_db):
+    session_factory, _ = roster_db
+    content = workbook_bytes(
+        {"id": "M1", "name": "  Smith,  Jane\tMarie  "}
+    )
+    service = DynamicsRosterService()
+    preview = service.preview(content, "roster.xlsx")
+    service.apply(content, "roster.xlsx", preview["preview_id"], {})
+
+    session = session_factory()
+    assert session.query(Missionary).one().full_name == "Smith, Jane Marie"
+    session.close()
+
+
 def test_same_id_different_name_requires_explicit_resolution(roster_db):
     session_factory, _ = roster_db
     missionary_id = add_missionary(

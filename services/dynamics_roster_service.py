@@ -27,6 +27,7 @@ from services.document_storage_service import (
     move_folder_and_rewrite_paths,
     portable_relative_path,
 )
+from utils.names import normalize_person_name
 
 
 CENTRAL_MISSION = "Perú Lima Central Mission (2010429)"
@@ -116,7 +117,9 @@ class DynamicsRosterService:
                 result.append({
                     "row_number": number,
                     "missionary_code": code,
-                    "full_name": str(source.get("Romanized Name") or "").strip(),
+                    "full_name": normalize_person_name(
+                        source.get("Romanized Name") or ""
+                    ),
                     "dynamics_contact_id": str(source.get("(Do Not Modify) Contact") or "").strip(),
                     "dynamics_row_checksum": str(source.get("(Do Not Modify) Row Checksum") or "").strip(),
                     "dynamics_modified_at": _datetime(source.get("(Do Not Modify) Modified On")),

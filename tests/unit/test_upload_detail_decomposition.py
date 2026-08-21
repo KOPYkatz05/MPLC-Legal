@@ -142,6 +142,7 @@ def test_identity_section_persists_changed_text_and_refreshes(monkeypatch):
     IdentityDetailsSection(host).save()
 
     assert updates == [(42, {"passport_number": "NEW"})]
+    assert host.current_missionary.passport_number == "NEW"
     assert refreshes == ["detail", "list"]
 
 

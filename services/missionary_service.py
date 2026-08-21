@@ -31,6 +31,7 @@ from services.appointment_service import (
     AppointmentService,
 )
 from utils.nationalities import normalize_nationality
+from utils.names import normalize_person_name
 
 from utils.logger import logger
 from utils.passport_numbers import normalize_passport_number
@@ -198,6 +199,7 @@ class MissionaryService:
         nationality = normalize_nationality(nationality)
         if last_entry_date is None:
             last_entry_date = arrival_date
+        full_name = normalize_person_name(full_name)
         if self.api_client is not None:
             payload = self.api_client.post(
                 "/v1/missionaries",
@@ -313,6 +315,10 @@ class MissionaryService:
         field_updates,
     ):
         field_updates = dict(field_updates)
+        if "full_name" in field_updates:
+            field_updates["full_name"] = normalize_person_name(
+                field_updates["full_name"]
+            )
         if "passport_number" in field_updates:
             field_updates["passport_number"] = normalize_passport_number(
                 field_updates["passport_number"]

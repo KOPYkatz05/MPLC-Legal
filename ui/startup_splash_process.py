@@ -228,6 +228,11 @@ def run_splash_child(server_name: str) -> int:
     def begin_fade():
         report("FADING")
         splash.fade_out(duration_ms=480, wait=False)
+        # Closing a window normally triggers QApplication shutdown, but this
+        # helper must not survive if another hidden Qt top-level widget exists.
+        # Explicitly end its isolated event loop after the fade completes.
+        if splash._fade_animation is not None:
+            splash._fade_animation.finished.connect(app.quit)
 
     def finish():
         splash.advance_to(100)

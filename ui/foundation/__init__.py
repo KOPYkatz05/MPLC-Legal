@@ -7,6 +7,11 @@ from ui.foundation.text_inputs import (
     create_plain_text_edit,
     create_search_edit,
 )
+from ui.foundation.date_inputs import (
+    AppDatePicker,
+    create_date_edit,
+    create_date_picker,
+)
 from ui.foundation.loading import LoadingIcon, create_loading_icon
 from ui.foundation.fluent import (
     APP_DIALOG_SHELL_MARGINS,
@@ -28,8 +33,6 @@ from ui.foundation.fluent import (
     create_check_box,
     create_card,
     create_combo_box,
-    create_date_edit,
-    create_date_picker,
     create_header_card,
     create_info_badge,
     create_list_widget,
@@ -82,6 +85,7 @@ __all__ = [
     "AppDialog",
     "ChatLineEdit",
     "ChatPlainTextEdit",
+    "AppDatePicker",
     "create_line_edit",
     "create_plain_text_edit",
     "create_search_edit",

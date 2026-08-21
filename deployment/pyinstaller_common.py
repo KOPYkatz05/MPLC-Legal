@@ -110,6 +110,11 @@ def windows_version_info(repo_root, *, description, original_filename):
 
 def application_datas(repo_root):
     repo_root = Path(repo_root)
+    import cv2
+
+    face_cascade = (
+        Path(cv2.data.haarcascades) / "haarcascade_frontalface_default.xml"
+    )
     return [
         (str(repo_root / "assets" / "styles" / "theme.qss"), "assets/styles"),
         (
@@ -128,6 +133,7 @@ def application_datas(repo_root):
             str(repo_root / "data" / "country_names_by_code.json"),
             "data",
         ),
+        (str(face_cascade), "cv2/data"),
     ]
 
 

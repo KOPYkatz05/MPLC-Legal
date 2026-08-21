@@ -1,11 +1,12 @@
-from PySide6.QtCore import QDate, QEvent, QObject, QRectF, QSize, Qt, QTimer
-from PySide6.QtGui import QColor, QPainterPath, QPalette, QRegion
+from PySide6.QtCore import QDate, QEvent, QObject, QSize, Qt, QTimer
+from PySide6.QtGui import QColor, QPainter, QPainterPath, QPalette
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
     QDateEdit,
     QDialog,
     QFrame,
+    QGraphicsEffect,
     QGraphicsDropShadowEffect,
     QLabel,
     QLineEdit,
@@ -168,44 +169,45 @@ def _make_surface_opaque(widget):
     widget.setAutoFillBackground(True)
 
 
-class _RoundedSurfaceMask(QObject):
-    def __init__(self, widget, radius):
-        super().__init__(widget)
-        self.widget = widget
+class _RoundedSurfaceEffect(QGraphicsEffect):
+    """Clip a complete dialog subtree with an antialiased rounded edge."""
+
+    def __init__(self, radius, parent=None):
+        super().__init__(parent)
         self.radius = radius
 
-    def eventFilter(self, watched, event):
-        widget = getattr(self, "widget", None)
-        if widget is not None and watched is widget and event.type() in {
-            QEvent.Resize,
-            QEvent.Show,
-        }:
-            self.apply()
-        return super().eventFilter(watched, event)
-
-    def apply(self):
-        rect = self.widget.rect()
-        if rect.isEmpty():
+    def draw(self, painter):
+        source = self.sourcePixmap(Qt.LogicalCoordinates)
+        if source.isNull():
             return
-        path = QPainterPath()
-        path.addRoundedRect(
-            QRectF(rect),
+
+        bounds = source.deviceIndependentSize()
+        clip = QPainterPath()
+        clip.addRoundedRect(
+            0,
+            0,
+            bounds.width(),
+            bounds.height(),
             self.radius,
             self.radius,
         )
-        self.widget.setMask(QRegion(path.toFillPolygon().toPolygon()))
+        painter.save()
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        painter.setClipPath(clip, Qt.IntersectClip)
+        painter.drawPixmap(0, 0, source)
+        painter.restore()
 
 
 def _clip_surface_to_rounded_rect(widget, radius=APP_DIALOG_SURFACE_RADIUS):
     if widget is None:
         return
-    mask_filter = getattr(widget, "_dialog_surface_mask_filter", None)
-    if mask_filter is None:
-        mask_filter = _RoundedSurfaceMask(widget, radius)
-        widget._dialog_surface_mask_filter = mask_filter
-        widget.installEventFilter(mask_filter)
-    mask_filter.radius = radius
-    mask_filter.apply()
+    effect = getattr(widget, "_dialog_surface_clip_effect", None)
+    if effect is None:
+        effect = _RoundedSurfaceEffect(radius, widget)
+        widget._dialog_surface_clip_effect = effect
+        widget.setGraphicsEffect(effect)
+    effect.radius = radius
+    effect.update()
 
 
 def _widget_is_alive(widget):

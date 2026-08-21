@@ -104,6 +104,7 @@ class DocumentsSection:
             )
 
         documents = sorted(documents, key=sort_key, reverse=True)
+        host._update_header_photo(documents)
         if not documents:
             empty = QListWidgetItem()
             widget = host._build_empty_state_card(

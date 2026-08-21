@@ -120,7 +120,7 @@ def test_schema_three_upgrades_to_current_and_records_ledger():
 
     assert result.starting_version == 3
     assert result.ending_version == SCHEMA_VERSION
-    assert result.applied == (4, 5)
+    assert result.applied == (4, 5, 6)
     assert migration_required(engine) is False
     with engine.connect() as connection:
         assert connection.execute(
@@ -132,7 +132,7 @@ def test_schema_three_upgrades_to_current_and_records_ledger():
         rows = connection.execute(
             text("SELECT id, sequence_number, status FROM residency_events ORDER BY id")
         ).all()
-    assert ledger == [1, 2, 3, 4, 5]
+    assert ledger == [1, 2, 3, 4, 5, 6]
     assert rows == [(1, -1, "SUPERSEDED"), (2, 0, "APPROVED")]
     assert "upload_id" in {
         column["name"] for column in inspect(engine).get_columns("documents")
@@ -152,7 +152,7 @@ def test_schema_four_backfills_last_entry_date_from_original_arrival():
 
     result = run_migrations(engine)
 
-    assert result.applied == (5,)
+    assert result.applied == (5, 6)
     with engine.connect() as connection:
         dates = connection.execute(
             text(
@@ -160,6 +160,26 @@ def test_schema_four_backfills_last_entry_date_from_original_arrival():
             )
         ).one()
     assert dates == ("2025-01-15", "2025-01-15")
+
+
+def test_existing_missionary_name_whitespace_is_normalized_on_upgrade():
+    engine = _released_schema_engine(schema_version=4)
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO missionaries (id, full_name, current_stage) "
+                "VALUES (1, '  Ruiz Rios,  Sara\tMagdaluz  ', 'DNI')"
+            )
+        )
+
+    result = run_migrations(engine)
+
+    assert result.applied == (5, 6)
+    with engine.connect() as connection:
+        full_name = connection.execute(
+            text("SELECT full_name FROM missionaries WHERE id = 1")
+        ).scalar_one()
+    assert full_name == "Ruiz Rios, Sara Magdaluz"
 
 
 def test_failed_migration_does_not_advance_schema_version():

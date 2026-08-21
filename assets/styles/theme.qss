@@ -282,6 +282,42 @@ QWidget#MissionaryDetailPage QLabel#ReadOnlyValue[state="empty"] {
     font-weight: 500;
 }
 
+QWidget#MissionaryDetailPage QPushButton#FieldEditButton {
+    color: #52525B;
+    background: transparent;
+    border: none;
+    border-radius: 6px;
+    padding: 4px;
+}
+
+QWidget#MissionaryDetailPage QPushButton#FieldEditButton:hover {
+    color: #18181B;
+    background: #E4E4E7;
+}
+
+QDateEdit[dateTextBox="true"] {
+    color: #18181B;
+    background: transparent;
+    border: none;
+    padding: 0 72px 0 12px;
+}
+
+QDateEdit[dateTextBox="true"]::drop-down {
+    width: 40px;
+    border: none;
+    background: transparent;
+}
+
+QDateEdit[dateTextBox="true"]::down-arrow {
+    image: none;
+    width: 0;
+    height: 0;
+}
+
+QDateEdit[dateTextBox="true"][editLocked="true"] {
+    color: #71717A;
+}
+
 QWidget#MissionaryDetailPage QLabel#SourceBadge {
     color: #0F5F64;
     background: rgba(14, 165, 172, 0.08);
@@ -327,7 +363,8 @@ QWidget#MissionaryDetailPage QLabel#SummaryBadge[tone="subtle"] {
 QWidget#MissionaryDetailPage QDateEdit#MissionaryDetailDatePicker,
 QWidget#MissionaryDetailPage QDateTimeEdit#MissionaryDetailDatePicker,
 QWidget#MissionaryDetailPage QPushButton#MissionaryDetailDatePicker {
-    min-height: 34px;
+    min-height: 42px;
+    max-height: 42px;
 }
 
 QWidget#MissionaryDetailPage QDateEdit#MissionaryDetailDatePicker[editLocked="true"],
@@ -2706,35 +2743,77 @@ QDateTimeEdit::down-arrow {
     height: 10px;
 }
 
-QCalendarWidget {
+QCalendarWidget#AppDatePickerCalendar {
     background-color: #FFFFFF;
     color: #18181B;
-    border: 1px solid #D4D4D8;
-    border-radius: 7px;
+    border: 1px solid #DADADF;
+    border-radius: 12px;
 }
 
-QCalendarWidget QWidget {
+QCalendarWidget#AppDatePickerCalendar QWidget#qt_calendar_navigationbar {
     background-color: #FFFFFF;
+    border-top-left-radius: 12px;
+    border-top-right-radius: 12px;
+    padding: 6px 8px 4px 8px;
 }
 
-QCalendarWidget QAbstractItemView {
+QCalendarWidget#AppDatePickerCalendar QAbstractItemView#qt_calendar_calendarview {
     background-color: #FFFFFF;
-    selection-background-color: #EFFCFC;
-    selection-color: #0F5F64;
-    outline: 0;
-}
-
-QCalendarWidget QToolButton {
-    background-color: transparent;
-    color: #18181B;
     border: none;
-    padding: 4px 8px;
-    margin: 2px;
+    border-bottom-left-radius: 12px;
+    border-bottom-right-radius: 12px;
+    selection-background-color: transparent;
+    selection-color: #FFFFFF;
+    alternate-background-color: #FFFFFF;
+    outline: 0;
+    padding: 4px 8px 8px 8px;
 }
 
-QCalendarWidget QMenu {
+QCalendarWidget#AppDatePickerCalendar QToolButton {
+    background-color: transparent;
+    color: #27272A;
+    border: none;
+    border-radius: 7px;
+    min-height: 28px;
+    padding: 2px 8px;
+    margin: 0 2px;
+    font-size: 13px;
+    font-weight: 600;
+}
+
+QCalendarWidget#AppDatePickerCalendar QToolButton:hover,
+QCalendarWidget#AppDatePickerCalendar QToolButton:pressed {
+    color: #0F5F64;
+    background-color: #EFFCFC;
+}
+
+QCalendarWidget#AppDatePickerCalendar QSpinBox {
+    color: #27272A;
+    background: #FFFFFF;
+    border: 1px solid #DADADF;
+    border-radius: 7px;
+    selection-background-color: #0EA5AC;
+    selection-color: #FFFFFF;
+    padding: 3px 6px;
+    font-weight: 600;
+}
+
+QCalendarWidget#AppDatePickerCalendar QMenu {
     background-color: #FFFFFF;
-    border: 1px solid #D4D4D8;
+    color: #27272A;
+    border: 1px solid #DADADF;
+    border-radius: 9px;
+    padding: 5px;
+}
+
+QCalendarWidget#AppDatePickerCalendar QMenu::item {
+    border-radius: 6px;
+    padding: 6px 18px;
+}
+
+QCalendarWidget#AppDatePickerCalendar QMenu::item:selected {
+    color: #0F5F64;
+    background-color: #EFFCFC;
 }
 
 

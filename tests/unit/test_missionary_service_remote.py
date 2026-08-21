@@ -62,6 +62,20 @@ def test_remote_create_and_update_serialize_dates(monkeypatch):
     assert client.calls[1][2]["json"]["fields"]["visa_expiration"] == "2027-07-12"
 
 
+def test_remote_create_and_update_normalize_name_whitespace(monkeypatch):
+    service, client = _remote_service(monkeypatch)
+
+    service.create_missionary(
+        full_name="  Smith,  Jane\tMarie  ", missionary_code="M1"
+    )
+    service.update_fields(8, {"full_name": "  Jones,  Ana   Lucia "})
+
+    assert client.calls[0][2]["json"]["full_name"] == "Smith, Jane Marie"
+    assert client.calls[1][2]["json"]["fields"]["full_name"] == (
+        "Jones, Ana Lucia"
+    )
+
+
 def test_remote_last_entry_date_can_be_updated_independently(monkeypatch):
     service, client = _remote_service(monkeypatch)
 

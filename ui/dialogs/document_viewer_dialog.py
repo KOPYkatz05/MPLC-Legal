@@ -26,6 +26,7 @@ from ui.dialogs.document_rendering import (
     render_document_pixmap,
     render_pdf_page,
 )
+from ui.file_dialogs import downloads_file_path
 from ui.document_printing import print_document_file
 from ui.foundation import (
     MaskDialogBase,
@@ -256,6 +257,7 @@ class DocumentPreviewWidget(QWidget):
         zoom_group.addWidget(self.preview_fit_window_btn)
         zoom_group.addWidget(self.preview_reset_btn)
         toolbar_layout.addLayout(zoom_group)
+        toolbar_layout.addStretch()
         card_layout.addWidget(self.preview_toolbar)
 
         self.scene = QGraphicsScene()
@@ -329,7 +331,7 @@ class DocumentPreviewWidget(QWidget):
         destination, _selected_filter = QFileDialog.getSaveFileName(
             self.window(),
             tr("document_viewer_download_title"),
-            self.path.name,
+            downloads_file_path(self.path.name),
             tr("document_viewer_download_filter"),
         )
         if not destination:

@@ -3,6 +3,7 @@ from database.migrations.migration_002_release_tracking import MIGRATION as MIGR
 from database.migrations.migration_003_dni_tracking import MIGRATION as MIGRATION_003
 from database.migrations.migration_004_upload_reliability import MIGRATION as MIGRATION_004
 from database.migrations.migration_005_last_entry_date import MIGRATION as MIGRATION_005
+from database.migrations.migration_006_normalize_missionary_names import MIGRATION as MIGRATION_006
 
 
 MIGRATIONS = (
@@ -11,4 +12,5 @@ MIGRATIONS = (
     MIGRATION_003,
     MIGRATION_004,
     MIGRATION_005,
+    MIGRATION_006,
 )

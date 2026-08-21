@@ -25,6 +25,7 @@ from ui.foundation import (
     create_scroll_area,
     show_message,
 )
+from ui.file_dialogs import downloads_folder
 from PySide6.QtGui import QIntValidator
 from ui.widgets.animated_tab_strip import (
     AnimatedTabStrip,
@@ -947,7 +948,7 @@ class SettingsPage(QWidget):
         folder = QFileDialog.getExistingDirectory(
             self,
             tr("settings_storage_root"),
-            self.storage_input.text(),
+            downloads_folder(),
         )
         if folder:
             self.storage_input.setText(folder)

@@ -31,6 +31,9 @@ class UploadQueueItem:
     replacement_target_resolved: bool = False
     content_sha256: str | None = None
     file_size: int | None = None
+    derived_from_upload_id: str | None = None
+    derived_kind: str | None = None
+    derived_photo_approved: bool = False
 
     @property
     def file_name(self):
