@@ -3,7 +3,6 @@
 from .coordinator import MissionaryDetailCoordinator
 from .identity_section import IdentityDetailsSection
 from .notes_section import NotesSection
-from .packet_actions import InterpolPacketActions
 from .sections import (
     DocumentsSection,
     MissingDocumentsSection,
@@ -14,7 +13,6 @@ from .sections import (
 from .state import MissionaryDetailState
 
 __all__ = [
-    "InterpolPacketActions",
     "IdentityDetailsSection",
     "DocumentsSection",
     "MissingDocumentsSection",

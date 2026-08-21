@@ -350,72 +350,25 @@ def test_missionary_detail_add_task_preselects_missionary(monkeypatch, qapp):
         page.close()
 
 
-def test_interpol_packet_opens_with_default_pdf_viewer(monkeypatch):
-    opened = []
-    page = detail_module.MissionaryDetailPage.__new__(
-        detail_module.MissionaryDetailPage
-    )
-
-    monkeypatch.setattr(
-        detail_module,
-        "open_document_with_default_app",
-        lambda file_path: opened.append(file_path),
-    )
-
-    page._open_packet_in_default_pdf_viewer("C:/Temp/interpol_packet.pdf")
-
-    assert opened == ["C:/Temp/interpol_packet.pdf"]
-
-
-def test_print_interpol_packet_uses_default_viewer_after_build(monkeypatch):
-    page = detail_module.MissionaryDetailPage.__new__(
-        detail_module.MissionaryDetailPage
-    )
-    page.current_missionary = SimpleNamespace(id=7)
+def test_print_interpol_packet_delegates_to_shared_controller(qtbot):
+    page = detail_module.MissionaryDetailPage(main_window=None)
+    qtbot.addWidget(page)
+    missionary = SimpleNamespace(id=7)
     calls = []
-
-    monkeypatch.setattr(
-        page,
-        "_validated_interpol_annotation_lines",
-        lambda: ["complete"],
-    )
-    monkeypatch.setattr(
-        page,
-        "_collect_interpol_packet_docs",
-        lambda: ([{"label": "Passport", "file_path": "passport.pdf"}], []),
-    )
-    monkeypatch.setattr(
-        page,
-        "_create_interpol_packet_temp_path",
-        lambda: "C:/Temp/interpol_packet.pdf",
-    )
-    monkeypatch.setattr(
-        page,
-        "_build_interpol_packet_pdf",
-        lambda docs, output_path:
-        calls.append(("build", docs, output_path)),
-    )
-    monkeypatch.setattr(
-        page,
-        "_open_packet_in_default_pdf_viewer",
-        lambda packet_path: calls.append(("open", packet_path)),
+    page.current_missionary = missionary
+    page.print_job_controller = SimpleNamespace(
+        print_packet=lambda *args, **kwargs: calls.append((args, kwargs))
     )
 
     page._print_interpol_packet()
 
-    assert calls == [
-        (
-            "build",
-            [{"label": "Passport", "file_path": "passport.pdf"}],
-            "C:/Temp/interpol_packet.pdf",
-        ),
-        ("open", "C:/Temp/interpol_packet.pdf"),
-    ]
+    assert calls == [(('INTERPOL', missionary), {'parent': page})]
 
 
 def test_interpol_annotation_uses_ordered_labels_and_blank_name_override(
     monkeypatch,
 ):
+    from services.print_transforms import interpol_annotation_lines
     from server import configuration as configuration_module
 
     monkeypatch.setattr(
@@ -438,7 +391,10 @@ def test_interpol_annotation_uses_ordered_labels_and_blank_name_override(
         mother_first_name_override="",
     )
 
-    assert page._validated_interpol_annotation_lines() == [
+    assert interpol_annotation_lines(
+        page.current_missionary,
+        page.document_service,
+    ) == [
         "Dirección Actual: Area Office",
         "Dirección en País de Origen: Home Address",
         "Nombre de Padre: Carlos",
@@ -449,6 +405,7 @@ def test_interpol_annotation_uses_ordered_labels_and_blank_name_override(
 
 def test_interpol_annotation_blocks_missing_official_data(monkeypatch):
     import pytest
+    from services.print_transforms import interpol_annotation_lines
     from server import configuration as configuration_module
 
     monkeypatch.setattr(
@@ -465,7 +422,10 @@ def test_interpol_annotation_blocks_missing_official_data(monkeypatch):
         father_first_name_override="", mother_first_name_override="",
     )
     with pytest.raises(ValueError, match="Area Office address"):
-        page._validated_interpol_annotation_lines()
+        interpol_annotation_lines(
+            page.current_missionary,
+            page.document_service,
+        )
 
 
 def test_run_migrations_adds_birthdate_column(monkeypatch):

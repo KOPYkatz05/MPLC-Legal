@@ -23,15 +23,18 @@ from ui.dialogs.document_rendering import (
     render_document_pixmap,
     render_pdf_page,
 )
+from ui.document_printing import print_document_file
 from ui.foundation import (
     MaskDialogBase,
     SmoothScrollDelegate,
     create_button,
     create_card,
     create_combo_box,
+    show_message,
     setup_dialog_shell,
     tune_fluent_scrollable,
 )
+from utils.language_helper import ui_text as tr
 from utils.logger import logger
 
 
@@ -176,9 +179,13 @@ class DocumentPreviewWidget(QWidget):
 
         self.close_btn = create_button("Close", "secondary")
         self.close_btn.clicked.connect(self.accept)
+        self.print_btn = create_button(tr("document_viewer_print"), "primary")
+        self.print_btn.setToolTip(tr("document_viewer_print_tooltip"))
+        self.print_btn.clicked.connect(self.print_document)
 
         header_layout.addLayout(title_stack, stretch=1)
         header_layout.addWidget(self.file_type_badge, alignment=Qt.AlignTop)
+        header_layout.addWidget(self.print_btn, alignment=Qt.AlignTop)
         header_layout.addWidget(self.close_btn, alignment=Qt.AlignTop)
         self.header.setVisible(self.show_header)
         root.addWidget(self.header)
@@ -287,6 +294,7 @@ class DocumentPreviewWidget(QWidget):
         self.page_combo.blockSignals(False)
 
         if not self.path.exists():
+            self.print_btn.setEnabled(False)
             self._show_empty_state("Cannot open document file.")
             return
 
@@ -297,10 +305,31 @@ class DocumentPreviewWidget(QWidget):
             elif suffix in SUPPORTED_IMAGE_EXTENSIONS:
                 self._load_image()
             else:
+                self.print_btn.setEnabled(False)
                 self._show_empty_state("Unsupported file format.")
         except Exception:
             logger.exception("Document load failed")
+            self.print_btn.setEnabled(False)
             self._show_empty_state("Failed to load document.")
+
+    def print_document(self, checked=False):
+        _ = checked
+        if not self.path.is_file():
+            return
+        try:
+            print_document_file(
+                self.path,
+                parent=self.window(),
+                job_name=self.path.name,
+            )
+        except Exception:
+            logger.exception("Document printing failed: %s", self.path)
+            show_message(
+                self.window(),
+                tr("document_viewer_print_failed_title"),
+                tr("document_viewer_print_failed"),
+                kind="critical",
+            )
 
     def _load_pdf(self):
         self.document = fitz.open(str(self.path))

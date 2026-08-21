@@ -221,12 +221,12 @@ class _SidebarCompat:
         self._index_to_key = {
             0: "dashboard",
             1: "missionaries",
-            4: "office_work",
-            5: "appointments",
-            6: "reports",
-            7: "trash",
-            8: "workspaces",
-            9: "settings",
+            3: "office_work",
+            4: "appointments",
+            5: "reports",
+            6: "trash",
+            7: "workspaces",
+            8: "settings",
         }
 
     def setCurrentRow(self, row):
@@ -479,12 +479,12 @@ class MainWindow(QMainWindow):
         for key, index, group in [
             ("dashboard", 0, "Work"),
             ("missionaries", 1, "Work"),
-            ("office_work", 4, "Work"),
-            ("appointments", 5, "Work"),
-            ("reports", 6, "Insights"),
-            ("trash", 7, "System"),
-            ("workspaces", 8, "System"),
-            ("settings", 9, "System"),
+            ("office_work", 3, "Work"),
+            ("appointments", 4, "Work"),
+            ("reports", 5, "Insights"),
+            ("trash", 6, "System"),
+            ("workspaces", 7, "System"),
+            ("settings", 8, "System"),
         ]:
             self.shell.add_nav_item(key, tr(self._nav_keys[key]), index, group)
 
@@ -526,17 +526,17 @@ class MainWindow(QMainWindow):
             page = self.dashboard_page
         elif nav_key == "missionaries" or stack_index == 1:
             page = self.missionaries_page
-        elif nav_key == "office_work" or stack_index == 4:
+        elif nav_key == "office_work" or stack_index == 3:
             page = self.office_work_page
-        elif nav_key == "appointments" or stack_index == 5:
+        elif nav_key == "appointments" or stack_index == 4:
             page = self.calendar_page
-        elif nav_key == "reports" or stack_index == 6:
+        elif nav_key == "reports" or stack_index == 5:
             page = self.reports_page
-        elif nav_key == "trash" or stack_index == 7:
+        elif nav_key == "trash" or stack_index == 6:
             page = self.trash_page
-        elif nav_key == "workspaces" or stack_index == 8:
+        elif nav_key == "workspaces" or stack_index == 7:
             page = self.workspaces_page
-        elif nav_key == "settings" or stack_index == 9:
+        elif nav_key == "settings" or stack_index == 8:
             page = self.settings_page
 
         self._request_page_refresh(page)

@@ -1,4 +1,8 @@
 import fitz
+import pytest
+import shutil
+from pathlib import Path
+from uuid import uuid4
 from PySide6.QtCore import QSize
 from PySide6.QtGui import QColor, QImage
 from PySide6.QtWidgets import QWidget
@@ -9,6 +13,16 @@ from ui.dialogs.document_viewer_dialog import (
     DocumentPreviewWidget,
     DocumentViewerDialog,
 )
+
+
+@pytest.fixture
+def tmp_path():
+    path = Path.cwd() / "run_tmp" / f"document-viewer-{uuid4().hex}"
+    path.mkdir(parents=True)
+    try:
+        yield path
+    finally:
+        shutil.rmtree(path, ignore_errors=True)
 
 
 def test_legacy_document_preview_module_reexports_canonical_api():
@@ -63,6 +77,7 @@ def test_image_loads_preview_without_page_controls(tmp_path, qapp):
         assert not dialog.graphics_view.isHidden()
         assert dialog.preview_empty_label.isHidden()
         assert dialog.file_type_badge.text() == "Image"
+        assert dialog.print_btn.isEnabled()
     finally:
         dialog.close()
 
@@ -110,6 +125,7 @@ def test_missing_path_shows_empty_state_and_disables_preview(tmp_path, qapp):
         assert "Cannot open document file" in dialog.preview_empty_label.text()
         assert dialog.graphics_view.isHidden()
         assert not dialog.preview_zoom_in_btn.isEnabled()
+        assert not dialog.print_btn.isEnabled()
     finally:
         dialog.close()
 
@@ -124,6 +140,7 @@ def test_unsupported_path_shows_empty_state_and_disables_preview(tmp_path, qapp)
         assert not dialog.preview_empty_label.isHidden()
         assert "Unsupported file format" in dialog.preview_empty_label.text()
         assert not dialog.preview_zoom_out_btn.isEnabled()
+        assert not dialog.print_btn.isEnabled()
     finally:
         dialog.close()
 
@@ -200,5 +217,24 @@ def test_resize_preserves_fit_zoom_mode(tmp_path, qapp):
 
         assert dialog._preview_zoom_mode == "fit_width"
         assert dialog.preview_zoom_label.text().startswith("Fit W")
+    finally:
+        dialog.close()
+
+
+def test_print_button_prints_current_local_document(tmp_path, qapp, monkeypatch):
+    image_path = _make_image(tmp_path / "document.png")
+    calls = []
+    monkeypatch.setattr(
+        "ui.dialogs.document_viewer_dialog.print_document_file",
+        lambda file_path, **kwargs: calls.append((file_path, kwargs)) or True,
+    )
+    dialog = DocumentViewerDialog(str(image_path))
+    try:
+        dialog.print_btn.click()
+
+        assert len(calls) == 1
+        assert calls[0][0] == image_path
+        assert calls[0][1]["parent"] is dialog.preview_widget.window()
+        assert calls[0][1]["job_name"] == image_path.name
     finally:
         dialog.close()

@@ -8,8 +8,6 @@ from datetime import date, datetime
 
 from pathlib import Path
 
-import fitz
-
 from PySide6.QtGui import QAction, QCursor, QPixmap
 from PySide6.QtWidgets import (
     QButtonGroup,
@@ -90,7 +88,6 @@ from utils.constants import (
     DOCUMENTS,
     WORKFLOW_STATUSES,
     WORKFLOW_STAGES,
-    requires_fbi_document,
     required_documents_for_missionary,
 )
 from utils.i18n import field_label
@@ -109,7 +106,7 @@ from ui.widgets.missionary_block_widgets import (
 from ui.foundation.background_loader import LatestRequestLoader
 from ui.pages.missionary_detail.state import MissionaryDetailState
 from ui.pages.missionary_detail.coordinator import MissionaryDetailCoordinator
-from ui.pages.missionary_detail.packet_actions import InterpolPacketActions
+from ui.controllers.print_job_controller import PrintJobController
 from ui.pages.missionary_detail.identity_section import IdentityDetailsSection
 from ui.pages.missionary_detail.notes_section import NotesSection
 from ui.pages.missionary_detail.sections import (
@@ -231,20 +228,6 @@ DOCUMENT_CARD_MIN_HEIGHT = 104
 MISSING_CARD_MIN_HEIGHT = 84
 MISSIONARY_DETAIL_SCROLL_STEP = 16
 AUTO_DERIVED_VISA_SOURCE_LABEL = "Auto-derived from arrival date"
-INTERPOL_PACKET_DOCUMENT_TYPES = [
-    "TAM",
-    "PASSPORT",
-    "PAGO_INTERPOL",
-    "CONSTANCIA_DE_CITA_INTERPOL",
-]
-FBI_INTERPOL_PACKET_DOCUMENT_TYPES = [
-    "TAM",
-    "PASSPORT",
-    "FBI",
-    "PAGO_INTERPOL",
-    "CONSTANCIA_DE_CITA_INTERPOL",
-]
-
 STAGE_TRANSLATION_KEYS = {
     "INTERPOL": "missionary_detail_stage_interpol",
     "CARNET DE EXTRANJERIA": "missionary_detail_stage_carnet_de_extranjeria",
@@ -587,6 +570,10 @@ class MissionaryDetailPage(QWidget):
         self.workflow_service = WorkflowService()
 
         self.document_service = DocumentService()
+        self.print_job_controller = PrintJobController(
+            self.document_service,
+            parent=self,
+        )
 
         self.missionary_service = MissionaryService()
 
@@ -2840,92 +2827,11 @@ class MissionaryDetailPage(QWidget):
     def _print_interpol_packet(self, checked=False):
         if not hasattr(self, "current_missionary"):
             return
-
-        try:
-            self._validated_interpol_annotation_lines()
-        except ValueError as exc:
-            show_message(
-                self,
-                "Interpol packet information is incomplete",
-                str(exc),
-                kind="warning",
-            )
-            return
-
-        packet_docs, missing_labels = self._collect_interpol_packet_docs()
-
-        if missing_labels:
-            missing_text = "\n".join(
-                f"- {label}" for label in missing_labels
-            )
-            response = show_message(
-                self,
-                tr("missionary_detail_missing_packet_title"),
-                tr(
-                    "missionary_detail_missing_packet_message",
-                    missing=missing_text,
-                ),
-                kind="warning",
-                buttons="yes_no",
-            )
-
-            if response not in {1, 16384}:
-                return
-
-        if not packet_docs:
-            show_message(
-                self,
-                tr("missionary_detail_no_documents_to_print_title"),
-                tr("missionary_detail_no_documents_to_print"),
-                kind="warning",
-            )
-            return
-
-        try:
-            temp_path = self._create_interpol_packet_temp_path()
-
-            self._build_interpol_packet_pdf(packet_docs, temp_path)
-            self._open_packet_in_default_pdf_viewer(temp_path)
-
-        except Exception:
-            logger.exception("Failed to print Interpol packet")
-            show_message(
-                self,
-                tr("missionary_detail_print_failed_title"),
-                tr("missionary_detail_print_failed"),
-                kind="critical",
-            )
-
-    def _collect_interpol_packet_docs(self):
-        return self._interpol_packet_actions().collect_documents()
-
-    def _interpol_packet_actions(self):
-        return InterpolPacketActions(
+        self.print_job_controller.print_packet(
+            "INTERPOL",
             self.current_missionary,
-            self.document_service,
-            document_label=_document_label,
+            parent=self,
         )
-    def _interpol_packet_document_types(self):
-        return self._interpol_packet_actions().document_types()
-    def _doc_is_newer(self, candidate, existing):
-        return InterpolPacketActions.document_is_newer(candidate, existing)
-    def _create_interpol_packet_temp_path(self):
-        return self._interpol_packet_actions().create_temp_path()
-    def _cleanup_old_packet_files(self, packet_dir):
-        self._interpol_packet_actions().cleanup_old_files(packet_dir)
-    def _build_interpol_packet_pdf(self, packet_docs, output_path):
-        self._interpol_packet_actions().build_pdf(packet_docs, output_path)
-    def _annotate_interpol_passport(self, page):
-        self._interpol_packet_actions().annotate_passport(page)
-    def _validated_interpol_annotation_lines(self):
-        return self._interpol_packet_actions().validated_annotation_lines()
-
-    def _open_packet_in_default_pdf_viewer(self, packet_path):
-        logger.info(
-            "Opening Interpol packet in default PDF viewer: %s",
-            packet_path,
-        )
-        open_document_with_default_app(packet_path)
 
     def _find_doc_data(self, doc_id):
         return next(
