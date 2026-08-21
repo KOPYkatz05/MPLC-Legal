@@ -95,7 +95,6 @@ from utils.language_helper import ui_text as tr
 from utils.logger import logger
 from utils.passport_numbers import normalize_passport_number
 from services.workflow_validator import WorkflowValidator
-from services.workspace_service import WorkspaceService
 from ui.widgets.missionary_block_widgets import (
     build_document_card,
     build_empty_state_card,
@@ -582,11 +581,6 @@ class MissionaryDetailPage(QWidget):
         self.residency_service = ResidencyService()
 
         self.workflow_validator = WorkflowValidator()
-        self.workspace_service = (
-            getattr(main_window, "workspace_service", None)
-            if main_window
-            else None
-        ) or WorkspaceService()
 
         self.thumb_service = ThumbnailService()
 
@@ -1308,11 +1302,6 @@ class MissionaryDetailPage(QWidget):
         self.print_interpol_packet_action.triggered.connect(
             self._print_interpol_packet
         )
-        self.workspace_menu = create_menu(
-            tr("missionary_detail_open_workspace"),
-            self.actions_menu,
-        )
-        self.actions_menu.addMenu(self.workspace_menu)
         self.actions_menu.addSeparator()
         self.move_to_menu = create_menu(
             tr("missionary_detail_move_to"),
@@ -1335,7 +1324,6 @@ class MissionaryDetailPage(QWidget):
             self.delete_missionary
         )
         self.actions_menu.addMenu(self.move_to_menu)
-        self.refresh_workspace_actions()
         self.actions_button.setMenu(self.actions_menu)
 
         self._header_widgets = [
@@ -2625,9 +2613,6 @@ class MissionaryDetailPage(QWidget):
             self.print_interpol_packet_action.setText(
                 tr("missionary_detail_print_interpol_packet")
             )
-        if hasattr(self, "workspace_menu"):
-            self.workspace_menu.setTitle(tr("missionary_detail_open_workspace"))
-            self.refresh_workspace_actions()
         if hasattr(self, "move_to_menu"):
             self.move_to_menu.setTitle(tr("missionary_detail_move_to"))
         if hasattr(self, "archive_missionary_action"):
@@ -2775,54 +2760,6 @@ class MissionaryDetailPage(QWidget):
 
         if action == print_interpol_action:
             self._print_interpol_packet()
-
-    def refresh_workspace_actions(self):
-        if not hasattr(self, "workspace_menu"):
-            return
-        self.workspace_menu.clear()
-        workspaces = self.workspace_service.list_workspaces()
-        if not workspaces:
-            empty_action = QAction(
-                tr("workspace_no_workspaces"),
-                self.workspace_menu,
-            )
-            self.workspace_menu.addAction(empty_action)
-            empty_action.setEnabled(False)
-            return
-        for workspace in workspaces:
-            action = QAction(
-                workspace.get("name") or tr("workspace_title"),
-                self.workspace_menu,
-            )
-            self.workspace_menu.addAction(action)
-            action.setData(workspace.get("id"))
-            action.triggered.connect(
-                lambda checked=False, workspace_id=workspace.get("id"): (
-                    self._open_workspace(workspace_id)
-                )
-            )
-
-    def _open_workspace(self, workspace_id):
-        if not hasattr(self, "current_missionary"):
-            return
-        workspace = self.workspace_service.get_workspace(workspace_id)
-        if not workspace:
-            return
-        opener = getattr(self.main_window, "open_missionary_workspace", None)
-        if callable(opener) and opener(self.current_missionary, workspace):
-            return
-
-        from ui.dialogs.missionary_workspace_dialog import (
-            MissionaryWorkspaceDialog,
-        )
-
-        dialog = MissionaryWorkspaceDialog(
-            self.current_missionary,
-            workspace,
-            parent=self,
-            on_refresh=lambda: self.load_missionary(self.current_missionary),
-        )
-        dialog.exec()
 
     def _print_interpol_packet(self, checked=False):
         if not hasattr(self, "current_missionary"):

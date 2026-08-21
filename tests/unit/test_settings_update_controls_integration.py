@@ -1,5 +1,3 @@
-from types import SimpleNamespace
-
 from PySide6.QtCore import QObject, Signal
 
 from ui.pages import settings_page as settings_page_module
@@ -83,11 +81,6 @@ def _settings_page(monkeypatch):
         lambda: service,
     )
     monkeypatch.setattr(
-        settings_page_module,
-        "WorkspaceService",
-        lambda: SimpleNamespace(list_workspaces=lambda: []),
-    )
-    monkeypatch.setattr(
         settings_page_module.MissionLegalApiClient,
         "from_environment",
         classmethod(lambda cls: None),
@@ -138,7 +131,7 @@ def test_settings_has_one_real_tab_strip_and_new_tabs_save_defaults(
     _ = qapp
     page = _settings_page(monkeypatch)
     try:
-        assert page.tabs.count() == 8
+        assert page.tabs.count() == 7
         assert not hasattr(page, "settings_top_tab_labels")
 
         page.calendar_default_view_combo.setCurrentIndex(

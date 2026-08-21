@@ -3,7 +3,6 @@ from PySide6.QtWidgets import (
     QFormLayout,
     QGridLayout,
     QLineEdit,
-    QListWidgetItem,
     QPushButton,
     QSizePolicy,
     QSpinBox,
@@ -23,7 +22,6 @@ from ui.foundation import (
     create_combo_box,
     create_date_picker,
     create_line_edit,
-    create_list_widget,
     create_scroll_area,
     show_message,
 )
@@ -34,33 +32,13 @@ from ui.widgets.animated_tab_strip import (
 )
 from PySide6.QtCore import QDate, Qt, QTime
 from datetime import date, timedelta
-from types import SimpleNamespace
 import time
 import json
 from services.email_digest_service import EmailDigestService
 from services.scheduler_service import SchedulerService
 from services.settings_service import SettingsService
 from services.api_client import MissionLegalApiClient
-from services.workspace_service import (
-    WorkspaceService,
-    new_block,
-    new_workspace,
-)
-from services.workspace_layout import (
-    WORKSPACE_GRID_COLUMNS,
-    normalize_workspace_layout,
-    validate_block_layout,
-)
-from ui.dialogs.missionary_workspace_dialog import (
-    BLOCK_LABELS,
-    FIELD_KEYS,
-    MissionaryWorkspaceDialog,
-    WorkspaceBlockFactory,
-    clear_layout,
-)
-from ui.widgets.workspace_layout_editor import WorkspaceLayoutEditor
 from ui.foundation.background_loader import LatestRequestLoader
-from utils.constants import DOCUMENTS
 from utils.language_helper import ui_text as tr
 from utils.logger import logger
 from version import APP_VERSION
@@ -79,13 +57,6 @@ class SettingsPage(QWidget):
             else SettingsService()
         )
         self.api_client = MissionLegalApiClient.from_environment()
-        self.workspace_service = (
-            getattr(main_window, "workspace_service", None)
-            if main_window
-            else None
-        ) or WorkspaceService()
-        self._workspaces = []
-        self._selected_workspace_id = None
         self._update_coordinator = None
         self._update_status = "not-configured"
         self._update_progress = 0
@@ -93,7 +64,6 @@ class SettingsPage(QWidget):
         self._server_configuration_refreshed_at = 0.0
         self._server_configuration_input_baseline = ""
         self._server_configuration_loader = LatestRequestLoader(parent=self)
-        self._workspace_settings_loaded = False
         self.setup_ui()
 
     def setup_ui(self):
@@ -120,7 +90,6 @@ class SettingsPage(QWidget):
         )
         self.tabs.addTab(self._build_transfer_tab(), tr("settings_tab_transfer"))
         self.tabs.addTab(self._build_ui_tab(), tr("settings_tab_ui"))
-        self.tabs.addTab(self._build_workspaces_tab(), tr("settings_tab_workspaces"))
         self.tabs.addTab(self._build_calendar_settings_tab(), tr("settings_tab_calendar"))
         self.tabs.addTab(self._build_analytics_settings_tab(), tr("settings_tab_analytics"))
         self.tabs.addTab(
@@ -134,7 +103,6 @@ class SettingsPage(QWidget):
             "notifications",
             "transfer",
             "ui",
-            "workspaces",
             "calendar",
             "analytics",
             "missionaries",
@@ -148,7 +116,6 @@ class SettingsPage(QWidget):
                     tr("settings_tab_notifications"),
                     tr("settings_tab_transfer"),
                     tr("settings_tab_ui"),
-                    tr("settings_tab_workspaces"),
                     tr("settings_tab_calendar"),
                     tr("settings_tab_analytics"),
                     tr("settings_tab_missionaries"),
@@ -176,13 +143,6 @@ class SettingsPage(QWidget):
 
     def _settings_tab_changed(self, index):
         self._sync_settings_tab_strip(index)
-        if (
-            0 <= index < len(self._settings_tab_keys)
-            and self._settings_tab_keys[index] == "workspaces"
-            and not self._workspace_settings_loaded
-        ):
-            self._workspace_settings_loaded = True
-            self._load_workspaces()
 
     def _build_tab_scroll(self, content_widget, *, full_width=False):
         tab = QWidget()
@@ -936,731 +896,6 @@ class SettingsPage(QWidget):
         self._load_transfer_settings()
         return self._build_tab_scroll(content)
 
-    def _build_workspaces_tab(self):
-        content, layout = self._build_settings_content(full_width=True)
-
-        shell = QHBoxLayout()
-        shell.setContentsMargins(0, 0, 0, 0)
-        shell.setSpacing(16)
-        layout.addLayout(shell)
-
-        list_card, list_body, self.workspaces_list_title, _ = self._settings_card(
-            tr("workspaces_title"),
-            tr("workspaces_hint"),
-        )
-        self.workspaces_list = create_list_widget("SettingsWorkspaceList")
-        self.workspaces_list.setObjectName("SettingsWorkspaceList")
-        self.workspaces_list.currentItemChanged.connect(
-            self._workspace_selection_changed
-        )
-        list_body.addWidget(self.workspaces_list)
-
-        self.workspace_new_btn = create_button(tr("workspace_new"), "primary")
-        self.workspace_duplicate_btn = create_button(
-            tr("workspace_duplicate"),
-            "secondary",
-        )
-        self.workspace_delete_btn = create_button(tr("workspace_delete"), "danger")
-        self.workspace_new_btn.clicked.connect(self._new_workspace)
-        self.workspace_duplicate_btn.clicked.connect(self._duplicate_workspace)
-        self.workspace_delete_btn.clicked.connect(self._delete_workspace)
-        list_body.addWidget(
-            self._action_row(
-                self.workspace_new_btn,
-                self.workspace_duplicate_btn,
-                self.workspace_delete_btn,
-            )
-        )
-        shell.addWidget(list_card, stretch=2)
-
-        editor_card, editor_body, self.workspace_editor_title, _ = (
-            self._settings_card(
-                tr("workspace_editor_title"),
-                tr("workspace_editor_hint"),
-            )
-        )
-        form = self._settings_form()
-        self.workspace_name_input = create_line_edit(
-            tr("workspace_name"),
-            "WorkspaceNameInput",
-        )
-        self.workspace_name_input.textChanged.connect(self._update_workspace_name)
-        form.addRow(tr("workspace_name"), self.workspace_name_input)
-
-        self.workspace_size_combo = create_combo_box()
-        self.workspace_size_combo.addItem(tr("workspace_size_medium"), "medium")
-        self.workspace_size_combo.addItem(tr("workspace_size_large"), "large")
-        self.workspace_size_combo.addItem(tr("workspace_size_wide"), "wide")
-        self.workspace_size_combo.currentIndexChanged.connect(
-            self._update_workspace_size
-        )
-        form.addRow(tr("workspace_dialog_size"), self.workspace_size_combo)
-        editor_body.addLayout(form)
-
-        block_header = QHBoxLayout()
-        block_header.setContentsMargins(0, 4, 0, 0)
-        self.workspace_blocks_label = QLabel(tr("workspace_blocks"))
-        self.workspace_blocks_label.setObjectName("SettingsCardTitle")
-        block_header.addWidget(self.workspace_blocks_label)
-        block_header.addStretch()
-        self.block_add_combo = create_combo_box()
-        for block_type in BLOCK_LABELS:
-            self.block_add_combo.addItem(tr(BLOCK_LABELS[block_type]), block_type)
-        block_header.addWidget(self.block_add_combo)
-        self.block_add_btn = create_button(tr("workspace_add_block"), "secondary")
-        self.block_add_btn.clicked.connect(self._add_workspace_block)
-        block_header.addWidget(self.block_add_btn)
-        editor_body.addLayout(block_header)
-
-        self.blocks_list = create_list_widget("SettingsWorkspaceBlockList")
-        self.blocks_list.setObjectName("SettingsWorkspaceBlockList")
-        self.blocks_list.currentItemChanged.connect(
-            self._workspace_block_selection_changed
-        )
-        editor_body.addWidget(self.blocks_list)
-
-        self.block_up_btn = create_button(tr("workspace_move_up"), "secondary")
-        self.block_down_btn = create_button(tr("workspace_move_down"), "secondary")
-        self.block_remove_btn = create_button(tr("workspace_remove_block"), "danger")
-        self.block_up_btn.clicked.connect(lambda: self._move_workspace_block(-1))
-        self.block_down_btn.clicked.connect(lambda: self._move_workspace_block(1))
-        self.block_remove_btn.clicked.connect(self._remove_workspace_block)
-        editor_body.addWidget(
-            self._action_row(
-                self.block_up_btn,
-                self.block_down_btn,
-                self.block_remove_btn,
-            )
-        )
-
-        self.workspace_layout_editor = WorkspaceLayoutEditor(
-            lambda block_type: tr(
-                BLOCK_LABELS.get(block_type, "workspace_block_unsupported")
-            )
-        )
-        self.workspace_layout_editor.blockSelected.connect(
-            self._select_block_from_layout
-        )
-        self.workspace_layout_editor.layoutChanged.connect(
-            self._workspace_layout_changed
-        )
-        editor_body.addWidget(self.workspace_layout_editor)
-
-        self.block_options_card = QFrame()
-        self.block_options_card.setObjectName("SettingsCard")
-        options_layout = QFormLayout()
-        options_layout.setContentsMargins(16, 14, 16, 14)
-        options_layout.setSpacing(10)
-        self.block_options_card.setLayout(options_layout)
-
-        self.block_title_input = create_line_edit(
-            tr("workspace_block_title"),
-            "WorkspaceBlockTitleInput",
-        )
-        self.block_title_input.textChanged.connect(self._update_block_title)
-        options_layout.addRow(tr("workspace_block_title"), self.block_title_input)
-
-        self.block_width_combo = create_combo_box()
-        self.block_width_combo.addItem(tr("workspace_width_half"), "half")
-        self.block_width_combo.addItem(tr("workspace_width_full"), "full")
-        self.block_width_combo.currentIndexChanged.connect(self._update_block_width)
-        options_layout.addRow(tr("workspace_block_width"), self.block_width_combo)
-
-        self.block_height_combo = create_combo_box()
-        self.block_height_combo.addItem(tr("workspace_height_compact"), "compact")
-        self.block_height_combo.addItem(tr("workspace_height_normal"), "normal")
-        self.block_height_combo.addItem(tr("workspace_height_tall"), "tall")
-        self.block_height_combo.currentIndexChanged.connect(self._update_block_height)
-        options_layout.addRow(tr("workspace_block_height"), self.block_height_combo)
-
-        self.block_col_span_spin = QSpinBox()
-        self.block_col_span_spin.setRange(1, WORKSPACE_GRID_COLUMNS)
-        self.block_col_span_spin.valueChanged.connect(self._update_block_col_span)
-        options_layout.addRow(tr("workspace_block_columns"), self.block_col_span_spin)
-
-        self.block_row_span_spin = QSpinBox()
-        self.block_row_span_spin.setRange(1, 8)
-        self.block_row_span_spin.valueChanged.connect(self._update_block_row_span)
-        options_layout.addRow(tr("workspace_block_rows"), self.block_row_span_spin)
-
-        field_editor = QWidget()
-        field_editor_layout = QVBoxLayout()
-        field_editor_layout.setContentsMargins(0, 0, 0, 0)
-        field_editor_layout.setSpacing(8)
-        field_editor.setLayout(field_editor_layout)
-        self.block_fields_widget = field_editor
-
-        field_add_row = QHBoxLayout()
-        field_add_row.setContentsMargins(0, 0, 0, 0)
-        field_add_row.setSpacing(8)
-        self.field_add_combo = create_combo_box()
-        for field_key in FIELD_KEYS:
-            self.field_add_combo.addItem(field_key, field_key)
-        self.field_add_btn = create_button(tr("workspace_add_field"), "secondary")
-        self.field_add_btn.clicked.connect(self._add_block_field)
-        field_add_row.addWidget(self.field_add_combo, stretch=1)
-        field_add_row.addWidget(self.field_add_btn)
-        field_editor_layout.addLayout(field_add_row)
-
-        self.block_fields_list = create_list_widget("WorkspaceBlockFieldsList")
-        self.block_fields_list.setMinimumHeight(120)
-        field_editor_layout.addWidget(self.block_fields_list)
-
-        field_actions = QHBoxLayout()
-        field_actions.setContentsMargins(0, 0, 0, 0)
-        field_actions.setSpacing(8)
-        self.field_up_btn = create_button(tr("workspace_move_up"), "secondary")
-        self.field_down_btn = create_button(tr("workspace_move_down"), "secondary")
-        self.field_remove_btn = create_button(tr("workspace_remove_field"), "danger")
-        self.field_up_btn.clicked.connect(lambda: self._move_block_field(-1))
-        self.field_down_btn.clicked.connect(lambda: self._move_block_field(1))
-        self.field_remove_btn.clicked.connect(self._remove_block_field)
-        field_actions.addWidget(self.field_up_btn)
-        field_actions.addWidget(self.field_down_btn)
-        field_actions.addWidget(self.field_remove_btn)
-        field_actions.addStretch()
-        field_editor_layout.addLayout(field_actions)
-        options_layout.addRow(tr("workspace_block_fields"), field_editor)
-
-        self.block_document_combo = create_combo_box()
-        self.block_document_combo.addItem(tr("workspace_first_available_document"), "")
-        for document_type, config in DOCUMENTS.items():
-            self.block_document_combo.addItem(
-                config.get("label", document_type),
-                document_type,
-            )
-        self.block_document_combo.currentIndexChanged.connect(
-            self._update_block_document_type
-        )
-        options_layout.addRow(
-            tr("workspace_block_document_type"),
-            self.block_document_combo,
-        )
-
-        self.block_web_url_input = create_line_edit(
-            tr("workspace_block_web_url"),
-            "WorkspaceBlockWebUrlInput",
-        )
-        self.block_web_url_input.textChanged.connect(self._update_block_web_url)
-        options_layout.addRow(tr("workspace_block_web_url"), self.block_web_url_input)
-        editor_body.addWidget(self.block_options_card)
-
-        self.workspace_save_btn = create_button(tr("workspace_save"), "primary")
-        self.workspace_save_btn.clicked.connect(self._save_current_workspace)
-        editor_body.addWidget(self._action_row(self.workspace_save_btn))
-        shell.addWidget(editor_card, stretch=6)
-
-        preview_card, preview_body, self.workspace_preview_title, _ = (
-            self._settings_card(
-                tr("workspace_preview_title"),
-                tr("workspace_preview_hint"),
-            )
-        )
-        self.workspace_preview_grid = QGridLayout()
-        self.workspace_preview_grid.setContentsMargins(0, 0, 0, 0)
-        self.workspace_preview_grid.setHorizontalSpacing(10)
-        self.workspace_preview_grid.setVerticalSpacing(10)
-        preview_body.addLayout(self.workspace_preview_grid)
-        shell.addWidget(preview_card, stretch=5)
-
-        layout.addStretch()
-        self._set_workspace_editor_enabled(False)
-        return self._build_tab_scroll(content, full_width=True)
-
-    def _load_workspaces(self):
-        self._workspaces = self.workspace_service.list_workspaces()
-        self.workspaces_list.blockSignals(True)
-        self.workspaces_list.clear()
-        for workspace in self._workspaces:
-            item = QListWidgetItem(workspace.get("name", tr("workspace_title")))
-            item.setData(Qt.UserRole, workspace.get("id"))
-            self.workspaces_list.addItem(item)
-        self.workspaces_list.blockSignals(False)
-        if self._workspaces:
-            self.workspaces_list.setCurrentRow(0)
-        else:
-            self._selected_workspace_id = None
-            self._set_workspace_editor_enabled(False)
-
-    def _current_workspace(self):
-        return next(
-            (
-                workspace
-                for workspace in self._workspaces
-                if workspace.get("id") == self._selected_workspace_id
-            ),
-            None,
-        )
-
-    def _current_block(self):
-        workspace = self._current_workspace()
-        item = self.blocks_list.currentItem()
-        if not workspace or item is None:
-            return None
-        block_id = item.data(Qt.UserRole)
-        return next(
-            (
-                block
-                for block in workspace.get("blocks", [])
-                if block.get("id") == block_id
-            ),
-            None,
-        )
-
-    def _set_workspace_editor_enabled(self, enabled):
-        for widget in (
-            self.workspace_name_input,
-            self.workspace_size_combo,
-            self.blocks_list,
-            self.block_add_combo,
-            self.block_add_btn,
-            self.block_up_btn,
-            self.block_down_btn,
-            self.block_remove_btn,
-            self.workspace_layout_editor,
-            self.block_options_card,
-            self.workspace_save_btn,
-            self.workspace_duplicate_btn,
-            self.workspace_delete_btn,
-        ):
-            widget.setEnabled(enabled)
-
-    def _workspace_selection_changed(self, current, previous):
-        _ = previous
-        self._selected_workspace_id = current.data(Qt.UserRole) if current else None
-        self._populate_workspace_editor()
-
-    def _populate_workspace_editor(self):
-        workspace = self._current_workspace()
-        self._set_workspace_editor_enabled(workspace is not None)
-        if not workspace:
-            self.workspace_name_input.clear()
-            self.blocks_list.clear()
-            self.workspace_layout_editor.set_workspace(None)
-            self._refresh_workspace_preview()
-            return
-        normalized = normalize_workspace_layout(workspace)
-        workspace["blocks"] = normalized.get("blocks", [])
-        self.workspace_name_input.blockSignals(True)
-        self.workspace_name_input.setText(workspace.get("name", ""))
-        self.workspace_name_input.blockSignals(False)
-        idx = self.workspace_size_combo.findData(workspace.get("dialog_size", "large"))
-        if idx >= 0:
-            self.workspace_size_combo.blockSignals(True)
-            self.workspace_size_combo.setCurrentIndex(idx)
-            self.workspace_size_combo.blockSignals(False)
-        self._refresh_blocks_list()
-        self.workspace_layout_editor.set_workspace(workspace)
-        self._refresh_workspace_preview()
-
-    def _refresh_blocks_list(self, selected_block_id=None):
-        workspace = self._current_workspace()
-        current_block = self._current_block()
-        if selected_block_id is None and current_block is not None:
-            selected_block_id = current_block.get("id")
-        self.blocks_list.blockSignals(True)
-        self.blocks_list.clear()
-        if workspace:
-            for block in workspace.get("blocks", []):
-                item = QListWidgetItem(
-                    f"{block.get('title', '')}  ({tr(BLOCK_LABELS.get(block.get('type'), 'workspace_block_unsupported'))})"
-                )
-                item.setData(Qt.UserRole, block.get("id"))
-                self.blocks_list.addItem(item)
-        self.blocks_list.blockSignals(False)
-        if selected_block_id and self._select_block_item(selected_block_id):
-            return
-        if self.blocks_list.count():
-            self.blocks_list.setCurrentRow(0)
-        else:
-            self._populate_block_options(None)
-
-    def _workspace_block_selection_changed(self, current, previous):
-        _ = previous
-        self._populate_block_options(self._current_block() if current else None)
-
-    def _populate_block_options(self, block):
-        enabled = block is not None
-        for widget in (
-            self.block_title_input,
-            self.block_width_combo,
-            self.block_height_combo,
-            self.block_col_span_spin,
-            self.block_row_span_spin,
-            self.block_fields_widget,
-            self.field_add_combo,
-            self.field_add_btn,
-            self.block_fields_list,
-            self.field_up_btn,
-            self.field_down_btn,
-            self.field_remove_btn,
-            self.block_document_combo,
-            self.block_web_url_input,
-        ):
-            widget.setEnabled(enabled)
-        if not block:
-            self.block_title_input.clear()
-            self.block_fields_list.clear()
-            self.block_fields_widget.setVisible(False)
-            self.block_document_combo.setVisible(False)
-            self.block_web_url_input.setVisible(False)
-            return
-        self.block_title_input.blockSignals(True)
-        self.block_title_input.setText(block.get("title", ""))
-        self.block_title_input.blockSignals(False)
-        for combo, key, default in (
-            (self.block_width_combo, "width", "half"),
-            (self.block_height_combo, "height", "normal"),
-        ):
-            idx = combo.findData(block.get(key, default))
-            if idx >= 0:
-                combo.blockSignals(True)
-                combo.setCurrentIndex(idx)
-                combo.blockSignals(False)
-        layout = validate_block_layout(block)
-        self.block_col_span_spin.blockSignals(True)
-        self.block_col_span_spin.setValue(layout["col_span"])
-        self.block_col_span_spin.blockSignals(False)
-        self.block_row_span_spin.blockSignals(True)
-        self.block_row_span_spin.setValue(layout["row_span"])
-        self.block_row_span_spin.blockSignals(False)
-        self.workspace_layout_editor.set_selected_block(block.get("id"))
-        self._refresh_block_fields_list()
-        doc_idx = self.block_document_combo.findData(block.get("document_type", ""))
-        self.block_document_combo.blockSignals(True)
-        self.block_document_combo.setCurrentIndex(max(doc_idx, 0))
-        self.block_document_combo.blockSignals(False)
-        self.block_web_url_input.blockSignals(True)
-        self.block_web_url_input.setText(block.get("web_url", ""))
-        self.block_web_url_input.blockSignals(False)
-        self.block_fields_widget.setVisible(block.get("type") == "personal_info")
-        self.block_document_combo.setVisible(block.get("type") == "document_viewer")
-        self.block_web_url_input.setVisible(block.get("type") == "web_viewer")
-
-    def _select_block_item(self, block_id):
-        for row in range(self.blocks_list.count()):
-            item = self.blocks_list.item(row)
-            if item.data(Qt.UserRole) == block_id:
-                self.blocks_list.setCurrentRow(row)
-                return True
-        return False
-
-    def _select_block_from_layout(self, block_id):
-        if block_id:
-            self._select_block_item(block_id)
-
-    def _workspace_layout_changed(self):
-        workspace = self._current_workspace()
-        if not workspace:
-            return
-        selected_id = self.workspace_layout_editor.selected_block_id
-        self._refresh_blocks_list(selected_id)
-        self._populate_block_options(self._current_block())
-        self._refresh_workspace_preview()
-
-    def _new_workspace(self):
-        workspace = self.workspace_service.save_workspace(
-            new_workspace(tr("workspace_default_name"))
-        )
-        self._load_workspaces()
-        self._select_workspace(workspace.get("id"))
-
-    def _duplicate_workspace(self):
-        workspace = self._current_workspace()
-        if not workspace:
-            return
-        duplicate = self.workspace_service.duplicate_workspace(workspace["id"])
-        self._load_workspaces()
-        if duplicate:
-            self._select_workspace(duplicate.get("id"))
-
-    def _delete_workspace(self):
-        workspace = self._current_workspace()
-        if not workspace:
-            return
-        self.workspace_service.delete_workspace(workspace["id"])
-        self._load_workspaces()
-
-    def _select_workspace(self, workspace_id):
-        for row in range(self.workspaces_list.count()):
-            item = self.workspaces_list.item(row)
-            if item.data(Qt.UserRole) == workspace_id:
-                self.workspaces_list.setCurrentRow(row)
-                return
-
-    def _update_workspace_name(self, value):
-        workspace = self._current_workspace()
-        if workspace is not None:
-            workspace["name"] = value
-            self._refresh_workspace_preview()
-
-    def _update_workspace_size(self):
-        workspace = self._current_workspace()
-        if workspace is not None:
-            workspace["dialog_size"] = self.workspace_size_combo.currentData()
-            self._refresh_workspace_preview()
-
-    def _add_workspace_block(self):
-        workspace = self._current_workspace()
-        if not workspace:
-            return
-        block = new_block(self.block_add_combo.currentData())
-        workspace.setdefault("blocks", []).append(block)
-        workspace["blocks"] = normalize_workspace_layout(workspace).get("blocks", [])
-        self._refresh_blocks_list(block.get("id"))
-        self.workspace_layout_editor.set_workspace(workspace)
-        self._refresh_workspace_preview()
-
-    def _move_workspace_block(self, direction):
-        workspace = self._current_workspace()
-        item = self.blocks_list.currentItem()
-        if not workspace or item is None:
-            return
-        block_id = item.data(Qt.UserRole)
-        blocks = workspace.get("blocks", [])
-        index = next((i for i, block in enumerate(blocks) if block.get("id") == block_id), -1)
-        target = index + direction
-        if index < 0 or target < 0 or target >= len(blocks):
-            return
-        blocks[index], blocks[target] = blocks[target], blocks[index]
-        workspace["blocks"] = normalize_workspace_layout(workspace).get("blocks", [])
-        self._refresh_blocks_list(block_id)
-        self.blocks_list.setCurrentRow(target)
-        self.workspace_layout_editor.set_workspace(workspace)
-        self._refresh_workspace_preview()
-
-    def _remove_workspace_block(self):
-        workspace = self._current_workspace()
-        item = self.blocks_list.currentItem()
-        if not workspace or item is None:
-            return
-        block_id = item.data(Qt.UserRole)
-        workspace["blocks"] = [
-            block
-            for block in workspace.get("blocks", [])
-            if block.get("id") != block_id
-        ]
-        self._refresh_blocks_list()
-        self.workspace_layout_editor.set_workspace(workspace)
-        self._refresh_workspace_preview()
-
-    def _update_block_title(self, value):
-        block = self._current_block()
-        if block is not None:
-            block["title"] = value
-            self._refresh_blocks_list(block.get("id"))
-            self.workspace_layout_editor.set_workspace(self._current_workspace())
-            self._refresh_workspace_preview()
-
-    def _update_block_width(self):
-        block = self._current_block()
-        if block is not None:
-            block["width"] = self.block_width_combo.currentData()
-            layout = validate_block_layout(block)
-            layout["col_span"] = (
-                WORKSPACE_GRID_COLUMNS
-                if block["width"] == "full"
-                else WORKSPACE_GRID_COLUMNS // 2
-            )
-            block["layout"] = validate_block_layout({"layout": layout})
-            self.block_col_span_spin.blockSignals(True)
-            self.block_col_span_spin.setValue(block["layout"]["col_span"])
-            self.block_col_span_spin.blockSignals(False)
-            self.workspace_layout_editor.set_workspace(self._current_workspace())
-            self._refresh_workspace_preview()
-
-    def _update_block_height(self):
-        block = self._current_block()
-        if block is not None:
-            block["height"] = self.block_height_combo.currentData()
-            layout = validate_block_layout(block)
-            layout["row_span"] = {
-                "compact": 1,
-                "normal": 2,
-                "tall": 3,
-            }.get(block["height"], 2)
-            block["layout"] = validate_block_layout({"layout": layout})
-            self.block_row_span_spin.blockSignals(True)
-            self.block_row_span_spin.setValue(block["layout"]["row_span"])
-            self.block_row_span_spin.blockSignals(False)
-            self.workspace_layout_editor.set_workspace(self._current_workspace())
-            self._refresh_workspace_preview()
-
-    def _update_block_col_span(self, value):
-        block = self._current_block()
-        if block is not None:
-            block["width"] = "full" if value >= WORKSPACE_GRID_COLUMNS else "half"
-            self.workspace_layout_editor.update_selected_layout(col_span=value)
-            self._refresh_workspace_preview()
-
-    def _update_block_row_span(self, value):
-        block = self._current_block()
-        if block is not None:
-            block["height"] = "compact" if value <= 1 else "tall" if value >= 3 else "normal"
-            self.workspace_layout_editor.update_selected_layout(row_span=value)
-            self._refresh_workspace_preview()
-
-    def _refresh_block_fields_list(self):
-        block = self._current_block()
-        self.block_fields_list.blockSignals(True)
-        self.block_fields_list.clear()
-        if block is not None:
-            for field_key in block.get("fields", []):
-                self.block_fields_list.addItem(QListWidgetItem(field_key))
-        self.block_fields_list.blockSignals(False)
-
-    def _add_block_field(self):
-        block = self._current_block()
-        if block is None or block.get("type") != "personal_info":
-            return
-        field_key = self.field_add_combo.currentData() or self.field_add_combo.currentText()
-        if not field_key:
-            return
-        fields = block.setdefault("fields", [])
-        if field_key not in fields:
-            fields.append(field_key)
-            self._refresh_block_fields_list()
-            self._refresh_workspace_preview()
-
-    def _remove_block_field(self):
-        block = self._current_block()
-        item = self.block_fields_list.currentItem()
-        if block is None or item is None:
-            return
-        fields = list(block.get("fields", []))
-        row = self.block_fields_list.row(item)
-        if 0 <= row < len(fields):
-            fields.pop(row)
-            block["fields"] = fields
-            self._refresh_block_fields_list()
-            self.block_fields_list.setCurrentRow(min(row, len(fields) - 1))
-            self._refresh_workspace_preview()
-
-    def _move_block_field(self, direction):
-        block = self._current_block()
-        item = self.block_fields_list.currentItem()
-        if block is None or item is None:
-            return
-        fields = list(block.get("fields", []))
-        row = self.block_fields_list.row(item)
-        target = row + direction
-        if row < 0 or target < 0 or target >= len(fields):
-            return
-        fields[row], fields[target] = fields[target], fields[row]
-        block["fields"] = fields
-        self._refresh_block_fields_list()
-        self.block_fields_list.setCurrentRow(target)
-        self._refresh_workspace_preview()
-
-    def _update_block_document_type(self):
-        block = self._current_block()
-        if block is not None and block.get("type") == "document_viewer":
-            block["document_type"] = self.block_document_combo.currentData() or ""
-            self._refresh_workspace_preview()
-
-    def _update_block_web_url(self, value):
-        block = self._current_block()
-        if block is not None and block.get("type") == "web_viewer":
-            block["web_url"] = value
-            self._refresh_workspace_preview()
-
-    def _sample_workspace_context(self):
-        missionary = SimpleNamespace(
-            id=0,
-            full_name=tr("workspace_preview_sample_name"),
-            missionary_code="SAMPLE-001",
-            nationality="Peru",
-            passport_number="P000000",
-            carnet_number="CE-000000",
-            date_of_birth=date(2000, 1, 1),
-            arrival_date=date.today(),
-            visa_expiration=None,
-            passport_expiration=None,
-            residency_expiration=None,
-            prorroga_expiration=None,
-            carnet_issue_date=None,
-            interpol_appointment_date=None,
-            biometric_appointment_date=None,
-            pickup_appointment_date=None,
-            folder_path="",
-            current_stage="INTERPOL",
-            notes=tr("workspace_preview_sample_notes"),
-        )
-        workflow = SimpleNamespace(
-            id=0,
-            stage_name="INTERPOL",
-            status="IN PROGRESS",
-        )
-        return SimpleNamespace(
-            missionary=missionary,
-            documents=[],
-            workflows=[workflow],
-            tasks=[
-                {
-                    "id": 0,
-                    "title": tr("workspace_preview_sample_task"),
-                    "priority": "NORMAL",
-                    "status": "TODO",
-                    "due_date": None,
-                }
-            ],
-            residency_rows=[],
-            missing_groups=[("INTERPOL", ["PASSPORT"], True)],
-        )
-
-    def _refresh_workspace_preview(self):
-        if not hasattr(self, "workspace_preview_grid"):
-            return
-        clear_layout(self.workspace_preview_grid)
-        workspace = self._current_workspace()
-        if not workspace:
-            label = QLabel(tr("workspace_no_workspaces"))
-            label.setObjectName("MutedText")
-            self.workspace_preview_grid.addWidget(label, 0, 0, 1, WORKSPACE_GRID_COLUMNS)
-            return
-        preview_workspace = normalize_workspace_layout(workspace)
-        fake_dialog = SimpleNamespace(
-            preview_mode=True,
-            context=self._sample_workspace_context(),
-            find_document=lambda document_type=None: None,
-            normalized_web_url=MissionaryWorkspaceDialog.normalized_web_url,
-            open_web_url=lambda url: None,
-            open_document_viewer=lambda doc: None,
-            open_document_notes=lambda doc: None,
-            open_document_file=lambda doc: None,
-            change_workflow_status=lambda workflow: None,
-            add_task=lambda: None,
-            complete_task=lambda task: None,
-            edit_task=lambda task: None,
-        )
-        factory = WorkspaceBlockFactory(fake_dialog)
-        for col in range(WORKSPACE_GRID_COLUMNS):
-            self.workspace_preview_grid.setColumnStretch(col, 1)
-        for block in preview_workspace.get("blocks", []):
-            layout = validate_block_layout(block)
-            self.workspace_preview_grid.addWidget(
-                factory.build(block),
-                layout["row"],
-                layout["col"],
-                layout["row_span"],
-                layout["col_span"],
-            )
-
-    def _save_current_workspace(self):
-        workspace = self._current_workspace()
-        if not workspace:
-            return
-        saved = self.workspace_service.save_workspace(workspace)
-        self._load_workspaces()
-        self._select_workspace(saved.get("id"))
-        if self.main_window and hasattr(self.main_window, "refresh_workspace_actions"):
-            self.main_window.refresh_workspace_actions()
-        show_message(
-            self,
-            tr("workspaces_title"),
-            tr("workspace_saved"),
-        )
-
     def _save(self):
         lang = self.lang_combo.currentData()
         self.settings_service.set_language(lang)
@@ -1967,10 +1202,9 @@ class SettingsPage(QWidget):
         self.tabs.setTabText(1, tr("settings_tab_notifications"))
         self.tabs.setTabText(2, tr("settings_tab_transfer"))
         self.tabs.setTabText(3, tr("settings_tab_ui"))
-        self.tabs.setTabText(4, tr("settings_tab_workspaces"))
-        self.tabs.setTabText(5, tr("settings_tab_calendar"))
-        self.tabs.setTabText(6, tr("settings_tab_analytics"))
-        self.tabs.setTabText(7, tr("settings_tab_missionaries"))
+        self.tabs.setTabText(4, tr("settings_tab_calendar"))
+        self.tabs.setTabText(5, tr("settings_tab_analytics"))
+        self.tabs.setTabText(6, tr("settings_tab_missionaries"))
         self.lang_label.setText(tr("settings_language"))
         self.hint_label.setText(tr("settings_language_hint"))
         self.storage_label.setText(tr("settings_storage_root"))

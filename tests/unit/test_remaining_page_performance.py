@@ -1,16 +1,12 @@
-from copy import deepcopy
 from types import SimpleNamespace
 
 from ui import main_window as main_window_module
 from ui.main_window import MainWindow, NavigationContext
-from ui.pages import missionary_workspace_page as missionary_workspace_module
 from ui.pages import reports_page as reports_page_module
 from ui.pages import settings_page as settings_page_module
 from ui.pages.reports_page import ReportsPage
 from ui.pages.settings_page import SettingsPage
 from ui.pages.trash_page import TrashPage
-from ui.pages.workspaces_page import WorkspacesPage
-from services.workspace_service import new_workspace
 
 
 class DeferredThreadPool:
@@ -46,20 +42,6 @@ class CountingTrashService:
     def get_trashed(self):
         self.calls += 1
         return []
-
-
-class CountingWorkspaceService:
-    def __init__(self):
-        self.calls = 0
-        self.rows = [new_workspace("Existing")]
-
-    def list_workspaces(self):
-        self.calls += 1
-        return deepcopy(self.rows)
-
-    def save_workspace(self, workspace):
-        self.rows.append(deepcopy(workspace))
-        return deepcopy(workspace)
 
 
 class FakeSettingsService:
@@ -143,7 +125,7 @@ def test_reports_navigation_dispatches_once_and_reuses_fresh_cache(
         page.close()
 
 
-def test_trash_and_workspaces_do_not_load_data_in_constructors(
+def test_trash_does_not_load_data_in_constructor(
     monkeypatch,
     qapp,
 ):
@@ -154,57 +136,10 @@ def test_trash_and_workspaces_do_not_load_data_in_constructors(
     )
     trash = TrashPage(None)
 
-    workspace_service = CountingWorkspaceService()
-    workspaces = WorkspacesPage(
-        SimpleNamespace(
-            settings_service=SimpleNamespace(),
-            workspace_service=workspace_service,
-        )
-    )
-    pool = DeferredThreadPool()
-    workspaces._refresh_loader._thread_pool = pool
-
     try:
         assert trash_service.calls == 0
-        assert workspace_service.calls == 0
-
-        workspaces.request_refresh()
-        assert workspace_service.calls == 0
-        assert len(pool.tasks) == 1
-
-        pool.run_next(qapp)
-        assert workspace_service.calls == 1
-        assert workspaces._workspaces
     finally:
         trash.close()
-        workspaces.close()
-
-
-def test_workspace_edit_cancels_stale_background_replacement(qapp):
-    workspace_service = CountingWorkspaceService()
-    page = WorkspacesPage(
-        SimpleNamespace(
-            settings_service=SimpleNamespace(),
-            workspace_service=workspace_service,
-        )
-    )
-    pool = DeferredThreadPool()
-    page._refresh_loader._thread_pool = pool
-    page._apply_workspace_snapshot(deepcopy(workspace_service.rows))
-    page._last_refresh_at = 0.0
-
-    try:
-        page.request_refresh()
-        assert page._refresh_loader.busy is True
-        assert len(pool.tasks) == 1
-
-        page.workspace_name_input.setText("Unsaved local edit")
-        assert page._workspace_dirty is True
-
-        pool.run_next(qapp)
-        assert page._current_workspace()["name"] == "Unsaved local edit"
-    finally:
-        page.close()
 
 
 def test_settings_server_configuration_is_lazy_and_background_dispatched(
@@ -220,7 +155,6 @@ def test_settings_server_configuration_is_lazy_and_background_dispatched(
     page = SettingsPage(
         SimpleNamespace(
             settings_service=FakeSettingsService(),
-            workspace_service=SimpleNamespace(),
         )
     )
     pool = DeferredThreadPool()
@@ -283,14 +217,7 @@ def test_open_missionary_detail_switches_before_background_lookup_finishes():
     assert window._detail_navigation_stack == [context]
 
 
-def test_secondary_workspace_navigation_uses_nonblocking_entry_points():
-    class FakeMissionaryWorkspacePage:
-        def __init__(self):
-            self.calls = []
-
-        def request_workspace(self, missionary, workspace):
-            self.calls.append((missionary, workspace))
-
+def test_task_navigation_uses_nonblocking_entry_point():
     window = MainWindow.__new__(MainWindow)
     window._clear_detail_navigation_stack_if_detail_visible = lambda: None
     window._nav_widgets = {}
@@ -299,7 +226,6 @@ def test_secondary_workspace_navigation_uses_nonblocking_entry_points():
     window.office_work_page = SimpleNamespace(
         focus_task_context=lambda title="": task_calls.append(title)
     )
-    window.missionary_workspace_page = FakeMissionaryWorkspacePage()
     task_calls = []
     task_destinations = []
 
@@ -310,61 +236,6 @@ def test_secondary_workspace_navigation_uses_nonblocking_entry_points():
     )
     assert task_calls == ["Follow up"]
     assert task_destinations == ["office_work"]
-
-    missionary = SimpleNamespace(id=4)
-    workspace = {"id": "workspace"}
-    assert MainWindow.open_missionary_workspace(
-        window,
-        missionary,
-        workspace,
-    )
-    assert window.missionary_workspace_page.calls == [
-        (missionary, workspace)
-    ]
-
-
-def test_missionary_workspace_context_load_is_background_dispatched(
-    monkeypatch,
-    qapp,
-):
-    calls = []
-
-    class FakeClientViewService:
-        def get_missionary_detail_snapshot(self, missionary_id):
-            calls.append(missionary_id)
-            return {
-                "missionary": SimpleNamespace(
-                    id=missionary_id,
-                    full_name="Async Missionary",
-                    current_stage=None,
-                ),
-                "documents": [],
-                "workflows": [],
-                "tasks": [],
-                "residency_timeline": [],
-            }
-
-    monkeypatch.setattr(
-        missionary_workspace_module,
-        "ClientViewService",
-        FakeClientViewService,
-    )
-    page = missionary_workspace_module.MissionaryWorkspacePage()
-    pool = DeferredThreadPool()
-    page._context_loader._thread_pool = pool
-    missionary = SimpleNamespace(id=8, full_name="Async Missionary")
-    workspace = new_workspace("Async Workspace")
-
-    try:
-        page.request_workspace(missionary, workspace)
-        assert calls == []
-        assert len(pool.tasks) == 1
-
-        pool.run_next(qapp)
-        assert calls == [8]
-        assert page.context is not None
-    finally:
-        page.close()
 
 
 def test_startup_alerts_are_scheduled_without_running_feed_inline(

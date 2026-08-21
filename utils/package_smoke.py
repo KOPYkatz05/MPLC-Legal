@@ -75,8 +75,6 @@ def run_client_package_smoke_test():
             "openpyxl",
             "velopack",
             "winotify",
-            "PySide6.QtWebEngineWidgets",
-            "PySide6.QtWebChannel",
             "keyring.backends.Windows",
             "paddle",
             "paddleocr",

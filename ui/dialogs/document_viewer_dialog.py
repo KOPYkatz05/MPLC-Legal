@@ -1,4 +1,6 @@
 from pathlib import Path
+import os
+import shutil
 
 import fitz
 from shiboken6 import isValid as shiboken_is_valid
@@ -13,6 +15,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QSizePolicy,
+    QFileDialog,
     QVBoxLayout,
     QWidget,
 )
@@ -28,8 +31,8 @@ from ui.foundation import (
     MaskDialogBase,
     SmoothScrollDelegate,
     create_button,
-    create_card,
     create_combo_box,
+    create_pill_button,
     show_message,
     setup_dialog_shell,
     tune_fluent_scrollable,
@@ -171,20 +174,23 @@ class DocumentPreviewWidget(QWidget):
         title_stack.addWidget(self.preview_name_label)
         title_stack.addWidget(self.preview_meta_label)
 
-        self.file_type_badge = QLabel("Document")
-        self.file_type_badge.setObjectName("UploadStatusChip")
-        self.file_type_badge.setProperty("status", "ready")
-        self.file_type_badge.setAlignment(Qt.AlignCenter)
-        self.file_type_badge.setMinimumWidth(72)
-
-        self.close_btn = create_button("Close", "secondary")
+        self.close_btn = create_pill_button(tr("common_close"), parent=self.header)
         self.close_btn.clicked.connect(self.accept)
-        self.print_btn = create_button(tr("document_viewer_print"), "primary")
+        self.download_btn = create_pill_button(
+            tr("document_viewer_download"),
+            parent=self.header,
+        )
+        self.download_btn.setToolTip(tr("document_viewer_download_tooltip"))
+        self.download_btn.clicked.connect(self.download_document)
+        self.print_btn = create_pill_button(
+            tr("document_viewer_print"),
+            parent=self.header,
+        )
         self.print_btn.setToolTip(tr("document_viewer_print_tooltip"))
         self.print_btn.clicked.connect(self.print_document)
 
         header_layout.addLayout(title_stack, stretch=1)
-        header_layout.addWidget(self.file_type_badge, alignment=Qt.AlignTop)
+        header_layout.addWidget(self.download_btn, alignment=Qt.AlignTop)
         header_layout.addWidget(self.print_btn, alignment=Qt.AlignTop)
         header_layout.addWidget(self.close_btn, alignment=Qt.AlignTop)
         self.header.setVisible(self.show_header)
@@ -194,33 +200,34 @@ class DocumentPreviewWidget(QWidget):
         body.setObjectName("DocumentViewerBody")
         body.setAttribute(Qt.WA_StyledBackground, True)
         body_layout = QVBoxLayout()
-        body_layout.setContentsMargins(18, 16, 18, 18)
-        body_layout.setSpacing(12)
+        body_layout.setContentsMargins(0, 0, 0, 0)
+        body_layout.setSpacing(0)
         body.setLayout(body_layout)
 
-        self.preview_card = create_card(object_name="UploadSurfaceCard")
-        self.preview_card.setObjectName("DocumentViewerPreviewCard")
+        self.preview_card = QFrame()
+        self.preview_card.setObjectName("DocumentViewerContent")
         self.preview_card.setAttribute(Qt.WA_StyledBackground, True)
         card_layout = QVBoxLayout()
-        card_layout.setContentsMargins(18, 16, 18, 16)
-        card_layout.setSpacing(12)
+        card_layout.setContentsMargins(0, 0, 0, 0)
+        card_layout.setSpacing(0)
         self.preview_card.setLayout(card_layout)
 
         self.preview_toolbar = QFrame()
-        self.preview_toolbar.setObjectName("UploadPreviewToolbar")
+        self.preview_toolbar.setObjectName("DocumentViewerToolbar")
         self.preview_toolbar.setAttribute(Qt.WA_StyledBackground, True)
+        self.preview_toolbar.setFixedHeight(40)
         toolbar_layout = QHBoxLayout()
-        toolbar_layout.setContentsMargins(14, 12, 14, 12)
-        toolbar_layout.setSpacing(10)
+        toolbar_layout.setContentsMargins(10, 5, 10, 5)
+        toolbar_layout.setSpacing(6)
         self.preview_toolbar.setLayout(toolbar_layout)
 
         page_group = QHBoxLayout()
         page_group.setContentsMargins(0, 0, 0, 0)
-        page_group.setSpacing(8)
+        page_group.setSpacing(6)
         self.page_label = QLabel("Page")
         self.page_label.setObjectName("MutedText")
         self.page_combo = create_combo_box(object_name="UploadPageInput")
-        self.page_combo.setMinimumWidth(152)
+        self.page_combo.setMinimumWidth(120)
         self.page_combo.currentIndexChanged.connect(self.change_page)
         self.page_prev_btn = self._make_preview_button("<", self.go_to_previous_page, width=34, tooltip="Previous page")
         self.page_next_btn = self._make_preview_button(">", self.go_to_next_page, width=34, tooltip="Next page")
@@ -233,7 +240,7 @@ class DocumentPreviewWidget(QWidget):
 
         zoom_group = QHBoxLayout()
         zoom_group.setContentsMargins(0, 0, 0, 0)
-        zoom_group.setSpacing(8)
+        zoom_group.setSpacing(6)
         self.preview_zoom_label = QLabel("Fit 100%")
         self.preview_zoom_label.setObjectName("UploadZoomBadge")
         self.preview_zoom_label.setAlignment(Qt.AlignCenter)
@@ -260,7 +267,7 @@ class DocumentPreviewWidget(QWidget):
         )
         self.graphics_view.setFrameShape(QFrame.NoFrame)
         self.graphics_view.setBackgroundBrush(Qt.GlobalColor.white)
-        self.graphics_view.setObjectName("UploadPreviewCanvas")
+        self.graphics_view.setObjectName("DocumentViewerCanvas")
         self.graphics_view.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.graphics_view.zoom_requested.connect(self._zoom_preview_by)
         card_layout.addWidget(self.graphics_view, stretch=1)
@@ -295,6 +302,7 @@ class DocumentPreviewWidget(QWidget):
 
         if not self.path.exists():
             self.print_btn.setEnabled(False)
+            self.download_btn.setEnabled(False)
             self._show_empty_state("Cannot open document file.")
             return
 
@@ -306,11 +314,52 @@ class DocumentPreviewWidget(QWidget):
                 self._load_image()
             else:
                 self.print_btn.setEnabled(False)
+                self.download_btn.setEnabled(False)
                 self._show_empty_state("Unsupported file format.")
         except Exception:
             logger.exception("Document load failed")
             self.print_btn.setEnabled(False)
+            self.download_btn.setEnabled(False)
             self._show_empty_state("Failed to load document.")
+
+    def download_document(self, checked=False):
+        _ = checked
+        if not self.path.is_file():
+            return
+        destination, _selected_filter = QFileDialog.getSaveFileName(
+            self.window(),
+            tr("document_viewer_download_title"),
+            self.path.name,
+            tr("document_viewer_download_filter"),
+        )
+        if not destination:
+            return
+        destination_path = Path(destination)
+        try:
+            if self.path.resolve() != destination_path.resolve():
+                destination_path.parent.mkdir(parents=True, exist_ok=True)
+                partial_path = destination_path.with_suffix(
+                    destination_path.suffix + ".partial"
+                )
+                try:
+                    shutil.copy2(self.path, partial_path)
+                    os.replace(partial_path, destination_path)
+                finally:
+                    partial_path.unlink(missing_ok=True)
+            show_message(
+                self.window(),
+                tr("document_viewer_download_complete_title"),
+                tr("document_viewer_download_complete"),
+                kind="information",
+            )
+        except Exception:
+            logger.exception("Document download failed: %s", self.path)
+            show_message(
+                self.window(),
+                tr("document_viewer_download_failed_title"),
+                tr("document_viewer_download_failed"),
+                kind="critical",
+            )
 
     def print_document(self, checked=False):
         _ = checked
@@ -343,13 +392,11 @@ class DocumentPreviewWidget(QWidget):
             self.page_combo.addItem(f"Page {page_index + 1}", page_index)
         self.page_combo.setCurrentIndex(0)
         self.page_combo.blockSignals(False)
-        self.file_type_badge.setText("PDF")
         self._set_page_controls_visible(page_count > 1)
         self.change_page(0)
 
     def _load_image(self):
         self.current_pixmap = render_document_pixmap(str(self.path))
-        self.file_type_badge.setText("Image")
         self._update_preview_meta_label()
         self.update_preview(reset_zoom=True)
 
@@ -432,7 +479,6 @@ class DocumentPreviewWidget(QWidget):
         self.graphics_view.set_preview_interactions_enabled(False)
         self._update_preview_zoom_label()
         self.preview_meta_label.setText(message)
-        self.file_type_badge.setText("Unavailable")
 
     def _preview_base_scale(self, mode):
         if self._preview_item is None or self.current_pixmap is None:

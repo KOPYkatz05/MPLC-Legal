@@ -95,7 +95,7 @@ def test_app_shell_menu_button_toggles_labeled_navigation(qapp, qtbot):
     shell = AppShell("Mission Legal Tracker")
     shell.add_nav_item("dashboard", "Dashboard", 0, "Work")
     shell.add_nav_item("office_work", "Tasks", 1, "Work")
-    shell.add_nav_item("workspaces", "Workspaces", 2, "System")
+    shell.add_nav_item("trash", "Trash", 2, "System")
     shell.add_nav_item("settings", "Settings", 3, "System")
     shell.resize(800, 600)
     shell.show()
@@ -111,7 +111,7 @@ def test_app_shell_menu_button_toggles_labeled_navigation(qapp, qtbot):
     assert shell._sidebar_animation is not None
     assert not shell.menu_button.text_label.isHidden()
     assert not shell._buttons["dashboard"].text_label.isHidden()
-    assert not shell._buttons["workspaces"].text_label.isHidden()
+    assert not shell._buttons["trash"].text_label.isHidden()
     assert not shell._buttons["settings"].text_label.isHidden()
     qtbot.waitUntil(
         lambda: shell.COLLAPSED_SIDEBAR_WIDTH
@@ -127,7 +127,7 @@ def test_app_shell_menu_button_toggles_labeled_navigation(qapp, qtbot):
     assert shell.menu_button.navigation_text() == "Menu"
     assert shell._buttons["dashboard"].navigation_text() == "Dashboard"
     assert shell._buttons["office_work"].navigation_text() == "Tasks"
-    assert shell._buttons["workspaces"].navigation_text() == "Workspaces"
+    assert shell._buttons["trash"].navigation_text() == "Trash"
     assert shell._buttons["settings"].navigation_text() == "Settings"
     assert shell._buttons["dashboard"].icon_label.geometry().x() == icon_x
     assert not shell.menu_button.text_label.isHidden()
@@ -142,7 +142,7 @@ def test_app_shell_menu_button_toggles_labeled_navigation(qapp, qtbot):
     assert shell._buttons["dashboard"].toolButtonStyle() == Qt.ToolButtonIconOnly
     assert shell.menu_button.text_label.isHidden()
     assert shell._buttons["dashboard"].text_label.isHidden()
-    assert shell._buttons["workspaces"].text_label.isHidden()
+    assert shell._buttons["trash"].text_label.isHidden()
     assert shell._buttons["settings"].text_label.isHidden()
 
 

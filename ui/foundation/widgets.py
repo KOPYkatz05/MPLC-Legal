@@ -637,7 +637,7 @@ class PillActionButton(QFrame):
             button.setText(fallback_text)
         if menu_items:
             menu = QMenu(button)
-            menu.setObjectName(action.get("menu_object_name") or "WorkspaceTileContextMenu")
+            menu.setObjectName(action.get("menu_object_name") or "AppContextMenu")
             for item in menu_items:
                 menu_action = menu.addAction(item.get("text") or item.get("tooltip") or "")
                 menu_icon = self._icon_from_names(
@@ -764,7 +764,6 @@ class AppShell(QWidget):
             "appointments": ("CALENDAR",),
             "reports": ("BAR_CHART", "DOCUMENT"),
             "trash": ("DELETE",),
-            "workspaces": ("PACKAGE", "FOLDER"),
             "settings": ("SETTING",),
         }
 
@@ -1036,20 +1035,6 @@ class AppShell(QWidget):
             painter.drawLine(QPointF(6, 10), QPointF(18, 10))
             painter.drawLine(QPointF(9, 5.5), QPointF(9, 8))
             painter.drawLine(QPointF(15, 5.5), QPointF(15, 8))
-        elif icon_key == "workspaces":
-            painter.drawPolygon(
-                [
-                    QPointF(12, 5.5),
-                    QPointF(18, 9),
-                    QPointF(18, 15.5),
-                    QPointF(12, 19),
-                    QPointF(6, 15.5),
-                    QPointF(6, 9),
-                ]
-            )
-            painter.drawLine(QPointF(12, 12), QPointF(12, 19))
-            painter.drawLine(QPointF(6.5, 9.2), QPointF(12, 12))
-            painter.drawLine(QPointF(17.5, 9.2), QPointF(12, 12))
         elif icon_key == "reports":
             painter.drawLine(QPointF(7, 18), QPointF(17, 18))
             painter.drawLine(QPointF(8, 16), QPointF(8, 12))
@@ -1084,7 +1069,6 @@ class AppShell(QWidget):
             "appointments": "C",
             "reports": "R",
             "trash": "T",
-            "workspaces": "B",
             "settings": "S",
         }.get(key, (title or "?")[:1])
 

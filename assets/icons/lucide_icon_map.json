@@ -6,7 +6,6 @@
   "sidebar.appointments": ["calendar-days", "calendar"],
   "sidebar.reports": ["chart-column", "file-chart-column"],
   "sidebar.trash": ["trash-2", "trash"],
-  "sidebar.workspaces": ["boxes", "package", "folder"],
   "sidebar.settings": ["settings"],
   "table.copy": ["copy"],
   "table.copy_done": ["check"],

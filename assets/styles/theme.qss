@@ -3132,13 +3132,25 @@ QDialog#UploadWorkspaceSurface QFrame#DocumentViewerBody {
     background-color: #FFFFFF;
 }
 
-QWidget#UploadWorkspaceSurface QFrame#DocumentViewerPreviewCard,
-QDialog#UploadWorkspaceSurface QFrame#DocumentViewerPreviewCard,
-QWidget#UploadWorkspaceSurface QWidget#DocumentViewerPreviewCard,
-QDialog#UploadWorkspaceSurface QWidget#DocumentViewerPreviewCard {
+QWidget#UploadWorkspaceSurface QFrame#DocumentViewerContent,
+QDialog#UploadWorkspaceSurface QFrame#DocumentViewerContent {
     background-color: #FFFFFF;
-    border: 1px solid #ECECEC;
-    border-radius: 7px;
+    border: none;
+}
+
+QWidget#UploadWorkspaceSurface QFrame#DocumentViewerToolbar,
+QDialog#UploadWorkspaceSurface QFrame#DocumentViewerToolbar {
+    background-color: #F5F5F6;
+    border: none;
+    border-bottom: 1px solid #E5E5E7;
+    border-radius: 0;
+}
+
+QWidget#UploadWorkspaceSurface QGraphicsView#DocumentViewerCanvas,
+QDialog#UploadWorkspaceSurface QGraphicsView#DocumentViewerCanvas {
+    background-color: #F3F4F6;
+    border: none;
+    border-radius: 0;
 }
 
 /* ==========================================
@@ -3804,195 +3816,8 @@ QTableWidget#TrashTable {
     border-radius: 7px;
 }
 
-/* ==========================================
-   WORKSPACE BUILDER FIGMA SHELL
-   ========================================== */
-
-QWidget#WorkspacesPage {
-    background-color: #FFFFFF;
-}
-
-QFrame#WorkspaceTopBar {
-    background-color: #FFFFFF;
-    border-bottom: 1px solid #ECECEC;
-}
-
-QLabel#WorkspacePageTitle {
-    color: #18181B;
-    font-size: 15px;
-    font-weight: 700;
-    background: transparent;
-}
-
-QLabel#WorkspacePageSubtitle {
-    color: #71717A;
-    font-size: 11px;
-    background: transparent;
-}
-
-QSplitter#WorkspaceBuilderSplitter {
-    background-color: #FFFFFF;
-}
-
-QSplitter#WorkspaceLeftPanelSplitter {
-    background-color: transparent;
-}
-
-QSplitter#WorkspaceLeftPanelSplitter::handle:vertical {
-    background-color: transparent;
-    height: 14px;
-    margin: 2px 64px;
-    border-top: 2px solid #DADADF;
-    border-bottom: 2px solid transparent;
-}
-
-QSplitter#WorkspaceLeftPanelSplitter::handle:vertical:hover {
-    border-top-color: #A1A1AA;
-}
-
-QSplitter#WorkspaceLeftPanelSplitter::handle:vertical:pressed {
-    border-top-color: #0891B2;
-}
-
-QFrame#WorkspaceLeftRail,
-QFrame#WorkspaceInspector,
-QFrame#WorkspaceToolbar {
-    background-color: #FBFBFC;
-    border: 1px solid #ECECEC;
-    border-radius: 7px;
-}
-
-QFrame#WorkspaceCanvasCard {
-    background-color: #FBFBFC;
-    border: none;
-}
-
-QLabel#WorkspacePanelTitle,
-QLabel#WorkspaceDialogTitle {
-    color: #18181B;
-    font-size: 12px;
-    font-weight: 700;
-    background: transparent;
-}
-
-QLabel#WorkspacePanelHint {
-    color: #71717A;
-    font-size: 11px;
-    background: transparent;
-}
-
-QLabel#WorkspacePaletteCategory {
-    color: #52525B;
-    font-size: 10px;
-    font-weight: 700;
-    text-transform: uppercase;
-    background: transparent;
-    padding: 8px 2px 2px 2px;
-}
-
-QLabel#WorkspaceShortcutHint {
-    color: #71717A;
-    font-size: 11px;
-    background: transparent;
-}
-
-QLabel#WorkspaceSelectionMetrics {
-    background-color: #18181B;
-    color: #FFFFFF;
-    border-radius: 7px;
-    padding: 4px 9px;
-    font-size: 11px;
-    font-weight: 700;
-}
-
-QFrame#WorkspacePaletteButton,
-QWidget#WorkspacePaletteButton {
-    background-color: #FAFAFA;
-    border: 1px solid #C7C7CF;
-    border-radius: 17px;
-}
-
-QFrame#WorkspaceListItemCard,
-QWidget#WorkspaceListItemCard {
-    background-color: #FFFFFF;
-    border: 1px solid #ECECEC;
-    border-radius: 7px;
-}
-
-QFrame#WorkspacePaletteButton:hover,
-QWidget#WorkspacePaletteButton:hover {
-    background-color: #FFFFFF;
-    border-color: #A1A1AA;
-}
-
-QFrame#WorkspaceListItemCard:hover,
-QWidget#WorkspaceListItemCard:hover {
-    background-color: #F8FAFC;
-    border-color: #C9D7F2;
-}
-
-QLabel#WorkspacePaletteTitle {
-    color: #18181B;
-    font-size: 12px;
-    font-weight: 400;
-    background: transparent;
-}
-
-QFrame#WorkspacePaletteButton:hover QLabel#WorkspacePaletteTitle,
-QWidget#WorkspacePaletteButton:hover QLabel#WorkspacePaletteTitle {
-    font-weight: 700;
-}
-
-QFrame#WorkspacePaletteAddButton {
-    background-color: transparent;
-    border: none;
-    border-radius: 7px;
-}
-
-QFrame#WorkspacePaletteAddButton:hover {
-    background-color: #F4F4F5;
-    border: 1px solid #E4E4E7;
-}
-
-QFrame#WorkspacePaletteAddButton:pressed {
-    background-color: #ECECEF;
-    border: 1px solid #DADADF;
-}
-
-QFrame#WorkspaceLayoutTile,
-QWidget#WorkspaceLayoutTile {
-    background-color: #FFFFFF;
-    border: 1px solid #ECECEC;
-    border-radius: 7px;
-}
-
-QFrame#WorkspaceLayoutTile QFrame#FluentCard,
-QFrame#WorkspaceLayoutTile QWidget#FluentCard,
-QFrame#WorkspaceLayoutTile QFrame#WorkspaceTileLivePreview,
-QFrame#WorkspaceLayoutTile QWidget#WorkspaceTileLivePreview {
-    border: none;
-    background-color: #FFFFFF;
-}
-
-QLabel#WorkspaceTileSizeChip {
-    background-color: #F4F4F5;
-    color: #52525B;
-    border: 1px solid #E4E4E7;
-    border-radius: 7px;
-    padding: 2px 8px;
-    font-weight: 700;
-}
-
-QLabel#WorkspaceTilePreviewStrong,
-QLabel#WorkspaceTilePreviewLine {
-    background-color: #FFFFFF;
-    color: #52525B;
-    border: 1px solid #ECECEC;
-    border-radius: 6px;
-    padding: 3px 7px;
-}
-
-QMenu#WorkspaceTileContextMenu {
+/* Reusable application context menus. */
+QMenu#AppContextMenu {
     background-color: #FFFFFF;
     color: #18181B;
     border: 1px solid #DADADF;
@@ -4000,250 +3825,19 @@ QMenu#WorkspaceTileContextMenu {
     padding: 6px;
 }
 
-QMenu#WorkspaceTileContextMenu::item {
+QMenu#AppContextMenu::item {
     padding: 7px 28px 7px 12px;
     border-radius: 6px;
     min-width: 140px;
 }
 
-QMenu#WorkspaceTileContextMenu::item:selected {
+QMenu#AppContextMenu::item:selected {
     background-color: #F4F4F5;
     color: #18181B;
 }
 
-QMenu#WorkspaceTileContextMenu::item:disabled {
+QMenu#AppContextMenu::item:disabled {
     color: #A1A1AA;
-}
-
-QListWidget#WorkspaceSwapBlockList {
-    background-color: #FFFFFF;
-    color: #18181B;
-    border: none;
-    outline: none;
-}
-
-QListWidget#WorkspaceSwapBlockList::item {
-    min-height: 28px;
-    padding: 4px 9px;
-    border-radius: 6px;
-}
-
-QListWidget#WorkspaceSwapBlockList::item:hover,
-QListWidget#WorkspaceSwapBlockList::item:selected {
-    background-color: #F4F4F5;
-    color: #18181B;
-}
-
-QLabel#WorkspaceTilePreviewStrong {
-    color: #18181B;
-    font-weight: 700;
-}
-
-QLabel#WorkspaceCanvasEmptyState {
-    color: #71717A;
-    font-size: 15px;
-    font-weight: 700;
-    background: transparent;
-}
-
-/* ==========================================
-   MISSIONARY WORKSPACE DIALOG
-   ========================================== */
-
-QWidget#AppDialogSurface QFrame#MissionaryWorkspaceDialogHeader,
-QDialog#AppDialogSurface QFrame#MissionaryWorkspaceDialogHeader {
-    background-color: #FFFFFF;
-    border-bottom: 1px solid #ECECEC;
-    border-top-left-radius: 20px;
-    border-top-right-radius: 20px;
-}
-
-QWidget#AppDialogSurface QLabel#MissionaryWorkspaceDialogTitle,
-QDialog#AppDialogSurface QLabel#MissionaryWorkspaceDialogTitle {
-    color: #18181B;
-    font-size: 15px;
-    font-weight: 700;
-    background: transparent;
-}
-
-QWidget#AppDialogSurface QLabel#MissionaryWorkspaceDialogSubtitle,
-QDialog#AppDialogSurface QLabel#MissionaryWorkspaceDialogSubtitle {
-    color: #71717A;
-    font-size: 11px;
-    background: transparent;
-}
-
-QWidget#AppDialogSurface QWidget#MissionaryWorkspaceDialogBody,
-QDialog#AppDialogSurface QWidget#MissionaryWorkspaceDialogBody,
-QWidget#AppDialogSurface QScrollArea#WorkspaceScrollArea,
-QDialog#AppDialogSurface QScrollArea#WorkspaceScrollArea {
-    background-color: #FFFFFF;
-    border: none;
-}
-
-QWidget#AppDialogSurface QFrame#WorkspaceInfoRow,
-QDialog#AppDialogSurface QFrame#WorkspaceInfoRow,
-QWidget#AppDialogSurface QWidget#WorkspaceInfoRow,
-QDialog#AppDialogSurface QWidget#WorkspaceInfoRow {
-    background-color: #FBFBFC;
-    border: 1px solid #ECECEC;
-    border-radius: 7px;
-}
-
-QWidget#AppDialogSurface QFrame#WorkspaceMetricCard,
-QDialog#AppDialogSurface QFrame#WorkspaceMetricCard,
-QWidget#AppDialogSurface QWidget#WorkspaceMetricCard,
-QDialog#AppDialogSurface QWidget#WorkspaceMetricCard {
-    background-color: #FFFFFF;
-    border: 1px solid #ECECEC;
-    border-radius: 7px;
-}
-
-QWidget#WorkspacePropertiesPopup,
-QDialog#WorkspacePropertiesDialog {
-    background-color: transparent;
-}
-
-QFrame#WorkspacePropertiesSurface {
-    background-color: transparent;
-    border: none;
-    border-radius: 0px;
-}
-
-QFrame#WorkspacePropertiesHeader {
-    background-color: #FFFFFF;
-    border: none;
-}
-
-QFrame#WorkspacePropertiesBody {
-    background-color: #FFFFFF;
-}
-
-QLabel#WorkspacePropertiesTitle {
-    color: #18181B;
-    font-size: 15px;
-    font-weight: 700;
-    background: transparent;
-}
-
-QLabel#WorkspacePropertiesSubtitle {
-    color: #71717A;
-    font-size: 11px;
-    background: transparent;
-}
-
-QFrame#WorkspacePropertiesFieldsPanel {
-    background-color: transparent;
-    border: none;
-}
-
-QFrame#WorkspacePropertiesSelectedFields {
-    background-color: #FBFBFC;
-    border: 1px solid #ECECEC;
-    border-radius: 8px;
-}
-
-QFrame#WorkspaceFieldPill {
-    background-color: #FAFAFA;
-    border: 1px solid #C7C7CF;
-    border-radius: 14px;
-}
-
-QFrame#WorkspaceFieldPill:hover {
-    background-color: #FFFFFF;
-    border-color: #A1A1AA;
-}
-
-QLabel#WorkspaceFieldPillText {
-    color: #18181B;
-    font-size: 11px;
-    font-weight: 400;
-    background: transparent;
-}
-
-QFrame#WorkspaceFieldPill:hover QLabel#WorkspaceFieldPillText {
-    font-weight: 700;
-}
-
-QPushButton#WorkspaceFieldPillRemove {
-    background-color: transparent;
-    color: #71717A;
-    border: none;
-    border-radius: 0px;
-    padding: 0px;
-    margin: 0px;
-    font-size: 12px;
-    font-weight: 700;
-    text-align: center;
-}
-
-QPushButton#WorkspaceFieldPillRemove:hover {
-    background-color: transparent;
-    color: #18181B;
-}
-
-QListWidget#WorkspaceFieldOptionList,
-QListWidget#WorkspacePropertiesLinksList,
-QListWidget#WorkspacePropertiesActionsList {
-    background-color: #FFFFFF;
-    color: #18181B;
-    border: 1px solid #ECECEC;
-    border-radius: 8px;
-    outline: none;
-}
-
-QListWidget#WorkspaceFieldOptionList::item,
-QListWidget#WorkspacePropertiesLinksList::item,
-QListWidget#WorkspacePropertiesActionsList::item {
-    min-height: 28px;
-    padding: 4px 9px;
-    border-radius: 7px;
-}
-
-QListWidget#WorkspaceFieldOptionList::item:hover,
-QListWidget#WorkspaceFieldOptionList::item:selected,
-QListWidget#WorkspacePropertiesLinksList::item:hover,
-QListWidget#WorkspacePropertiesLinksList::item:selected,
-QListWidget#WorkspacePropertiesActionsList::item:hover,
-QListWidget#WorkspacePropertiesActionsList::item:selected {
-    background-color: #F4F4F5;
-    color: #18181B;
-}
-
-QListWidget#WorkspaceFieldOptionList::item:disabled {
-    color: #A1A1AA;
-    background-color: #FAFAFA;
-}
-
-QLabel#WorkspacePropertiesNoFields {
-    color: #71717A;
-    font-size: 11px;
-    font-weight: 700;
-    background: transparent;
-}
-
-QPushButton#WorkspacePropertiesCancelButton,
-QPushButton#WorkspacePropertiesApplyButton {
-    min-width: 64px;
-    padding: 0px 14px;
-    border-radius: 17px;
-    font-size: 12px;
-    font-weight: 400;
-    background-color: #FAFAFA;
-    color: #18181B;
-    border: 1px solid #C7C7CF;
-}
-
-QPushButton#WorkspacePropertiesCancelButton:hover,
-QPushButton#WorkspacePropertiesApplyButton:hover {
-    background-color: #FFFFFF;
-    border-color: #A1A1AA;
-    font-weight: 700;
-}
-
-QPushButton#WorkspacePropertiesCancelButton:pressed,
-QPushButton#WorkspacePropertiesApplyButton:pressed {
-    background-color: #ECECEF;
 }
 
 /* Keep reusable dialog child panels inside the rounded surface. */

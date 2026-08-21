@@ -17,7 +17,6 @@ from PySide6.QtWidgets import (
 )
 
 from services.settings_service import SettingsService
-from services.workspace_service import WorkspaceService
 from services.notification_feed_service import NotificationFeedService
 from ui.foundation import AppShell, FLUENT_AVAILABLE, fluent_icon
 from ui.foundation.background_loader import LatestRequestLoader
@@ -25,12 +24,10 @@ from ui.pages.calendar_page import CalendarPage
 from ui.pages.dashboard_page import DashboardPage
 from ui.pages.missionaries_page import MissionariesPage
 from ui.pages.missionary_detail_page import MissionaryDetailPage
-from ui.pages.missionary_workspace_page import MissionaryWorkspacePage
 from ui.pages.office_work_page import OfficeWorkPage
 from ui.pages.reports_page import ReportsPage
 from ui.pages.settings_page import SettingsPage
 from ui.pages.trash_page import TrashPage
-from ui.pages.workspaces_page import WorkspacesPage
 from utils.i18n import tr
 from utils.logger import logger
 from utils.window_diagnostics import log_top_level_windows
@@ -225,8 +222,7 @@ class _SidebarCompat:
             4: "appointments",
             5: "reports",
             6: "trash",
-            7: "workspaces",
-            8: "settings",
+            7: "settings",
         }
 
     def setCurrentRow(self, row):
@@ -254,7 +250,6 @@ class MainWindow(QMainWindow):
         super().__init__()
 
         self.settings_service = SettingsService()
-        self.workspace_service = WorkspaceService()
         self._nav_widgets = {}
         self._nav_titles = {}
         self._content_overlay = None
@@ -332,13 +327,6 @@ class MainWindow(QMainWindow):
             if callable(column_refresher):
                 column_refresher()
 
-    def refresh_workspace_actions(self):
-        if hasattr(self, "detail_page") and hasattr(
-            self.detail_page,
-            "refresh_workspace_actions",
-        ):
-            self.detail_page.refresh_workspace_actions()
-
     def setup_ui(self):
         self.dashboard_page = DashboardPage(self)
         self.dashboard_page.startup_alerts_requested.connect(
@@ -346,12 +334,10 @@ class MainWindow(QMainWindow):
         )
         self.missionaries_page = MissionariesPage(self)
         self.detail_page = MissionaryDetailPage(self)
-        self.missionary_workspace_page = MissionaryWorkspacePage(self)
         self.office_work_page = OfficeWorkPage(self)
         self.calendar_page = CalendarPage(self)
         self.reports_page = ReportsPage(self)
         self.trash_page = TrashPage(self)
-        self.workspaces_page = WorkspacesPage(self)
         self.settings_page = SettingsPage(self)
 
         self._nav_keys = {
@@ -361,7 +347,6 @@ class MainWindow(QMainWindow):
             "appointments": "sidebar_appointments",
             "reports": "sidebar_reports",
             "trash": "sidebar_trash",
-            "workspaces": "sidebar_workspaces",
             "settings": "sidebar_settings",
         }
         self._detail_navigation_stack = []
@@ -428,15 +413,12 @@ class MainWindow(QMainWindow):
 
         self.detail_page.setObjectName("MissionaryDetailPage")
         self.stackedWidget.addWidget(self.detail_page)
-        self.missionary_workspace_page.setObjectName("MissionaryWorkspacePage")
-        self.stackedWidget.addWidget(self.missionary_workspace_page)
 
         for widget, key, icon_name, _stack_index in [
             (self.office_work_page, "office_work", "EDIT", 3),
             (self.calendar_page, "appointments", "CALENDAR", 4),
             (self.reports_page, "reports", "DOCUMENT", 5),
             (self.trash_page, "trash", "DELETE", 6),
-            (self.workspaces_page, "workspaces", "EDIT", 7),
             (self.settings_page, "settings", "SETTING", 7),
         ]:
             self._add_fluent_nav_page(widget, key, icon_name)
@@ -470,9 +452,7 @@ class MainWindow(QMainWindow):
             self.calendar_page,
             self.reports_page,
             self.trash_page,
-            self.workspaces_page,
             self.settings_page,
-            self.missionary_workspace_page,
         ]:
             self.stack.addWidget(widget)
 
@@ -483,8 +463,7 @@ class MainWindow(QMainWindow):
             ("appointments", 4, "Work"),
             ("reports", 5, "Insights"),
             ("trash", 6, "System"),
-            ("workspaces", 7, "System"),
-            ("settings", 8, "System"),
+            ("settings", 7, "System"),
         ]:
             self.shell.add_nav_item(key, tr(self._nav_keys[key]), index, group)
 
@@ -534,9 +513,7 @@ class MainWindow(QMainWindow):
             page = self.reports_page
         elif nav_key == "trash" or stack_index == 6:
             page = self.trash_page
-        elif nav_key == "workspaces" or stack_index == 7:
-            page = self.workspaces_page
-        elif nav_key == "settings" or stack_index == 8:
+        elif nav_key == "settings" or stack_index == 7:
             page = self.settings_page
 
         self._request_page_refresh(page)
@@ -559,14 +536,10 @@ class MainWindow(QMainWindow):
             self.set_nav_title(nav_key, tr(translation_key))
         if hasattr(self.settings_page, "retranslate_ui"):
             self.settings_page.retranslate_ui()
-        if hasattr(self.workspaces_page, "retranslate_ui"):
-            self.workspaces_page.retranslate_ui()
         if hasattr(self.missionaries_page, "retranslate_ui"):
             self.missionaries_page.retranslate_ui()
         if hasattr(self.detail_page, "retranslate_ui"):
             self.detail_page.retranslate_ui()
-        if hasattr(self.missionary_workspace_page, "retranslate_ui"):
-            self.missionary_workspace_page.retranslate_ui()
 
     def go_to_calendar(self):
         self.set_current_key("appointments")
@@ -768,36 +741,6 @@ class MainWindow(QMainWindow):
                 "Failed to open task list for task ID %s",
                 task_id,
             )
-            return False
-
-    def open_missionary_workspace(self, missionary, workspace):
-        try:
-            self._clear_detail_navigation_stack_if_detail_visible()
-            requester = getattr(
-                self.missionary_workspace_page,
-                "request_workspace",
-                None,
-            )
-            if callable(requester):
-                requester(missionary, workspace)
-            else:
-                self.missionary_workspace_page.load_workspace(
-                    missionary,
-                    workspace,
-                )
-            self.stack.setCurrentWidget(self.missionary_workspace_page)
-
-            if (
-                FLUENT_AVAILABLE
-                and hasattr(self, "navigationInterface")
-                and "missionaries" in self._nav_widgets
-            ):
-                widget = self._nav_widgets["missionaries"]
-                self.navigationInterface.setCurrentItem(widget.objectName())
-
-            return True
-        except Exception:
-            logger.exception("Failed to open missionary workspace")
             return False
 
     def show_content_loading_overlay(

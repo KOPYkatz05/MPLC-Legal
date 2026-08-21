@@ -639,10 +639,10 @@ class OfficeWorkPage(QWidget):
 
     def _show_task_filter_menu(self):
         menu = QMenu(self)
-        menu.setObjectName("WorkspaceTileContextMenu")
+        menu.setObjectName("AppContextMenu")
 
         quick_filters = menu.addMenu("Quick Filters")
-        quick_filters.setObjectName("WorkspaceTileContextMenu")
+        quick_filters.setObjectName("AppContextMenu")
         for label, preset in [
             ("Today", "today"),
             ("Overdue", "overdue"),
@@ -679,7 +679,7 @@ class OfficeWorkPage(QWidget):
 
     def _add_filter_menu_group(self, menu, title, combo):
         submenu = menu.addMenu(title)
-        submenu.setObjectName("WorkspaceTileContextMenu")
+        submenu.setObjectName("AppContextMenu")
         current_value = combo.currentData()
         for index in range(combo.count()):
             label = combo.itemText(index)

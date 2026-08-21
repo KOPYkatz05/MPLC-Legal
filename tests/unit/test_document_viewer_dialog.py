@@ -76,8 +76,8 @@ def test_image_loads_preview_without_page_controls(tmp_path, qapp):
         assert dialog.preview_zoom_in_btn.isEnabled()
         assert not dialog.graphics_view.isHidden()
         assert dialog.preview_empty_label.isHidden()
-        assert dialog.file_type_badge.text() == "Image"
         assert dialog.print_btn.isEnabled()
+        assert dialog.download_btn.isEnabled()
     finally:
         dialog.close()
 
@@ -126,6 +126,7 @@ def test_missing_path_shows_empty_state_and_disables_preview(tmp_path, qapp):
         assert dialog.graphics_view.isHidden()
         assert not dialog.preview_zoom_in_btn.isEnabled()
         assert not dialog.print_btn.isEnabled()
+        assert not dialog.download_btn.isEnabled()
     finally:
         dialog.close()
 
@@ -141,6 +142,7 @@ def test_unsupported_path_shows_empty_state_and_disables_preview(tmp_path, qapp)
         assert "Unsupported file format" in dialog.preview_empty_label.text()
         assert not dialog.preview_zoom_out_btn.isEnabled()
         assert not dialog.print_btn.isEnabled()
+        assert not dialog.download_btn.isEnabled()
     finally:
         dialog.close()
 
@@ -221,6 +223,21 @@ def test_resize_preserves_fit_zoom_mode(tmp_path, qapp):
         dialog.close()
 
 
+def test_viewer_content_is_flat_and_toolbar_is_compact(tmp_path, qapp):
+    image_path = _make_image(tmp_path / "document.png")
+    dialog = DocumentViewerDialog(str(image_path))
+    try:
+        assert dialog.preview_card.objectName() == "DocumentViewerContent"
+        assert dialog.preview_card.layout().contentsMargins().left() == 0
+        assert dialog.preview_card.layout().spacing() == 0
+        assert dialog.preview_toolbar.objectName() == "DocumentViewerToolbar"
+        assert dialog.preview_toolbar.height() == 40
+        assert dialog.preview_toolbar.layout().contentsMargins().top() == 5
+        assert dialog.graphics_view.objectName() == "DocumentViewerCanvas"
+    finally:
+        dialog.close()
+
+
 def test_print_button_prints_current_local_document(tmp_path, qapp, monkeypatch):
     image_path = _make_image(tmp_path / "document.png")
     calls = []
@@ -236,5 +253,28 @@ def test_print_button_prints_current_local_document(tmp_path, qapp, monkeypatch)
         assert calls[0][0] == image_path
         assert calls[0][1]["parent"] is dialog.preview_widget.window()
         assert calls[0][1]["job_name"] == image_path.name
+    finally:
+        dialog.close()
+
+
+def test_download_button_saves_current_cached_document(tmp_path, qapp, monkeypatch):
+    image_path = _make_image(tmp_path / "document.png")
+    destination = tmp_path / "saved-copy.png"
+    messages = []
+    monkeypatch.setattr(
+        "ui.dialogs.document_viewer_dialog.QFileDialog.getSaveFileName",
+        lambda *args, **kwargs: (str(destination), ""),
+    )
+    monkeypatch.setattr(
+        "ui.dialogs.document_viewer_dialog.show_message",
+        lambda *args, **kwargs: messages.append((args, kwargs)),
+    )
+    dialog = DocumentViewerDialog(str(image_path))
+    try:
+        dialog.download_btn.click()
+
+        assert destination.read_bytes() == image_path.read_bytes()
+        assert messages[-1][1]["kind"] == "information"
+        assert not destination.with_suffix(".png.partial").exists()
     finally:
         dialog.close()

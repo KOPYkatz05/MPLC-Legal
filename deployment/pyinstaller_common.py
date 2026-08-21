@@ -16,9 +16,6 @@ from PyInstaller.utils.win32.versioninfo import (
 
 CLIENT_HIDDEN_IMPORTS = [
     "PIL.ImageQt",
-    "PySide6.QtWebChannel",
-    "PySide6.QtWebEngineCore",
-    "PySide6.QtWebEngineWidgets",
     "cryptography",
     "bs4",
     "docx",
