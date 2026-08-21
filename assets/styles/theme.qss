@@ -203,141 +203,6 @@ QDialog#AppDialogSurface QFrame#MissionariesDialogFooter {
     border-bottom-right-radius: 20px;
 }
 
-QWidget#AlertWorkspacePage,
-QWidget#AlertWorkspaceContent,
-QScrollArea#AlertWorkspaceScroll {
-    background-color: #FFFFFF;
-}
-
-QFrame#AlertWorkspaceTopBar {
-    background-color: #FFFFFF;
-    border-bottom: 1px solid #ECECEC;
-}
-
-QFrame#AlertWorkspaceTabStrip {
-    background-color: transparent;
-    min-height: 30px;
-    max-height: 30px;
-    border-bottom: 1px solid #D9D9D9;
-}
-
-QLabel#AlertWorkspaceTopTab {
-    color: #707070;
-    font-size: 12px;
-    font-weight: 400;
-    padding: 0px 9px 7px 9px;
-    border-bottom: 1px solid transparent;
-}
-
-QLabel#AlertWorkspaceTopTab[active="true"] {
-    color: #242424;
-    border-bottom: 1px solid #242424;
-}
-
-QLabel#AlertWorkspaceTitle {
-    color: #18181B;
-    font-size: 15px;
-    font-weight: 700;
-    background: transparent;
-}
-
-QLabel#AlertWorkspaceSubtitle {
-    color: #71717A;
-    font-size: 11px;
-    background: transparent;
-}
-
-QFrame#AlertStepRow,
-QFrame#AlertMissionaryRow {
-    background-color: #FAFAFA;
-    border: 1px solid #F1F1F1;
-    border-radius: 7px;
-}
-
-QFrame#AlertStepRow:hover,
-QFrame#AlertMissionaryRow:hover {
-    background-color: #FFFFFF;
-    border-color: #DADADF;
-}
-
-QLabel#AlertStepNumber {
-    color: #0EA5AC;
-    border: 1px solid #9BE3E6;
-    border-radius: 7px;
-    background-color: #EFFCFC;
-    font-weight: 700;
-}
-
-QFrame#AlertFactTile {
-    background-color: #FFFFFF;
-    border: 1px solid #ECECEC;
-    border-radius: 7px;
-}
-
-QFrame#AlertWorkspaceErrorCard,
-QWidget#AlertWorkspaceErrorCard {
-    background-color: #FFFFFF;
-    border: 1px solid #ECECEC;
-    border-radius: 7px;
-}
-
-QLabel#AlertFactValue {
-    color: #18181B;
-    font-size: 13px;
-    font-weight: 700;
-    background: transparent;
-}
-
-QLabel#AlertFactValue[tone="danger"] {
-    color: #DC2626;
-}
-
-QLabel#AlertFactValue[tone="warning"] {
-    color: #D97706;
-}
-
-QLabel#AlertFactValue[tone="info"] {
-    color: #0EA5AC;
-}
-
-QLabel#AlertFactValue[tone="success"] {
-    color: #059669;
-}
-
-QLabel#AlertFactValue[tone="neutral"] {
-    color: #71717A;
-}
-
-QLabel#AlertWorkspaceChip {
-    color: #71717A;
-    border: 1px solid #71717A;
-    border-radius: 7px;
-    padding: 3px 8px;
-    background-color: #FFFFFF;
-    font-size: 11px;
-    font-weight: 600;
-}
-
-QLabel#AlertWorkspaceChip[tone="danger"] {
-    color: #DC2626;
-    border-color: #DC2626;
-}
-
-QLabel#AlertWorkspaceChip[tone="warning"] {
-    color: #D97706;
-    border-color: #D97706;
-}
-
-QLabel#AlertWorkspaceChip[tone="info"] {
-    color: #0F5F64;
-    border-color: #0EA5AC;
-}
-
-QLabel#AlertWorkspaceChip[tone="success"] {
-    color: #059669;
-    border-color: #059669;
-}
-
 QWidget#SettingsPage,
 QWidget#SettingsWorkspace {
     background-color: #FFFFFF;
@@ -463,6 +328,14 @@ QWidget#MissionaryDetailPage QDateEdit#MissionaryDetailDatePicker,
 QWidget#MissionaryDetailPage QDateTimeEdit#MissionaryDetailDatePicker,
 QWidget#MissionaryDetailPage QPushButton#MissionaryDetailDatePicker {
     min-height: 34px;
+}
+
+QWidget#MissionaryDetailPage QDateEdit#MissionaryDetailDatePicker[editLocked="true"],
+QWidget#MissionaryDetailPage QDateTimeEdit#MissionaryDetailDatePicker[editLocked="true"],
+QWidget#MissionaryDetailPage QPushButton#MissionaryDetailDatePicker[editLocked="true"] {
+    color: #71717A;
+    background-color: #F4F4F5;
+    border-color: #D4D4D8;
 }
 
 QWidget#MissionaryDetailPage QDateEdit#MissionaryDetailDatePicker[state="empty"],
@@ -2728,6 +2601,10 @@ QPlainTextEdit[chatTextBox="true"] {
 
 QLineEdit[chatTextBoxVariant="search"] {
     padding: 8px 32px 8px 13px;
+}
+
+QLineEdit[chatTextBox="true"][editLocked="true"] {
+    color: #71717A;
 }
 
 QPlainTextEdit[chatTextBox="true"] {

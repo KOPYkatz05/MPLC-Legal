@@ -147,7 +147,10 @@ class DocumentPreviewWidget(QWidget):
         root.setSpacing(0)
         self.setLayout(root)
 
-        self.header = QFrame()
+        # Parent the header before making it visible.  When it is temporarily
+        # parentless, Windows treats it as a top-level window and flashes it
+        # briefly before the viewer dialog appears.
+        self.header = QFrame(self)
         self.header.setObjectName("DocumentViewerHeader")
         self.header.setAttribute(Qt.WA_StyledBackground, True)
         header_layout = QHBoxLayout()

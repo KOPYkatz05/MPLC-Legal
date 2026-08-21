@@ -10,7 +10,7 @@ from pathlib import Path
 
 import fitz
 
-from PySide6.QtGui import QAction, QPixmap
+from PySide6.QtGui import QAction, QCursor, QPixmap
 from PySide6.QtWidgets import (
     QButtonGroup,
     QDialog,
@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
 
 from PySide6.QtCore import (
     Qt,
+    QEvent,
     QSize,
     QDate,
     QTimer,
@@ -74,6 +75,7 @@ from ui.foundation import (
     create_line_edit,
     create_list_widget,
     create_loading_icon,
+    lucide_icon,
     create_menu,
     create_plain_text_edit,
     create_pill_button,
@@ -437,6 +439,61 @@ def _refresh_widget_style(widget):
     widget.update()
 
 
+class IntentionalEditField(QWidget):
+    """Field shell that reveals its edit affordance only on hover."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.edit_button = None
+        self._unlocked = False
+
+    def set_edit_button(self, button):
+        self.edit_button = button
+        button.setVisible(False)
+
+    def enable_hover_tracking(self):
+        watched_widgets = (self, *self.findChildren(QWidget))
+        for child in watched_widgets:
+            child.setAttribute(Qt.WA_Hover, True)
+            child.setMouseTracking(True)
+            child.installEventFilter(self)
+
+    def _sync_edit_button_visibility(self):
+        if self.edit_button is None or self._unlocked:
+            return
+        local_pos = self.mapFromGlobal(QCursor.pos())
+        self.edit_button.setVisible(self.rect().contains(local_pos))
+
+    def eventFilter(self, watched, event):
+        if self.edit_button is not None:
+            if event.type() in {
+                QEvent.Enter,
+                QEvent.HoverEnter,
+                QEvent.HoverMove,
+                QEvent.MouseMove,
+            }:
+                self.edit_button.setVisible(True)
+            elif event.type() in {QEvent.Leave, QEvent.HoverLeave}:
+                QTimer.singleShot(0, self._sync_edit_button_visibility)
+        return super().eventFilter(watched, event)
+
+    def set_unlocked(self, unlocked):
+        self._unlocked = bool(unlocked)
+        self.setProperty("editUnlocked", self._unlocked)
+        if self.edit_button is not None:
+            self.edit_button.setVisible(self._unlocked or self.underMouse())
+
+    def enterEvent(self, event):
+        if self.edit_button is not None:
+            self.edit_button.setVisible(True)
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        if self.edit_button is not None and not self._unlocked:
+            self.edit_button.setVisible(False)
+        super().leaveEvent(event)
+
+
 class MissionaryDetailPage(QWidget):
     def _detail_state(self):
         state = self.__dict__.get("_state")
@@ -551,6 +608,9 @@ class MissionaryDetailPage(QWidget):
         self._document_data = []
         self._date_edits = {}
         self._text_edits = {}
+        self._detail_edit_fields = {}
+        self._detail_edit_buttons = {}
+        self._active_detail_editor = None
         self._date_empty_overlays = {}
         self._date_source_labels = {}
         self._credential_source_labels = {}
@@ -816,6 +876,7 @@ class MissionaryDetailPage(QWidget):
         )
         for layout_name in (
             "overview_work_layout",
+            "summary_detail_layout",
             "details_primary_layout",
             "details_secondary_layout",
         ):
@@ -825,7 +886,6 @@ class MissionaryDetailPage(QWidget):
 
         grid_specs = (
             ("summary_metrics_grid", "summary_metric_cards", 1 if narrow else 2),
-            ("summary_chip_grid", "summary_chip_widgets", 1 if narrow else (3 if cards_stacked else 6)),
             ("identity_grid", "identity_field_widgets", 1 if narrow else 2),
             ("credentials_grid", "credential_field_widgets", 1 if narrow else 2),
             ("timeline_grid", "timeline_field_widgets", 1 if narrow else 2),
@@ -872,8 +932,13 @@ class MissionaryDetailPage(QWidget):
         value_widget,
         source_widget=None,
         reserve_source_space=False,
+        editable_widget=None,
     ):
-        field_widget = QWidget()
+        field_widget = (
+            IntentionalEditField()
+            if editable_widget is not None
+            else QWidget()
+        )
         # A long child value (notably the folder path) must not dictate the
         # width of its entire grid column. Equal grid stretch can only produce
         # equal columns when every field is allowed to shrink below its hint.
@@ -884,10 +949,39 @@ class MissionaryDetailPage(QWidget):
         field_layout.setSpacing(3)
         field_widget.setLayout(field_layout)
 
+        label_row = QHBoxLayout()
+        label_row.setContentsMargins(0, 0, 0, 0)
+        label_row.setSpacing(4)
+
         label = QLabel(label_text)
         label.setObjectName("MutedText")
         label.setMinimumWidth(0)
-        field_layout.addWidget(label)
+        label_row.addWidget(label)
+        label_row.addStretch()
+
+        if editable_widget is not None:
+            edit_icon = lucide_icon("pencil", size=15, color="#52525B")
+            edit_button = create_button(
+                "" if edit_icon is not None and not edit_icon.isNull() else "✎",
+                "subtle",
+                fixed_height=24,
+                icon=edit_icon,
+            )
+            edit_button.setFixedWidth(28)
+            edit_button.setToolTip(f"Edit {label_text}")
+            edit_button.setAccessibleName(f"Edit {label_text}")
+            edit_button.clicked.connect(
+                lambda _checked=False, editor=editable_widget: (
+                    self._unlock_detail_editor(editor)
+                )
+            )
+            field_widget.set_edit_button(edit_button)
+            self._detail_edit_fields[editable_widget] = field_widget
+            self._detail_edit_buttons[editable_widget] = edit_button
+            self._set_detail_editor_locked(editable_widget, True)
+            label_row.addWidget(edit_button, alignment=Qt.AlignRight)
+
+        field_layout.addLayout(label_row)
 
         value_widget.setMinimumWidth(0)
         value_widget.setSizePolicy(
@@ -903,7 +997,42 @@ class MissionaryDetailPage(QWidget):
             spacer.setFixedHeight(16)
             field_layout.addWidget(spacer)
 
+        if isinstance(field_widget, IntentionalEditField):
+            field_widget.enable_hover_tracking()
+
         return field_widget
+
+    def _set_detail_editor_locked(self, editor, locked):
+        locked = bool(locked)
+        if hasattr(editor, "setReadOnly"):
+            editor.setReadOnly(locked)
+        else:
+            editor.setEnabled(not locked)
+            editor.setFocusPolicy(Qt.NoFocus if locked else Qt.StrongFocus)
+        editor.setProperty("editLocked", locked)
+        _refresh_widget_style(editor)
+
+    def _unlock_detail_editor(self, editor):
+        if editor is self._active_detail_editor:
+            return
+
+        self._lock_active_detail_editor()
+        self._active_detail_editor = editor
+        self._set_detail_editor_locked(editor, False)
+        field = self._detail_edit_fields.get(editor)
+        if field is not None:
+            field.set_unlocked(True)
+        editor.setFocus(Qt.MouseFocusReason)
+
+    def _lock_active_detail_editor(self):
+        editor = self._active_detail_editor
+        if editor is None:
+            return
+        self._set_detail_editor_locked(editor, True)
+        field = self._detail_edit_fields.get(editor)
+        if field is not None:
+            field.set_unlocked(False)
+        self._active_detail_editor = None
 
     def _build_value_label(self, text=None, *, elided=False):
         text = tr("missionary_detail_not_set") if text is None else text
@@ -1078,62 +1207,6 @@ class MissionaryDetailPage(QWidget):
             else:
                 overlay.setVisible(is_empty)
         _refresh_widget_style(picker)
-
-    def _update_summary_strip(self, missionary):
-        if not missionary:
-            return
-
-        birthdate = getattr(missionary, "date_of_birth", None)
-        folder_path = getattr(missionary, "folder_path", None)
-        folder_state = (
-            tr("missionary_detail_set")
-            if folder_path
-            else tr("missionary_detail_not_set")
-        )
-        empty = tr("missionary_detail_not_set")
-
-        summary_values = {
-            "summary_name_chip": tr(
-                "missionary_detail_name_chip",
-                value=getattr(missionary, "full_name", "—") or "—",
-            ),
-            "summary_stage_chip": tr(
-                "missionary_detail_stage_chip",
-                value=_stage_display_name(
-                    getattr(missionary, "current_stage", None)
-                ),
-            ),
-            "summary_nationality_chip": tr(
-                "missionary_detail_nationality_chip",
-                value=getattr(missionary, "nationality", None) or empty,
-            ),
-            "summary_passport_chip": tr(
-                "missionary_detail_passport_chip",
-                value=getattr(missionary, "passport_number", None) or empty,
-            ),
-            "summary_carnet_chip": tr(
-                "missionary_detail_carnet_chip",
-                value=getattr(missionary, "carnet_number", None) or empty,
-            ),
-            "summary_birthdate_chip": (
-                tr(
-                    "missionary_detail_birthdate_chip",
-                    value=birthdate.strftime("%b %d, %Y"),
-                )
-                if birthdate
-                else tr("missionary_detail_birthdate_chip", value=empty)
-            ),
-            "summary_folder_chip": tr(
-                "missionary_detail_folder_chip",
-                value=folder_state,
-            ),
-        }
-
-        for attr, value in summary_values.items():
-            widget = getattr(self, attr, None)
-            if widget is not None and hasattr(widget, "setText"):
-                widget.setText(value)
-                widget.adjustSize()
 
     # ==========================================
     # UI SETUP
@@ -1425,10 +1498,10 @@ class MissionaryDetailPage(QWidget):
 
         content.setLayout(content_layout)
 
-        self.overview_summary_section = self._build_summary_section()
-        self.workflow_section = self._build_workflow_section()
-        self.open_tasks_section = self._build_open_tasks_section()
         self.documents_overview_section = self._build_documents_overview_section()
+        self.workflow_section = self._build_workflow_section()
+        self.overview_summary_section = self._build_summary_section()
+        self.open_tasks_section = self._build_open_tasks_section()
         self.missing_documents_overview_section = (
             self._build_missing_documents_overview_section()
         )
@@ -1441,12 +1514,17 @@ class MissionaryDetailPage(QWidget):
         work_row_layout.setSpacing(OVERVIEW_CONTENT_SPACING)
         work_row.setLayout(work_row_layout)
         self.overview_work_layout = work_row_layout
-        work_row_layout.addWidget(self.workflow_section, stretch=1)
-        work_row_layout.addWidget(self.open_tasks_section, stretch=1)
+        work_row_layout.addWidget(
+            self.missing_documents_overview_section,
+            stretch=1,
+            alignment=Qt.AlignTop,
+        )
+        work_row_layout.addWidget(
+            self.open_tasks_section,
+            stretch=1,
+            alignment=Qt.AlignTop,
+        )
         content_layout.addWidget(work_row)
-
-        content_layout.addWidget(self.documents_overview_section)
-        content_layout.addWidget(self.missing_documents_overview_section)
 
         content_layout.addStretch()
 
@@ -1467,18 +1545,6 @@ class MissionaryDetailPage(QWidget):
         layout.setContentsMargins(22, 18, 22, 18)
         layout.setSpacing(10)
         section.setLayout(layout)
-
-        self.documents_section_title = SectionTitle(
-            tr("missionary_detail_documents")
-        )
-        layout.addWidget(self.documents_section_title)
-
-        self.docs_helper = QLabel(
-            tr("missionary_detail_documents_hint")
-        )
-        self.docs_helper.setObjectName("MutedText")
-        self.docs_helper.setWordWrap(True)
-        layout.addWidget(self.docs_helper)
 
         self.upload_button = create_detail_pill_button(
             tr("missionary_detail_upload_document"),
@@ -1531,18 +1597,6 @@ class MissionaryDetailPage(QWidget):
         layout.setSpacing(10)
         section.setLayout(layout)
 
-        self.missing_documents_section_title = SectionTitle(
-            tr("missionary_detail_missing_documents")
-        )
-        layout.addWidget(self.missing_documents_section_title)
-
-        self.missing_helper = QLabel(
-            tr("missionary_detail_missing_documents_hint")
-        )
-        self.missing_helper.setObjectName("MutedText")
-        self.missing_helper.setWordWrap(True)
-        layout.addWidget(self.missing_helper)
-
         self.missing_documents_list = create_list_widget()
         self.missing_documents_list.setSpacing(8)
         self.missing_documents_list.setMinimumHeight(
@@ -1565,18 +1619,6 @@ class MissionaryDetailPage(QWidget):
         header_row.setContentsMargins(0, 0, 0, 0)
         header_row.setSpacing(12)
 
-        title_stack = QVBoxLayout()
-        title_stack.setContentsMargins(0, 0, 0, 0)
-        title_stack.setSpacing(3)
-
-        self.summary_title_label = QLabel(
-            tr("missionary_detail_overview_title")
-        )
-        self.summary_title_label.setObjectName("PanelTitle")
-
-        title_stack.addWidget(self.summary_title_label)
-
-        header_row.addLayout(title_stack)
         header_row.addStretch()
 
         self.overview_stage_badge = QLabel("—")
@@ -1588,8 +1630,8 @@ class MissionaryDetailPage(QWidget):
         metrics_grid = QGridLayout()
         self.summary_metrics_grid = metrics_grid
         metrics_grid.setContentsMargins(0, 0, 0, 0)
-        metrics_grid.setHorizontalSpacing(12)
-        metrics_grid.setVerticalSpacing(12)
+        metrics_grid.setHorizontalSpacing(10)
+        metrics_grid.setVerticalSpacing(8)
 
         self.summary_current_stage_card = StatCard(
             "—",
@@ -1603,65 +1645,41 @@ class MissionaryDetailPage(QWidget):
             subtitle=tr("missionary_detail_current_stage_docs_subtitle"),
             color="#059669",
         )
-        self.summary_missing_card = StatCard(
-            "0",
-            tr("missionary_detail_required_docs_missing"),
-            subtitle=tr("missionary_detail_required_docs_missing_subtitle"),
-            color="#DC2626",
-        )
-        self.summary_upload_card = StatCard(
-            "—",
-            tr("missionary_detail_last_upload"),
-            subtitle=tr("missionary_detail_last_upload_subtitle"),
-            color="#7A6EEC",
-        )
-
         self.summary_metric_cards = [
             self.summary_current_stage_card,
             self.summary_complete_card,
-            self.summary_missing_card,
-            self.summary_upload_card,
         ]
+        for metric_card in self.summary_metric_cards:
+            metric_card.setFixedHeight(82)
+            metric_card.layout().setContentsMargins(14, 8, 14, 8)
+            metric_card.layout().setSpacing(1)
+            metric_card.value_label.setStyleSheet("font-size: 28px;")
+            metric_card.title_label.setStyleSheet("font-size: 11px;")
+            if metric_card.subtitle_label is not None:
+                metric_card.subtitle_label.setStyleSheet("font-size: 10px;")
 
         metrics_grid.addWidget(self.summary_current_stage_card, 0, 0)
         metrics_grid.addWidget(self.summary_complete_card, 0, 1)
-        metrics_grid.addWidget(self.summary_missing_card, 1, 0)
-        metrics_grid.addWidget(self.summary_upload_card, 1, 1)
 
         layout.addLayout(metrics_grid)
 
-        action_card = create_card()
-        action_layout = QVBoxLayout()
-        action_layout.setContentsMargins(18, 16, 18, 16)
-        action_layout.setSpacing(8)
-        action_card.setLayout(action_layout)
-
-        self.summary_action_title = QLabel(
-            tr("missionary_detail_recommended_next_step")
+        detail_row = QWidget()
+        detail_row_layout = QBoxLayout(QBoxLayout.LeftToRight)
+        detail_row_layout.setContentsMargins(0, 0, 0, 0)
+        detail_row_layout.setSpacing(OVERVIEW_CONTENT_SPACING)
+        detail_row.setLayout(detail_row_layout)
+        self.summary_detail_layout = detail_row_layout
+        detail_row_layout.addWidget(
+            self.documents_overview_section,
+            stretch=1,
+            alignment=Qt.AlignTop,
         )
-        self.summary_action_title.setObjectName("SectionHeader")
-
-        self.summary_next_action_label = QLabel(
-            tr("missionary_detail_select_missionary_next_step")
+        detail_row_layout.addWidget(
+            self.workflow_section,
+            stretch=1,
+            alignment=Qt.AlignTop,
         )
-        self.summary_next_action_label.setWordWrap(True)
-
-        self.summary_activity_label = QLabel("")
-        self.summary_activity_label.setObjectName("MutedText")
-        self.summary_activity_label.setWordWrap(True)
-
-        self.summary_tip_label = QLabel(
-            tr("missionary_detail_overview_default_tip")
-        )
-        self.summary_tip_label.setObjectName("MutedText")
-        self.summary_tip_label.setWordWrap(True)
-
-        action_layout.addWidget(self.summary_action_title)
-        action_layout.addWidget(self.summary_next_action_label)
-        action_layout.addWidget(self.summary_activity_label)
-        action_layout.addWidget(self.summary_tip_label)
-
-        layout.addWidget(action_card)
+        layout.addWidget(detail_row)
 
         return card
 
@@ -1672,18 +1690,6 @@ class MissionaryDetailPage(QWidget):
         layout.setContentsMargins(22, 18, 22, 18)
         layout.setSpacing(12)
         card.setLayout(layout)
-
-        self.workflow_section_title = SectionTitle(
-            tr("missionary_detail_workflow_stages")
-        )
-        layout.addWidget(self.workflow_section_title)
-
-        self.workflow_helper = QLabel(
-            tr("missionary_detail_workflow_hint")
-        )
-        self.workflow_helper.setObjectName("MutedText")
-        self.workflow_helper.setWordWrap(True)
-        layout.addWidget(self.workflow_helper)
 
         self.workflow_list = create_list_widget()
         self.workflow_list.setContextMenuPolicy(Qt.CustomContextMenu)
@@ -1724,106 +1730,56 @@ class MissionaryDetailPage(QWidget):
         content_layout.setSpacing(14)
         details_content.setLayout(content_layout)
 
-        summary_card, summary_layout = self._build_detail_card(
-            tr("missionary_detail_at_a_glance"),
-            tr("missionary_detail_at_a_glance_subtitle"),
-            title_key="missionary_detail_at_a_glance",
-            subtitle_key="missionary_detail_at_a_glance_subtitle",
+        self.full_name_input = create_line_edit(
+            field_label("full_name"), locked=True
         )
-        summary_layout.setSpacing(8)
-        self.summary_chip_grid = QGridLayout()
-        self.summary_chip_grid.setContentsMargins(0, 0, 0, 0)
-        self.summary_chip_grid.setHorizontalSpacing(10)
-        self.summary_chip_grid.setVerticalSpacing(8)
-        summary_layout.addLayout(self.summary_chip_grid)
-        content_layout.addWidget(summary_card)
-
-        self.summary_name_chip = self._build_badge_chip(
-            tr("missionary_detail_name_chip", value="—")
-        )
-        self.summary_stage_chip = self._build_badge_chip(
-            tr("missionary_detail_stage_chip", value="—")
-        )
-        self.summary_nationality_chip = self._build_badge_chip(
-            tr("missionary_detail_nationality_chip", value="—")
-        )
-        self.summary_passport_chip = self._build_badge_chip(
-            tr("missionary_detail_passport_chip", value="—")
-        )
-        self.summary_carnet_chip = self._build_badge_chip(
-            tr("missionary_detail_carnet_chip", value="—")
-        )
-        self.summary_birthdate_chip = self._build_badge_chip(
-            tr("missionary_detail_birthdate_chip", value="—")
-        )
-        self.summary_folder_chip = self._build_badge_chip(
-            tr(
-                "missionary_detail_folder_chip",
-                value=tr("missionary_detail_not_set"),
-            )
-        )
-
-        summary_chips = [
-            self.summary_name_chip,
-            self.summary_stage_chip,
-            self.summary_nationality_chip,
-            self.summary_passport_chip,
-            self.summary_carnet_chip,
-            self.summary_birthdate_chip,
-            self.summary_folder_chip,
-        ]
-        self.summary_chip_widgets = summary_chips
-        for index, chip in enumerate(summary_chips):
-            self.summary_chip_grid.addWidget(
-                chip,
-                index // 6,
-                index % 6,
-                alignment=Qt.AlignLeft,
-            )
-        self.summary_chip_grid.setColumnStretch(len(summary_chips), 1)
-
-        self.full_name_input = create_line_edit(field_label("full_name"))
         self._text_edits["full_name"] = self.full_name_input
         self.nationality_label = self._build_value_label()
-        self.passport_input = create_line_edit(field_label("passport_number"))
+        self.passport_input = create_line_edit(
+            field_label("passport_number"), locked=True
+        )
         self.passport_input.textChanged.connect(self._normalize_passport_input)
         self._text_edits["passport_number"] = self.passport_input
         # Retain the established attribute for callers that inspect this field.
         self.passport_label = self.passport_input
-        self.dni_number_input = create_line_edit(field_label("dni_number"))
+        self.dni_number_input = create_line_edit(
+            field_label("dni_number"), locked=True
+        )
         self._text_edits["dni_number"] = self.dni_number_input
-        self.carnet_number_input = create_line_edit(field_label("carnet_number"))
+        self.carnet_number_input = create_line_edit(
+            field_label("carnet_number"), locked=True
+        )
         self._text_edits["carnet_number"] = self.carnet_number_input
         self.home_address_input = create_line_edit(
-            field_label("home_address")
+            field_label("home_address"), locked=True
         )
         self._text_edits["home_address"] = self.home_address_input
         self.father_name_input = create_line_edit(
-            field_label("father_name")
+            field_label("father_name"), locked=True
         )
         self._text_edits["father_name"] = self.father_name_input
         self.mother_name_input = create_line_edit(
-            field_label("mother_name")
+            field_label("mother_name"), locked=True
         )
         self._text_edits["mother_name"] = self.mother_name_input
         self.father_first_name_override_input = create_line_edit(
-            "Father first name for Interpol"
+            "Father first name for Interpol", locked=True
         )
         self._text_edits[
             "father_first_name_override"
         ] = self.father_first_name_override_input
         self.mother_first_name_override_input = create_line_edit(
-            "Mother first name for Interpol"
+            "Mother first name for Interpol", locked=True
         )
         self._text_edits[
             "mother_first_name_override"
         ] = self.mother_first_name_override_input
         self.tramite_usuario_input = create_line_edit(
-            field_label("tramite_usuario")
+            field_label("tramite_usuario"), locked=True
         )
         self._text_edits["tramite_usuario"] = self.tramite_usuario_input
         self.tramite_contrasena_input = create_line_edit(
-            field_label("tramite_contrasena")
+            field_label("tramite_contrasena"), locked=True
         )
         self._text_edits["tramite_contrasena"] = self.tramite_contrasena_input
         self.folder_label = self._build_value_label(elided=True)
@@ -1853,6 +1809,7 @@ class MissionaryDetailPage(QWidget):
         full_name_field = self._build_field_block(
                 field_label("full_name"),
                 self.full_name_input,
+                editable_widget=self.full_name_input,
             )
         nationality_field = self._build_field_block(
                 field_label("nationality"),
@@ -1861,39 +1818,48 @@ class MissionaryDetailPage(QWidget):
         passport_field = self._build_field_block(
                 field_label("passport_number"),
                 self.passport_label,
+                editable_widget=self.passport_input,
             )
         dni_field = self._build_field_block(
                 field_label("dni_number"),
                 self.dni_number_input,
+                editable_widget=self.dni_number_input,
             )
         carnet_field = self._build_field_block(
                 field_label("carnet_number"),
                 self.carnet_number_input,
+                editable_widget=self.carnet_number_input,
             )
         birthdate_field = self._build_field_block(
                 field_label("date_of_birth"),
                 birthdate_shell,
                 birthdate_source_lbl,
+                editable_widget=self.birthdate_picker,
             )
         home_address_field = self._build_field_block(
             field_label("home_address"),
             self.home_address_input,
+            editable_widget=self.home_address_input,
         )
         father_name_field = self._build_field_block(
             field_label("father_name"),
             self.father_name_input,
+            editable_widget=self.father_name_input,
         )
         mother_name_field = self._build_field_block(
             field_label("mother_name"),
             self.mother_name_input,
+            editable_widget=self.mother_name_input,
         )
         father_override_field = self._build_field_block(
             "Father first name for Interpol",
             self.father_first_name_override_input,
+            editable_widget=self.father_first_name_override_input,
         )
         mother_override_field = self._build_field_block(
             "Mother first name for Interpol",
             self.mother_first_name_override_input,
+            editable_widget=self.mother_first_name_override_input,
         )
 
         folder_widget = QWidget()
@@ -1973,6 +1939,7 @@ class MissionaryDetailPage(QWidget):
                     label_text,
                     value_label,
                     source_lbl,
+                    editable_widget=value_label,
                 )
             self.credential_field_widgets.append(field_widget)
             credentials_grid.addWidget(field_widget, 0, col)
@@ -2007,6 +1974,7 @@ class MissionaryDetailPage(QWidget):
                     date_shell,
                     source_lbl,
                     reserve_source_space=True,
+                    editable_widget=date_picker,
                 )
             self.timeline_field_widgets.append(field_widget)
             timeline_grid.addWidget(field_widget, idx // 2, idx % 2)
@@ -2636,6 +2604,7 @@ class MissionaryDetailPage(QWidget):
                 self._set_source_badge(source_lbl, "")
 
     def _save_dates(self):
+        self._lock_active_detail_editor()
         IdentityDetailsSection(self).save()
 
 
@@ -2684,30 +2653,8 @@ class MissionaryDetailPage(QWidget):
             )
         if hasattr(self, "banner_now_btn"):
             self.banner_now_btn.setText(tr("missionary_detail_advance_now"))
-        if hasattr(self, "docs_helper"):
-            self.docs_helper.setText(tr("missionary_detail_documents_hint"))
         if hasattr(self, "upload_button"):
             self.upload_button.setText(tr("missionary_detail_upload_document"))
-        if hasattr(self, "missing_helper"):
-            self.missing_helper.setText(
-                tr("missionary_detail_missing_documents_hint")
-            )
-        self._set_section_title(
-            getattr(self, "documents_section_title", None),
-            tr("missionary_detail_documents"),
-        )
-        self._set_section_title(
-            getattr(self, "missing_documents_section_title", None),
-            tr("missionary_detail_missing_documents"),
-        )
-        self._set_section_title(
-            getattr(self, "workflow_section_title", None),
-            tr("missionary_detail_workflow_stages"),
-        )
-        if hasattr(self, "summary_title_label"):
-            self.summary_title_label.setText(
-                tr("missionary_detail_overview_title")
-            )
         for label, key in getattr(self, "_translated_labels", []):
             label.setText(tr(key))
         if hasattr(self, "summary_current_stage_card"):
@@ -2724,24 +2671,6 @@ class MissionaryDetailPage(QWidget):
             self.summary_complete_card.setSubtitle(
                 tr("missionary_detail_current_stage_docs_subtitle")
             )
-        if hasattr(self, "summary_missing_card"):
-            self.summary_missing_card.setTitle(
-                tr("missionary_detail_required_docs_missing")
-            )
-            self.summary_missing_card.setSubtitle(
-                tr("missionary_detail_required_docs_missing_subtitle")
-            )
-        if hasattr(self, "summary_upload_card"):
-            self.summary_upload_card.setTitle(tr("missionary_detail_last_upload"))
-            self.summary_upload_card.setSubtitle(
-                tr("missionary_detail_last_upload_subtitle")
-            )
-        if hasattr(self, "summary_action_title"):
-            self.summary_action_title.setText(
-                tr("missionary_detail_recommended_next_step")
-            )
-        if hasattr(self, "workflow_helper"):
-            self.workflow_helper.setText(tr("missionary_detail_workflow_hint"))
         if hasattr(self, "folder_open_btn"):
             self.folder_open_btn.setText(tr("missionary_detail_open_folder"))
         if hasattr(self, "residency_timeline_title"):
@@ -3173,6 +3102,7 @@ class MissionaryDetailPage(QWidget):
     def load_missionary(self, missionary, *, _detail_snapshot=None):
         if missionary is None:
             return
+        self._lock_active_detail_editor()
         self._detail_loaded = False
         self._set_detail_loading(True)
         self._requested_missionary_id = missionary.id
@@ -3189,7 +3119,6 @@ class MissionaryDetailPage(QWidget):
         self.stage_badge.setText(
             f"  {_stage_display_name(stage) if stage != '-' else stage}  "
         )
-        self._update_summary_strip(missionary)
 
         self.full_name_input.setText(missionary.full_name or "")
         self._set_value_text(
@@ -3689,7 +3618,6 @@ class MissionaryDetailPage(QWidget):
         stage = getattr(self.current_missionary, "current_stage", None)
         stage_display = _stage_display_name(stage)
         self.overview_stage_badge.setText(stage_display)
-        self.summary_stage_chip.setText(stage_display)
         self.summary_current_stage_card.setValue(stage_display)
 
         if documents is None:
@@ -3730,91 +3658,6 @@ class MissionaryDetailPage(QWidget):
         self.summary_complete_card.setValue(
             f"{complete_count}/{total_count}"
         )
-        self.summary_missing_card.setValue(
-            str(len(missing_current))
-        )
-
-        latest_upload = None
-        for doc in documents:
-            uploaded_at = getattr(doc, "uploaded_at", None)
-            if uploaded_at and (
-                latest_upload is None or uploaded_at > latest_upload
-            ):
-                latest_upload = uploaded_at
-
-        self.summary_upload_card.setValue(
-            latest_upload.strftime("%b %d, %Y")
-            if latest_upload
-            else tr("missionary_detail_no_uploads_yet")
-        )
-
-        latest_activity = self._find_latest_activity(stage_history)
-
-        if missing_current:
-            next_doc = _document_label(missing_current[0])
-            next_text = tr(
-                "missionary_detail_next_upload",
-                document=next_doc,
-            )
-        elif stage and stage in WORKFLOW_STAGES:
-            next_index = WORKFLOW_STAGES.index(stage) + 1
-            if next_index < len(WORKFLOW_STAGES):
-                next_text = tr(
-                    "missionary_detail_next_review_advance",
-                    stage=stage_display,
-                    next_stage=_stage_display_name(
-                        WORKFLOW_STAGES[next_index]
-                    ),
-                )
-            else:
-                next_text = tr("missionary_detail_next_complete")
-        else:
-            next_text = tr("missionary_detail_next_assign_stage")
-
-        self.summary_next_action_label.setText(next_text)
-        self.summary_activity_label.setText(
-            tr(
-                "missionary_detail_last_update",
-                activity=(
-                    _format_datetime(latest_activity)
-                    or tr("missionary_detail_no_activity_yet")
-                ),
-                upload=(
-                    _format_datetime(latest_upload)
-                    if latest_upload
-                    else tr("missionary_detail_no_uploads_yet")
-                ),
-            )
-        )
-
-        if missing_current:
-            tip = tr("missionary_detail_tip_missing")
-        else:
-            tip = tr("missionary_detail_tip_ready")
-        self.summary_tip_label.setText(tip)
-
-    def _find_latest_activity(self, history=None):
-        if not hasattr(self, "current_missionary"):
-            return None
-
-        latest = getattr(self.current_missionary, "created_at", None)
-
-        try:
-            if history is None:
-                history = WorkflowService().get_stage_history(
-                    self.current_missionary.id
-                )
-            first = history[0] if history else None
-            if first and first.created_at:
-                latest = (
-                    first.created_at
-                    if latest is None or first.created_at > latest
-                    else latest
-                )
-        except Exception:
-            logger.exception("Failed to collect latest activity")
-
-        return latest
 
     def _build_empty_state_card(self, title, text, tone="muted"):
         return build_empty_state_card(

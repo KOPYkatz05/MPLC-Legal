@@ -55,6 +55,7 @@ def test_image_loads_preview_without_page_controls(tmp_path, qapp):
 
     dialog = DocumentViewerDialog(str(image_path))
     try:
+        assert dialog.header.parentWidget() is dialog.preview_widget
         assert dialog.current_pixmap is not None
         assert dialog._preview_item is not None
         assert dialog.page_combo.isHidden()

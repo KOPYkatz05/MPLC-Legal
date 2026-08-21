@@ -18,6 +18,8 @@ _BORDER_COLORS = {
     "hover": QColor("#C8C8CF"),
     "focus": QColor("#0EA5AC"),
 }
+_LOCKED_BORDER_COLOR = QColor("#D4D4D8")
+_LOCKED_SURFACE_COLOR = QColor("#F4F4F5")
 
 
 class PixelCrispTextInputStyle(QProxyStyle):
@@ -29,12 +31,12 @@ class PixelCrispTextInputStyle(QProxyStyle):
 
         if isinstance(widget, QLineEdit):
             if element == QStyle.PE_PanelLineEdit:
-                self._draw_input_surface(option, painter)
+                self._draw_input_surface(option, painter, widget)
                 return
             if element == QStyle.PE_FrameLineEdit:
                 return
         elif isinstance(widget, QPlainTextEdit) and element == QStyle.PE_Frame:
-            self._draw_input_surface(option, painter)
+            self._draw_input_surface(option, painter, widget)
             return
 
         return super().drawPrimitive(element, option, painter, widget)
@@ -47,7 +49,7 @@ class PixelCrispTextInputStyle(QProxyStyle):
         )
 
     @staticmethod
-    def _draw_input_surface(option, painter):
+    def _draw_input_surface(option, painter, widget=None):
         device = painter.device()
         device_pixel_ratio = (
             device.devicePixelRatioF()
@@ -74,7 +76,12 @@ class PixelCrispTextInputStyle(QProxyStyle):
         )
         inner_radius = max(0.0, outer_radius - border_inset)
 
-        if option.state & QStyle.State_HasFocus:
+        is_locked = bool(
+            widget is not None and widget.property("editLocked") is True
+        )
+        if is_locked:
+            border_color = _LOCKED_BORDER_COLOR
+        elif option.state & QStyle.State_HasFocus:
             border_color = _BORDER_COLORS["focus"]
         elif option.state & QStyle.State_MouseOver:
             border_color = _BORDER_COLORS["hover"]
@@ -86,7 +93,9 @@ class PixelCrispTextInputStyle(QProxyStyle):
         painter.setPen(Qt.NoPen)
         painter.setBrush(border_color)
         painter.drawRoundedRect(rect, outer_radius, outer_radius)
-        painter.setBrush(QColor("#FFFFFF"))
+        painter.setBrush(
+            _LOCKED_SURFACE_COLOR if is_locked else QColor("#FFFFFF")
+        )
         painter.drawRoundedRect(inner_rect, inner_radius, inner_radius)
         painter.restore()
 

@@ -21,7 +21,6 @@ from services.workspace_service import WorkspaceService
 from services.notification_feed_service import NotificationFeedService
 from ui.foundation import AppShell, FLUENT_AVAILABLE, fluent_icon
 from ui.foundation.background_loader import LatestRequestLoader
-from ui.pages.alert_workspace_page import AlertWorkspacePage
 from ui.pages.calendar_page import CalendarPage
 from ui.pages.dashboard_page import DashboardPage
 from ui.pages.missionaries_page import MissionariesPage
@@ -348,7 +347,6 @@ class MainWindow(QMainWindow):
         self.missionaries_page = MissionariesPage(self)
         self.detail_page = MissionaryDetailPage(self)
         self.missionary_workspace_page = MissionaryWorkspacePage(self)
-        self.alert_workspace_page = AlertWorkspacePage(self)
         self.office_work_page = OfficeWorkPage(self)
         self.calendar_page = CalendarPage(self)
         self.reports_page = ReportsPage(self)
@@ -430,8 +428,6 @@ class MainWindow(QMainWindow):
 
         self.detail_page.setObjectName("MissionaryDetailPage")
         self.stackedWidget.addWidget(self.detail_page)
-        self.alert_workspace_page.setObjectName("AlertWorkspacePage")
-        self.stackedWidget.addWidget(self.alert_workspace_page)
         self.missionary_workspace_page.setObjectName("MissionaryWorkspacePage")
         self.stackedWidget.addWidget(self.missionary_workspace_page)
 
@@ -470,7 +466,6 @@ class MainWindow(QMainWindow):
             self.dashboard_page,
             self.missionaries_page,
             self.detail_page,
-            self.alert_workspace_page,
             self.office_work_page,
             self.calendar_page,
             self.reports_page,
@@ -756,35 +751,21 @@ class MainWindow(QMainWindow):
             )
             return False
 
-    def open_alert_workspace(self, task_id, return_key="dashboard"):
+    def open_task_list(self, task_id=None, title=""):
+        """Open the actionable task list; task detail has no separate screen."""
         try:
             self._clear_detail_navigation_stack_if_detail_visible()
-            requester = getattr(
-                self.alert_workspace_page,
-                "request_task",
-                None,
-            )
-            if callable(requester):
-                requester(task_id, return_key=return_key)
-            else:
-                self.alert_workspace_page.load_task(
-                    task_id,
-                    return_key=return_key,
-                )
-            self.stack.setCurrentWidget(self.alert_workspace_page)
-
-            if (
-                FLUENT_AVAILABLE
-                and hasattr(self, "navigationInterface")
-                and return_key in self._nav_widgets
-            ):
-                widget = self._nav_widgets[return_key]
-                self.navigationInterface.setCurrentItem(widget.objectName())
-
+            office_page = self.office_work_page
+            focus = getattr(office_page, "focus_task_context", None)
+            if callable(focus):
+                # The list is the useful destination.  Do not fetch or render
+                # the retired task/alert workspace just to open a task.
+                focus(title=title)
+            self.set_current_key("office_work")
             return True
         except Exception:
             logger.exception(
-                "Failed to open alert workspace for task ID %s",
+                "Failed to open task list for task ID %s",
                 task_id,
             )
             return False

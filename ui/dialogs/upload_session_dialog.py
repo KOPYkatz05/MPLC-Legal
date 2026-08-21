@@ -677,7 +677,6 @@ class UploadSessionDialog(MaskDialogBase):
         self._build_queue_panel()
         self._build_details_panel()
         self._build_preview_panel()
-        self._build_progress_panel(root)
         self._build_footer(root)
         self._ensure_screen_tracking()
         self._apply_responsive_shell_geometry()
@@ -685,7 +684,6 @@ class UploadSessionDialog(MaskDialogBase):
         self._set_preview_controls_enabled(False)
         self._set_busy(False)
         self.clear_detail()
-        self.update_progress()
         self._update_action_states()
 
     def _build_shell(self):
@@ -991,29 +989,6 @@ class UploadSessionDialog(MaskDialogBase):
         self.splitter.setStretchFactor(1, 1)
         self.splitter.setStretchFactor(2, 2)
 
-    def _build_progress_panel(self, root):
-        self.progress_card = create_card(object_name="UploadSurfaceCard")
-        self.progress_card.setObjectName("UploadSurfaceCard")
-        self.progress_card.setAttribute(Qt.WA_StyledBackground, True)
-        progress_layout = QHBoxLayout()
-        progress_layout.setContentsMargins(18, 14, 18, 14)
-        progress_layout.setSpacing(20)
-        self.progress_card.setLayout(progress_layout)
-
-        self.progress_step_files = self._make_progress_step(
-            "1", "Select files", "Waiting"
-        )
-        self.progress_step_review = self._make_progress_step(
-            "2", "Review metadata", "Not started"
-        )
-        self.progress_step_save = self._make_progress_step(
-            "3", "Save records", "Not started"
-        )
-        progress_layout.addWidget(self.progress_step_files)
-        progress_layout.addWidget(self.progress_step_review)
-        progress_layout.addWidget(self.progress_step_save)
-        root.addWidget(self.progress_card)
-
     def _build_footer(self, root):
         self.footer = QFrame()
         self.footer.setObjectName("UploadWorkspaceFooter")
@@ -1203,38 +1178,6 @@ class UploadSessionDialog(MaskDialogBase):
                 name,
                 self._preview_item is not None and can_modify,
             )
-
-    def _make_progress_step(self, number, title, subtitle):
-        frame = QFrame()
-        frame.setObjectName("UploadProgressStep")
-        layout = QVBoxLayout()
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(4)
-        frame.setLayout(layout)
-
-        row = QHBoxLayout()
-        row.setContentsMargins(0, 0, 0, 0)
-        row.setSpacing(10)
-        badge = QLabel(number)
-        badge.setObjectName("UploadStepBadge")
-        badge.setAlignment(Qt.AlignCenter)
-        badge.setFixedSize(28, 28)
-        row.addWidget(badge)
-
-        copy = QVBoxLayout()
-        copy.setContentsMargins(0, 0, 0, 0)
-        copy.setSpacing(2)
-        title_label = QLabel(title)
-        title_label.setObjectName("StrongText")
-        subtitle_label = QLabel(subtitle)
-        subtitle_label.setObjectName("SubtleText")
-        copy.addWidget(title_label)
-        copy.addWidget(subtitle_label)
-        row.addLayout(copy)
-        row.addStretch()
-
-        layout.addLayout(row)
-        return frame
 
     def pick_files(self, checked=False):
         files, _ = QFileDialog.getOpenFileNames(
@@ -2535,67 +2478,9 @@ class UploadSessionDialog(MaskDialogBase):
         self._switch_to_item(next_index, persist_current=True)
 
     def update_progress(self):
-        if self._is_closing:
-            return
-        total = len(self.controller.items)
-        saved = sum(1 for item in self.controller.items if item.status == "saved")
-        failed = sum(1 for item in self.controller.items if item.status == "failed")
-        queued = sum(
-            1
-            for item in self.controller.items
-            if item.status in {"pending", "ocr", "ready", "review"}
-        )
-        review = sum(1 for item in self.controller.items if item.status == "review")
-        self._set_progress_step(
-            self.progress_step_files,
-            "complete" if total else "idle",
-            "Files added" if total else "Waiting",
-        )
-        ocr_active = any(item.status == "ocr" for item in self.controller.items)
-        if ocr_active:
-            review_state = "active"
-            review_text = "Reading"
-        elif review:
-            review_state = "active"
-            review_text = f"{review} need review"
-        elif total and queued:
-            review_state = "complete"
-            review_text = "Ready to save"
-        else:
-            review_state = "idle"
-            review_text = "Not started"
-        self._set_progress_step(
-            self.progress_step_review,
-            review_state,
-            review_text,
-        )
-
-        if self._saving_all:
-            save_state = "active"
-            save_text = "Saving"
-        elif saved:
-            save_state = "complete"
-            save_text = f"{saved} saved"
-        elif total:
-            save_state = "idle"
-            save_text = "Not started"
-        else:
-            save_state = "idle"
-            save_text = "Waiting"
-        self._set_progress_step(
-            self.progress_step_save,
-            save_state,
-            save_text,
-        )
-
-    def _set_progress_step(self, frame, state, subtitle):
-        frame.setProperty("state", state)
-        labels = frame.findChildren(QLabel)
-        if len(labels) >= 3:
-            labels[2].setText(subtitle)
-        _refresh_style(frame)
-        for label in labels:
-            _refresh_style(label)
+        # Retained as a compatibility hook for upload flows and focused tests.
+        # Save progress is presented by UploadSaveProgressDialog instead.
+        return
 
     def dragEnterEvent(self, event):
         if event.mimeData().hasUrls():

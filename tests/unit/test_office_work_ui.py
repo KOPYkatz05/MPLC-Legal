@@ -915,13 +915,12 @@ def test_office_work_task_presets_drive_existing_filters(qapp):
         page.close()
 
 
-def test_office_work_task_opens_alert_workspace(qapp):
+def test_office_work_task_opens_task_list(qapp):
     _ = qapp
     opened = []
     page = OfficeWorkPage(
         main_window=SimpleNamespace(
-            open_alert_workspace=lambda task_id, return_key="office_work":
-            opened.append((task_id, return_key))
+            open_task_list=lambda task_id, title="": opened.append((task_id, title))
         ),
         service=FakeSecretaryWorkService(),
     )
@@ -929,7 +928,7 @@ def test_office_work_task_opens_alert_workspace(qapp):
     try:
         page._open_task_workspace(1)
 
-        assert opened == [(1, "office_work")]
+        assert opened == [(1, "")]
     finally:
         page.close()
 

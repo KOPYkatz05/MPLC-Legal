@@ -52,6 +52,32 @@ def _completion_codes_for_prefix(dialog, prefix):
     ]
 
 
+def test_uses_shared_popup_shell_and_reference_sections(
+    monkeypatch,
+    qapp,
+):
+    dialog, _ = _build_dialog(monkeypatch, qapp)
+
+    assert isinstance(dialog, dialog_module.AppDialog)
+    assert dialog.surface.objectName() == "AppDialogSurface"
+    assert dialog.header.objectName() == "AddMissionaryHeader"
+    assert dialog.body.objectName() == "AddMissionaryBody"
+    assert dialog.footer.objectName() == "AddMissionaryFooter"
+    margins = dialog.body_layout.contentsMargins()
+    assert (
+        margins.left(),
+        margins.top(),
+        margins.right(),
+        margins.bottom(),
+    ) == (
+        18,
+        16,
+        18,
+        16,
+    )
+    assert dialog.body_layout.spacing() == 12
+
+
 def test_nationality_uses_locked_passport_country_codes(
     monkeypatch,
     qapp,

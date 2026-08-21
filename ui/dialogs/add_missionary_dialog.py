@@ -18,8 +18,7 @@ from services.missionary_service import (
     MissionaryService,
 )
 from ui.foundation import (
-    setup_dialog_shell,
-    DialogFooter,
+    AppDialog,
     create_button,
     create_combo_box,
     create_date_picker,
@@ -36,11 +35,6 @@ from utils.nationalities import (
 from utils.passport_numbers import normalize_passport_number
 
 try:
-    from qfluentwidgets import (
-        BodyLabel,
-        MaskDialogBase,
-        SubtitleLabel,
-    )
     from qfluentwidgets.components.widgets.line_edit import (
         CompleterMenu as FluentCompleterMenu,
     )
@@ -49,9 +43,6 @@ try:
 
     FLUENT_DIALOG_AVAILABLE = True
 except Exception:
-    BodyLabel = QLabel
-    SubtitleLabel = QLabel
-    MaskDialogBase = QDialog
     FluentCompleterMenu = None
     MenuAnimationType = None
     RoundMenu = QDialog
@@ -293,26 +284,21 @@ if FLUENT_DIALOG_AVAILABLE:
                 self.indexActivated.emit(self.indexes[row])
 
 
-class AddMissionaryDialog(MaskDialogBase):
+class AddMissionaryDialog(AppDialog):
     def __init__(self, parent=None):
-        if FLUENT_DIALOG_AVAILABLE and parent is None:
-            QDialog.__init__(self, parent)
-            self._using_plain_dialog_shell = True
-        else:
-            super().__init__(parent)
-            self._using_plain_dialog_shell = False
-
         self.missionary_service = (
             MissionaryService()
         )
 
-        self.setWindowTitle(
-            "Add Missionary"
-        )
-
-        self.surface = setup_dialog_shell(
-            self,
-            surface_width=520,
+        super().__init__(
+            parent,
+            title="Add Missionary",
+            subtitle=(
+                "Create the missionary record now, "
+                "then let document uploads fill in "
+                "the rest later."
+            ),
+            width=520,
         )
 
         logger.info(
@@ -325,95 +311,21 @@ class AddMissionaryDialog(MaskDialogBase):
         super().showEvent(event)
         self.missionary_id_input.setFocus()
 
-    def done(self, code):
-        if (
-            FLUENT_DIALOG_AVAILABLE
-            and not getattr(self, "_using_plain_dialog_shell", False)
-        ):
-            super().done(code)
-        else:
-            QDialog.done(self, code)
-
-    def _onDone(self, code):
-        if (
-            FLUENT_DIALOG_AVAILABLE
-            and not getattr(self, "_using_plain_dialog_shell", False)
-        ):
-            super()._onDone(code)
-        else:
-            QDialog.done(self, code)
-
     def setup_ui(self):
-        surface = self.surface
+        self.header.setObjectName("AddMissionaryHeader")
+        title = self.header.findChild(QLabel, "AppDialogTitle")
+        subtitle = self.header.findChild(QLabel, "AppDialogSubtitle")
+        if title is not None:
+            title.setObjectName("AddMissionaryTitle")
+        if subtitle is not None:
+            subtitle.setObjectName("AddMissionarySubtitle")
 
-        layout = QVBoxLayout()
-
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
-
-        surface.setLayout(layout)
-
-        layout.addWidget(
-            self._build_header()
-        )
-
-        layout.addWidget(
-            self._build_form_body()
-        )
-
-        layout.addWidget(
-            self._build_footer()
-        )
-
-    def _build_header(self):
-        header = QFrame()
-        header.setObjectName(
-            "AddMissionaryHeader"
-        )
-        header.setAttribute(
-            Qt.WA_StyledBackground,
-            True,
-        )
-
-        layout = QVBoxLayout()
-        layout.setContentsMargins(
-            18, 16, 18, 12
-        )
-        layout.setSpacing(4)
-        header.setLayout(layout)
-
-        title = SubtitleLabel(
-            "Add Missionary"
-        )
-        title.setObjectName("AddMissionaryTitle")
-
-        subtitle = BodyLabel(
-            "Create the missionary record now, "
-            "then let document uploads fill in "
-            "the rest later."
-        )
-        subtitle.setObjectName("AddMissionarySubtitle")
-        subtitle.setWordWrap(True)
-
-        layout.addWidget(title)
-        layout.addWidget(subtitle)
-
-        return header
-
-    def _build_form_body(self):
-        body = QWidget()
-        body.setObjectName("AddMissionaryBody")
-        body.setAttribute(
-            Qt.WA_StyledBackground,
-            True,
-        )
-
-        layout = QVBoxLayout()
-        layout.setContentsMargins(
+        self.body.setObjectName("AddMissionaryBody")
+        self.body_layout.setContentsMargins(
             18, 16, 18, 16
         )
-        layout.setSpacing(12)
-        body.setLayout(layout)
+        self.body_layout.setSpacing(12)
+        self.footer.setObjectName("AddMissionaryFooter")
 
         self.missionary_id_input = create_line_edit(
             "Enter numeric missionary ID",
@@ -559,35 +471,35 @@ class AddMissionaryDialog(MaskDialogBase):
             )
         )
 
-        layout.addWidget(
+        self.body_layout.addWidget(
             self._build_field(
                 "Missionary ID",
                 self.missionary_id_input,
             )
         )
 
-        layout.addWidget(
+        self.body_layout.addWidget(
             self._build_field(
                 "Full Name",
                 self.full_name_input,
             )
         )
 
-        layout.addWidget(
+        self.body_layout.addWidget(
             self._build_field(
                 "Nationality",
                 self.nationality_input,
             )
         )
 
-        layout.addWidget(
+        self.body_layout.addWidget(
             self._build_field(
                 "Passport Number",
                 self.passport_input,
             )
         )
 
-        layout.addWidget(
+        self.body_layout.addWidget(
             self._build_field(
                 "Original Entry Date",
                 self.arrival_date_input,
@@ -599,7 +511,7 @@ class AddMissionaryDialog(MaskDialogBase):
             )
         )
 
-        return body
+        self._build_footer()
 
     def _build_field(
         self,
@@ -638,9 +550,6 @@ class AddMissionaryDialog(MaskDialogBase):
             self.nationality_input.setText(normalize_nationality(code))
 
     def _build_footer(self):
-        footer = DialogFooter()
-        footer.setObjectName("AddMissionaryFooter")
-
         self.cancel_button = create_button(
             "Cancel",
             "secondary",
@@ -659,15 +568,13 @@ class AddMissionaryDialog(MaskDialogBase):
             self.save_missionary
         )
 
-        footer.add_action(
+        self.footer.add_action(
             self.cancel_button
         )
 
-        footer.add_action(
+        self.footer.add_action(
             self.save_button
         )
-
-        return footer
 
     def _selected_arrival_date(self):
         if hasattr(

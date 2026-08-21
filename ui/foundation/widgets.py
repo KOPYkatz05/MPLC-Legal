@@ -6,7 +6,6 @@ from PySide6.QtCore import (
     QEasingCurve,
     QEvent,
     QMimeData,
-    QParallelAnimationGroup,
     QPoint,
     QPointF,
     QPropertyAnimation,
@@ -14,6 +13,7 @@ from PySide6.QtCore import (
     QRectF,
     QSize,
     Qt,
+    Property,
     Signal,
 )
 from PySide6.QtGui import (
@@ -746,7 +746,8 @@ class AppShell(QWidget):
     EXPANDED_SIDEBAR_WIDTH = 224
     COLLAPSED_BUTTON_WIDTH = 55
     EXPANDED_BUTTON_WIDTH = 208
-    SIDEBAR_ANIMATION_DURATION_MS = 220
+    SIDEBAR_EXPAND_DURATION_MS = 210
+    SIDEBAR_COLLAPSE_DURATION_MS = 170
 
     def __init__(self, app_title, parent=None):
         super().__init__(parent)
@@ -755,6 +756,7 @@ class AppShell(QWidget):
         self._buttons = {}
         self._sidebar_expanded = False
         self._sidebar_animation = None
+        self._sidebar_current_width = self.COLLAPSED_SIDEBAR_WIDTH
         self._icon_names = {
             "dashboard": ("VIEW_DASHBOARD", "HOME"),
             "missionaries": ("PEOPLE", "CONTACT"),
@@ -776,15 +778,16 @@ class AppShell(QWidget):
 
         body = QWidget(self)
         body.setObjectName("AppShellBody")
+        self.body = body
         body_layout = QHBoxLayout()
         body_layout.setContentsMargins(0, 0, 0, 0)
         body_layout.setSpacing(0)
         body.setLayout(body_layout)
         root.addWidget(body, stretch=1)
 
-        self.sidebar = QFrame()
+        self.sidebar = QFrame(body)
         self.sidebar.setObjectName("FluentSidebar")
-        self.sidebar.setFixedWidth(self.COLLAPSED_SIDEBAR_WIDTH)
+        self.sidebar.resize(self.COLLAPSED_SIDEBAR_WIDTH, body.height())
         self.sidebar_layout = QVBoxLayout()
         self.sidebar_layout.setContentsMargins(8, 8, 8, 8)
         self.sidebar_layout.setSpacing(0)
@@ -815,10 +818,41 @@ class AppShell(QWidget):
         self.stack.setMinimumSize(0, 0)
         self.stack.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Ignored)
 
-        body_layout.addWidget(self.sidebar)
+        self.sidebar_rail = QWidget(body)
+        self.sidebar_rail.setObjectName("SidebarRailPlaceholder")
+        self.sidebar_rail.setFixedWidth(self.COLLAPSED_SIDEBAR_WIDTH)
+        body_layout.addWidget(self.sidebar_rail)
         body_layout.addWidget(self.stack, stretch=1)
+        body.installEventFilter(self)
+        self.sidebar.raise_()
 
         self.sidebar_layout.addStretch()
+
+    def eventFilter(self, watched, event):
+        if watched is self.body and event.type() == QEvent.Resize:
+            self.sidebar.setGeometry(
+                0,
+                0,
+                self._sidebar_current_width,
+                self.body.height(),
+            )
+            self.sidebar.raise_()
+        return super().eventFilter(watched, event)
+
+    def _get_sidebar_width(self):
+        return self._sidebar_current_width
+
+    def _set_sidebar_width(self, width):
+        self._sidebar_current_width = int(width)
+        self.sidebar.setGeometry(
+            0,
+            0,
+            self._sidebar_current_width,
+            self.body.height(),
+        )
+        self.sidebar.raise_()
+
+    sidebarWidth = Property(int, _get_sidebar_width, _set_sidebar_width)
 
     def add_nav_item(self, key, title, stack_index, group=""):
         button = SidebarToolButton(title, self.sidebar)
@@ -863,6 +897,14 @@ class AppShell(QWidget):
         # slides over its contents instead of making them disappear abruptly.
         if self._sidebar_expanded:
             self._set_sidebar_button_content(True, button_width)
+            # Prepare the complete drawer while it is still clipped behind the
+            # compact rail. The first animated frame can then reveal finished
+            # content instead of waiting on lazy label/effect painting.
+            self.sidebar.ensurePolished()
+            self.sidebar_layout.activate()
+            for button in (self.menu_button, *self._buttons.values()):
+                button.ensurePolished()
+                button.text_label.ensurePolished()
 
         self.menu_button.setToolTip(
             "Collapse navigation" if self._sidebar_expanded else "Expand navigation"
@@ -873,22 +915,23 @@ class AppShell(QWidget):
             self._sidebar_animation.stop()
             self._sidebar_animation = None
 
-        start_width = self.sidebar.width()
+        start_width = self._sidebar_current_width
         if not animate or start_width == target_width:
-            self.sidebar.setFixedWidth(target_width)
+            self._set_sidebar_width(target_width)
             self._finish_sidebar_animation()
             return
 
-        self.sidebar.setMinimumWidth(start_width)
-        self.sidebar.setMaximumWidth(start_width)
-        animation = QParallelAnimationGroup(self)
-        for property_name in (b"minimumWidth", b"maximumWidth"):
-            width_animation = QPropertyAnimation(self.sidebar, property_name, animation)
-            width_animation.setDuration(self.SIDEBAR_ANIMATION_DURATION_MS)
-            width_animation.setStartValue(start_width)
-            width_animation.setEndValue(target_width)
-            width_animation.setEasingCurve(QEasingCurve.InOutCubic)
-            animation.addAnimation(width_animation)
+        animation = QPropertyAnimation(self, b"sidebarWidth", self)
+        animation.setDuration(
+            self.SIDEBAR_EXPAND_DURATION_MS
+            if self._sidebar_expanded
+            else self.SIDEBAR_COLLAPSE_DURATION_MS
+        )
+        animation.setStartValue(start_width)
+        animation.setEndValue(target_width)
+        animation.setEasingCurve(
+            QEasingCurve.OutCubic if self._sidebar_expanded else QEasingCurve.InCubic
+        )
         animation.finished.connect(self._finish_sidebar_animation)
         self._sidebar_animation = animation
         animation.start()
@@ -906,7 +949,7 @@ class AppShell(QWidget):
             if self._sidebar_expanded
             else self.COLLAPSED_SIDEBAR_WIDTH
         )
-        self.sidebar.setFixedWidth(target_width)
+        self._set_sidebar_width(target_width)
         if not self._sidebar_expanded:
             self._set_sidebar_button_content(False, self.COLLAPSED_BUTTON_WIDTH)
         self._sidebar_animation = None

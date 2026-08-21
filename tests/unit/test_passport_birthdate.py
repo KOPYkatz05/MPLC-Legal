@@ -225,8 +225,6 @@ def test_missionary_detail_page_handles_birthdate_field(monkeypatch, qapp):
     assert page.father_name_input.text() == "Carlos Example"
     assert page.mother_name_input.text() == "Maria Example"
     assert page.folder_open_btn.isEnabled() is False
-    assert "Name:" in page.summary_name_chip.text()
-    assert "Birthdate:" in page.summary_birthdate_chip.text()
     assert page.has_unsaved_changes() is False
     assert page._detail_loaded is True
     assert page.detail_loading_icon.isHidden()

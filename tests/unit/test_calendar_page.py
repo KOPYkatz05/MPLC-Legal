@@ -1146,6 +1146,7 @@ def test_calendar_toolbar_no_longer_shows_overdue_strip(monkeypatch, qapp):
         )
         assert len(nav_buttons) == 2
         assert all(button.width() == 34 for button in nav_buttons)
+        assert [button.text() for button in nav_buttons] == ["‹", "›"]
         assert today_button is not None
         assert today_button.text() == "Today"
         assert add_button is not None

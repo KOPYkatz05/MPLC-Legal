@@ -1600,9 +1600,9 @@ class OfficeWorkPage(QWidget):
 
     def _open_task_workspace(self, task_id):
         if self.main_window is not None:
-            opener = getattr(self.main_window, "open_alert_workspace", None)
+            opener = getattr(self.main_window, "open_task_list", None)
             if callable(opener):
-                opener(task_id, return_key="office_work")
+                opener(task_id)
                 return
         self.focus_task_context(title="")
 

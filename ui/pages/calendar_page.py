@@ -7,7 +7,6 @@ from PySide6.QtCore import (
     QMimeData,
     QPoint,
     QRect,
-    QSize,
     Qt,
     QTimer,
 )
@@ -56,7 +55,6 @@ from ui.foundation import (
     create_combo_box,
     create_scroll_area,
     create_search_edit,
-    app_icon,
     show_message,
 )
 from utils.i18n import tr
@@ -903,7 +901,6 @@ class CalendarPage(QWidget):
 
     def _render_calendar(self):
         self._clear_layout(self.calendar_layout)
-        self._build_summary_cards()
 
         visible_dates = visible_range_for_mode(
             self._calendar_mode,
@@ -988,6 +985,7 @@ class CalendarPage(QWidget):
                 )
             )
 
+        self.calendar_layout.addWidget(self._build_summary_cards())
         self.calendar_layout.addStretch()
 
     def _build_summary_cards(self):
@@ -1023,7 +1021,7 @@ class CalendarPage(QWidget):
         wrapper = QWidget()
         wrapper.setObjectName("CalendarSummaryRow")
         wrapper.setLayout(row)
-        self.calendar_layout.addWidget(wrapper)
+        return wrapper
 
     def _build_summary_counts(self, appointments):
         today = date.today()
@@ -1135,17 +1133,15 @@ class CalendarPage(QWidget):
         return toolbar
 
     def _make_nav_arrow_button(self, icon_name, tooltip):
-        slot = "calendar.previous" if icon_name == "LEFT_ARROW" else "calendar.next"
-        fallback = "<" if icon_name == "LEFT_ARROW" else ">"
-        button = create_pill_button(fallback)
+        # Keep these as button glyphs instead of relying on the optional Lucide
+        # icon runtime.  That runtime can return a non-null but blank icon on
+        # some Windows installs, leaving the month navigation controls empty.
+        arrow = "‹" if icon_name == "LEFT_ARROW" else "›"
+        button = create_pill_button(arrow)
         button.setObjectName("CalendarNavPillButton")
         button.setFixedSize(34, 30)
-        lucide = app_icon(slot, size=18)
-        if lucide is not None and not lucide.isNull():
-            button.setIcon(lucide)
-            button.setIconSize(QSize(16, 16))
-            button.setText("")
         button.setToolTip(tooltip)
+        button.setAccessibleName(tooltip)
         return button
 
     def _apply_calendar_filters(self, appointments):

@@ -9,7 +9,6 @@ from PySide6.QtWidgets import (
     QFrame,
     QSizePolicy,
     QStackedLayout,
-    QGraphicsOpacityEffect,
 )
 
 from PySide6.QtCore import (
@@ -22,6 +21,7 @@ from PySide6.QtCore import (
     QRunnable,
     QThreadPool,
     Slot,
+    Property,
 )
 from PySide6.QtGui import QColor, QFont, QPalette, QPainter, QPen
 
@@ -228,6 +228,7 @@ class RefreshSpinner(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._angle = 0
+        self._opacity = 1.0
         self._timer = QTimer(self)
         self._timer.setInterval(40)
         self._timer.timeout.connect(self._advance)
@@ -245,13 +246,52 @@ class RefreshSpinner(QWidget):
         self._angle = (self._angle + 28) % 360
         self.update()
 
+    def _get_opacity(self):
+        return self._opacity
+
+    def _set_opacity(self, opacity):
+        self._opacity = max(0.0, min(1.0, float(opacity)))
+        self.update()
+
+    opacity = Property(float, _get_opacity, _set_opacity)
+
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing, True)
+        painter.setOpacity(self._opacity)
         pen = QPen(QColor("#0F8D94"), 2)
         pen.setCapStyle(Qt.RoundCap)
         painter.setPen(pen)
         painter.drawArc(3, 3, 12, 12, -self._angle * 16, 235 * 16)
+
+
+class RefreshCheckmark(QWidget):
+    """Small confirmation mark with painter-owned opacity."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._opacity = 0.0
+        self.setFixedSize(18, 18)
+
+    def _get_opacity(self):
+        return self._opacity
+
+    def _set_opacity(self, opacity):
+        self._opacity = max(0.0, min(1.0, float(opacity)))
+        self.update()
+
+    opacity = Property(float, _get_opacity, _set_opacity)
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        painter.setOpacity(self._opacity)
+        painter.setPen(QColor("#059669"))
+        font = painter.font()
+        font.setPixelSize(17)
+        font.setWeight(QFont.DemiBold)
+        painter.setFont(font)
+        painter.drawText(self.rect(), Qt.AlignCenter, "\u2713")
 
 
 class RefreshStatusIndicator(QWidget):
@@ -264,22 +304,16 @@ class RefreshStatusIndicator(QWidget):
         layout = QStackedLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         self._spinner = RefreshSpinner(self)
-        self._check = QLabel("✓", self)
-        self._check.setAlignment(Qt.AlignCenter)
-        self._check.setStyleSheet("color: #059669; font-size: 17px; font-weight: 600;")
+        self._check = RefreshCheckmark(self)
         layout.addWidget(self._spinner)
         layout.addWidget(self._check)
         self._layout = layout
 
-        self._spinner_opacity = QGraphicsOpacityEffect(self._spinner)
-        self._spinner.setGraphicsEffect(self._spinner_opacity)
-        self._check_opacity = QGraphicsOpacityEffect(self._check)
-        self._check.setGraphicsEffect(self._check_opacity)
-        self._fade = QPropertyAnimation(self._spinner_opacity, b"opacity", self)
+        self._fade = QPropertyAnimation(self._spinner, b"opacity", self)
         self._fade.setDuration(150)
         self._fade.setEasingCurve(QEasingCurve.OutCubic)
         self._fade.finished.connect(self._show_checkmark)
-        self._check_fade = QPropertyAnimation(self._check_opacity, b"opacity", self)
+        self._check_fade = QPropertyAnimation(self._check, b"opacity", self)
         self._check_fade.setDuration(180)
         self._check_fade.setEasingCurve(QEasingCurve.OutCubic)
         self.hide()
@@ -288,14 +322,14 @@ class RefreshStatusIndicator(QWidget):
         self._fade.stop()
         self._check_fade.stop()
         self._layout.setCurrentWidget(self._spinner)
-        self._spinner_opacity.setOpacity(1.0)
-        self._check_opacity.setOpacity(0.0)
+        self._spinner.setProperty("opacity", 1.0)
+        self._check.setProperty("opacity", 0.0)
         self.show()
         self._spinner.start()
 
     def show_complete(self):
         self._spinner.stop()
-        self._fade.setStartValue(self._spinner_opacity.opacity())
+        self._fade.setStartValue(self._spinner.property("opacity"))
         self._fade.setEndValue(0.0)
         self._fade.start()
 
@@ -1171,9 +1205,9 @@ class DashboardPage(QWidget):
     def _open_office_task(self, task_id, title):
         if self.main_window is None:
             return
-        opener = getattr(self.main_window, "open_alert_workspace", None)
+        opener = getattr(self.main_window, "open_task_list", None)
         if task_id and callable(opener):
-            opener(task_id, return_key="dashboard")
+            opener(task_id, title=title)
             return
         office_page = getattr(self.main_window, "office_work_page", None)
         if office_page is not None and hasattr(office_page, "focus_task_context"):
@@ -1602,9 +1636,9 @@ class DashboardPage(QWidget):
             return
         task_id = item.get("task_id")
         if task_id and self.main_window is not None:
-            opener = getattr(self.main_window, "open_alert_workspace", None)
+            opener = getattr(self.main_window, "open_task_list", None)
             if callable(opener):
-                opener(task_id, return_key="dashboard")
+                opener(task_id, title=item.get("action", ""))
                 return
         if item.get("missionary_id") and self.main_window is not None:
             opener = getattr(self.main_window, "open_missionary_detail", None)
@@ -2003,9 +2037,9 @@ class DashboardPage(QWidget):
             }
             and self.main_window is not None
         ):
-            opener = getattr(self.main_window, "open_alert_workspace", None)
+            opener = getattr(self.main_window, "open_task_list", None)
             if callable(opener):
-                opener(task_id, return_key="dashboard")
+                opener(task_id, title=item.get("title") or item.get("action", ""))
                 return
 
         missionary_id = item.get("missionary_id")

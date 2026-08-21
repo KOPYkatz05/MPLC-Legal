@@ -5,7 +5,14 @@ from pathlib import Path
 import pytest
 from PySide6.QtCore import QCoreApplication, QEvent, QRect
 from PySide6.QtGui import QImage, QPainter
-from PySide6.QtWidgets import QDialog, QFrame, QStyle, QStyleOptionFrame, QVBoxLayout
+from PySide6.QtWidgets import (
+    QDialog,
+    QFrame,
+    QPushButton,
+    QStyle,
+    QStyleOptionFrame,
+    QVBoxLayout,
+)
 
 from ui.foundation import text_inputs
 from ui.foundation import text_input_style
@@ -51,6 +58,74 @@ def test_standard_text_input_factories_preserve_widget_contracts(qapp):
     assert line_edit.property("chatTextBoxVariant") == "line"
     assert search_edit.property("chatTextBoxVariant") == "search"
     assert plain_text_edit.property("chatTextBoxVariant") == "textarea"
+
+
+def test_line_edit_factory_can_create_locked_text_box(qapp):
+    line_edit = create_line_edit("Missionary name", locked=True)
+
+    assert line_edit.isReadOnly()
+    assert line_edit.property("lockedTextBox") is True
+    assert line_edit.property("editLocked") is True
+
+
+def test_missionary_detail_unlocks_only_one_locked_text_box(qapp):
+    from ui.pages.missionary_detail_page import (
+        IntentionalEditField,
+        MissionaryDetailPage,
+    )
+
+    class Harness:
+        _set_detail_editor_locked = (
+            MissionaryDetailPage._set_detail_editor_locked
+        )
+        _unlock_detail_editor = MissionaryDetailPage._unlock_detail_editor
+        _lock_active_detail_editor = (
+            MissionaryDetailPage._lock_active_detail_editor
+        )
+
+    first = create_line_edit("First", locked=True)
+    second = create_line_edit("Second", locked=True)
+    first_field = IntentionalEditField()
+    second_field = IntentionalEditField()
+    harness = Harness()
+    harness._active_detail_editor = None
+    harness._detail_edit_fields = {
+        first: first_field,
+        second: second_field,
+    }
+
+    harness._unlock_detail_editor(first)
+    assert not first.isReadOnly()
+    assert second.isReadOnly()
+
+    harness._unlock_detail_editor(second)
+    assert first.isReadOnly()
+    assert not second.isReadOnly()
+    assert harness._active_detail_editor is second
+
+
+def test_locked_field_reveals_edit_button_when_child_input_is_hovered(qapp):
+    from ui.pages.missionary_detail_page import IntentionalEditField
+
+    field = IntentionalEditField()
+    layout = QVBoxLayout(field)
+    edit_button = QPushButton("Edit")
+    editor = create_line_edit("Name", locked=True)
+    field.set_edit_button(edit_button)
+    layout.addWidget(edit_button)
+    layout.addWidget(editor)
+    field.enable_hover_tracking()
+    field.resize(320, 100)
+    field.show()
+    qapp.processEvents()
+
+    # Send the same child-enter event Qt emits on a real pointer transition.
+    # QTest.mouseMove does not update the native cursor under every headless
+    # Windows test backend, which made this assertion backend-dependent.
+    QCoreApplication.sendEvent(editor, QEvent(QEvent.Enter))
+    qapp.processEvents()
+
+    assert edit_button.isVisible()
 
 
 def test_text_input_factory_uses_no_direct_style_or_painter_code():
@@ -126,6 +201,25 @@ def test_pixel_crisp_style_draws_one_physical_pixel_border(
     assert image.pixelColor(1, center_y).name() == "#ffffff"
     assert image.pixelColor(center_x, image.height() - 1).name() == expected_color
     assert image.pixelColor(image.width() - 1, center_y).name() == expected_color
+
+
+def test_locked_text_box_factory_draws_muted_gray_surface(qapp):
+    widget = create_line_edit("Name", locked=True)
+    image = QImage(120, 42, QImage.Format_ARGB32_Premultiplied)
+    image.fill("#00000000")
+    option = QStyleOptionFrame()
+    option.rect = QRect(0, 0, 120, 42)
+    option.state = QStyle.State_Enabled
+    painter = QPainter(image)
+    PixelCrispTextInputStyle._draw_input_surface(
+        option,
+        painter,
+        widget,
+    )
+    painter.end()
+
+    assert image.pixelColor(60, 21).name() == "#f4f4f5"
+    assert image.pixelColor(60, 0).name() == "#d4d4d8"
 
 
 def test_repeated_text_input_dialog_lifecycle_is_stable(qapp):

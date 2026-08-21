@@ -284,13 +284,6 @@ def test_open_missionary_detail_switches_before_background_lookup_finishes():
 
 
 def test_secondary_workspace_navigation_uses_nonblocking_entry_points():
-    class FakeAlertPage:
-        def __init__(self):
-            self.calls = []
-
-        def request_task(self, task_id, return_key="dashboard"):
-            self.calls.append((task_id, return_key))
-
     class FakeMissionaryWorkspacePage:
         def __init__(self):
             self.calls = []
@@ -302,15 +295,21 @@ def test_secondary_workspace_navigation_uses_nonblocking_entry_points():
     window._clear_detail_navigation_stack_if_detail_visible = lambda: None
     window._nav_widgets = {}
     window.stack = FakeStack()
-    window.alert_workspace_page = FakeAlertPage()
+    window.set_current_key = lambda key: task_destinations.append(key)
+    window.office_work_page = SimpleNamespace(
+        focus_task_context=lambda title="": task_calls.append(title)
+    )
     window.missionary_workspace_page = FakeMissionaryWorkspacePage()
+    task_calls = []
+    task_destinations = []
 
-    assert MainWindow.open_alert_workspace(
+    assert MainWindow.open_task_list(
         window,
         7,
-        return_key="office_work",
+        title="Follow up",
     )
-    assert window.alert_workspace_page.calls == [(7, "office_work")]
+    assert task_calls == ["Follow up"]
+    assert task_destinations == ["office_work"]
 
     missionary = SimpleNamespace(id=4)
     workspace = {"id": "workspace"}

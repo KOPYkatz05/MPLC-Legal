@@ -30,11 +30,20 @@ def _configure_chat_text_box(widget, fixed_height=None, variant="line"):
     return widget
 
 
-def create_line_edit(placeholder="", object_name="AppTextInput", parent=None):
+def create_line_edit(
+    placeholder="",
+    object_name="AppTextInput",
+    parent=None,
+    *,
+    locked=False,
+):
     line_edit = ChatLineEdit(parent)
     if object_name:
         line_edit.setObjectName(object_name)
     line_edit.setPlaceholderText(placeholder)
+    line_edit.setProperty("lockedTextBox", bool(locked))
+    line_edit.setProperty("editLocked", bool(locked))
+    line_edit.setReadOnly(bool(locked))
     return _configure_chat_text_box(
         line_edit,
         fixed_height=42,

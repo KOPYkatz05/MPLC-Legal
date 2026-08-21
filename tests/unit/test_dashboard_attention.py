@@ -486,13 +486,12 @@ def test_dashboard_attention_action_routes_to_missionary_detail(qapp):
     assert opened == [42]
 
 
-def test_dashboard_attention_task_routes_to_alert_workspace(qapp):
+def test_dashboard_attention_task_routes_to_task_list(qapp):
     _ = qapp
     page = DashboardPage.__new__(DashboardPage)
     opened = []
     page.main_window = SimpleNamespace(
-        open_alert_workspace=lambda task_id, return_key="dashboard":
-        opened.append((task_id, return_key))
+        open_task_list=lambda task_id, title="": opened.append((task_id, title))
     )
 
     DashboardPage._open_attention_item(
@@ -504,16 +503,15 @@ def test_dashboard_attention_task_routes_to_alert_workspace(qapp):
         },
     )
 
-    assert opened == [(55, "dashboard")]
+    assert opened == [(55, "")]
 
 
-def test_dashboard_attention_follow_up_task_routes_to_alert_workspace(qapp):
+def test_dashboard_attention_follow_up_task_routes_to_task_list(qapp):
     _ = qapp
     page = DashboardPage.__new__(DashboardPage)
     opened = []
     page.main_window = SimpleNamespace(
-        open_alert_workspace=lambda task_id, return_key="dashboard":
-        opened.append((task_id, return_key))
+        open_task_list=lambda task_id, title="": opened.append((task_id, title))
     )
 
     DashboardPage._open_attention_item(
@@ -525,7 +523,7 @@ def test_dashboard_attention_follow_up_task_routes_to_alert_workspace(qapp):
         },
     )
 
-    assert opened == [(56, "dashboard")]
+    assert opened == [(56, "")]
 
 
 def test_dashboard_attention_action_labels_are_specific():
@@ -839,13 +837,12 @@ def test_dashboard_cache_is_instant_and_force_refresh_runs_in_background(
         page.close()
 
 
-def test_dashboard_digest_task_routes_to_alert_workspace(qapp):
+def test_dashboard_digest_task_routes_to_task_list(qapp):
     _ = qapp
     page = DashboardPage.__new__(DashboardPage)
     opened = []
     page.main_window = SimpleNamespace(
-        open_alert_workspace=lambda task_id, return_key="dashboard":
-        opened.append((task_id, return_key))
+        open_task_list=lambda task_id, title="": opened.append((task_id, title))
     )
 
     DashboardPage._open_digest_item(
@@ -856,7 +853,7 @@ def test_dashboard_digest_task_routes_to_alert_workspace(qapp):
         },
     )
 
-    assert opened == [(66, "dashboard")]
+    assert opened == [(66, "Critical Prorroga follow-up needed")]
 
 
 def test_dashboard_attention_complete_appointment_refreshes_pages(monkeypatch, qapp):

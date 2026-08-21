@@ -95,26 +95,40 @@ def test_app_shell_menu_button_toggles_labeled_navigation(qapp, qtbot):
     shell = AppShell("Mission Legal Tracker")
     shell.add_nav_item("dashboard", "Dashboard", 0, "Work")
     shell.add_nav_item("office_work", "Tasks", 1, "Work")
+    shell.add_nav_item("workspaces", "Workspaces", 2, "System")
+    shell.add_nav_item("settings", "Settings", 3, "System")
+    shell.resize(800, 600)
+    shell.show()
+    qapp.processEvents()
 
     assert shell.sidebar.width() == shell.COLLAPSED_SIDEBAR_WIDTH
+    stack_x = shell.stack.geometry().x()
     icon_x = shell._buttons["dashboard"].icon_label.geometry().x()
     assert shell.menu_button.text_label.isHidden()
     assert shell._buttons["dashboard"].text_label.isHidden()
 
     shell.menu_button.click()
     assert shell._sidebar_animation is not None
+    assert not shell.menu_button.text_label.isHidden()
+    assert not shell._buttons["dashboard"].text_label.isHidden()
+    assert not shell._buttons["workspaces"].text_label.isHidden()
+    assert not shell._buttons["settings"].text_label.isHidden()
     qtbot.waitUntil(
         lambda: shell.COLLAPSED_SIDEBAR_WIDTH
         < shell.sidebar.width()
         < shell.EXPANDED_SIDEBAR_WIDTH
     )
+    assert shell.stack.geometry().x() == stack_x
     assert shell._buttons["dashboard"].icon_label.geometry().x() == icon_x
     qtbot.waitUntil(lambda: shell._sidebar_animation is None)
 
     assert shell.sidebar.width() == shell.EXPANDED_SIDEBAR_WIDTH
+    assert shell.stack.geometry().x() == stack_x
     assert shell.menu_button.navigation_text() == "Menu"
     assert shell._buttons["dashboard"].navigation_text() == "Dashboard"
     assert shell._buttons["office_work"].navigation_text() == "Tasks"
+    assert shell._buttons["workspaces"].navigation_text() == "Workspaces"
+    assert shell._buttons["settings"].navigation_text() == "Settings"
     assert shell._buttons["dashboard"].icon_label.geometry().x() == icon_x
     assert not shell.menu_button.text_label.isHidden()
     assert not shell._buttons["dashboard"].text_label.isHidden()
@@ -123,10 +137,13 @@ def test_app_shell_menu_button_toggles_labeled_navigation(qapp, qtbot):
     qtbot.waitUntil(lambda: shell._sidebar_animation is None)
 
     assert shell.sidebar.width() == shell.COLLAPSED_SIDEBAR_WIDTH
+    assert shell.stack.geometry().x() == stack_x
     assert shell._buttons["dashboard"].icon_label.geometry().x() == icon_x
     assert shell._buttons["dashboard"].toolButtonStyle() == Qt.ToolButtonIconOnly
     assert shell.menu_button.text_label.isHidden()
     assert shell._buttons["dashboard"].text_label.isHidden()
+    assert shell._buttons["workspaces"].text_label.isHidden()
+    assert shell._buttons["settings"].text_label.isHidden()
 
 
 def test_app_title_bar_window_buttons_call_parent_window(qapp):
