@@ -76,6 +76,24 @@ def test_remote_create_and_update_normalize_name_whitespace(monkeypatch):
     )
 
 
+def test_remote_create_routes_peruvian_records_to_dni_tracking(monkeypatch):
+    service, client = _remote_service(monkeypatch)
+
+    service.create_missionary(
+        full_name="Quispe, Ana",
+        missionary_code="101",
+        nationality="PER",
+        passport_number="P 123 456",
+        arrival_date=date(2026, 7, 12),
+    )
+
+    payload = client.calls[0][2]["json"]
+    assert payload["nationality"] == "Peru"
+    assert payload["passport_number"] is None
+    assert payload["arrival_date"] is None
+    assert payload["last_entry_date"] is None
+
+
 def test_remote_last_entry_date_can_be_updated_independently(monkeypatch):
     service, client = _remote_service(monkeypatch)
 

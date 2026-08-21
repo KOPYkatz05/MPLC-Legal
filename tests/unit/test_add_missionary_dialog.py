@@ -60,9 +60,19 @@ def test_uses_shared_popup_shell_and_reference_sections(
 
     assert isinstance(dialog, dialog_module.AppDialog)
     assert dialog.surface.objectName() == "AppDialogSurface"
+    assert dialog.surface_container.graphicsEffect() is None
     assert dialog.header.objectName() == "AddMissionaryHeader"
     assert dialog.body.objectName() == "AddMissionaryBody"
     assert dialog.footer.objectName() == "AddMissionaryFooter"
+    assert dialog.surface.property("dialogVariant") == "addMissionary"
+    assert dialog.body.findChild(
+        dialog_module.QLabel,
+        "AddMissionarySectionLabel",
+    ).text() == "Identity"
+    assert dialog.body.findChild(
+        dialog_module.GuidanceButton,
+        "GuidanceButton",
+    ).guidance_title == "Original entry date"
     margins = dialog.body_layout.contentsMargins()
     assert (
         margins.left(),
@@ -76,8 +86,6 @@ def test_uses_shared_popup_shell_and_reference_sections(
         16,
     )
     assert dialog.body_layout.spacing() == 12
-
-
 def test_nationality_uses_locked_passport_country_codes(
     monkeypatch,
     qapp,
@@ -297,3 +305,77 @@ def test_save_uses_selected_country_name(
     assert len(fake_service.calls) == 1
     assert fake_service.calls[0]["nationality"] == "Peru"
     assert fake_service.calls[0]["full_name"] == "Test Missionary"
+
+
+def test_peruvian_nationality_hides_foreign_fields_and_omits_them_on_save(
+    monkeypatch,
+    qapp,
+):
+    dialog, fake_service = _build_dialog(monkeypatch, qapp)
+    dialog.full_name_input.setText("Peruvian Example")
+    dialog.missionary_id_input.setText("54321")
+    dialog.passport_input.setText("P1234567")
+
+    peruvian_index = dialog.nationality_input.findData("PER")
+    assert peruvian_index >= 0
+    dialog.nationality_input.setCurrentIndex(peruvian_index)
+    dialog._update_nationality_dependent_fields()
+
+    assert dialog.passport_field.isHidden()
+    assert dialog.mission_history_label.isHidden()
+    assert dialog.arrival_date_field.isHidden()
+
+    dialog.save_missionary()
+
+    assert fake_service.calls[0]["nationality"] == "Peru"
+    assert fake_service.calls[0]["passport_number"] is None
+    assert fake_service.calls[0]["arrival_date"] is None
+
+
+def test_foreign_nationality_keeps_foreign_fields_visible(monkeypatch, qapp):
+    dialog, _ = _build_dialog(monkeypatch, qapp)
+
+    foreign_index = dialog.nationality_input.findData("USA")
+    assert foreign_index >= 0
+    dialog.nationality_input.setCurrentIndex(foreign_index)
+    dialog._update_nationality_dependent_fields()
+
+    assert not dialog.passport_field.isHidden()
+    assert not dialog.mission_history_label.isHidden()
+    assert not dialog.arrival_date_field.isHidden()
+
+
+def test_nationality_changes_are_coalesced_before_reflow(monkeypatch, qapp):
+    dialog, _ = _build_dialog(monkeypatch, qapp)
+
+    peruvian_index = dialog.nationality_input.findData("PER")
+    assert peruvian_index >= 0
+    dialog.nationality_input.setCurrentIndex(peruvian_index)
+
+    assert dialog._nationality_ui_timer.isSingleShot()
+    assert dialog._nationality_ui_timer.isActive()
+    assert not dialog.passport_field.isHidden()
+
+    dialog._nationality_ui_timer.stop()
+    dialog._update_nationality_dependent_fields()
+    assert dialog.passport_field.isHidden()
+
+
+def test_typed_country_does_not_reuse_stale_selected_country(
+    monkeypatch,
+    qapp,
+):
+    dialog, _ = _build_dialog(monkeypatch, qapp)
+
+    peruvian_index = dialog.nationality_input.findData("PER")
+    assert peruvian_index >= 0
+    dialog.nationality_input.setCurrentIndex(peruvian_index)
+    dialog._update_nationality_dependent_fields()
+    assert dialog.passport_field.isHidden()
+
+    _set_combo_text(dialog.nationality_input, "United States")
+    dialog._update_nationality_dependent_fields()
+
+    assert dialog._selected_nationality() == "United States"
+    assert not dialog.passport_field.isHidden()
+    assert not dialog.arrival_date_field.isHidden()

@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from PySide6.QtCore import QPoint, QSize, Qt, QRegularExpression
+from PySide6.QtCore import QPoint, QSize, Qt, QRegularExpression, QTimer
 from PySide6.QtGui import QRegularExpressionValidator, QStandardItem, QStandardItemModel
 from PySide6.QtWidgets import (
     QCompleter,
@@ -19,9 +19,11 @@ from services.missionary_service import (
 )
 from ui.foundation import (
     AppDialog,
+    GuidanceButton,
     create_button,
     create_combo_box,
     create_date_picker,
+    create_guidance_button,
     create_line_edit,
     show_message,
 )
@@ -299,7 +301,14 @@ class AddMissionaryDialog(AppDialog):
                 "the rest later."
             ),
             width=520,
+            # QGraphicsDropShadowEffect caches the complete child surface on
+            # Windows. This form changes shape when Peru is selected, and the
+            # cached frame can leave duplicated controls behind.
+            shadow=False,
         )
+        # Keep the reusable AppDialog surface while allowing the form to have
+        # the same purpose-specific hierarchy as the rest of Mission Legal.
+        self.surface.setProperty("dialogVariant", "addMissionary")
 
         logger.info(
             "Opened Add Missionary dialog"
@@ -325,6 +334,7 @@ class AddMissionaryDialog(AppDialog):
             18, 16, 18, 16
         )
         self.body_layout.setSpacing(12)
+        self.body_layout.setAlignment(Qt.AlignTop)
         self.footer.setObjectName("AddMissionaryFooter")
 
         self.missionary_id_input = create_line_edit(
@@ -457,6 +467,33 @@ class AddMissionaryDialog(AppDialog):
         if hasattr(self.nationality_input, "setCurrentIndex"):
             self.nationality_input.setCurrentIndex(-1)
 
+        self._nationality_ui_timer = QTimer(self)
+        self._nationality_ui_timer.setSingleShot(True)
+        self._nationality_ui_timer.setInterval(80)
+        self._nationality_ui_timer.timeout.connect(
+            self._update_nationality_dependent_fields
+        )
+        self._peruvian_fields_hidden = None
+
+        nationality_changed = getattr(
+            self.nationality_input,
+            "currentTextChanged",
+            None,
+        )
+        if nationality_changed is not None:
+            nationality_changed.connect(
+                self._schedule_nationality_field_update
+            )
+        nationality_index_changed = getattr(
+            self.nationality_input,
+            "currentIndexChanged",
+            None,
+        )
+        if nationality_index_changed is not None:
+            nationality_index_changed.connect(
+                self._schedule_nationality_field_update
+            )
+
         self.passport_input = create_line_edit(
             "Passport number",
             "AddMissionaryInput",
@@ -469,6 +506,10 @@ class AddMissionaryDialog(AppDialog):
             create_date_picker(
                 "AddMissionaryDatePicker"
             )
+        )
+
+        self.body_layout.addWidget(
+            self._build_section_label("Identity")
         )
 
         self.body_layout.addWidget(
@@ -492,32 +533,45 @@ class AddMissionaryDialog(AppDialog):
             )
         )
 
-        self.body_layout.addWidget(
-            self._build_field(
-                "Passport Number",
-                self.passport_input,
-            )
+        self.passport_field = self._build_field(
+            "Passport Number",
+            self.passport_input,
         )
+        self.body_layout.addWidget(self.passport_field)
 
-        self.body_layout.addWidget(
-            self._build_field(
-                "Original Entry Date",
-                self.arrival_date_input,
-                (
-                    "Use the arrival date only. "
-                    "It should be the date the missionary arrived in "
-                    "the country, not the date they came to the mission. "
-                ),
-            )
+        self.mission_history_label = self._build_section_label(
+            "Mission history"
         )
+        self.body_layout.addWidget(self.mission_history_label)
+
+        self.arrival_date_field = self._build_field(
+            "Original Entry Date",
+            self.arrival_date_input,
+            guidance_text=(
+                "Use the date the missionary first arrived in the country, "
+                "not the date they came to the mission."
+            ),
+            guidance_title="Original entry date",
+        )
+        self.body_layout.addWidget(self.arrival_date_field)
+
+        self._update_nationality_dependent_fields()
 
         self._build_footer()
+
+    @staticmethod
+    def _build_section_label(text):
+        label = QLabel(text)
+        label.setObjectName("AddMissionarySectionLabel")
+        return label
 
     def _build_field(
         self,
         label_text,
         control,
         hint_text="",
+        guidance_text="",
+        guidance_title="",
     ):
         container = QWidget()
 
@@ -531,7 +585,21 @@ class AddMissionaryDialog(AppDialog):
             "AddMissionaryFieldLabel"
         )
 
-        layout.addWidget(label)
+        if guidance_text:
+            label_row = QHBoxLayout()
+            label_row.setContentsMargins(0, 0, 0, 0)
+            label_row.setSpacing(4)
+            label_row.addWidget(label)
+            help_button = create_guidance_button(
+                guidance_text,
+                title=guidance_title or label_text,
+                parent=container,
+            )
+            label_row.addWidget(help_button)
+            label_row.addStretch()
+            layout.addLayout(label_row)
+        else:
+            layout.addWidget(label)
         layout.addWidget(control)
 
         if hint_text:
@@ -599,20 +667,52 @@ class AddMissionaryDialog(AppDialog):
             self.passport_input.setText(normalized)
 
     def _selected_nationality(self):
-        nationality = self.nationality_input.currentData()
-        if nationality in PASSPORT_COUNTRY_CODES:
-            return normalize_nationality(nationality)
-
         typed = (
             self.nationality_input.currentText()
             .strip()
             .upper()
         )
 
-        if country_code(typed):
-            return normalize_nationality(typed)
+        if typed:
+            if country_code(typed):
+                return normalize_nationality(typed)
+            # An editable combo can retain the previous row's data while its
+            # text is being replaced. Do not treat that stale data as the
+            # user's current country.
+            return None
+
+        nationality = self.nationality_input.currentData()
+        if nationality in PASSPORT_COUNTRY_CODES:
+            return normalize_nationality(nationality)
 
         return None
+
+    def _is_peruvian_nationality(self):
+        return country_code(self._selected_nationality()) == "PER"
+
+    def _schedule_nationality_field_update(self, *_args):
+        """Coalesce the editable combo's intermediate change signals."""
+        self._nationality_ui_timer.start()
+
+    def _update_nationality_dependent_fields(self, *_args):
+        """Keep Peru's DNI-only record path free of foreign requirements."""
+        is_peruvian = self._is_peruvian_nationality()
+        if self._peruvian_fields_hidden == is_peruvian:
+            return
+
+        self._peruvian_fields_hidden = is_peruvian
+        self.passport_field.setVisible(not is_peruvian)
+        self.mission_history_label.setVisible(not is_peruvian)
+        self.arrival_date_field.setVisible(not is_peruvian)
+
+        # Let Qt complete the layout normally. Temporarily disabling painting
+        # here left stale source pixmaps inside the dialog's shadow effect,
+        # which looked like duplicated controls at arbitrary positions.
+        self.body_layout.activate()
+        self.body.updateGeometry()
+        self.surface.layout().activate()
+        self.surface.updateGeometry()
+        self.surface_container.update()
 
     def save_missionary(self):
         try:
@@ -637,6 +737,9 @@ class AddMissionaryDialog(AppDialog):
 
                 return
 
+            nationality = self._selected_nationality()
+            is_peruvian = country_code(nationality) == "PER"
+
             missionary = (
                 self.missionary_service
                 .create_missionary(
@@ -648,16 +751,18 @@ class AddMissionaryDialog(AppDialog):
                         .strip()
                     ),
 
-                    nationality=self._selected_nationality(),
+                    nationality=nationality,
 
                     passport_number=(
-                        self.passport_input
-                        .text()
-                        .strip()
+                        None
+                        if is_peruvian
+                        else self.passport_input.text().strip()
                     ),
 
                     arrival_date=(
-                        self._selected_arrival_date()
+                        None
+                        if is_peruvian
+                        else self._selected_arrival_date()
                     ),
                 )
             )

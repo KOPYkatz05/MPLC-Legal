@@ -2631,6 +2631,11 @@ QLineEdit:focus {
    PixelCrispTextInputStyle so it remains clean at fractional DPI scales. */
 QLineEdit[chatTextBox="true"],
 QPlainTextEdit[chatTextBox="true"] {
+    /* The factory paints its own opaque rounded surface. This keeps all four
+       edges intact when a translucent dialog is composed at fractional DPI. */
+    background: transparent;
+    border: none;
+    border-radius: 0px;
     padding: 8px 13px;
     color: #18181B;
     font-size: 13px;
@@ -2837,7 +2842,7 @@ QDialog QLabel {
     background: transparent;
 }
 
-QFrame#AddMissionarySurface {
+QFrame#AppDialogSurface[dialogVariant="addMissionary"] {
     background-color: #FFFFFF;
     border: 1px solid #DADADF;
     border-radius: 20px;
@@ -2868,7 +2873,7 @@ QWidget#AddMissionaryBody {
 }
 
 QFrame#AddMissionaryFooter {
-    background-color: #FFFFFF;
+    background-color: #F7F7F8;
     border-top: 1px solid #ECECEC;
     border-bottom-left-radius: 20px;
     border-bottom-right-radius: 20px;
@@ -2883,6 +2888,55 @@ QLabel#AddMissionaryFieldLabel {
 
 QLabel#AddMissionaryHint {
     color: #71717A;
+    font-size: 11px;
+}
+
+QLabel#AddMissionarySectionLabel {
+    color: #0F5F64;
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.7px;
+    padding-top: 2px;
+}
+
+QToolButton#GuidanceButton {
+    background-color: transparent;
+    border: 1px solid transparent;
+    border-radius: 12px;
+    padding: 0px;
+}
+
+QToolButton#GuidanceButton:hover,
+QToolButton#GuidanceButton:focus {
+    background-color: #EFFCFC;
+    border-color: #9BE3E6;
+}
+
+QToolTip {
+    background-color: #18181B;
+    color: #FFFFFF;
+    border: 1px solid #3F3F46;
+    border-radius: 7px;
+    padding: 8px 10px;
+    font-size: 11px;
+}
+
+QFrame#GuidancePopup {
+    background: transparent;
+    border: none;
+}
+
+QLabel#GuidancePopupTitle {
+    background: transparent;
+    color: #16383C;
+    font-size: 11px;
+    font-weight: 700;
+}
+
+QLabel#GuidancePopupBody {
+    background: transparent;
+    color: #475569;
     font-size: 11px;
 }
 
@@ -2901,41 +2955,16 @@ QLabel#CountryCompletionName {
     font-size: 12px;
 }
 
-QLineEdit#AddMissionaryInput {
-    min-height: 34px;
-    border-radius: 7px;
-    padding: 7px 10px;
-    border: 1px solid #DADADF;
-    background-color: #FFFFFF;
-    color: #18181B;
-}
-
-QLineEdit#AddMissionaryInput:focus {
-    border-color: #18181B;
-}
-
 QPushButton#AddMissionaryDatePicker,
 QDateEdit#AddMissionaryDatePicker {
     min-height: 34px;
-    background-color: #FFFFFF;
+    background: transparent;
     color: #18181B;
-    border: 1px solid #DADADF;
-    border-radius: 7px;
-    padding: 7px 10px;
+    border: none;
+    border-radius: 0px;
+    padding: 7px 36px 7px 10px;
     text-align: left;
 }
-
-QPushButton#AddMissionaryDatePicker:hover,
-QDateEdit#AddMissionaryDatePicker:hover {
-    border-color: #C8C8CF;
-    background-color: #FBFBFC;
-}
-
-QPushButton#AddMissionaryDatePicker:focus,
-QDateEdit#AddMissionaryDatePicker:focus {
-    border-color: #18181B;
-}
-
 
 /* ==========================================
    SLIDERS (Document Editor)

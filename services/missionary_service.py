@@ -30,7 +30,7 @@ from services.appointment_service import (
     APPOINTMENT_FIELDS,
     AppointmentService,
 )
-from utils.nationalities import normalize_nationality
+from utils.nationalities import country_code, normalize_nationality
 from utils.names import normalize_person_name
 
 from utils.logger import logger
@@ -46,6 +46,14 @@ from services.document_storage_service import (
 
 class MissionaryCodeError(ValueError):
     pass
+
+
+def _tracking_profile_for_nationality(nationality):
+    return (
+        "PERUVIAN_DNI"
+        if country_code(nationality) == "PER"
+        else "LEGAL"
+    )
 
 
 def missionary_display_id(missionary):
@@ -197,6 +205,15 @@ class MissionaryService:
     ):
         passport_number = normalize_passport_number(passport_number)
         nationality = normalize_nationality(nationality)
+        tracking_profile = _tracking_profile_for_nationality(nationality)
+        if tracking_profile == "PERUVIAN_DNI":
+            # A Peruvian record follows the DNI-only track.  Ignore values
+            # that may have been left in foreign-national controls before the
+            # nationality selection changed.
+            passport_number = None
+            arrival_date = None
+            last_entry_date = None
+            visa_expiration = None
         if last_entry_date is None:
             last_entry_date = arrival_date
         full_name = normalize_person_name(full_name)
@@ -268,6 +285,14 @@ class MissionaryService:
 
                 status="ACTIVE",
 
+                tracking_profile=tracking_profile,
+
+                current_stage=(
+                    "DNI"
+                    if tracking_profile == "PERUVIAN_DNI"
+                    else "INTERPOL"
+                ),
+
                 arrival_date=arrival_date,
 
                 last_entry_date=last_entry_date,
@@ -281,9 +306,10 @@ class MissionaryService:
 
             session.refresh(missionary)
 
-            self.workflow_service.initialize_workflows(
-                missionary.id
-            )
+            if tracking_profile == "LEGAL":
+                self.workflow_service.initialize_workflows(
+                    missionary.id
+                )
 
             logger.info(
                 f"Created missionary: "

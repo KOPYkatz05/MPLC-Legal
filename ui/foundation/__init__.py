@@ -13,6 +13,7 @@ from ui.foundation.date_inputs import (
     create_date_picker,
 )
 from ui.foundation.loading import LoadingIcon, create_loading_icon
+from ui.foundation.guidance import GuidanceButton, create_guidance_button
 from ui.foundation.fluent import (
     APP_DIALOG_SHELL_MARGINS,
     APP_DIALOG_SHELL_OBJECT_NAME,
@@ -91,6 +92,8 @@ __all__ = [
     "create_search_edit",
     "LoadingIcon",
     "create_loading_icon",
+    "GuidanceButton",
+    "create_guidance_button",
     "APP_DIALOG_SHELL_MARGINS",
     "APP_DIALOG_SHELL_OBJECT_NAME",
     "APP_DIALOG_MASK_COLOR",

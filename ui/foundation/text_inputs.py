@@ -4,11 +4,17 @@ from PySide6.QtWidgets import (
     QPlainTextEdit,
 )
 
+from ui.foundation.text_input_style import paint_text_input_surface
+
 
 class ChatLineEdit(QLineEdit):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setFrame(False)
+
+    def paintEvent(self, event):
+        paint_text_input_surface(self)
+        super().paintEvent(event)
 
 
 class ChatPlainTextEdit(QPlainTextEdit):

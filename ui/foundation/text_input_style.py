@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
     QPlainTextEdit,
     QProxyStyle,
     QStyle,
+    QStyleOptionFrame,
 )
 
 
@@ -98,6 +99,18 @@ class PixelCrispTextInputStyle(QProxyStyle):
         )
         painter.drawRoundedRect(inner_rect, inner_radius, inner_radius)
         painter.restore()
+
+
+def paint_text_input_surface(widget):
+    """Paint a complete factory-input surface before Qt draws its contents."""
+    option = QStyleOptionFrame()
+    option.initFrom(widget)
+    option.rect = widget.rect()
+    if widget.hasFocus():
+        option.state |= QStyle.State_HasFocus
+    painter = QPainter(widget)
+    PixelCrispTextInputStyle._draw_input_surface(option, painter, widget)
+    painter.end()
 
 
 def install_pixel_crisp_text_input_style(app=None):

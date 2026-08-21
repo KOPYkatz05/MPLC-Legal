@@ -17,14 +17,13 @@ from PySide6.QtWidgets import (
     QDateEdit,
     QLabel,
     QStyle,
-    QStyleOptionFrame,
     QStyledItemDelegate,
     QTableView,
     QToolButton,
 )
 
 from ui.foundation.icons import lucide_icon
-from ui.foundation.text_input_style import PixelCrispTextInputStyle
+from ui.foundation.text_input_style import paint_text_input_surface
 
 
 # AppDatePicker palette. These are the primary color-editing points for the
@@ -366,14 +365,7 @@ class AppDatePicker(QDateEdit):
         self._layout_trailing_controls()
 
     def paintEvent(self, event):
-        option = QStyleOptionFrame()
-        option.initFrom(self)
-        option.rect = self.rect()
-        if self.hasFocus():
-            option.state |= QStyle.State_HasFocus
-        painter = QPainter(self)
-        PixelCrispTextInputStyle._draw_input_surface(option, painter, self)
-        painter.end()
+        paint_text_input_surface(self)
         super().paintEvent(event)
 
 

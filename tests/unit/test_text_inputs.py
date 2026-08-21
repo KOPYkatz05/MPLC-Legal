@@ -396,9 +396,9 @@ def test_chat_input_styles_leave_surface_rendering_to_the_proxy_style():
         'QLineEdit[chatTextBoxVariant="search"]',
         1,
     )[0]
-    assert "border:" not in chat_block
-    assert "border-radius:" not in chat_block
-    assert "background" not in chat_block
+    assert "border: none;" in chat_block
+    assert "border-radius: 0px;" in chat_block
+    assert "background: transparent;" in chat_block
 
 
 def test_pixel_crisp_style_installs_once(qapp):
@@ -407,11 +407,9 @@ def test_pixel_crisp_style_installs_once(qapp):
     assert install_pixel_crisp_text_input_style(qapp) is style
 
 
-def test_pixel_crisp_style_only_uses_qts_active_painter():
+def test_pixel_crisp_style_avoids_manual_painter_startup():
     source = inspect.getsource(text_input_style).casefold()
     assert "painter.begin" not in source
-    assert "painter.end" not in source
-    assert "paintevent" not in source
 
 
 @pytest.mark.parametrize("device_pixel_ratio", [1.0, 1.25, 1.5, 2.0])
